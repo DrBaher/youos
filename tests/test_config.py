@@ -94,7 +94,7 @@ def test_get_base_model_default():
 
 
 def test_get_server_port_default():
-    assert get_server_port({}) == 8765
+    assert get_server_port({}) == 8901
 
 
 def test_save_and_reload(tmp_path):

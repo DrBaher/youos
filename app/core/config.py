@@ -84,7 +84,7 @@ def get_model_fallback(config: dict[str, Any] | None = None) -> str:
 
 def get_server_port(config: dict[str, Any] | None = None) -> int:
     cfg = config or load_config()
-    return int(cfg.get("server", {}).get("port", 8765))
+    return int(cfg.get("server", {}).get("port", 8901))
 
 
 def get_server_host(config: dict[str, Any] | None = None) -> str:

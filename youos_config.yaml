@@ -1,43 +1,35 @@
-# YouOS User Configuration
-# Created by: youos setup
-# Edit this file or re-run the setup wizard to change settings.
-
-user:
-  name: ""                    # set during setup
-  display_name: ""            # e.g. "YouOS"
-  emails: []                  # e.g. ["you@company.com", "you@gmail.com"]
-  names: []                   # e.g. ["Your Name"]
-  timezone: "Europe/Vienna"
-
-server:
-  port: 8765
-  host: "0.0.0.0"
-  pin: ""  # set during setup, empty = no auth (Tailscale-only recommended)
-
-tailscale:
-  hostname: ""                # auto-detected during setup
-
-ingestion:
-  initial_months: 12          # how far back to go on first ingestion
-  accounts: []                # populated from user.emails
-
-model:
-  base: "Qwen/Qwen2.5-1.5B-Instruct"
-  adapter_path: "models/adapters/latest"
-  fallback: "claude"          # claude | openai | none
-
-persona:
-  # auto-populated by corpus analysis during setup
-  avg_reply_words: 40
-  greeting_style: "Hi [name],"
-  closing_formal: "Best,\n{name}"
-  closing_informal: "Cheers,\n{name}"
-  custom_constraints: []
-
 autoresearch:
   enabled: true
   iterations: 80
-  schedule: "0 1 * * *"      # 1 AM local time
-
+  schedule: 0 1 * * *
 benchmarks:
-  last_refresh_count: 0       # reply_pairs count at last benchmark refresh
+  last_refresh_count: 0
+ingestion:
+  accounts: []
+  initial_months: 12
+model:
+  adapter_path: models/adapters/latest
+  base: Qwen/Qwen2.5-1.5B-Instruct
+  fallback: claude
+persona:
+  avg_reply_words: 40
+  closing_formal: 'Best,
+
+    {name}'
+  closing_informal: 'Cheers,
+
+    {name}'
+  custom_constraints: []
+  greeting_style: Hi [name],
+server:
+  host: 0.0.0.0
+  pin: ''
+  port: 8901
+tailscale:
+  hostname: ''
+user:
+  display_name: ''
+  emails: []
+  name: ''
+  names: []
+  timezone: Europe/Vienna

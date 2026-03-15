@@ -277,5 +277,35 @@ def teardown(
     do_teardown(delete_all=all_data)
 
 
+model_app = typer.Typer(help="Manage the local model.")
+app.add_typer(model_app, name="model")
+
+
+@model_app.command(name="set")
+def model_set(
+    model_name: str = typer.Argument(help="HuggingFace model name, e.g. Qwen/Qwen2.5-3B-Instruct"),
+):
+    """Set the base model for fine-tuning and generation."""
+    import yaml
+    config_path = ROOT_DIR / "youos_config.yaml"
+    config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
+    config.setdefault("model", {})["base"] = model_name
+    config_path.write_text(yaml.dump(config, default_flow_style=False))
+    typer.echo(f"✅ Model set to {model_name}")
+    typer.echo("   Run `youos finetune` to train a new adapter on this model.")
+
+
+@model_app.command(name="show")
+def model_show():
+    """Show the currently configured model."""
+    import yaml
+    config_path = ROOT_DIR / "youos_config.yaml"
+    config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
+    base = config.get("model", {}).get("base", "Qwen/Qwen2.5-1.5B-Instruct")
+    adapter = ROOT_DIR / "models" / "adapters" / "latest" / "adapters.safetensors"
+    typer.echo(f"Base model:  {base}")
+    typer.echo(f"Adapter:     {'✅ trained' if adapter.exists() else '❌ not trained yet'}")
+
+
 if __name__ == "__main__":
     app()
