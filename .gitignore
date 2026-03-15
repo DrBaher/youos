@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+dist/
+build/
+*.egg-info/
+*.db
+*.sqlite
+*.sqlite3
+.DS_Store
+data/
+models/adapters/latest/*.safetensors
+models/adapters/latest/*.json

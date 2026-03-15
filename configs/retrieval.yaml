@@ -1,0 +1,17 @@
+defaults:
+  chunk_size_chars: 1200
+  chunk_overlap_chars: 150
+  top_k_chunks: 8
+  top_k_reply_pairs: 4
+ranking:
+  prefer_reply_pairs_for_drafting: true
+  prefer_authored_docs_for_background: true
+  recency_weight: 0.2
+  source_weights:
+    gmail_thread: 1.0
+    google_doc: 0.9
+    whatsapp_export: 0.6
+deferred:
+  embedding_model: TODO
+  reranker: TODO
+  routing_policy: TODO

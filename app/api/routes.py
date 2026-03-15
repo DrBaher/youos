@@ -1,0 +1,142 @@
+from typing import Literal
+
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
+
+from app.core.text_utils import strip_quoted_text
+from app.generation.service import DraftRequest, generate_draft
+from app.retrieval.service import RetrievalRequest, retrieve_context
+
+router = APIRouter()
+
+
+@router.get("/healthz")
+def healthz() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@router.get("/config-summary")
+def config_summary(request: Request) -> dict[str, object]:
+    settings = request.app.state.settings
+    return {
+        "app_name": settings.app_name,
+        "environment": settings.environment,
+        "database_url": settings.database_url,
+        "configs_dir": str(settings.configs_dir),
+    }
+
+
+class RetrievalLookupBody(BaseModel):
+    query: str = Field(min_length=1)
+    scope: Literal["all", "documents", "reply_pairs"] = "all"
+    source_types: list[str] = Field(default_factory=list)
+    account_emails: list[str] = Field(default_factory=list)
+    top_k_documents: int | None = Field(default=None, ge=1)
+    top_k_chunks: int | None = Field(default=None, ge=1)
+    top_k_reply_pairs: int | None = Field(default=None, ge=1)
+
+
+@router.post("/retrieval/lookup")
+def retrieval_lookup(body: RetrievalLookupBody, request: Request) -> dict[str, object]:
+    settings = request.app.state.settings
+    try:
+        response = retrieve_context(
+            RetrievalRequest(
+                query=body.query,
+                scope=body.scope,
+                source_types=tuple(body.source_types),
+                account_emails=tuple(body.account_emails),
+                top_k_documents=body.top_k_documents,
+                top_k_chunks=body.top_k_chunks,
+                top_k_reply_pairs=body.top_k_reply_pairs,
+            ),
+            database_url=settings.database_url,
+            configs_dir=settings.configs_dir,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return response.to_dict()
+
+
+class DraftBody(BaseModel):
+    inbound_message: str = Field(min_length=1)
+    mode: Literal["work", "personal"] | None = None
+    audience_hint: str | None = None
+    top_k_reply_pairs: int = Field(default=5, ge=1)
+    top_k_chunks: int = Field(default=3, ge=1)
+    account_email: str | None = None
+    tone_hint: Literal["shorter", "more_formal", "more_detail"] | None = None
+    sender: str | None = None
+
+
+@router.post("/draft")
+def draft(body: DraftBody, request: Request) -> dict[str, object]:
+    settings = request.app.state.settings
+    try:
+        response = generate_draft(
+            DraftRequest(
+                inbound_message=body.inbound_message,
+                mode=body.mode,
+                audience_hint=body.audience_hint,
+                top_k_reply_pairs=body.top_k_reply_pairs,
+                top_k_chunks=body.top_k_chunks,
+                account_email=body.account_email,
+                tone_hint=body.tone_hint,
+                sender=body.sender,
+            ),
+            database_url=settings.database_url,
+            configs_dir=settings.configs_dir,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return response.to_dict()
+
+
+class DraftCompareBody(BaseModel):
+    inbound_text: str = Field(min_length=1)
+    sender: str | None = None
+
+
+@router.post("/draft/compare")
+def draft_compare(body: DraftCompareBody, request: Request) -> dict:
+    """Generate two drafts: retrieval-grounded vs baseline (persona-only)."""
+    settings = request.app.state.settings
+    clean_inbound = strip_quoted_text(body.inbound_text)
+
+    # Full retrieval-grounded draft
+    try:
+        retrieval_resp = generate_draft(
+            DraftRequest(inbound_message=clean_inbound, sender=body.sender),
+            database_url=settings.database_url,
+            configs_dir=settings.configs_dir,
+        )
+        retrieval_draft = retrieval_resp.draft
+        retrieval_confidence = retrieval_resp.confidence
+        exemplar_count = len(retrieval_resp.precedent_used)
+    except Exception as exc:
+        retrieval_draft = f"[generation failed: {exc}]"
+        retrieval_confidence = "error"
+        exemplar_count = 0
+
+    # Baseline draft (no exemplars — just persona + inbound)
+    try:
+        baseline_resp = generate_draft(
+            DraftRequest(
+                inbound_message=clean_inbound,
+                sender=body.sender,
+                top_k_reply_pairs=0,
+                top_k_chunks=0,
+            ),
+            database_url=settings.database_url,
+            configs_dir=settings.configs_dir,
+        )
+        baseline_draft = baseline_resp.draft
+    except Exception as exc:
+        baseline_draft = f"[generation failed: {exc}]"
+
+    return {
+        "retrieval_draft": retrieval_draft,
+        "baseline_draft": baseline_draft,
+        "retrieval_confidence": retrieval_confidence,
+        "exemplar_count": exemplar_count,
+    }

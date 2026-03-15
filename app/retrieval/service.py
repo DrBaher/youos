@@ -1,0 +1,1003 @@
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
+import json
+from pathlib import Path
+import re
+import sqlite3
+from typing import Any, Literal
+
+import yaml
+
+from app.core.embeddings import cosine_similarity, deserialize_embedding, get_embedding
+from app.core.sender import classify_sender, extract_domain
+from app.db.bootstrap import resolve_sqlite_path
+
+
+ResultType = Literal["document", "chunk", "reply_pair"]
+ScopeType = Literal["all", "documents", "reply_pairs"]
+ModeHint = Literal["work", "personal", "unknown"]
+
+_TOKEN_PATTERN = re.compile(r"[a-z0-9]{2,}")
+
+_WORK_SIGNALS = re.compile(
+    r"\b(proposal|integration|api|contract|client|invoice|pricing|budget|deadline|"
+    r"deliverable|stakeholder|timeline|vendor|compliance|saas|enterprise|onboard|"
+    r"quote|demo|meeting|schedule|call|partner|partnership|agreement|nda|sla|"
+    r"implementation|deployment|credentials|credentials|technical|support|ticket|"
+    r"report|status|update|project|team|colleague|manager|hr|legal|document|sign|"
+    r"audit|review|payment|billing|subscription|license|renewal|account|lab|hospital|"
+    r"clinic|healthcare|software|platform|solution|service|product|feature|bug|issue|"
+    r"request|requirement|specification|scope|milestone|delivery|handover|onboarding)\b",
+    re.IGNORECASE,
+)
+_PERSONAL_SIGNALS = re.compile(
+    r"\b(friend|family|personal|vacation|birthday|weekend|dinner|"
+    r"wedding|holiday|kids|parents|trip|thanks for checking in|"
+    r"catch up|catchup|hang out|hangout|drinks|lunch|coffee|"
+    r"sister|brother|mum|mom|dad|uncle|aunt|cousin|girlfriend|boyfriend|"
+    r"wife|husband|home|house|apartment|moving|baby|pregnant|"
+    r"sick|travel|flight|hotel|ages|old group|Saturday|Sunday)\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass(slots=True)
+class RetrievalRequest:
+    query: str
+    scope: ScopeType = "all"
+    source_types: tuple[str, ...] = ()
+    account_emails: tuple[str, ...] = ()
+    top_k_documents: int | None = None
+    top_k_chunks: int | None = None
+    top_k_reply_pairs: int | None = None
+    sender_type_hint: str | None = None
+    sender_domain_hint: str | None = None
+
+
+@dataclass(slots=True)
+class RetrievalMatch:
+    result_type: ResultType
+    score: float
+    lexical_score: float
+    metadata_score: float
+    source_type: str
+    source_id: str
+    account_email: str | None
+    title: str | None
+    author: str | None
+    external_uri: str | None
+    thread_id: str | None
+    created_at: str | None
+    updated_at: str | None
+    document_id: int | None = None
+    chunk_id: int | None = None
+    chunk_index: int | None = None
+    reply_pair_id: int | None = None
+    snippet: str | None = None
+    content: str | None = None
+    inbound_text: str | None = None
+    reply_text: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class RetrievalResponse:
+    query: str
+    retrieval_method: str
+    semantic_search_enabled: bool
+    applied_filters: dict[str, Any]
+    detected_mode: ModeHint
+    documents: list[RetrievalMatch]
+    chunks: list[RetrievalMatch]
+    reply_pairs: list[RetrievalMatch]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "query": self.query,
+            "retrieval_method": self.retrieval_method,
+            "semantic_search_enabled": self.semantic_search_enabled,
+            "applied_filters": self.applied_filters,
+            "detected_mode": self.detected_mode,
+            "documents": [match.to_dict() for match in self.documents],
+            "chunks": [match.to_dict() for match in self.chunks],
+            "reply_pairs": [match.to_dict() for match in self.reply_pairs],
+        }
+
+
+@dataclass(slots=True)
+class RetrievalConfig:
+    top_k_documents: int
+    top_k_chunks: int
+    top_k_reply_pairs: int
+    recency_boost_days: int
+    recency_boost_weight: float
+    account_boost_weight: float
+    source_weights: dict[str, float]
+    semantic_weight: float = 0.4
+    semantic_min_coverage: float = 0.1
+    sender_type_boost: float = 0.15
+    sender_domain_boost: float = 0.10
+
+
+def _has_fts5_table(connection: sqlite3.Connection, table_name: str) -> bool:
+    row = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,)
+    ).fetchone()
+    return row is not None
+
+
+class RetrievalService:
+    def __init__(self, *, db_path: Path, config: RetrievalConfig) -> None:
+        self.db_path = db_path
+        self.config = config
+
+    @classmethod
+    def from_database_url(cls, *, database_url: str, configs_dir: Path) -> RetrievalService:
+        return cls(
+            db_path=resolve_sqlite_path(database_url),
+            config=_load_retrieval_config(configs_dir),
+        )
+
+    def retrieve(self, request: RetrievalRequest) -> RetrievalResponse:
+        query = request.query.strip()
+        if not query:
+            raise ValueError("Retrieval query must not be empty.")
+
+        tokens = _tokenize(query)
+        detected_mode = _detect_mode(query)
+        filters = {
+            "scope": request.scope,
+            "source_types": list(request.source_types),
+            "account_emails": list(request.account_emails),
+        }
+
+        with sqlite3.connect(self.db_path) as connection:
+            connection.row_factory = sqlite3.Row
+            use_fts = _has_fts5_table(connection, "chunks_fts")
+
+            documents: list[RetrievalMatch] = []
+            chunks: list[RetrievalMatch] = []
+            reply_pairs: list[RetrievalMatch] = []
+
+            if request.scope in ("all", "documents"):
+                documents = self._retrieve_documents(
+                    connection, query=query, tokens=tokens, request=request
+                )
+                if use_fts:
+                    chunks = self._retrieve_chunks_fts(
+                        connection, query=query, tokens=tokens, request=request
+                    )
+                else:
+                    chunks = self._retrieve_chunks_legacy(
+                        connection, query=query, tokens=tokens, request=request
+                    )
+
+            if request.scope in ("all", "reply_pairs"):
+                if use_fts:
+                    reply_pairs = self._retrieve_reply_pairs_fts(
+                        connection, query=query, tokens=tokens, request=request
+                    )
+                else:
+                    reply_pairs = self._retrieve_reply_pairs_legacy(
+                        connection, query=query, tokens=tokens, request=request
+                    )
+
+            # Hybrid semantic re-ranking
+            semantic_enabled = False
+            if reply_pairs:
+                semantic_enabled = self._apply_semantic_reranking(
+                    connection, query, reply_pairs, "reply_pairs"
+                )
+            if chunks:
+                chunks_semantic = self._apply_semantic_reranking(
+                    connection, query, chunks, "chunks"
+                )
+                semantic_enabled = semantic_enabled or chunks_semantic
+
+        method = "fts5_bm25" if use_fts else "lexical_v1"
+        if semantic_enabled:
+            method = f"{method}+semantic"
+
+        return RetrievalResponse(
+            query=query,
+            retrieval_method=method,
+            semantic_search_enabled=semantic_enabled,
+            applied_filters=filters,
+            detected_mode=detected_mode,
+            documents=documents,
+            chunks=chunks,
+            reply_pairs=reply_pairs,
+        )
+
+    # -- Semantic reranking ────────────────────────────────────────────────
+
+    def _apply_semantic_reranking(
+        self,
+        connection: sqlite3.Connection,
+        query: str,
+        matches: list[RetrievalMatch],
+        table: str,
+    ) -> bool:
+        """Re-score matches using hybrid FTS + semantic similarity.
+
+        Returns True if semantic search was enabled, False otherwise.
+        Only operates on top-20 FTS candidates for efficiency.
+        """
+        if not _has_embedding_column(connection, table):
+            return False
+
+        coverage = _embedding_coverage(connection, table)
+        if coverage < self.config.semantic_min_coverage:
+            return False
+
+        # Get query embedding — if embedding generation fails, skip semantic
+        try:
+            query_emb = get_embedding(query)
+        except Exception:
+            return False
+
+        id_field = "chunk_id" if table == "chunks" else "reply_pair_id"
+        top_n = min(len(matches), 20)
+        fts_weight = 1.0 - self.config.semantic_weight
+        sem_weight = self.config.semantic_weight
+
+        for match in matches[:top_n]:
+            row_id = getattr(match, id_field)
+            if row_id is None:
+                continue
+            row = connection.execute(
+                f"SELECT embedding FROM {table} WHERE id = ?", (row_id,)
+            ).fetchone()
+            if not row or not row["embedding"] or len(row["embedding"]) < 4:
+                continue
+            emb = deserialize_embedding(row["embedding"])
+            sim = cosine_similarity(query_emb, emb)
+            # Normalize sim from [-1,1] to [0,1] range, then scale to match FTS score range
+            sim_normalized = (sim + 1.0) / 2.0
+            sim_score = sim_normalized * 10.0  # scale to comparable range with FTS scores
+            match.score = round(
+                fts_weight * match.score + sem_weight * sim_score, 4
+            )
+
+        # Re-sort after reranking
+        matches.sort(key=lambda m: (-m.score, m.result_type, m.source_id))
+        return True
+
+    # -- FTS5 paths ──────────────────────────────────────────────────────
+
+    def _retrieve_chunks_fts(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        query: str,
+        tokens: list[str],
+        request: RetrievalRequest,
+    ) -> list[RetrievalMatch]:
+        fts_query = _fts5_query(tokens)
+        if not fts_query:
+            return []
+        rows = connection.execute(
+            """
+            SELECT
+                c.id,
+                c.chunk_index,
+                c.content,
+                c.metadata_json AS chunk_metadata_json,
+                d.id AS document_id,
+                d.source_type,
+                d.source_id,
+                d.title,
+                d.author,
+                d.external_uri,
+                d.thread_id,
+                d.created_at,
+                d.updated_at,
+                d.metadata_json AS document_metadata_json,
+                cfts.rank AS fts_rank
+            FROM chunks_fts AS cfts
+            INNER JOIN chunks AS c ON c.id = cfts.rowid
+            INNER JOIN documents AS d ON d.id = c.document_id
+            WHERE chunks_fts MATCH ?
+            ORDER BY cfts.rank
+            LIMIT ?
+            """,
+            (fts_query, (request.top_k_chunks or self.config.top_k_chunks) * 3),
+        ).fetchall()
+        matches: list[RetrievalMatch] = []
+        for row in rows:
+            if not _matches_filters(
+                source_type=row["source_type"],
+                metadata_json=row["document_metadata_json"],
+                source_types=request.source_types,
+                account_emails=request.account_emails,
+            ):
+                continue
+            match = self._score_chunk_row_fts(row, query=query, tokens=tokens, request=request)
+            if match is not None:
+                matches.append(match)
+        return _top_matches(matches, request.top_k_chunks or self.config.top_k_chunks)
+
+    def _retrieve_reply_pairs_fts(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        query: str,
+        tokens: list[str],
+        request: RetrievalRequest,
+    ) -> list[RetrievalMatch]:
+        fts_query = _fts5_query(tokens)
+        if not fts_query:
+            return []
+        rows = connection.execute(
+            """
+            SELECT
+                rp.id,
+                rp.source_type,
+                rp.source_id,
+                rp.thread_id,
+                rp.inbound_text,
+                rp.reply_text,
+                rp.inbound_author,
+                rp.reply_author,
+                rp.paired_at,
+                rp.metadata_json,
+                d.id AS document_id,
+                d.title,
+                d.author,
+                d.external_uri,
+                d.created_at,
+                d.updated_at,
+                rpfts.rank AS fts_rank
+            FROM reply_pairs_fts AS rpfts
+            INNER JOIN reply_pairs AS rp ON rp.id = rpfts.rowid
+            LEFT JOIN documents AS d ON d.id = rp.document_id
+            WHERE reply_pairs_fts MATCH ?
+            ORDER BY rpfts.rank
+            LIMIT ?
+            """,
+            (fts_query, (request.top_k_reply_pairs or self.config.top_k_reply_pairs) * 3),
+        ).fetchall()
+        matches: list[RetrievalMatch] = []
+        for row in rows:
+            if not _matches_filters(
+                source_type=row["source_type"],
+                metadata_json=row["metadata_json"],
+                source_types=request.source_types,
+                account_emails=request.account_emails,
+            ):
+                continue
+            match = self._score_reply_pair_row_fts(
+                row, query=query, tokens=tokens, request=request
+            )
+            if match is not None:
+                matches.append(match)
+        return _top_matches(matches, request.top_k_reply_pairs or self.config.top_k_reply_pairs)
+
+    def _score_chunk_row_fts(
+        self,
+        row: sqlite3.Row,
+        *,
+        query: str,
+        tokens: list[str],
+        request: RetrievalRequest,
+    ) -> RetrievalMatch | None:
+        document_metadata = _loads_json(row["document_metadata_json"])
+        chunk_metadata = _loads_json(row["chunk_metadata_json"])
+        content = row["content"] or ""
+        title = row["title"] or ""
+        # FTS5 rank is negative (more negative = better match); normalize to positive
+        raw_rank = abs(row["fts_rank"]) if row["fts_rank"] else 0.0
+        lexical_score = min(raw_rank * 2.0, 10.0) + _field_match_bonus(title, tokens)
+        metadata_score = self._metadata_score(
+            source_type=row["source_type"],
+            timestamp=row["updated_at"] or row["created_at"],
+            account_email=_account_email_from_metadata(document_metadata),
+            request_account_emails=request.account_emails,
+        )
+        metadata = dict(document_metadata)
+        metadata["chunk"] = chunk_metadata
+        return RetrievalMatch(
+            result_type="chunk",
+            score=round(lexical_score + metadata_score, 4),
+            lexical_score=round(lexical_score, 4),
+            metadata_score=round(metadata_score, 4),
+            source_type=row["source_type"],
+            source_id=row["source_id"],
+            account_email=_account_email_from_metadata(document_metadata),
+            title=row["title"],
+            author=row["author"],
+            external_uri=row["external_uri"],
+            thread_id=row["thread_id"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            document_id=row["document_id"],
+            chunk_id=row["id"],
+            chunk_index=row["chunk_index"],
+            snippet=_make_snippet(content, tokens=tokens),
+            content=content,
+            metadata=metadata,
+        )
+
+    def _score_reply_pair_row_fts(
+        self,
+        row: sqlite3.Row,
+        *,
+        query: str,
+        tokens: list[str],
+        request: RetrievalRequest,
+    ) -> RetrievalMatch | None:
+        metadata = _loads_json(row["metadata_json"])
+        inbound_text = row["inbound_text"] or ""
+        reply_text = row["reply_text"] or ""
+        raw_rank = abs(row["fts_rank"]) if row["fts_rank"] else 0.0
+        lexical_score = min(raw_rank * 2.0, 10.0)
+        metadata_score = self._metadata_score(
+            source_type=row["source_type"],
+            timestamp=row["paired_at"] or row["updated_at"] or row["created_at"],
+            account_email=_account_email_from_metadata(metadata),
+            request_account_emails=request.account_emails,
+            inbound_author=row["inbound_author"],
+            sender_type_hint=request.sender_type_hint,
+            sender_domain_hint=request.sender_domain_hint,
+        )
+        return RetrievalMatch(
+            result_type="reply_pair",
+            score=round(lexical_score + metadata_score, 4),
+            lexical_score=round(lexical_score, 4),
+            metadata_score=round(metadata_score, 4),
+            source_type=row["source_type"],
+            source_id=row["source_id"],
+            account_email=_account_email_from_metadata(metadata),
+            title=row["title"],
+            author=row["reply_author"] or row["author"],
+            external_uri=row["external_uri"],
+            thread_id=row["thread_id"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            document_id=row["document_id"],
+            reply_pair_id=row["id"],
+            snippet=_make_snippet(inbound_text, tokens=tokens),
+            inbound_text=inbound_text,
+            reply_text=reply_text,
+            metadata=metadata,
+        )
+
+    # -- Legacy paths (no FTS5) ──────────────────────────────────────────
+
+    def _retrieve_documents(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        query: str,
+        tokens: list[str],
+        request: RetrievalRequest,
+    ) -> list[RetrievalMatch]:
+        rows = connection.execute(
+            """
+            SELECT
+                d.id,
+                d.source_type,
+                d.source_id,
+                d.title,
+                d.author,
+                d.external_uri,
+                d.thread_id,
+                d.created_at,
+                d.updated_at,
+                d.content,
+                d.metadata_json
+            FROM documents AS d
+            ORDER BY COALESCE(d.updated_at, d.created_at, d.created_ts) DESC
+            """
+        ).fetchall()
+        matches = [
+            self._score_document_row(row, query=query, tokens=tokens, request=request)
+            for row in rows
+            if _matches_filters(
+                source_type=row["source_type"],
+                metadata_json=row["metadata_json"],
+                source_types=request.source_types,
+                account_emails=request.account_emails,
+            )
+        ]
+        return _top_matches(matches, request.top_k_documents or self.config.top_k_documents)
+
+    def _retrieve_chunks_legacy(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        query: str,
+        tokens: list[str],
+        request: RetrievalRequest,
+    ) -> list[RetrievalMatch]:
+        rows = connection.execute(
+            """
+            SELECT
+                c.id,
+                c.chunk_index,
+                c.content,
+                c.metadata_json AS chunk_metadata_json,
+                d.id AS document_id,
+                d.source_type,
+                d.source_id,
+                d.title,
+                d.author,
+                d.external_uri,
+                d.thread_id,
+                d.created_at,
+                d.updated_at,
+                d.metadata_json AS document_metadata_json
+            FROM chunks AS c
+            INNER JOIN documents AS d
+                ON d.id = c.document_id
+            ORDER BY COALESCE(d.updated_at, d.created_at, d.created_ts) DESC, c.chunk_index ASC
+            """
+        ).fetchall()
+        matches = [
+            self._score_chunk_row_legacy(row, query=query, tokens=tokens, request=request)
+            for row in rows
+            if _matches_filters(
+                source_type=row["source_type"],
+                metadata_json=row["document_metadata_json"],
+                source_types=request.source_types,
+                account_emails=request.account_emails,
+            )
+        ]
+        return _top_matches(matches, request.top_k_chunks or self.config.top_k_chunks)
+
+    def _retrieve_reply_pairs_legacy(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        query: str,
+        tokens: list[str],
+        request: RetrievalRequest,
+    ) -> list[RetrievalMatch]:
+        rows = connection.execute(
+            """
+            SELECT
+                rp.id,
+                rp.source_type,
+                rp.source_id,
+                rp.thread_id,
+                rp.inbound_text,
+                rp.reply_text,
+                rp.inbound_author,
+                rp.reply_author,
+                rp.paired_at,
+                rp.metadata_json,
+                d.id AS document_id,
+                d.title,
+                d.author,
+                d.external_uri,
+                d.created_at,
+                d.updated_at
+            FROM reply_pairs AS rp
+            LEFT JOIN documents AS d
+                ON d.id = rp.document_id
+            ORDER BY COALESCE(rp.paired_at, d.updated_at, d.created_at, rp.created_ts) DESC
+            """
+        ).fetchall()
+        matches = [
+            self._score_reply_pair_row_legacy(row, query=query, tokens=tokens, request=request)
+            for row in rows
+            if _matches_filters(
+                source_type=row["source_type"],
+                metadata_json=row["metadata_json"],
+                source_types=request.source_types,
+                account_emails=request.account_emails,
+            )
+        ]
+        return _top_matches(
+            matches, request.top_k_reply_pairs or self.config.top_k_reply_pairs
+        )
+
+    # -- Legacy scoring ──────────────────────────────────────────────────
+
+    def _score_document_row(
+        self,
+        row: sqlite3.Row,
+        *,
+        query: str,
+        tokens: list[str],
+        request: RetrievalRequest,
+    ) -> RetrievalMatch | None:
+        metadata = _loads_json(row["metadata_json"])
+        content = row["content"] or ""
+        title = row["title"] or ""
+        lexical_score = _score_text(query, tokens, f"{title}\n{content}")
+        if lexical_score <= 0:
+            return None
+        metadata_score = self._metadata_score(
+            source_type=row["source_type"],
+            timestamp=row["updated_at"] or row["created_at"],
+            account_email=_account_email_from_metadata(metadata),
+            request_account_emails=request.account_emails,
+        )
+        return RetrievalMatch(
+            result_type="document",
+            score=round(lexical_score + metadata_score, 4),
+            lexical_score=round(lexical_score, 4),
+            metadata_score=round(metadata_score, 4),
+            source_type=row["source_type"],
+            source_id=row["source_id"],
+            account_email=_account_email_from_metadata(metadata),
+            title=row["title"],
+            author=row["author"],
+            external_uri=row["external_uri"],
+            thread_id=row["thread_id"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            document_id=row["id"],
+            snippet=_make_snippet(content or title, tokens=tokens),
+            content=content,
+            metadata=metadata,
+        )
+
+    def _score_chunk_row_legacy(
+        self,
+        row: sqlite3.Row,
+        *,
+        query: str,
+        tokens: list[str],
+        request: RetrievalRequest,
+    ) -> RetrievalMatch | None:
+        document_metadata = _loads_json(row["document_metadata_json"])
+        chunk_metadata = _loads_json(row["chunk_metadata_json"])
+        content = row["content"] or ""
+        title = row["title"] or ""
+        lexical_score = (
+            _score_text(query, tokens, f"{title}\n{content}") + _field_match_bonus(title, tokens)
+        )
+        if lexical_score <= 0:
+            return None
+        metadata_score = self._metadata_score(
+            source_type=row["source_type"],
+            timestamp=row["updated_at"] or row["created_at"],
+            account_email=_account_email_from_metadata(document_metadata),
+            request_account_emails=request.account_emails,
+        )
+        metadata = dict(document_metadata)
+        metadata["chunk"] = chunk_metadata
+        return RetrievalMatch(
+            result_type="chunk",
+            score=round(lexical_score + metadata_score, 4),
+            lexical_score=round(lexical_score, 4),
+            metadata_score=round(metadata_score, 4),
+            source_type=row["source_type"],
+            source_id=row["source_id"],
+            account_email=_account_email_from_metadata(document_metadata),
+            title=row["title"],
+            author=row["author"],
+            external_uri=row["external_uri"],
+            thread_id=row["thread_id"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            document_id=row["document_id"],
+            chunk_id=row["id"],
+            chunk_index=row["chunk_index"],
+            snippet=_make_snippet(content, tokens=tokens),
+            content=content,
+            metadata=metadata,
+        )
+
+    def _score_reply_pair_row_legacy(
+        self,
+        row: sqlite3.Row,
+        *,
+        query: str,
+        tokens: list[str],
+        request: RetrievalRequest,
+    ) -> RetrievalMatch | None:
+        metadata = _loads_json(row["metadata_json"])
+        inbound_text = row["inbound_text"] or ""
+        reply_text = row["reply_text"] or ""
+        lexical_score = (
+            _score_text(query, tokens, inbound_text)
+            + (_score_text(query, tokens, reply_text) * 0.35)
+        )
+        if lexical_score <= 0:
+            return None
+        metadata_score = self._metadata_score(
+            source_type=row["source_type"],
+            timestamp=row["paired_at"] or row["updated_at"] or row["created_at"],
+            account_email=_account_email_from_metadata(metadata),
+            request_account_emails=request.account_emails,
+            inbound_author=row["inbound_author"],
+            sender_type_hint=request.sender_type_hint,
+            sender_domain_hint=request.sender_domain_hint,
+        )
+        return RetrievalMatch(
+            result_type="reply_pair",
+            score=round(lexical_score + metadata_score, 4),
+            lexical_score=round(lexical_score, 4),
+            metadata_score=round(metadata_score, 4),
+            source_type=row["source_type"],
+            source_id=row["source_id"],
+            account_email=_account_email_from_metadata(metadata),
+            title=row["title"],
+            author=row["reply_author"] or row["author"],
+            external_uri=row["external_uri"],
+            thread_id=row["thread_id"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            document_id=row["document_id"],
+            reply_pair_id=row["id"],
+            snippet=_make_snippet(inbound_text, tokens=tokens),
+            inbound_text=inbound_text,
+            reply_text=reply_text,
+            metadata=metadata,
+        )
+
+    # -- Shared scoring helpers ──────────────────────────────────────────
+
+    def _metadata_score(
+        self,
+        *,
+        source_type: str,
+        timestamp: str | None,
+        account_email: str | None,
+        request_account_emails: tuple[str, ...],
+        inbound_author: str | None = None,
+        sender_type_hint: str | None = None,
+        sender_domain_hint: str | None = None,
+    ) -> float:
+        source_weight = self.config.source_weights.get(source_type, 1.0) - 1.0
+        recency_bonus = _recency_bonus(
+            timestamp,
+            self.config.recency_boost_weight,
+            self.config.recency_boost_days,
+        )
+        account_bonus = 0.0
+        if request_account_emails and account_email and account_email in request_account_emails:
+            account_bonus = self.config.account_boost_weight
+
+        # Sender-aware boosts
+        sender_bonus = 0.0
+        if sender_type_hint and inbound_author:
+            stored_sender_type = classify_sender(inbound_author)
+            if stored_sender_type == sender_type_hint:
+                sender_bonus += self.config.sender_type_boost
+            if sender_domain_hint:
+                stored_domain = extract_domain(inbound_author)
+                if stored_domain and stored_domain == sender_domain_hint:
+                    sender_bonus += self.config.sender_domain_boost
+
+        return source_weight + recency_bonus + account_bonus + sender_bonus
+
+
+def retrieve_context(
+    request: RetrievalRequest,
+    *,
+    database_url: str,
+    configs_dir: Path,
+) -> RetrievalResponse:
+    service = RetrievalService.from_database_url(database_url=database_url, configs_dir=configs_dir)
+    return service.retrieve(request)
+
+
+# -- Mode detection ──────────────────────────────────────────────────────
+
+
+def detect_mode(query: str) -> ModeHint:
+    return _detect_mode(query)
+
+
+def _detect_mode(query: str) -> ModeHint:
+    work_hits = len(_WORK_SIGNALS.findall(query))
+    personal_hits = len(_PERSONAL_SIGNALS.findall(query))
+    if work_hits > personal_hits:
+        return "work"
+    if personal_hits > work_hits:
+        return "personal"
+    # Default to work when signals are ambiguous.
+    # Only return unknown if the query is very short (< 4 words) and has no signals.
+    words = query.split()
+    if len(words) < 4 and work_hits == 0 and personal_hits == 0:
+        return "unknown"
+    return "work"
+
+
+# -- Config loading ──────────────────────────────────────────────────────
+
+
+def _load_retrieval_config(configs_dir: Path) -> RetrievalConfig:
+    # Try new-style configs/retrieval/defaults.yaml first, fall back to configs/retrieval.yaml
+    defaults_path = configs_dir / "retrieval" / "defaults.yaml"
+    legacy_path = configs_dir / "retrieval.yaml"
+
+    if defaults_path.exists():
+        payload = yaml.safe_load(defaults_path.read_text(encoding="utf-8")) or {}
+        # Also load source_weights from legacy config if present
+        source_weights: dict[str, float] = {}
+        if legacy_path.exists():
+            legacy = yaml.safe_load(legacy_path.read_text(encoding="utf-8")) or {}
+            ranking = legacy.get("ranking", {})
+            source_weights = {
+                str(k): float(v) for k, v in ranking.get("source_weights", {}).items()
+            }
+        return RetrievalConfig(
+            top_k_documents=int(payload.get("top_k_documents", 3)),
+            top_k_chunks=int(payload.get("top_k_chunks", 3)),
+            top_k_reply_pairs=int(payload.get("top_k_reply_pairs", 5)),
+            recency_boost_days=int(payload.get("recency_boost_days", 90)),
+            recency_boost_weight=float(payload.get("recency_boost_weight", 0.2)),
+            account_boost_weight=float(payload.get("account_boost_weight", 0.15)),
+            source_weights=source_weights,
+            semantic_weight=float(payload.get("semantic_weight", 0.4)),
+            semantic_min_coverage=float(payload.get("semantic_min_coverage", 0.1)),
+            sender_type_boost=float(payload.get("sender_type_boost", 0.15)),
+            sender_domain_boost=float(payload.get("sender_domain_boost", 0.10)),
+        )
+
+    # Legacy path
+    payload = yaml.safe_load(legacy_path.read_text(encoding="utf-8")) or {}
+    defaults = payload.get("defaults", {})
+    ranking = payload.get("ranking", {})
+    return RetrievalConfig(
+        top_k_documents=3,
+        top_k_chunks=int(defaults.get("top_k_chunks", 8)),
+        top_k_reply_pairs=int(defaults.get("top_k_reply_pairs", 4)),
+        recency_boost_days=90,
+        recency_boost_weight=float(ranking.get("recency_weight", 0.2)),
+        account_boost_weight=0.15,
+        source_weights={str(k): float(v) for k, v in ranking.get("source_weights", {}).items()},
+    )
+
+
+# -- Shared utility functions ────────────────────────────────────────────
+
+
+def _has_embedding_column(connection: sqlite3.Connection, table: str) -> bool:
+    """Check if the table has an embedding column."""
+    cols = [row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()]
+    return "embedding" in cols
+
+
+def _embedding_coverage(connection: sqlite3.Connection, table: str) -> float:
+    """Return the fraction of rows that have a non-NULL, non-empty embedding."""
+    row = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+    total = row[0] if row else 0
+    if total == 0:
+        return 0.0
+    row = connection.execute(
+        f"SELECT COUNT(*) FROM {table} WHERE embedding IS NOT NULL AND LENGTH(embedding) > 0"
+    ).fetchone()
+    embedded = row[0] if row else 0
+    return embedded / total
+
+
+def _fts5_query(tokens: list[str]) -> str:
+    """Build an FTS5 query string from tokens using OR logic."""
+    if not tokens:
+        return ""
+    safe = [t for t in tokens if t.isalnum()]
+    if not safe:
+        return ""
+    return " OR ".join(safe)
+
+
+def _matches_filters(
+    *,
+    source_type: str,
+    metadata_json: str,
+    source_types: tuple[str, ...],
+    account_emails: tuple[str, ...],
+) -> bool:
+    if source_types and source_type not in source_types:
+        return False
+    if not account_emails:
+        return True
+    metadata = _loads_json(metadata_json)
+    account_email = _account_email_from_metadata(metadata)
+    return account_email in account_emails
+
+
+def _loads_json(raw_json: str | None) -> dict[str, Any]:
+    if not raw_json:
+        return {}
+    try:
+        payload = json.loads(raw_json)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _account_email_from_metadata(metadata: dict[str, Any]) -> str | None:
+    account_email = metadata.get("account_email")
+    return account_email if isinstance(account_email, str) and account_email else None
+
+
+def _tokenize(text: str) -> list[str]:
+    return list(dict.fromkeys(_TOKEN_PATTERN.findall(text.lower())))
+
+
+def _score_text(query: str, tokens: list[str], text: str) -> float:
+    if not text:
+        return 0.0
+    lowered = text.lower()
+    normalized_query = query.lower()
+    score = 0.0
+    if normalized_query in lowered:
+        score += 4.0
+    if not tokens:
+        return score
+    matched_tokens = 0
+    token_occurrences = 0
+    for token in tokens:
+        occurrences = lowered.count(token)
+        if occurrences:
+            matched_tokens += 1
+            token_occurrences += min(occurrences, 3)
+    if matched_tokens == 0:
+        return score
+    score += (matched_tokens / len(tokens)) * 5.0
+    score += token_occurrences * 0.35
+    return score
+
+
+def _field_match_bonus(text: str, tokens: list[str]) -> float:
+    if not text:
+        return 0.0
+    lowered = text.lower()
+    matched = sum(1 for token in tokens if token in lowered)
+    return matched * 0.25
+
+
+def _recency_bonus(timestamp: str | None, recency_weight: float, boost_days: int = 90) -> float:
+    if not timestamp:
+        return 0.0
+    parsed = _parse_timestamp(timestamp)
+    if parsed is None:
+        return 0.0
+    age_days = max((datetime.now(UTC) - parsed).days, 0)
+    if age_days <= boost_days:
+        return recency_weight
+    if age_days <= boost_days * 2:
+        return recency_weight * 0.6
+    if age_days <= boost_days * 4:
+        return recency_weight * 0.3
+    return 0.0
+
+
+def _parse_timestamp(value: str) -> datetime | None:
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _make_snippet(text: str, *, tokens: list[str], window: int = 220) -> str:
+    clean_text = " ".join(text.split())
+    if len(clean_text) <= window:
+        return clean_text
+    lowered = clean_text.lower()
+    token_positions = [lowered.find(token) for token in tokens if lowered.find(token) >= 0]
+    start = 0
+    if token_positions:
+        pivot = min(token_positions)
+        start = max(pivot - (window // 4), 0)
+    end = min(start + window, len(clean_text))
+    snippet = clean_text[start:end]
+    prefix = "..." if start > 0 else ""
+    suffix = "..." if end < len(clean_text) else ""
+    return f"{prefix}{snippet}{suffix}"
+
+
+def _top_matches(matches: list[RetrievalMatch | None], limit: int) -> list[RetrievalMatch]:
+    filtered = [match for match in matches if match is not None]
+    filtered.sort(key=lambda match: (-match.score, match.result_type, match.source_id))
+    return filtered[:limit]

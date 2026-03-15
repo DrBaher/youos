@@ -1,0 +1,92 @@
+"""Local semantic embeddings using MLX + Qwen2.5 mean pooling.
+
+Zero new dependencies — reuses the mlx_lm / transformers stack already present.
+Embeddings are optional at runtime; the system falls back to FTS5-only retrieval.
+"""
+
+from __future__ import annotations
+
+import math
+import struct
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass
+
+from app.core.config import get_base_model
+
+# Module-level singleton for lazy model loading
+_model = None
+_tokenizer = None
+
+
+def _load_model():
+    """Lazy-load the Qwen model and tokenizer for embedding generation."""
+    global _model, _tokenizer
+    if _model is not None:
+        return _model, _tokenizer
+    try:
+        import mlx.core as mx
+        from mlx_lm import load
+    except ImportError as exc:
+        raise RuntimeError(
+            "mlx_lm is required for embedding generation. "
+            "Install with: pip install mlx-lm"
+        ) from exc
+
+    model_id = get_base_model()
+    _model, _tokenizer = load(model_id)
+    return _model, _tokenizer
+
+
+def get_embedding(text: str) -> list[float]:
+    """Generate a normalized embedding for *text* using mean-pooled Qwen hidden states."""
+    import mlx.core as mx
+
+    model, tokenizer = _load_model()
+    tokens = tokenizer.encode(text, return_tensors=None)
+    if not tokens:
+        # Empty text — return zero vector of expected dimension
+        dim = model.model.embed_tokens.weight.shape[1]
+        return [0.0] * dim
+
+    input_ids = mx.array([tokens])
+    hidden = model.model(input_ids)  # (1, seq_len, hidden_dim)
+
+    # Mean pool over sequence length
+    embedding = mx.mean(hidden, axis=1).squeeze(0)  # (hidden_dim,)
+
+    # L2-normalize
+    norm = mx.sqrt(mx.sum(embedding * embedding))
+    norm = mx.maximum(norm, mx.array(1e-12))
+    embedding = embedding / norm
+
+    return embedding.tolist()
+
+
+def get_embedding_batch(texts: list[str]) -> list[list[float]]:
+    """Generate embeddings for a batch of texts (processes sequentially)."""
+    return [get_embedding(t) for t in texts]
+
+
+def cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Compute cosine similarity between two embedding vectors."""
+    if len(a) != len(b):
+        raise ValueError(f"Dimension mismatch: {len(a)} vs {len(b)}")
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a < 1e-12 or norm_b < 1e-12:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def serialize_embedding(emb: list[float]) -> bytes:
+    """Serialize embedding to bytes (float32 array) for SQLite BLOB storage."""
+    return struct.pack(f"<{len(emb)}f", *emb)
+
+
+def deserialize_embedding(blob: bytes) -> list[float]:
+    """Deserialize embedding from SQLite BLOB back to float list."""
+    count = len(blob) // 4
+    return list(struct.unpack(f"<{count}f", blob))

@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouOS — Stats</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: #1a1a2e; color: #e0e0e0; min-height: 100vh;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 2rem 1rem;
+}
+.container { width: 100%; max-width: 900px; }
+h1 { font-size: 1.4rem; margin-bottom: 0.5rem; color: #c8c8ff; }
+.subtitle { color: #888; font-size: 0.9rem; margin-bottom: 2rem; }
+.nav { margin-bottom: 1.5rem; }
+.nav a { color: #6c63ff; text-decoration: none; font-size: 0.85rem; }
+.nav a:hover { text-decoration: underline; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
+@media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+.card {
+  background: #16213e; border: 1px solid #333; border-radius: 8px;
+  padding: 1.2rem 1.5rem;
+}
+.card h2 { font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.8rem; }
+.stat-row { display: flex; justify-content: space-between; padding: 0.3rem 0; border-bottom: 1px solid #222; }
+.stat-row:last-child { border-bottom: none; }
+.stat-label { color: #aaa; font-size: 0.85rem; }
+.stat-value { color: #e0e0e0; font-weight: 600; font-size: 0.85rem; }
+.full-width { grid-column: 1 / -1; }
+.sender-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.sender-table th { text-align: left; color: #888; font-weight: 600; padding: 0.3rem 0.5rem; border-bottom: 1px solid #333; }
+.sender-table td { padding: 0.3rem 0.5rem; color: #bbb; border-bottom: 1px solid #222; }
+.loading { text-align: center; padding: 2rem; color: #888; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="nav"><a href="/feedback">&larr; Feedback</a> &middot; <a href="/bookmarklet">Bookmarklet</a></div>
+  <h1>YouOS Stats</h1>
+  <p class="subtitle">Corpus health, model status, and benchmarks</p>
+
+  <div id="loading" class="loading">Loading stats...</div>
+  <div id="content" style="display:none;">
+    <div class="grid">
+      <!-- Corpus Health -->
+      <div class="card">
+        <h2>Corpus Health</h2>
+        <div class="stat-row"><span class="stat-label">Total documents</span><span class="stat-value" id="totalDocs">-</span></div>
+        <div class="stat-row"><span class="stat-label">Reply pairs</span><span class="stat-value" id="totalPairs">-</span></div>
+        <div class="stat-row"><span class="stat-label">Feedback pairs</span><span class="stat-value" id="totalFeedback">-</span></div>
+        <div class="stat-row"><span class="stat-label">Reviewed today</span><span class="stat-value" id="reviewedToday">-</span></div>
+        <div class="stat-row"><span class="stat-label">Reviewed this week</span><span class="stat-value" id="reviewedWeek">-</span></div>
+        <div class="stat-row"><span class="stat-label">Avg edit distance (last 50)</span><span class="stat-value" id="avgEditDist">-</span></div>
+        <div class="stat-row"><span class="stat-label">Pairs with embeddings</span><span class="stat-value" id="embeddingPct">-</span></div>
+      </div>
+
+      <!-- Model Status -->
+      <div class="card">
+        <h2>Model Status</h2>
+        <div class="stat-row"><span class="stat-label">Generation model</span><span class="stat-value" id="genModel">-</span></div>
+        <div class="stat-row"><span class="stat-label">LoRA adapter</span><span class="stat-value" id="loraStatus">-</span></div>
+        <div class="stat-row"><span class="stat-label">Adapter trained at</span><span class="stat-value" id="loraTrained">-</span></div>
+        <div class="stat-row"><span class="stat-label">Pairs used for fine-tune</span><span class="stat-value" id="loraPairs">-</span></div>
+        <div class="stat-row"><span class="stat-label">Last fine-tune run</span><span class="stat-value" id="lastFinetune">-</span></div>
+      </div>
+
+      <!-- Benchmark Trend -->
+      <div class="card">
+        <h2>Benchmark Trend</h2>
+        <div id="benchmarkTrend"><span class="stat-label">No benchmark runs yet</span></div>
+      </div>
+
+      <!-- Cost Savings -->
+      <div class="card">
+        <h2>Cost Savings</h2>
+        <div class="stat-row"><span class="stat-label">Drafts generated (total)</span><span class="stat-value" id="totalDrafts">-</span></div>
+        <div class="stat-row"><span class="stat-label">Local model drafts</span><span class="stat-value" id="localDrafts">-</span></div>
+        <div class="stat-row"><span class="stat-label">Claude drafts</span><span class="stat-value" id="claudeDrafts">-</span></div>
+      </div>
+
+      <!-- Sender Profiles -->
+      <div class="card full-width">
+        <h2>Sender Profiles</h2>
+        <div class="stat-row" style="margin-bottom:0.6rem;"><span class="stat-label">Total profiles</span><span class="stat-value" id="totalProfiles">-</span></div>
+        <table class="sender-table" id="topSenders">
+          <thead><tr><th>Sender</th><th>Company</th><th>Type</th><th>Replies</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(async function() {
+  try {
+    const res = await fetch('/stats/data');
+    if (!res.ok) throw new Error('Failed to load stats');
+    const d = await res.json();
+
+    document.getElementById('totalDocs').textContent = (d.corpus.total_documents || 0).toLocaleString();
+    document.getElementById('totalPairs').textContent = (d.corpus.total_reply_pairs || 0).toLocaleString();
+    document.getElementById('totalFeedback').textContent = (d.corpus.total_feedback_pairs || 0).toLocaleString();
+    document.getElementById('reviewedToday').textContent = (d.corpus.reviewed_today || 0).toLocaleString();
+    document.getElementById('reviewedWeek').textContent = (d.corpus.reviewed_this_week || 0).toLocaleString();
+    document.getElementById('avgEditDist').textContent = d.corpus.avg_edit_distance != null
+      ? (d.corpus.avg_edit_distance * 100).toFixed(1) + '%' : 'N/A';
+    document.getElementById('embeddingPct').textContent = d.corpus.embedding_pct != null
+      ? d.corpus.embedding_pct.toFixed(1) + '%' : 'N/A';
+
+    document.getElementById('genModel').textContent = d.model.generation_model || 'unknown';
+    document.getElementById('loraStatus').textContent = d.model.lora_adapter_exists ? 'Yes' : 'No';
+    document.getElementById('loraTrained').textContent = d.model.lora_trained_at || 'N/A';
+    document.getElementById('loraPairs').textContent = (d.model.lora_pairs_used || 0).toLocaleString();
+    document.getElementById('lastFinetune').textContent = d.model.last_finetune_run || 'N/A';
+
+    if (d.benchmark_trend && d.benchmark_trend.length > 0) {
+      let html = '';
+      for (const run of d.benchmark_trend) {
+        html += '<div class="stat-row"><span class="stat-label">' + run.date + '</span>' +
+          '<span class="stat-value">Score: ' + (run.composite_score || 'N/A') +
+          (run.improvements_kept != null ? ' (' + run.improvements_kept + ' kept)' : '') +
+          '</span></div>';
+      }
+      document.getElementById('benchmarkTrend').innerHTML = html;
+    }
+
+    document.getElementById('totalDrafts').textContent = (d.cost.total_drafts || 0).toLocaleString();
+    document.getElementById('localDrafts').textContent = (d.cost.local_drafts || 0).toLocaleString();
+    document.getElementById('claudeDrafts').textContent = (d.cost.claude_drafts || 0).toLocaleString();
+
+    document.getElementById('totalProfiles').textContent = (d.senders.total_profiles || 0).toLocaleString();
+    const tbody = document.querySelector('#topSenders tbody');
+    if (d.senders.top_senders && d.senders.top_senders.length > 0) {
+      for (const s of d.senders.top_senders) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + (s.display_name || s.email) + '</td><td>' +
+          (s.company || '-') + '</td><td>' + (s.sender_type || '-') + '</td><td>' +
+          (s.reply_count || 0) + '</td>';
+        tbody.appendChild(tr);
+      }
+    } else {
+      tbody.innerHTML = '<tr><td colspan="4" style="color:#666;">No sender profiles yet</td></tr>';
+    }
+
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('content').style.display = 'block';
+  } catch (e) {
+    document.getElementById('loading').textContent = 'Error loading stats: ' + e.message;
+  }
+})();
+</script>
+</body>
+</html>

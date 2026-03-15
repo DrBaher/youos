@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouOS — Gmail Bookmarklet</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: #1a1a2e; color: #e0e0e0; min-height: 100vh;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 2rem 1rem;
+}
+.container { width: 100%; max-width: 700px; }
+h1 { font-size: 1.4rem; margin-bottom: 0.5rem; color: #c8c8ff; }
+.subtitle { color: #888; font-size: 0.9rem; margin-bottom: 2rem; }
+.nav { margin-bottom: 1.5rem; }
+.nav a { color: #6c63ff; text-decoration: none; font-size: 0.85rem; }
+.nav a:hover { text-decoration: underline; }
+.card {
+  background: #16213e; border: 1px solid #333; border-radius: 8px;
+  padding: 2rem; margin-bottom: 1.5rem;
+}
+.bookmarklet-link {
+  display: inline-block; padding: 0.8rem 1.6rem;
+  background: #6c63ff; color: #fff; font-weight: 700; font-size: 1rem;
+  border-radius: 6px; text-decoration: none; cursor: grab;
+  transition: background 0.2s;
+}
+.bookmarklet-link:hover { background: #5a52d5; }
+.bookmarklet-link:active { cursor: grabbing; }
+.steps { margin-top: 1.5rem; }
+.steps li { margin-bottom: 0.8rem; line-height: 1.6; color: #bbb; }
+.steps li strong { color: #e0e0e0; }
+.note {
+  margin-top: 1rem; padding: 0.75rem 1rem;
+  background: #0d1b2a; border-radius: 6px; border-left: 3px solid #6c63ff;
+  font-size: 0.85rem; color: #aaa; line-height: 1.5;
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="nav"><a href="/feedback">&larr; Back to Feedback</a> &middot; <a href="/stats">Stats</a></div>
+  <h1>Gmail Bookmarklet</h1>
+  <p class="subtitle">One-click email drafting from Gmail</p>
+
+  <div class="card" style="text-align: center;">
+    <p style="margin-bottom: 1.2rem; color: #aaa;">Drag this button to your bookmarks bar:</p>
+    <a class="bookmarklet-link" href="javascript:void(function(){try{var s=document.title.replace(/ - [^-]+@[^-]+ - Gmail.*$/,'').replace(/^Gmail - /,'');var b='';var els=document.querySelectorAll('.a3s.aiL, .a3s.aXjCH, div[data-message-id] .a3s');if(els.length>0){b=els[els.length-1].innerText.substring(0,2000)}else{var gs=document.querySelectorAll('[role=&quot;listitem&quot;] .ii.gt');if(gs.length>0){b=gs[gs.length-1].innerText.substring(0,2000)}}if(!b){var all=document.querySelectorAll('.ii.gt');if(all.length>0){b=all[all.length-1].innerText.substring(0,2000)}}var f='';var fromEls=document.querySelectorAll('span[email], .gD');if(fromEls.length>0){var last=fromEls[fromEls.length-1];f=last.getAttribute('email')||last.innerText}var base='http://localhost:8765/feedback';var u=base+'?inbound='+encodeURIComponent(b)+'%26sender='+encodeURIComponent(f)+'%26subject='+encodeURIComponent(s);window.open(u,'_blank')}catch(e){alert('YouOS bookmarklet error: '+e.message)}}())">&#x1F4E7; YouOS Draft</a>
+  </div>
+
+  <div class="card">
+    <h2 style="font-size: 1.1rem; color: #c8c8ff; margin-bottom: 1rem;">How to use</h2>
+    <ol class="steps">
+      <li><strong>Drag</strong> the button above to your bookmarks bar.</li>
+      <li>Open any email in <strong>Gmail</strong>.</li>
+      <li>Click the <strong>YouOS Draft</strong> bookmark.</li>
+      <li>YouOS opens with the email pre-filled — generate a draft reply instantly.</li>
+    </ol>
+  </div>
+
+  <div class="note">
+    <strong>How it works:</strong> The bookmarklet extracts the email subject, sender, and body text
+    from the currently open Gmail thread and opens YouOS with those fields pre-filled.
+    No data is stored until you submit feedback.
+  </div>
+</div>
+</body>
+</html>

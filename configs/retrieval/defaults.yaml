@@ -1,0 +1,14 @@
+top_k_reply_pairs: 8
+top_k_documents: 3
+top_k_chunks: 3
+recency_boost_days: 60
+recency_boost_weight: 0.2
+account_boost_weight: 0.15
+
+# Semantic search settings
+semantic_weight: 0.4
+semantic_min_coverage: 0.1
+
+# Sender-aware retrieval boosts
+sender_type_boost: 0.15
+sender_domain_boost: 0.10
