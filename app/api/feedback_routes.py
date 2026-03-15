@@ -34,8 +34,11 @@ BOOKMARKLET_TEMPLATE = TEMPLATE_DIR / "bookmarklet.html"
 
 
 @_BOOKMARKLET_ROUTER.get("/bookmarklet", response_class=HTMLResponse)
-def bookmarklet_page() -> HTMLResponse:
+def bookmarklet_page(request: Request) -> HTMLResponse:
+    base_url = str(request.base_url).rstrip("/")
     html = BOOKMARKLET_TEMPLATE.read_text(encoding="utf-8")
+    # Replace hardcoded localhost URL with actual server URL
+    html = html.replace("http://localhost:8765/feedback", f"{base_url}/feedback")
     return HTMLResponse(content=html)
 
 

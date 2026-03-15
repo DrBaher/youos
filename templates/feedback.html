@@ -393,7 +393,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   </footer>
 
   <!-- ── Onboarding Tour ─────────────────────────────────── -->
-  <div id="tourOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9000;display:flex;align-items:center;justify-content:center;">
+  <div id="tourOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9000;align-items:center;justify-content:center;">
     <div style="background:#0d1b2a;border:1px solid #00c4a7;border-radius:12px;padding:2.5rem;max-width:480px;width:90%;text-align:center;">
       <div id="tourEmoji" style="font-size:2.5rem;margin-bottom:0.8rem;"></div>
       <h2 id="tourTitle" style="color:#00c4a7;font-size:1.2rem;margin-bottom:0.6rem;"></h2>
@@ -981,6 +981,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     }
     function startTour() {
       overlay.style.display = 'flex';
+      overlay.style.alignItems = 'center';
+      overlay.style.justifyContent = 'center';
       showStep(0);
     }
     function endTour() {
