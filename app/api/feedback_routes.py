@@ -69,10 +69,30 @@ def feedback_generate(body: GenerateBody, request: Request) -> dict:
         database_url=settings.database_url,
         configs_dir=settings.configs_dir,
     )
+
+    # Save to draft_history
+    try:
+        db_path = _get_db_path(request)
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute(
+                """INSERT INTO draft_history
+                   (inbound_text, sender, generated_draft, confidence, model_used, retrieval_method)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (body.inbound_text, body.sender, response.draft,
+                 response.confidence, response.model_used, response.retrieval_method),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass  # Don't fail the request if history save fails
+
     return {
         "draft": response.draft,
         "precedent_used": response.precedent_used,
         "confidence": response.confidence,
+        "suggested_subject": response.suggested_subject,
     }
 
 

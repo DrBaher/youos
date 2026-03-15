@@ -45,6 +45,7 @@ class DraftResponse:
     confidence_reason: str
     model_used: str
     sender_profile: dict[str, Any] | None = None
+    suggested_subject: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -254,6 +255,34 @@ def lookup_sender_profile(email: str, database_url: str) -> dict[str, Any] | Non
         conn.close()
 
 
+def generate_subject(inbound_text: str, draft: str, database_url: str, configs_dir: Path) -> str | None:
+    """Generate a subject line for the draft reply."""
+    # If inbound has a subject-like line (Re: ..., Subject: ...), return that
+    for line in inbound_text.split('\n')[:5]:
+        line = line.strip()
+        if line.lower().startswith('subject:'):
+            subj = line[len('subject:'):].strip()
+            if subj:
+                if not subj.lower().startswith('re:'):
+                    return f"Re: {subj}"
+                return subj
+    # Generate via claude CLI
+    try:
+        prompt = (
+            "Generate a concise email subject line (under 60 chars) for this reply.\n\n"
+            f"Inbound:\n{inbound_text[:500]}\n\nDraft reply:\n{draft[:500]}\n\n"
+            "Output ONLY the subject line, nothing else."
+        )
+        result = _call_claude_cli(prompt)
+        # Clean up: remove quotes, "Subject:" prefix
+        result = result.strip().strip('"').strip("'")
+        if result.lower().startswith('subject:'):
+            result = result[len('subject:'):].strip()
+        return result[:80] if result else None
+    except Exception:
+        return None
+
+
 def _format_sender_context(profile: dict[str, Any]) -> str:
     """Format sender profile into a prompt context block."""
     user_name = get_user_name()
@@ -280,6 +309,7 @@ def assemble_prompt(
     audience_hint: str | None = None,
     tone_hint: str | None = None,
     sender_context: str | None = None,
+    language_hint: str | None = None,
 ) -> str:
     style = persona.get("style", {})
     voice = style.get("voice", "direct, clear, pragmatic")
@@ -325,12 +355,17 @@ def assemble_prompt(
     if sender_context:
         sender_block = f"\n{sender_context}\n"
 
+    language_block = ""
+    if language_hint and language_hint != "en":
+        language_block = f"\n[LANGUAGE: {language_hint}] Reply in the same language as the inbound message.\n"
+
     return (
         f"[SYSTEM]\n"
         f"{system.strip()}\n"
         f"{persona_block}\n"
         f"{context_block}"
         f"{sender_block}"
+        f"{language_block}"
         f"\n"
         f"[EXEMPLARS — {n} similar past replies]\n"
         f"{exemplars_text}\n"
@@ -376,6 +411,29 @@ def _call_local_model(prompt: str) -> str:
     return result.stdout.strip()
 
 
+def _generate_via_ollama(prompt: str, model: str = "mistral", base_url: str = "http://localhost:11434") -> str:
+    """Generate via Ollama HTTP API."""
+    import urllib.request
+    payload = json.dumps({
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {"temperature": 0.7, "num_predict": 400}
+    }).encode()
+    req = urllib.request.Request(
+        f"{base_url}/api/generate",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+            return result.get("response", "").strip()
+    except Exception as exc:
+        raise RuntimeError(f"Ollama generation failed: {exc}") from exc
+
+
 def _call_claude_cli(prompt: str) -> str:
     result = subprocess.run(
         ["claude", "--print", prompt],
@@ -397,6 +455,9 @@ def generate_draft(
 ) -> DraftResponse:
     # Strip quoted text from inbound before processing
     clean_inbound = strip_quoted_text(request.inbound_message)
+
+    from app.core.text_utils import detect_language
+    detected_lang = detect_language(clean_inbound)
 
     # Handle thread context for ongoing threads
     inbound_for_prompt = clean_inbound
@@ -426,6 +487,7 @@ def generate_draft(
             top_k_chunks=request.top_k_chunks,
             sender_type_hint=sender_type_hint,
             sender_domain_hint=sender_domain_hint,
+            language_hint=detected_lang,
         ),
         database_url=database_url,
         configs_dir=configs_dir,
@@ -455,6 +517,7 @@ def generate_draft(
         audience_hint=request.audience_hint,
         tone_hint=request.tone_hint,
         sender_context=sender_context,
+        language_hint=detected_lang,
     )
 
     precedent_used = [_precedent_summary(rp) for rp in reply_pairs]
@@ -464,6 +527,13 @@ def generate_draft(
         if request.use_local_model and _adapter_available():
             draft = _call_local_model(prompt)
             model_used = "qwen2.5-1.5b-lora"
+        elif fallback_model == "ollama":
+            from app.core.config import get_ollama_config
+            ollama_cfg = get_ollama_config()
+            ollama_model = ollama_cfg.get("model", "mistral")
+            ollama_url = ollama_cfg.get("base_url", "http://localhost:11434")
+            draft = _generate_via_ollama(prompt, model=ollama_model, base_url=ollama_url)
+            model_used = f"ollama:{ollama_model}"
         elif fallback_model == "claude":
             draft = _call_claude_cli(prompt)
             model_used = "claude"
@@ -474,6 +544,9 @@ def generate_draft(
         draft = f"[draft generation failed: {exc}]"
         model_used = "error"
 
+    # Generate subject line
+    suggested_subject = generate_subject(request.inbound_message, draft, database_url, configs_dir)
+
     return DraftResponse(
         draft=draft,
         detected_mode=detected_mode,
@@ -483,4 +556,5 @@ def generate_draft(
         confidence_reason=confidence_reason,
         model_used=model_used,
         sender_profile=sender_profile,
+        suggested_subject=suggested_subject,
     )

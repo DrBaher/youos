@@ -7,10 +7,15 @@ benchmarks:
 ingestion:
   accounts: []
   initial_months: 12
+  last_ingest_at: {}
 model:
   adapter_path: models/adapters/latest
   base: Qwen/Qwen2.5-1.5B-Instruct
   fallback: claude
+  ollama:
+    enabled: false
+    model: mistral
+    base_url: http://localhost:11434
 persona:
   avg_reply_words: 40
   closing_formal: 'Best,

@@ -74,6 +74,36 @@ def _migrate_sender_profiles(db_path: Path) -> bool:
         conn.close()
 
 
+def _migrate_draft_history(db_path: Path) -> bool:
+    """Create draft_history table if it doesn't exist."""
+    conn = sqlite3.connect(db_path)
+    try:
+        existing = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='draft_history'"
+        ).fetchone()
+        if existing:
+            return False
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS draft_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                inbound_text TEXT NOT NULL,
+                sender TEXT,
+                generated_draft TEXT NOT NULL,
+                final_reply TEXT,
+                edit_distance_pct REAL,
+                confidence TEXT,
+                model_used TEXT,
+                retrieval_method TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        print("  Migrated: created draft_history table")
+        return True
+    finally:
+        conn.close()
+
+
 def main() -> None:
     db_path = bootstrap_database()
     print(f"Bootstrapped database at {db_path}")
@@ -86,6 +116,9 @@ def main() -> None:
     sp_migrated = _migrate_sender_profiles(db_path)
     if not sp_migrated:
         print("  sender_profiles table already exists")
+    dh_migrated = _migrate_draft_history(db_path)
+    if not dh_migrated:
+        print("  draft_history table already exists")
 
 
 if __name__ == "__main__":

@@ -53,6 +53,7 @@ class RetrievalRequest:
     top_k_reply_pairs: int | None = None
     sender_type_hint: str | None = None
     sender_domain_hint: str | None = None
+    language_hint: str | None = None
 
 
 @dataclass(slots=True)

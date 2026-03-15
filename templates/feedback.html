@@ -254,6 +254,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   <div class="tabs">
     <div class="tab active" data-tab="draft-reply">Draft Reply</div>
     <div class="tab" data-tab="review-queue">Review Queue <span class="oc-tip" data-tip="Pre-loaded emails from your corpus. Edit drafts and submit to train your model.">?</span></div>
+    <div class="tab" data-tab="history">History</div>
   </div>
 
   <!-- Progress nudge -->
@@ -280,6 +281,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       <div class="panel">
         <label for="draft">Generated draft (editable)</label>
         <textarea id="draft" placeholder="Click 'Generate Draft' to produce a draft..." readonly></textarea>
+        <div id="suggestedSubject" class="suggested-subject" style="display:none;" title="Click to copy"></div>
         <div class="tone-row">
           <label>Re-generate:</label>
           <button class="btn-tone" data-tone="shorter" disabled>Shorter</button>
@@ -369,6 +371,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
           <button class="btn-tone" id="rqCompare">Compare</button>
           <button class="btn-submit" id="rqSubmitNext">Submit & Next</button>
         </div>
+        <div class="rq-keyhints" id="rqKeyHints"><kbd>j</kbd> submit &middot; <kbd>k</kbd> skip &middot; <kbd>e</kbd> edit &middot; <kbd>1</kbd>-<kbd>5</kbd> rate &middot; <kbd>?</kbd> help</div>
       </div>
     </div>
 
@@ -379,6 +382,30 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
         <span id="rqArStatus">Triggering autoresearch optimization in background...</span>
       </div>
       <button class="btn-load-batch" id="rqLoadNext">Load next batch</button>
+    </div>
+  </div>
+
+  <!-- Tab 3: History -->
+  <div class="tab-content" id="tab-history">
+    <div id="historyLoading" style="text-align:center;padding:2rem;color:#888;">Loading history...</div>
+    <div id="historyEmpty" style="display:none;text-align:center;padding:2rem;color:#666;">No draft history yet. Generate some drafts first.</div>
+    <div class="history-list" id="historyList"></div>
+  </div>
+
+  <!-- Keyboard help overlay -->
+  <div class="kb-overlay" id="kbOverlay">
+    <div class="kb-dialog">
+      <h3>Keyboard Shortcuts</h3>
+      <table>
+        <tr><td>j / &rarr;</td><td>Submit &amp; Next</td></tr>
+        <tr><td>k / &larr;</td><td>Skip</td></tr>
+        <tr><td>e</td><td>Focus draft editor</td></tr>
+        <tr><td>r</td><td>Re-generate draft</td></tr>
+        <tr><td>1-5</td><td>Set rating</td></tr>
+        <tr><td>?</td><td>Show this help</td></tr>
+        <tr><td>Esc</td><td>Close this dialog</td></tr>
+      </table>
+      <button class="kb-close" id="kbClose">Close</button>
     </div>
   </div>
   </div>
@@ -418,6 +445,42 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     /* Tooltips */
     .oc-tip{display:inline-block;width:14px;height:14px;border-radius:50%;background:#1e3a4a;color:#888;font-size:0.65rem;text-align:center;line-height:14px;cursor:help;margin-left:4px;position:relative;}
     .oc-tip:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#0d1b2a;border:1px solid #00c4a7;color:#ccc;padding:0.4rem 0.6rem;border-radius:6px;font-size:0.75rem;white-space:normal;width:200px;z-index:100;text-align:left;line-height:1.4;}
+    /* Streaming cursor */
+    .streaming-cursor::after { content: "\u258B"; animation: blink 0.7s infinite; color: #00c4a7; }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+    /* Subject line */
+    .suggested-subject { font-size: 0.82rem; color: #00c4a7; margin-top: 0.4rem; cursor: pointer; }
+    .suggested-subject:hover { text-decoration: underline; }
+    /* History tab */
+    .history-list { display: flex; flex-direction: column; gap: 0.5rem; }
+    .history-item { background: #16213e; border: 1px solid #333; border-radius: 6px; padding: 0.8rem 1rem; cursor: pointer; transition: border-color 0.2s; }
+    .history-item:hover { border-color: #00c4a7; }
+    .history-row { display: flex; gap: 1rem; align-items: center; font-size: 0.85rem; }
+    .history-date { color: #666; font-size: 0.78rem; min-width: 90px; }
+    .history-sender { color: #aaa; min-width: 120px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .history-snippet { color: #ccc; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .history-badge { font-size: 0.7rem; padding: 0.1rem 0.5rem; border-radius: 3px; color: #fff; white-space: nowrap; }
+    .history-badge.low { background: #2ecc71; }
+    .history-badge.medium { background: #f39c12; }
+    .history-badge.high { background: #e74c3c; }
+    .history-detail { display: none; margin-top: 0.6rem; font-size: 0.82rem; line-height: 1.5; }
+    .history-detail.visible { display: block; }
+    .history-detail pre { background: #0d1b2a; padding: 0.6rem; border-radius: 4px; white-space: pre-wrap; word-break: break-word; color: #ccc; margin: 0.3rem 0; }
+    .history-detail label { color: #888; font-weight: 600; display: block; margin-top: 0.5rem; }
+    /* Keyboard hints */
+    .rq-keyhints { font-size: 0.75rem; color: #444; font-family: 'SF Mono', 'Fira Code', monospace; padding: 0.4rem 1rem; text-align: center; border-top: 1px solid #222; }
+    .rq-keyhints kbd { background: #222; padding: 0.1rem 0.35rem; border-radius: 3px; color: #888; }
+    /* Keyboard help overlay */
+    .kb-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:9500; align-items:center; justify-content:center; }
+    .kb-overlay.visible { display:flex; }
+    .kb-dialog { background:#0d1b2a; border:1px solid #00c4a7; border-radius:12px; padding:2rem; max-width:400px; width:90%; }
+    .kb-dialog h3 { color:#00c4a7; margin-bottom:1rem; }
+    .kb-dialog table { width:100%; font-size:0.85rem; }
+    .kb-dialog td { padding:0.3rem 0.5rem; color:#ccc; }
+    .kb-dialog td:first-child { color:#00c4a7; font-family:monospace; font-weight:600; width:80px; }
+    .kb-dialog .kb-close { margin-top:1rem; background:#333; color:#ccc; border:none; padding:0.4rem 1.2rem; border-radius:6px; cursor:pointer; }
+    /* Language badge */
+    .lang-badge { display:inline-block; font-size:0.65rem; padding:0.1rem 0.4rem; border-radius:3px; background:#1e3a4a; color:#00c4a7; margin-left:0.3rem; text-transform:uppercase; vertical-align:middle; }
   </style>
 </div>
 
@@ -600,6 +663,18 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     btn.addEventListener('click', () => regenerateWithTone(btn.dataset.tone));
   });
 
+  const suggestedSubjectEl = document.getElementById('suggestedSubject');
+
+  function showSubject(subject) {
+    if (subject) {
+      suggestedSubjectEl.textContent = 'Suggested subject: ' + subject;
+      suggestedSubjectEl.style.display = 'block';
+      suggestedSubjectEl.onclick = () => { navigator.clipboard.writeText(subject).catch(() => {}); suggestedSubjectEl.textContent = 'Copied!'; setTimeout(() => { suggestedSubjectEl.textContent = 'Suggested subject: ' + subject; }, 1000); };
+    } else {
+      suggestedSubjectEl.style.display = 'none';
+    }
+  }
+
   btnGen.addEventListener('click', async () => {
     const text = inbound.value.trim();
     if (!text) { showInfo('Please paste an inbound email first.'); return; }
@@ -609,7 +684,86 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     draft.value = '';
     draft.readOnly = true;
     btnSub.disabled = true;
+    suggestedSubjectEl.style.display = 'none';
 
+    // Try streaming first
+    try {
+      const genPayload = {inbound_text: text};
+      const senderVal = senderInput.value.trim();
+      if (senderVal) genPayload.sender = senderVal;
+
+      const streamRes = await fetch('/draft/stream', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(genPayload)
+      });
+
+      if (streamRes.ok && streamRes.headers.get('content-type')?.includes('text/event-stream')) {
+        draft.readOnly = false;
+        draft.classList.add('streaming-cursor');
+        const reader = streamRes.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let streamDone = false;
+        let streamConfidence = '';
+        let streamPrecedent = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const payload = JSON.parse(line.slice(6));
+              if (payload.done) {
+                streamDone = true;
+                streamConfidence = payload.confidence || '';
+                streamPrecedent = payload.precedent_used || [];
+              } else if (payload.token) {
+                draft.value += payload.token + '\n';
+              }
+            } catch(e) { /* skip malformed */ }
+          }
+        }
+        draft.classList.remove('streaming-cursor');
+        generatedDraft = draft.value.trim();
+        draft.value = generatedDraft;
+        btnSub.disabled = false;
+        toneButtons.forEach(b => b.disabled = false);
+
+        let extra = '';
+        if (streamPrecedent.length) {
+          extra = '<div class="precedent">Precedent: ' +
+            streamPrecedent.map(p => p.title || p.source_id).join(', ') +
+            ' | Confidence: ' + (streamConfidence || 'unknown') + '</div>';
+        }
+        showInfo('Draft generated (streamed). Edit as needed, then submit.' + extra);
+
+        // Fetch subject separately
+        try {
+          const subRes = await fetch('/feedback/generate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(genPayload)
+          });
+          if (subRes.ok) {
+            const subData = await subRes.json();
+            showSubject(subData.suggested_subject);
+          }
+        } catch(e) { /* ignore */ }
+
+        btnGen.disabled = false;
+        btnGen.textContent = 'Generate Draft';
+        return;
+      }
+    } catch (e) {
+      // Streaming failed, fall through to non-streaming
+    }
+
+    // Fallback: non-streaming
     try {
       const genPayload = {inbound_text: text};
       const senderVal = senderInput.value.trim();
@@ -626,6 +780,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       draft.readOnly = false;
       btnSub.disabled = false;
       toneButtons.forEach(b => b.disabled = false);
+      showSubject(data.suggested_subject);
 
       let extra = '';
       if (data.precedent_used) {
@@ -1016,6 +1171,127 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       }
     }).catch(() => {});
   })();
+
+  // ── History Tab ──────────────────────────────────────────
+  let historyLoaded = false;
+  function loadHistory() {
+    if (historyLoaded) return;
+    historyLoaded = true;
+    fetch('/history?limit=20').then(r => r.json()).then(data => {
+      document.getElementById('historyLoading').style.display = 'none';
+      if (!data.items || data.items.length === 0) {
+        document.getElementById('historyEmpty').style.display = 'block';
+        return;
+      }
+      const list = document.getElementById('historyList');
+      data.items.forEach(item => {
+        const el = document.createElement('div');
+        el.className = 'history-item';
+        const ed = item.edit_distance_pct;
+        let badgeClass = 'low', badgeText = 'low edit';
+        if (ed != null) {
+          if (ed > 0.4) { badgeClass = 'high'; badgeText = Math.round(ed*100) + '%'; }
+          else if (ed > 0.1) { badgeClass = 'medium'; badgeText = Math.round(ed*100) + '%'; }
+          else { badgeText = Math.round(ed*100) + '%'; }
+        } else { badgeText = '-'; badgeClass = ''; }
+        const dateStr = item.created_at ? item.created_at.split('T')[0] : '';
+        const senderSnippet = (item.sender || '').substring(0, 20);
+        const draftSnippet = (item.generated_draft || '').substring(0, 80);
+        el.innerHTML =
+          '<div class="history-row">' +
+          '<span class="history-date">' + dateStr + '</span>' +
+          '<span class="history-sender">' + senderSnippet + '</span>' +
+          '<span class="history-snippet">' + draftSnippet + '</span>' +
+          (badgeClass ? '<span class="history-badge ' + badgeClass + '">' + badgeText + '</span>' : '') +
+          '</div>' +
+          '<div class="history-detail" id="hd-' + item.id + '">' +
+          '<label>Inbound:</label><pre>' + (item.inbound_text || '').substring(0, 500) + '</pre>' +
+          '<label>Draft:</label><pre>' + (item.generated_draft || '') + '</pre>' +
+          (item.final_reply ? '<label>Final reply:</label><pre>' + item.final_reply + '</pre>' : '') +
+          '</div>';
+        el.addEventListener('click', () => {
+          const detail = document.getElementById('hd-' + item.id);
+          detail.classList.toggle('visible');
+        });
+        list.appendChild(el);
+      });
+    }).catch(() => {
+      document.getElementById('historyLoading').textContent = 'Failed to load history.';
+    });
+  }
+
+  // ── Keyboard Shortcuts for Review Queue ─────────────────
+  const kbOverlay = document.getElementById('kbOverlay');
+  document.getElementById('kbClose').addEventListener('click', () => kbOverlay.classList.remove('visible'));
+
+  function isReviewQueueActive() {
+    const tab = document.getElementById('tab-review-queue');
+    return tab && tab.classList.contains('active') && document.getElementById('rqMain').style.display !== 'none';
+  }
+
+  document.addEventListener('keydown', (e) => {
+    // Close keyboard help on Escape
+    if (e.key === 'Escape') { kbOverlay.classList.remove('visible'); return; }
+
+    // Only handle shortcuts when review queue is active and not typing in an input
+    const tag = e.target.tagName.toLowerCase();
+    if (tag === 'textarea' || tag === 'input') return;
+    if (!isReviewQueueActive()) {
+      // Load history on tab switch
+      if (document.getElementById('tab-history')?.classList.contains('active') && !historyLoaded) {
+        loadHistory();
+      }
+      return;
+    }
+
+    switch (e.key) {
+      case 'j':
+      case 'ArrowRight':
+        e.preventDefault();
+        document.getElementById('rqSubmitNext').click();
+        break;
+      case 'k':
+      case 'ArrowLeft':
+        e.preventDefault();
+        document.getElementById('rqSkip').click();
+        break;
+      case 'e':
+        e.preventDefault();
+        document.getElementById('rqDraftTextarea').focus();
+        break;
+      case 'r':
+        e.preventDefault();
+        // Re-generate: call generate for current item
+        const item = rqItems[rqIndex];
+        if (item) {
+          fetch('/feedback/generate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({inbound_text: item.inbound_text, sender: item.inbound_author})
+          }).then(r => r.json()).then(d => {
+            document.getElementById('rqDraftTextarea').value = d.draft;
+            item.generated_draft = d.draft;
+          }).catch(() => {});
+        }
+        break;
+      case '?':
+        e.preventDefault();
+        kbOverlay.classList.toggle('visible');
+        break;
+      case '1': case '2': case '3': case '4': case '5':
+        e.preventDefault();
+        rqRating = parseInt(e.key);
+        rqStars.forEach(st => {
+          st.classList.toggle('active', parseInt(st.dataset.val) <= rqRating);
+        });
+        break;
+    }
+  });
+
+  // Trigger history load when History tab is clicked
+  document.querySelector('[data-tab="history"]')?.addEventListener('click', () => {
+    setTimeout(loadHistory, 50);
+  });
 
 })();
 </script>

@@ -6,10 +6,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.feedback_routes import _BOOKMARKLET_ROUTER as bookmarklet_router
 from app.api.feedback_routes import router as feedback_router
+from app.api.history_routes import router as history_router
 from app.api.review_queue_routes import router as review_queue_router
 from app.api.routes import router
 from app.api.sender_routes import router as sender_router
 from app.api.stats_routes import router as stats_router
+from app.api.stream_routes import router as stream_router
 from app.core.auth import (
     LoginRateLimiter,
     create_session_token,
@@ -114,6 +116,8 @@ def create_app() -> FastAPI:
     app.include_router(review_queue_router)
     app.include_router(stats_router)
     app.include_router(bookmarklet_router)
+    app.include_router(stream_router)
+    app.include_router(history_router)
     return app
 
 

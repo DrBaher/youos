@@ -47,3 +47,43 @@ def strip_quoted_text(text: str) -> str:
             return stripped
 
     return text
+
+
+def detect_language(text: str) -> str:
+    """Detect language of text. Returns ISO 639-1 code (e.g. 'en', 'de', 'ar').
+
+    Simple heuristic based on character scripts and common words.
+    """
+    if not text:
+        return 'en'
+
+    # Check for Arabic script (Unicode range \u0600-\u06FF)
+    arabic_chars = sum(1 for c in text if '\u0600' <= c <= '\u06FF')
+    if arabic_chars > len(text) * 0.1:
+        return 'ar'
+
+    # Check for common German words
+    lower = text.lower()
+    german_words = ['der', 'die', 'das', 'und', 'ist', 'nicht', 'sie', 'ich',
+                    'ein', 'eine', 'wir', 'sehr', 'geehrter', 'geehrte',
+                    'mit', 'freundlichen', 'grüßen', 'bitte', 'können']
+    german_hits = sum(1 for w in german_words if re.search(r'\b' + re.escape(w) + r'\b', lower))
+
+    # Check for common French words
+    french_words = ['vous', 'nous', 'est', 'les', 'une', 'pour', 'dans',
+                    'avec', 'sur', 'que', 'qui', 'sont', 'cette', 'mais',
+                    'bonjour', 'merci', 'monsieur', 'madame']
+    french_hits = sum(1 for w in french_words if re.search(r'\b' + re.escape(w) + r'\b', lower))
+
+    # Check for common Spanish words
+    spanish_words = ['usted', 'nosotros', 'para', 'como', 'pero', 'hola',
+                     'gracias', 'señor', 'señora', 'estimado', 'estimada',
+                     'por', 'favor', 'también']
+    spanish_hits = sum(1 for w in spanish_words if re.search(r'\b' + re.escape(w) + r'\b', lower))
+
+    scores = {'de': german_hits, 'fr': french_hits, 'es': spanish_hits}
+    best = max(scores, key=scores.get)
+    if scores[best] >= 2:
+        return best
+
+    return 'en'

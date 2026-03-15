@@ -102,6 +102,26 @@ def get_autoresearch_iterations(config: dict[str, Any] | None = None) -> int:
     return int(cfg.get("autoresearch", {}).get("iterations", 80))
 
 
+def get_ollama_config(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    cfg = config or load_config()
+    return cfg.get("model", {}).get("ollama", {})
+
+
+def is_ollama_enabled(config: dict[str, Any] | None = None) -> bool:
+    return bool(get_ollama_config(config).get("enabled", False))
+
+
+def get_last_ingest_at(account: str, config: dict[str, Any] | None = None) -> str | None:
+    cfg = config or load_config()
+    return cfg.get("ingestion", {}).get("last_ingest_at", {}).get(account)
+
+
+def set_last_ingest_at(account: str, timestamp: str, config: dict[str, Any] | None = None) -> None:
+    cfg = config if config is not None else _load_raw_config()
+    cfg.setdefault("ingestion", {}).setdefault("last_ingest_at", {})[account] = timestamp
+    save_config(cfg)
+
+
 def save_config(config: dict[str, Any], config_path: Path | None = None) -> None:
     path = config_path or CONFIG_PATH
     path.write_text(

@@ -11,7 +11,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from app.core.config import get_ingestion_accounts
+from app.core.config import get_ingestion_accounts, get_last_ingest_at, set_last_ingest_at
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT_DIR / "var" / "youos.db"
@@ -45,13 +45,20 @@ def _run_step(name: str, cmd: list[str], timeout: int = 600) -> bool:
 
 
 def step_ingest_gmail() -> bool:
-    """Ingest sent emails from last 48h for all accounts."""
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
-    date_str = cutoff.strftime("%Y/%m/%d")
-    query = f"in:sent after:{date_str}"
-
+    """Ingest sent emails incrementally for all accounts."""
     success = True
     for account in ACCOUNTS:
+        last_at = get_last_ingest_at(account)
+        if last_at:
+            # Incremental: use last ingestion timestamp
+            date_str = last_at[:10].replace("-", "/")
+            query = f"in:sent after:{date_str}"
+        else:
+            # Initial: use default 48h window
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+            date_str = cutoff.strftime("%Y/%m/%d")
+            query = f"in:sent after:{date_str}"
+
         ok = _run_step(
             f"Gmail ingestion ({account})",
             [
@@ -64,7 +71,9 @@ def step_ingest_gmail() -> bool:
             ],
             timeout=300,
         )
-        if not ok:
+        if ok:
+            set_last_ingest_at(account, datetime.now(timezone.utc).isoformat())
+        else:
             success = False
     return success
 
@@ -99,6 +108,25 @@ def step_finetune() -> bool:
         "LoRA fine-tuning",
         [sys.executable, str(ROOT_DIR / "scripts" / "finetune_lora.py")],
         timeout=3600,
+    )
+
+
+def step_index_embeddings() -> dict:
+    """Run incremental embedding indexer."""
+    result = _run_step(
+        "Embedding indexer",
+        [sys.executable, str(ROOT_DIR / "scripts" / "index_embeddings.py"), "--limit", "500"],
+        timeout=1800,
+    )
+    return {"ok": result}
+
+
+def step_deduplicate() -> bool:
+    """Run corpus deduplication (best-effort)."""
+    return _run_step(
+        "Corpus deduplication",
+        [sys.executable, str(ROOT_DIR / "scripts" / "deduplicate_corpus.py")],
+        timeout=300,
     )
 
 
@@ -141,6 +169,10 @@ def main() -> None:
     print(f"{'='*60}")
 
     results: dict[str, str] = {}
+
+    # 0. Corpus deduplication (best-effort, before ingestion)
+    ok = step_deduplicate()
+    results["dedup"] = "OK" if ok else "WARN"
 
     # 1. Gmail ingestion
     ok = step_ingest_gmail()
@@ -185,7 +217,11 @@ def main() -> None:
     else:
         results["finetune"] = f"skipped (only {unused} unused pairs, need 10)"
 
-    # 4. Autoresearch
+    # 4. Embedding indexer (after fine-tuning)
+    embed_result = step_index_embeddings()
+    results["embeddings"] = "OK" if embed_result["ok"] else "WARN"
+
+    # 5. Autoresearch
     ok = step_autoresearch()
     results["autoresearch"] = "OK" if ok else "WARN"
 

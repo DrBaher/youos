@@ -176,3 +176,16 @@ CREATE TRIGGER IF NOT EXISTS reply_pairs_fts_update AFTER UPDATE ON reply_pairs 
     INSERT INTO reply_pairs_fts(rowid, inbound_text, reply_text)
     VALUES (new.id, new.inbound_text, new.reply_text);
 END;
+
+CREATE TABLE IF NOT EXISTS draft_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    inbound_text TEXT NOT NULL,
+    sender TEXT,
+    generated_draft TEXT NOT NULL,
+    final_reply TEXT,
+    edit_distance_pct REAL,
+    confidence TEXT,
+    model_used TEXT,
+    retrieval_method TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);

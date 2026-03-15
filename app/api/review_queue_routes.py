@@ -285,6 +285,7 @@ def review_queue_next(
             "sender_profile": sender_profile,
             "account_email": cand.get("account_email"),
             "paired_at": cand["paired_at"],
+            "suggested_subject": getattr(draft_response, 'suggested_subject', None),
         })
 
         if len(items) >= batch_size:
@@ -349,6 +350,19 @@ def review_queue_submit(body: ReviewSubmitBody, request: Request) -> dict:
         )
         conn.commit()
         total = conn.execute("SELECT COUNT(*) FROM feedback_pairs").fetchone()[0]
+
+        # Save to draft_history
+        try:
+            conn.execute(
+                """INSERT INTO draft_history
+                   (inbound_text, sender, generated_draft, final_reply, edit_distance_pct)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (body.inbound_text, None, body.generated_draft,
+                 body.edited_reply, edit_distance_pct),
+            )
+            conn.commit()
+        except Exception:
+            pass
     finally:
         conn.close()
 

@@ -32,10 +32,13 @@ def status():
     """Show corpus size, model status, last run."""
     from app.core.config import (
         get_display_name,
+        get_ingestion_accounts,
+        get_last_ingest_at,
         get_server_port,
         get_tailscale_hostname,
         get_user_emails,
         get_user_name,
+        is_ollama_enabled,
         load_config,
     )
     from app.core.settings import get_settings
@@ -65,6 +68,14 @@ def status():
         server_running = False
     server_icon = "\u2705" if server_running else "\u274c"
     print(f"Server:      {server_icon} {'running' if server_running else 'stopped'} on port {port}")
+
+    # Ollama status
+    ollama_cfg = config.get("model", {}).get("ollama", {})
+    if is_ollama_enabled(config):
+        ollama_model = ollama_cfg.get("model", "mistral")
+        print(f"Ollama:      \u2705 enabled ({ollama_model})")
+    else:
+        print("Ollama:      \u274c not configured")
 
     # Tailscale
     if ts_hostname:
@@ -96,6 +107,16 @@ def status():
 
         print(f"Corpus:      {docs:,} docs | {pairs:,} reply pairs")
         print(f"Feedback:    {feedback} pairs ({reviewed_today} today)")
+
+        # Embedding coverage
+        try:
+            embedded = conn.execute(
+                "SELECT COUNT(*) FROM documents WHERE embedding IS NOT NULL"
+            ).fetchone()[0]
+            pct = (embedded / docs * 100) if docs > 0 else 0
+            print(f"Embeddings:  {embedded:,}/{docs:,} ({pct:.0f}%)")
+        except Exception:
+            pass
     except Exception:
         print("Database exists but tables may not be initialized.")
 
@@ -110,6 +131,16 @@ def status():
         print(f"Model:       {model_used} (trained {dt.strftime('%Y-%m-%d %H:%M')})")
     else:
         print(f"Model:       {model_used} (not fine-tuned yet)")
+
+    # Last ingestion dates
+    accounts = get_ingestion_accounts(config)
+    ingest_parts = []
+    for acct in accounts:
+        last = get_last_ingest_at(acct, config)
+        if last:
+            ingest_parts.append(f"{last[:10]} ({acct})")
+    if ingest_parts:
+        print(f"Last ingest: {', '.join(ingest_parts)}")
 
     # Benchmark results
     try:
@@ -305,6 +336,33 @@ def model_show():
     adapter = ROOT_DIR / "models" / "adapters" / "latest" / "adapters.safetensors"
     typer.echo(f"Base model:  {base}")
     typer.echo(f"Adapter:     {'✅ trained' if adapter.exists() else '❌ not trained yet'}")
+
+
+ollama_app = typer.Typer(help="Manage Ollama integration.")
+model_app.add_typer(ollama_app, name="ollama")
+
+
+@ollama_app.command(name="enable")
+def ollama_enable():
+    """Enable Ollama as a generation backend."""
+    from app.core.config import _load_raw_config, save_config
+    config = _load_raw_config()
+    config.setdefault("model", {}).setdefault("ollama", {})["enabled"] = True
+    config["model"]["fallback"] = "ollama"
+    save_config(config)
+    typer.echo("Ollama enabled as generation fallback.")
+
+
+@ollama_app.command(name="disable")
+def ollama_disable():
+    """Disable Ollama as a generation backend."""
+    from app.core.config import _load_raw_config, save_config
+    config = _load_raw_config()
+    config.setdefault("model", {}).setdefault("ollama", {})["enabled"] = False
+    if config.get("model", {}).get("fallback") == "ollama":
+        config["model"]["fallback"] = "claude"
+    save_config(config)
+    typer.echo("Ollama disabled. Fallback set to claude.")
 
 
 if __name__ == "__main__":
