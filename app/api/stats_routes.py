@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
+from app.core.config import load_config
 from app.db.bootstrap import resolve_sqlite_path
 
 router = APIRouter(tags=["stats"])
@@ -15,6 +16,35 @@ router = APIRouter(tags=["stats"])
 TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "templates" / "stats.html"
 ADAPTER_PATH = Path(__file__).resolve().parents[2] / "models" / "adapters" / "latest"
 AUTORESEARCH_LOG = Path(__file__).resolve().parents[2] / "autoresearch_log.md"
+
+
+@router.get("/api/config")
+def get_api_config(request: Request) -> dict[str, Any]:
+    config = load_config()
+    user_name = config.get("user", {}).get("name", "")
+    display_name = f"{user_name}OS" if user_name else "YouOS"
+
+    db_path = resolve_sqlite_path(request.app.state.settings.database_url)
+    corpus_ready = False
+    model_ready = False
+    if db_path.exists():
+        conn = sqlite3.connect(db_path)
+        try:
+            count = conn.execute("SELECT COUNT(*) FROM reply_pairs").fetchone()[0]
+            corpus_ready = count > 0
+            model_ready = (ADAPTER_PATH / "adapters.safetensors").exists()
+        except sqlite3.OperationalError:
+            pass
+        finally:
+            conn.close()
+
+    return {
+        "display_name": display_name,
+        "user_name": user_name,
+        "version": "0.1.0",
+        "corpus_ready": corpus_ready,
+        "model_ready": model_ready,
+    }
 
 
 def _get_db_path(request: Request) -> Path:

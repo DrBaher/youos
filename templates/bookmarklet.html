@@ -13,48 +13,157 @@ body {
   padding: 2rem 1rem;
 }
 .container { width: 100%; max-width: 700px; }
-h1 { font-size: 1.4rem; margin-bottom: 0.5rem; color: #c8c8ff; }
-.subtitle { color: #888; font-size: 0.9rem; margin-bottom: 2rem; }
-.nav { margin-bottom: 1.5rem; }
-.nav a { color: #6c63ff; text-decoration: none; font-size: 0.85rem; }
-.nav a:hover { text-decoration: underline; }
-.card {
-  background: #16213e; border: 1px solid #333; border-radius: 8px;
-  padding: 2rem; margin-bottom: 1.5rem;
+/* Header */
+.oc-header {
+  width: 100%; max-width: 1100px;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 1rem 0 1.5rem; margin-bottom: 1rem;
+  border-bottom: 1px solid #2a3a4a;
 }
+.oc-logo { display: flex; align-items: center; gap: 0.5rem; }
+.oc-emoji { font-size: 1.4rem; }
+.oc-wordmark { font-size: 1.3rem; font-weight: 700; color: #00c4a7; letter-spacing: -0.02em; }
+.oc-nav { display: flex; gap: 1.5rem; }
+.oc-nav-link { color: #888; text-decoration: none; font-size: 0.85rem; font-weight: 500; transition: color 0.2s; }
+.oc-nav-link:hover, .oc-nav-link.active { color: #00c4a7; }
+/* Footer */
+.oc-footer {
+  width: 100%; max-width: 1100px;
+  margin-top: 3rem; padding: 1rem 0;
+  border-top: 1px solid #1e2a3a;
+  display: flex; gap: 0.75rem; align-items: center;
+  font-size: 0.75rem; color: #444;
+}
+.oc-footer a { color: #555; text-decoration: none; }
+.oc-footer a:hover { color: #00c4a7; }
+/* Hero */
+.hero {
+  text-align: center; padding: 2.5rem 1rem 2rem;
+}
+.hero-title { font-size: 1.6rem; color: #00c4a7; margin-bottom: 0.6rem; font-weight: 700; }
+.hero-sub { color: #888; font-size: 1rem; margin-bottom: 2rem; }
+/* Bookmarklet button */
+.bookmarklet-wrap {
+  text-align: center; padding: 2rem;
+  background: #16213e; border: 1px solid #333; border-radius: 12px;
+  margin-bottom: 2rem;
+}
+.bookmarklet-wrap p { color: #888; margin-bottom: 1.2rem; font-size: 0.9rem; }
 .bookmarklet-link {
-  display: inline-block; padding: 0.8rem 1.6rem;
-  background: #6c63ff; color: #fff; font-weight: 700; font-size: 1rem;
-  border-radius: 6px; text-decoration: none; cursor: grab;
-  transition: background 0.2s;
+  display: inline-block; padding: 1rem 2.5rem;
+  background: #00c4a7; color: #1a1a2e; font-weight: 700; font-size: 1.1rem;
+  border-radius: 8px; text-decoration: none; cursor: grab;
+  transition: background 0.2s, transform 0.1s;
+  box-shadow: 0 4px 12px rgba(0,196,167,0.2);
 }
-.bookmarklet-link:hover { background: #5a52d5; }
-.bookmarklet-link:active { cursor: grabbing; }
-.steps { margin-top: 1.5rem; }
-.steps li { margin-bottom: 0.8rem; line-height: 1.6; color: #bbb; }
-.steps li strong { color: #e0e0e0; }
+.bookmarklet-link:hover { background: #00b398; transform: translateY(-1px); }
+.bookmarklet-link:active { cursor: grabbing; transform: translateY(0); }
+/* Steps */
+.steps-grid {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1.2rem;
+  margin-bottom: 2rem;
+}
+@media (max-width: 600px) { .steps-grid { grid-template-columns: 1fr; } }
+.step-card {
+  background: #16213e; border: 1px solid #333; border-radius: 8px;
+  padding: 1.5rem 1.2rem; text-align: center;
+}
+.step-num {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border-radius: 50%;
+  background: #00c4a7; color: #1a1a2e; font-weight: 700; font-size: 1rem;
+  margin-bottom: 0.8rem;
+}
+.step-title { font-size: 0.95rem; font-weight: 600; color: #e0e0e0; margin-bottom: 0.4rem; }
+.step-desc { font-size: 0.82rem; color: #888; line-height: 1.5; }
+/* How it works */
+.how-card {
+  background: #16213e; border: 1px solid #333; border-radius: 8px;
+  padding: 1.5rem 2rem; margin-bottom: 1.5rem;
+}
+.how-card h2 { font-size: 1.1rem; color: #00c4a7; margin-bottom: 1rem; }
+.how-card ol { padding-left: 1.2rem; }
+.how-card li { margin-bottom: 0.8rem; line-height: 1.6; color: #bbb; }
+.how-card li strong { color: #e0e0e0; }
+/* Note */
 .note {
-  margin-top: 1rem; padding: 0.75rem 1rem;
-  background: #0d1b2a; border-radius: 6px; border-left: 3px solid #6c63ff;
+  padding: 0.75rem 1rem;
+  background: #0d1b2a; border-radius: 6px; border-left: 3px solid #7b61ff;
   font-size: 0.85rem; color: #aaa; line-height: 1.5;
 }
+/* Mockup */
+.mockup-section {
+  background: #16213e; border: 1px solid #333; border-radius: 8px;
+  padding: 1.5rem 2rem; margin-bottom: 1.5rem; text-align: center;
+}
+.mockup-section h3 { font-size: 0.9rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; }
+.mockup-flow {
+  display: flex; align-items: center; justify-content: center; gap: 1rem; flex-wrap: wrap;
+}
+.mockup-box {
+  background: #0d1b2a; border: 1px solid #2a3a4a; border-radius: 6px;
+  padding: 0.8rem 1.2rem; font-size: 0.82rem; color: #888;
+}
+.mockup-arrow { color: #00c4a7; font-size: 1.2rem; }
 </style>
 </head>
 <body>
 <div class="container">
-  <div class="nav"><a href="/feedback">&larr; Back to Feedback</a> &middot; <a href="/stats">Stats</a></div>
-  <h1>Gmail Bookmarklet</h1>
-  <p class="subtitle">One-click email drafting from Gmail</p>
+  <header class="oc-header">
+    <div class="oc-logo">
+      <span class="oc-emoji">&#x2709;&#xFE0F;</span>
+      <span class="oc-wordmark" id="appName">YouOS</span>
+    </div>
+    <nav class="oc-nav">
+      <a href="/feedback" class="oc-nav-link">Draft</a>
+      <a href="/stats" class="oc-nav-link">Stats</a>
+      <a href="/bookmarklet" class="oc-nav-link active">Bookmarklet</a>
+    </nav>
+  </header>
 
-  <div class="card" style="text-align: center;">
-    <p style="margin-bottom: 1.2rem; color: #aaa;">Drag this button to your bookmarks bar:</p>
+  <div class="hero">
+    <h1 class="hero-title">One-click email drafting from Gmail</h1>
+    <p class="hero-sub">Install the bookmarklet and generate AI-drafted replies without leaving your inbox.</p>
+  </div>
+
+  <div class="bookmarklet-wrap">
+    <p>Drag this button to your bookmarks bar:</p>
     <a class="bookmarklet-link" href="javascript:void(function(){try{var s=document.title.replace(/ - [^-]+@[^-]+ - Gmail.*$/,'').replace(/^Gmail - /,'');var b='';var els=document.querySelectorAll('.a3s.aiL, .a3s.aXjCH, div[data-message-id] .a3s');if(els.length>0){b=els[els.length-1].innerText.substring(0,2000)}else{var gs=document.querySelectorAll('[role=&quot;listitem&quot;] .ii.gt');if(gs.length>0){b=gs[gs.length-1].innerText.substring(0,2000)}}if(!b){var all=document.querySelectorAll('.ii.gt');if(all.length>0){b=all[all.length-1].innerText.substring(0,2000)}}var f='';var fromEls=document.querySelectorAll('span[email], .gD');if(fromEls.length>0){var last=fromEls[fromEls.length-1];f=last.getAttribute('email')||last.innerText}var base='http://localhost:8765/feedback';var u=base+'?inbound='+encodeURIComponent(b)+'%26sender='+encodeURIComponent(f)+'%26subject='+encodeURIComponent(s);window.open(u,'_blank')}catch(e){alert('YouOS bookmarklet error: '+e.message)}}())">&#x1F4E7; YouOS Draft</a>
   </div>
 
-  <div class="card">
-    <h2 style="font-size: 1.1rem; color: #c8c8ff; margin-bottom: 1rem;">How to use</h2>
-    <ol class="steps">
-      <li><strong>Drag</strong> the button above to your bookmarks bar.</li>
+  <div class="steps-grid">
+    <div class="step-card">
+      <div class="step-num">1</div>
+      <div class="step-title">Install</div>
+      <div class="step-desc">Drag the button above to your browser's bookmarks bar.</div>
+    </div>
+    <div class="step-card">
+      <div class="step-num">2</div>
+      <div class="step-title">Open an email</div>
+      <div class="step-desc">Navigate to any email conversation in Gmail.</div>
+    </div>
+    <div class="step-card">
+      <div class="step-num">3</div>
+      <div class="step-title">Click &amp; draft</div>
+      <div class="step-desc">Click the bookmark — YouOS opens with the email pre-filled for instant drafting.</div>
+    </div>
+  </div>
+
+  <div class="mockup-section">
+    <h3>How it works</h3>
+    <div class="mockup-flow">
+      <div class="mockup-box">Gmail inbox<br><small>Open any email</small></div>
+      <span class="mockup-arrow">&rarr;</span>
+      <div class="mockup-box">Click bookmark<br><small>Extracts subject, sender, body</small></div>
+      <span class="mockup-arrow">&rarr;</span>
+      <div class="mockup-box">YouOS drafts<br><small>AI reply in your voice</small></div>
+    </div>
+  </div>
+
+  <div class="how-card">
+    <h2>Detailed steps</h2>
+    <ol>
+      <li><strong>Drag</strong> the teal button above to your bookmarks bar.</li>
       <li>Open any email in <strong>Gmail</strong>.</li>
       <li>Click the <strong>YouOS Draft</strong> bookmark.</li>
       <li>YouOS opens with the email pre-filled — generate a draft reply instantly.</li>
@@ -62,10 +171,24 @@ h1 { font-size: 1.4rem; margin-bottom: 0.5rem; color: #c8c8ff; }
   </div>
 
   <div class="note">
-    <strong>How it works:</strong> The bookmarklet extracts the email subject, sender, and body text
+    <strong>Privacy:</strong> The bookmarklet extracts the email subject, sender, and body text
     from the currently open Gmail thread and opens YouOS with those fields pre-filled.
-    No data is stored until you submit feedback.
+    No data leaves your machine — everything runs locally.
   </div>
+
+  <footer class="oc-footer">
+    <span>YouOS v0.1.0</span>
+    <span>&middot;</span>
+    <a href="https://github.com/DrBaher/youos" target="_blank">GitHub</a>
+    <span>&middot;</span>
+    <span>Your data stays local</span>
+  </footer>
 </div>
+
+<script>
+fetch('/api/config').then(r => r.json()).then(d => {
+  if (d.display_name) document.getElementById('appName').textContent = d.display_name;
+}).catch(() => {});
+</script>
 </body>
 </html>

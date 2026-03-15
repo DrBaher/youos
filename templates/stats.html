@@ -13,11 +13,32 @@ body {
   padding: 2rem 1rem;
 }
 .container { width: 100%; max-width: 900px; }
-h1 { font-size: 1.4rem; margin-bottom: 0.5rem; color: #c8c8ff; }
+/* Header */
+.oc-header {
+  width: 100%; max-width: 1100px;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 1rem 0 1.5rem; margin-bottom: 1rem;
+  border-bottom: 1px solid #2a3a4a;
+}
+.oc-logo { display: flex; align-items: center; gap: 0.5rem; }
+.oc-emoji { font-size: 1.4rem; }
+.oc-wordmark { font-size: 1.3rem; font-weight: 700; color: #00c4a7; letter-spacing: -0.02em; }
+.oc-nav { display: flex; gap: 1.5rem; }
+.oc-nav-link { color: #888; text-decoration: none; font-size: 0.85rem; font-weight: 500; transition: color 0.2s; }
+.oc-nav-link:hover, .oc-nav-link.active { color: #00c4a7; }
+/* Footer */
+.oc-footer {
+  width: 100%; max-width: 1100px;
+  margin-top: 3rem; padding: 1rem 0;
+  border-top: 1px solid #1e2a3a;
+  display: flex; gap: 0.75rem; align-items: center;
+  font-size: 0.75rem; color: #444;
+}
+.oc-footer a { color: #555; text-decoration: none; }
+.oc-footer a:hover { color: #00c4a7; }
+/* Page */
+.page-title { font-size: 1.4rem; margin-bottom: 0.5rem; color: #00c4a7; }
 .subtitle { color: #888; font-size: 0.9rem; margin-bottom: 2rem; }
-.nav { margin-bottom: 1.5rem; }
-.nav a { color: #6c63ff; text-decoration: none; font-size: 0.85rem; }
-.nav a:hover { text-decoration: underline; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem; }
 @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
 .card {
@@ -25,6 +46,7 @@ h1 { font-size: 1.4rem; margin-bottom: 0.5rem; color: #c8c8ff; }
   padding: 1.2rem 1.5rem;
 }
 .card h2 { font-size: 0.85rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.8rem; }
+.card-updated { font-size: 0.7rem; color: #555; float: right; }
 .stat-row { display: flex; justify-content: space-between; padding: 0.3rem 0; border-bottom: 1px solid #222; }
 .stat-row:last-child { border-bottom: none; }
 .stat-label { color: #aaa; font-size: 0.85rem; }
@@ -34,12 +56,47 @@ h1 { font-size: 1.4rem; margin-bottom: 0.5rem; color: #c8c8ff; }
 .sender-table th { text-align: left; color: #888; font-weight: 600; padding: 0.3rem 0.5rem; border-bottom: 1px solid #333; }
 .sender-table td { padding: 0.3rem 0.5rem; color: #bbb; border-bottom: 1px solid #222; }
 .loading { text-align: center; padding: 2rem; color: #888; }
+/* Progress bar */
+.review-progress-bar {
+  width: 100%; height: 10px; background: #333; border-radius: 5px; overflow: hidden;
+  margin-top: 0.6rem;
+}
+.review-progress-fill {
+  height: 100%; background: #00c4a7; border-radius: 5px; transition: width 0.3s;
+}
+.review-progress-label { font-size: 0.78rem; color: #888; margin-top: 0.3rem; }
+/* Status badge */
+.status-badge {
+  display: inline-block; font-size: 0.8rem; padding: 0.2rem 0.6rem;
+  border-radius: 4px; font-weight: 600;
+}
+.status-badge.local { background: rgba(0,196,167,0.15); color: #00c4a7; }
+.status-badge.fallback { background: rgba(255,140,66,0.15); color: #ff8c42; }
+/* Autoresearch button */
+.btn-autoresearch {
+  margin-top: 1rem; padding: 0.5rem 1.2rem; border: none; border-radius: 6px;
+  background: #7b61ff; color: #fff; font-size: 0.85rem; font-weight: 600;
+  cursor: pointer; transition: background 0.2s;
+}
+.btn-autoresearch:hover { background: #6a52e0; }
+.btn-autoresearch:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>
 </head>
 <body>
 <div class="container">
-  <div class="nav"><a href="/feedback">&larr; Feedback</a> &middot; <a href="/bookmarklet">Bookmarklet</a></div>
-  <h1>YouOS Stats</h1>
+  <header class="oc-header">
+    <div class="oc-logo">
+      <span class="oc-emoji">&#x2709;&#xFE0F;</span>
+      <span class="oc-wordmark" id="appName">YouOS</span>
+    </div>
+    <nav class="oc-nav">
+      <a href="/feedback" class="oc-nav-link">Draft</a>
+      <a href="/stats" class="oc-nav-link active">Stats</a>
+      <a href="/bookmarklet" class="oc-nav-link">Bookmarklet</a>
+    </nav>
+  </header>
+
+  <h1 class="page-title" id="pageTitle">YouOS Stats</h1>
   <p class="subtitle">Corpus health, model status, and benchmarks</p>
 
   <div id="loading" class="loading">Loading stats...</div>
@@ -47,7 +104,7 @@ h1 { font-size: 1.4rem; margin-bottom: 0.5rem; color: #c8c8ff; }
     <div class="grid">
       <!-- Corpus Health -->
       <div class="card">
-        <h2>Corpus Health</h2>
+        <h2>Corpus Health <span class="card-updated" id="corpusUpdated"></span></h2>
         <div class="stat-row"><span class="stat-label">Total documents</span><span class="stat-value" id="totalDocs">-</span></div>
         <div class="stat-row"><span class="stat-label">Reply pairs</span><span class="stat-value" id="totalPairs">-</span></div>
         <div class="stat-row"><span class="stat-label">Feedback pairs</span><span class="stat-value" id="totalFeedback">-</span></div>
@@ -55,16 +112,22 @@ h1 { font-size: 1.4rem; margin-bottom: 0.5rem; color: #c8c8ff; }
         <div class="stat-row"><span class="stat-label">Reviewed this week</span><span class="stat-value" id="reviewedWeek">-</span></div>
         <div class="stat-row"><span class="stat-label">Avg edit distance (last 50)</span><span class="stat-value" id="avgEditDist">-</span></div>
         <div class="stat-row"><span class="stat-label">Pairs with embeddings</span><span class="stat-value" id="embeddingPct">-</span></div>
+        <div id="reviewProgressSection" style="display:none;">
+          <div class="review-progress-bar"><div class="review-progress-fill" id="reviewProgressFill" style="width:0%"></div></div>
+          <div class="review-progress-label" id="reviewProgressLabel"></div>
+        </div>
       </div>
 
       <!-- Model Status -->
       <div class="card">
-        <h2>Model Status</h2>
+        <h2>Model Status <span class="card-updated" id="modelUpdated"></span></h2>
+        <div style="margin-bottom: 0.8rem;" id="modelBadge"></div>
         <div class="stat-row"><span class="stat-label">Generation model</span><span class="stat-value" id="genModel">-</span></div>
         <div class="stat-row"><span class="stat-label">LoRA adapter</span><span class="stat-value" id="loraStatus">-</span></div>
         <div class="stat-row"><span class="stat-label">Adapter trained at</span><span class="stat-value" id="loraTrained">-</span></div>
         <div class="stat-row"><span class="stat-label">Pairs used for fine-tune</span><span class="stat-value" id="loraPairs">-</span></div>
         <div class="stat-row"><span class="stat-label">Last fine-tune run</span><span class="stat-value" id="lastFinetune">-</span></div>
+        <button class="btn-autoresearch" id="btnAutoresearch">Run autoresearch now</button>
       </div>
 
       <!-- Benchmark Trend -->
@@ -92,65 +155,124 @@ h1 { font-size: 1.4rem; margin-bottom: 0.5rem; color: #c8c8ff; }
       </div>
     </div>
   </div>
+
+  <footer class="oc-footer">
+    <span>YouOS v0.1.0</span>
+    <span>&middot;</span>
+    <a href="https://github.com/DrBaher/youos" target="_blank">GitHub</a>
+    <span>&middot;</span>
+    <span>Your data stays local</span>
+  </footer>
 </div>
 
 <script>
-(async function() {
-  try {
-    const res = await fetch('/stats/data');
-    if (!res.ok) throw new Error('Failed to load stats');
-    const d = await res.json();
-
-    document.getElementById('totalDocs').textContent = (d.corpus.total_documents || 0).toLocaleString();
-    document.getElementById('totalPairs').textContent = (d.corpus.total_reply_pairs || 0).toLocaleString();
-    document.getElementById('totalFeedback').textContent = (d.corpus.total_feedback_pairs || 0).toLocaleString();
-    document.getElementById('reviewedToday').textContent = (d.corpus.reviewed_today || 0).toLocaleString();
-    document.getElementById('reviewedWeek').textContent = (d.corpus.reviewed_this_week || 0).toLocaleString();
-    document.getElementById('avgEditDist').textContent = d.corpus.avg_edit_distance != null
-      ? (d.corpus.avg_edit_distance * 100).toFixed(1) + '%' : 'N/A';
-    document.getElementById('embeddingPct').textContent = d.corpus.embedding_pct != null
-      ? d.corpus.embedding_pct.toFixed(1) + '%' : 'N/A';
-
-    document.getElementById('genModel').textContent = d.model.generation_model || 'unknown';
-    document.getElementById('loraStatus').textContent = d.model.lora_adapter_exists ? 'Yes' : 'No';
-    document.getElementById('loraTrained').textContent = d.model.lora_trained_at || 'N/A';
-    document.getElementById('loraPairs').textContent = (d.model.lora_pairs_used || 0).toLocaleString();
-    document.getElementById('lastFinetune').textContent = d.model.last_finetune_run || 'N/A';
-
-    if (d.benchmark_trend && d.benchmark_trend.length > 0) {
-      let html = '';
-      for (const run of d.benchmark_trend) {
-        html += '<div class="stat-row"><span class="stat-label">' + run.date + '</span>' +
-          '<span class="stat-value">Score: ' + (run.composite_score || 'N/A') +
-          (run.improvements_kept != null ? ' (' + run.improvements_kept + ' kept)' : '') +
-          '</span></div>';
-      }
-      document.getElementById('benchmarkTrend').innerHTML = html;
+(function() {
+  // Fetch config for display name
+  fetch('/api/config').then(r => r.json()).then(d => {
+    if (d.display_name) {
+      document.getElementById('appName').textContent = d.display_name;
+      document.getElementById('pageTitle').textContent = d.display_name + ' Stats';
     }
+  }).catch(() => {});
 
-    document.getElementById('totalDrafts').textContent = (d.cost.total_drafts || 0).toLocaleString();
-    document.getElementById('localDrafts').textContent = (d.cost.local_drafts || 0).toLocaleString();
-    document.getElementById('claudeDrafts').textContent = (d.cost.claude_drafts || 0).toLocaleString();
-
-    document.getElementById('totalProfiles').textContent = (d.senders.total_profiles || 0).toLocaleString();
-    const tbody = document.querySelector('#topSenders tbody');
-    if (d.senders.top_senders && d.senders.top_senders.length > 0) {
-      for (const s of d.senders.top_senders) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = '<td>' + (s.display_name || s.email) + '</td><td>' +
-          (s.company || '-') + '</td><td>' + (s.sender_type || '-') + '</td><td>' +
-          (s.reply_count || 0) + '</td>';
-        tbody.appendChild(tr);
-      }
-    } else {
-      tbody.innerHTML = '<tr><td colspan="4" style="color:#666;">No sender profiles yet</td></tr>';
+  // Autoresearch button
+  document.getElementById('btnAutoresearch').addEventListener('click', async function() {
+    const btn = this;
+    btn.disabled = true;
+    btn.textContent = 'Triggering...';
+    try {
+      const res = await fetch('/review-queue/trigger-autoresearch', { method: 'POST' });
+      const data = await res.json();
+      btn.textContent = data.message || 'Started!';
+    } catch (e) {
+      btn.textContent = 'Error: ' + e.message;
     }
+  });
 
-    document.getElementById('loading').style.display = 'none';
-    document.getElementById('content').style.display = 'block';
-  } catch (e) {
-    document.getElementById('loading').textContent = 'Error loading stats: ' + e.message;
-  }
+  // Load stats
+  (async function() {
+    try {
+      const res = await fetch('/stats/data');
+      if (!res.ok) throw new Error('Failed to load stats');
+      const d = await res.json();
+      const now = new Date().toLocaleTimeString();
+
+      document.getElementById('corpusUpdated').textContent = 'Updated ' + now;
+      document.getElementById('modelUpdated').textContent = 'Updated ' + now;
+
+      document.getElementById('totalDocs').textContent = (d.corpus.total_documents || 0).toLocaleString();
+      document.getElementById('totalPairs').textContent = (d.corpus.total_reply_pairs || 0).toLocaleString();
+      document.getElementById('totalFeedback').textContent = (d.corpus.total_feedback_pairs || 0).toLocaleString();
+      document.getElementById('reviewedToday').textContent = (d.corpus.reviewed_today || 0).toLocaleString();
+      document.getElementById('reviewedWeek').textContent = (d.corpus.reviewed_this_week || 0).toLocaleString();
+      document.getElementById('avgEditDist').textContent = d.corpus.avg_edit_distance != null
+        ? (d.corpus.avg_edit_distance * 100).toFixed(1) + '%' : 'N/A';
+      document.getElementById('embeddingPct').textContent = d.corpus.embedding_pct != null
+        ? d.corpus.embedding_pct.toFixed(1) + '%' : 'N/A';
+
+      // Review progress bar
+      var totalPairs = d.corpus.total_reply_pairs || 0;
+      var feedbackPairs = d.corpus.total_feedback_pairs || 0;
+      if (totalPairs > 0) {
+        var pct = Math.round((feedbackPairs / totalPairs) * 100);
+        document.getElementById('reviewProgressSection').style.display = 'block';
+        document.getElementById('reviewProgressFill').style.width = pct + '%';
+        document.getElementById('reviewProgressLabel').textContent =
+          feedbackPairs.toLocaleString() + ' / ' + totalPairs.toLocaleString() + ' pairs reviewed (' + pct + '%)';
+      }
+
+      // Model status badge
+      var genModel = d.model.generation_model || 'unknown';
+      document.getElementById('genModel').textContent = genModel;
+      var badgeEl = document.getElementById('modelBadge');
+      if (d.model.lora_adapter_exists) {
+        badgeEl.innerHTML = '<span class="status-badge local">Local Qwen</span>';
+      } else {
+        badgeEl.innerHTML = '<span class="status-badge fallback">Claude fallback</span>';
+      }
+
+      document.getElementById('loraStatus').textContent = d.model.lora_adapter_exists ? 'Yes' : 'No';
+      document.getElementById('loraTrained').textContent = d.model.lora_trained_at || 'N/A';
+      document.getElementById('loraPairs').textContent = (d.model.lora_pairs_used || 0).toLocaleString();
+      document.getElementById('lastFinetune').textContent = d.model.last_finetune_run || 'N/A';
+
+      if (d.benchmark_trend && d.benchmark_trend.length > 0) {
+        var html = '';
+        for (var i = 0; i < d.benchmark_trend.length; i++) {
+          var run = d.benchmark_trend[i];
+          html += '<div class="stat-row"><span class="stat-label">' + run.date + '</span>' +
+            '<span class="stat-value">Score: ' + (run.composite_score || 'N/A') +
+            (run.improvements_kept != null ? ' (' + run.improvements_kept + ' kept)' : '') +
+            '</span></div>';
+        }
+        document.getElementById('benchmarkTrend').innerHTML = html;
+      }
+
+      document.getElementById('totalDrafts').textContent = (d.cost.total_drafts || 0).toLocaleString();
+      document.getElementById('localDrafts').textContent = (d.cost.local_drafts || 0).toLocaleString();
+      document.getElementById('claudeDrafts').textContent = (d.cost.claude_drafts || 0).toLocaleString();
+
+      document.getElementById('totalProfiles').textContent = (d.senders.total_profiles || 0).toLocaleString();
+      var tbody = document.querySelector('#topSenders tbody');
+      if (d.senders.top_senders && d.senders.top_senders.length > 0) {
+        for (var j = 0; j < d.senders.top_senders.length; j++) {
+          var s = d.senders.top_senders[j];
+          var tr = document.createElement('tr');
+          tr.innerHTML = '<td>' + (s.display_name || s.email) + '</td><td>' +
+            (s.company || '-') + '</td><td>' + (s.sender_type || '-') + '</td><td>' +
+            (s.reply_count || 0) + '</td>';
+          tbody.appendChild(tr);
+        }
+      } else {
+        tbody.innerHTML = '<tr><td colspan="4" style="color:#666;">No sender profiles yet</td></tr>';
+      }
+
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('content').style.display = 'block';
+    } catch (e) {
+      document.getElementById('loading').textContent = 'Error loading stats: ' + e.message;
+    }
+  })();
 })();
 </script>
 </body>

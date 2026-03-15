@@ -12,8 +12,30 @@ body {
   display: flex; flex-direction: column; align-items: center;
   padding: 2rem 1rem;
 }
-h1 { font-size: 1.4rem; margin-bottom: 1.5rem; color: #c8c8ff; }
 .container { width: 100%; max-width: 1100px; }
+/* Header */
+.oc-header {
+  width: 100%; max-width: 1100px;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 1rem 0 1.5rem; margin-bottom: 1rem;
+  border-bottom: 1px solid #2a3a4a;
+}
+.oc-logo { display: flex; align-items: center; gap: 0.5rem; }
+.oc-emoji { font-size: 1.4rem; }
+.oc-wordmark { font-size: 1.3rem; font-weight: 700; color: #00c4a7; letter-spacing: -0.02em; }
+.oc-nav { display: flex; gap: 1.5rem; }
+.oc-nav-link { color: #888; text-decoration: none; font-size: 0.85rem; font-weight: 500; transition: color 0.2s; }
+.oc-nav-link:hover, .oc-nav-link.active { color: #00c4a7; }
+/* Footer */
+.oc-footer {
+  width: 100%; max-width: 1100px;
+  margin-top: 3rem; padding: 1rem 0;
+  border-top: 1px solid #1e2a3a;
+  display: flex; gap: 0.75rem; align-items: center;
+  font-size: 0.75rem; color: #444;
+}
+.oc-footer a { color: #555; text-decoration: none; }
+.oc-footer a:hover { color: #00c4a7; }
 /* Tabs */
 .tabs { display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 2px solid #333; }
 .tab {
@@ -22,7 +44,7 @@ h1 { font-size: 1.4rem; margin-bottom: 1.5rem; color: #c8c8ff; }
   transition: color 0.2s, border-color 0.2s;
 }
 .tab:hover { color: #ccc; }
-.tab.active { color: #c8c8ff; border-bottom-color: #c8c8ff; }
+.tab.active { color: #00c4a7; border-bottom-color: #00c4a7; }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
 .panels {
@@ -38,7 +60,7 @@ textarea {
   color: #e0e0e0; font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
   font-size: 0.9rem; resize: vertical; line-height: 1.5;
 }
-textarea:focus { outline: none; border-color: #6c63ff; }
+textarea:focus { outline: none; border-color: #7b61ff; }
 .meta-row {
   display: flex; gap: 1.5rem; align-items: flex-end;
   flex-wrap: wrap; margin-bottom: 1.5rem;
@@ -50,7 +72,7 @@ textarea:focus { outline: none; border-color: #6c63ff; }
   background: #16213e; border: 1px solid #333; border-radius: 6px;
   color: #e0e0e0; font-size: 0.9rem;
 }
-.meta-row .field input[type="text"]:focus { outline: none; border-color: #6c63ff; }
+.meta-row .field input[type="text"]:focus { outline: none; border-color: #7b61ff; }
 .stars { display: flex; gap: 0.3rem; align-items: center; }
 .stars label.star-label { font-size: 0.85rem; color: #aaa; margin-right: 0.5rem; margin-bottom: 0; font-weight: 600; }
 .stars input[type="radio"] { display: none; }
@@ -66,8 +88,8 @@ button {
   transition: background 0.2s;
 }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-generate { background: #6c63ff; color: #fff; }
-.btn-generate:hover:not(:disabled) { background: #5a52d5; }
+.btn-generate { background: #00c4a7; color: #1a1a2e; }
+.btn-generate:hover:not(:disabled) { background: #00b398; }
 .btn-submit { background: #2ecc71; color: #fff; }
 .btn-submit:hover:not(:disabled) { background: #27ae60; }
 .btn-skip { background: #e67e22; color: #fff; }
@@ -79,7 +101,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .info {
   margin-top: 1rem; padding: 0.75rem 1rem;
   background: #16213e; border-radius: 6px; font-size: 0.85rem;
-  border-left: 3px solid #6c63ff; display: none;
+  border-left: 3px solid #7b61ff; display: none;
 }
 .info.visible { display: block; }
 .info.success { border-left-color: #2ecc71; }
@@ -92,7 +114,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   transition: max-height 0.35s ease, opacity 0.3s ease, padding 0.3s ease, margin 0.3s ease;
 }
 .sender-card.visible { max-height: 200px; opacity: 1; }
-.sender-card .sc-name { font-weight: 600; color: #c8c8ff; }
+.sender-card .sc-name { font-weight: 600; color: #00c4a7; }
 .sender-card .sc-company { color: #aaa; }
 .sender-card .sc-type-badge {
   display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.5rem;
@@ -103,7 +125,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .sender-card .sc-note:hover { color: #fff; }
 .sender-card .sc-note-edit {
   width: 100%; padding: 0.3rem 0.5rem; margin-top: 0.3rem;
-  background: #1a1a2e; border: 1px solid #6c63ff; border-radius: 4px;
+  background: #1a1a2e; border: 1px solid #7b61ff; border-radius: 4px;
   color: #e0e0e0; font-size: 0.82rem; resize: none;
 }
 .sender-card .sc-new { color: #888; font-style: italic; }
@@ -115,6 +137,14 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   vertical-align: middle; margin-left: 0.4rem;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* Empty State */
+.empty-state { text-align: center; padding: 4rem 2rem; }
+.empty-emoji { font-size: 3rem; margin-bottom: 1rem; }
+.empty-state h2 { color: #00c4a7; font-size: 1.4rem; margin-bottom: 0.5rem; }
+.empty-state p { color: #888; margin-bottom: 0.5rem; }
+.empty-state code { background: #0d1b2a; padding: 0.2rem 0.5rem; border-radius: 4px; color: #00c4a7; }
+.empty-steps { display: flex; gap: 1rem; justify-content: center; margin-top: 2rem; flex-wrap: wrap; }
+.empty-step { background: #0d1b2a; border: 1px solid #2a3a4a; border-radius: 8px; padding: 0.8rem 1.2rem; color: #888; font-size: 0.85rem; }
 /* Review Queue */
 .rq-header {
   display: flex; align-items: center; gap: 1.5rem; margin-bottom: 1rem; flex-wrap: wrap;
@@ -126,7 +156,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   width: 120px; height: 8px; background: #333; border-radius: 4px; overflow: hidden;
 }
 .rq-progress-fill {
-  height: 100%; background: #6c63ff; border-radius: 4px; transition: width 0.3s;
+  height: 100%; background: #00c4a7; border-radius: 4px; transition: width 0.3s;
 }
 .rq-remaining { font-size: 0.8rem; color: #666; }
 .rq-card {
@@ -146,13 +176,14 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   letter-spacing: 0.05em; margin-bottom: 0.6rem;
 }
 .rq-from { font-size: 0.85rem; margin-bottom: 0.4rem; }
-.rq-from-name { color: #c8c8ff; font-weight: 600; }
+.rq-from-name { color: #00c4a7; font-weight: 600; }
 .rq-from-company { color: #aaa; font-size: 0.8rem; }
 .rq-from-type {
   display: inline-block; font-size: 0.65rem; padding: 0.1rem 0.45rem;
   border-radius: 3px; color: #fff; margin-left: 0.3rem; vertical-align: middle;
 }
 .rq-subject { font-size: 0.8rem; color: #999; margin-bottom: 0.5rem; }
+.rq-date { font-size: 0.75rem; color: #666; margin-bottom: 0.4rem; }
 .rq-inbound-text {
   flex: 1; max-height: 350px; overflow-y: auto; font-size: 0.85rem; line-height: 1.5;
   color: #ccc; white-space: pre-wrap; word-break: break-word;
@@ -160,6 +191,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .rq-draft textarea {
   flex: 1; min-height: 200px; resize: vertical;
 }
+.rq-word-hint { font-size: 0.75rem; color: #666; margin-top: 0.3rem; }
 .rq-footer {
   padding: 0.8rem 1rem; border-top: 1px solid #333;
   display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
@@ -171,36 +203,59 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   background: #1a1a2e; border: 1px solid #333; border-radius: 4px;
   color: #e0e0e0; font-size: 0.85rem;
 }
-.rq-footer .field input[type="text"]:focus { outline: none; border-color: #6c63ff; }
-.rq-loading {
-  text-align: center; padding: 3rem 1rem; color: #aaa; font-size: 0.95rem;
+.rq-footer .field input[type="text"]:focus { outline: none; border-color: #7b61ff; }
+/* Loading card */
+.loading-card { text-align: center; padding: 3rem; }
+.loading-spinner {
+  width: 40px; height: 40px; border: 3px solid #2a3a4a;
+  border-top-color: #00c4a7; border-radius: 50%;
+  animation: spin 0.8s linear infinite; margin: 0 auto 1rem;
 }
-.rq-loading .spinner { width: 24px; height: 24px; margin: 0 auto 1rem; display: block; }
+.loading-text { color: #00c4a7; font-weight: 600; margin-bottom: 0.3rem; }
+.loading-sub { color: #666; font-size: 0.85rem; margin-bottom: 0.5rem; }
+.loading-progress { color: #888; font-size: 0.8rem; font-family: monospace; }
 .rq-batch-complete {
   text-align: center; padding: 3rem 1rem; color: #e0e0e0;
 }
-.rq-batch-complete h2 { font-size: 1.2rem; color: #c8c8ff; margin-bottom: 0.8rem; }
+.rq-batch-complete h2 { font-size: 1.2rem; color: #00c4a7; margin-bottom: 0.8rem; }
 .rq-batch-complete p { color: #aaa; margin-bottom: 1.5rem; }
-.btn-load-batch { background: #6c63ff; color: #fff; padding: 0.7rem 2rem; font-size: 1rem; }
-.btn-load-batch:hover { background: #5a52d5; }
+.btn-load-batch { background: #00c4a7; color: #1a1a2e; padding: 0.7rem 2rem; font-size: 1rem; }
+.btn-load-batch:hover { background: #00b398; }
 </style>
 </head>
 <body>
 <div class="container">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
-    <h1>YouOS Feedback</h1>
-    <div style="display:flex;gap:1rem;font-size:0.85rem;">
-      <a href="/stats" style="color:#6c63ff;text-decoration:none;">Stats</a>
-      <a href="/bookmarklet" style="color:#6c63ff;text-decoration:none;">Bookmarklet</a>
+  <header class="oc-header">
+    <div class="oc-logo">
+      <span class="oc-emoji">&#x2709;&#xFE0F;</span>
+      <span class="oc-wordmark" id="appName">YouOS</span>
+    </div>
+    <nav class="oc-nav">
+      <a href="/feedback" class="oc-nav-link active">Draft</a>
+      <a href="/stats" class="oc-nav-link">Stats</a>
+      <a href="/bookmarklet" class="oc-nav-link">Bookmarklet</a>
+    </nav>
+  </header>
+
+  <div id="emptyState" class="empty-state" style="display:none;">
+    <div class="empty-emoji">&#x2709;&#xFE0F;</div>
+    <h2>Welcome to YouOS</h2>
+    <p>Your email corpus isn't set up yet.</p>
+    <p>Run <code>youos setup</code> in your terminal to get started.</p>
+    <div class="empty-steps">
+      <div class="empty-step">1. Run setup wizard</div>
+      <div class="empty-step">2. Connect your Gmail</div>
+      <div class="empty-step">3. Start drafting in your voice</div>
     </div>
   </div>
 
+  <div id="mainContent">
   <div class="tabs">
     <div class="tab active" data-tab="draft-reply">Draft Reply</div>
     <div class="tab" data-tab="review-queue">Review Queue</div>
   </div>
 
-  <!-- ═══ Tab 1: Draft Reply (original) ═══ -->
+  <!-- Tab 1: Draft Reply -->
   <div class="tab-content active" id="tab-draft-reply">
     <div class="panels">
       <div class="panel">
@@ -250,11 +305,15 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     <div class="info" id="info"></div>
   </div>
 
-  <!-- ═══ Tab 2: Review Queue ═══ -->
+  <!-- Tab 2: Review Queue -->
   <div class="tab-content" id="tab-review-queue">
-    <div id="rqLoading" class="rq-loading" style="display:none;">
-      <span class="spinner" style="width:24px;height:24px;display:block;margin:0 auto 1rem;"></span>
-      Generating 10 drafts... (this takes ~30s)
+    <div id="rqLoading" style="display:none;">
+      <div class="loading-card">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Generating drafts...</div>
+        <div class="loading-sub">Retrieving similar past replies and generating in your style</div>
+        <div class="loading-progress" id="loadingProgress">0 / 10</div>
+      </div>
     </div>
 
     <div id="rqMain" style="display:none;">
@@ -277,11 +336,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
             </div>
             <div class="rq-from-company" id="rqFromCompany"></div>
             <div class="rq-subject" id="rqSubject"></div>
+            <div class="rq-date" id="rqDate"></div>
             <div class="rq-inbound-text" id="rqInboundText"></div>
           </div>
           <div class="rq-draft">
             <div class="rq-section-title">Draft (edit me)</div>
             <textarea id="rqDraftTextarea"></textarea>
+            <div class="rq-word-hint" id="rqWordHint"></div>
           </div>
         </div>
         <div class="rq-footer">
@@ -305,19 +366,37 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     </div>
 
     <div id="rqBatchComplete" class="rq-batch-complete" style="display:none;">
-      <h2>Batch complete! 🎉</h2>
+      <h2>Batch complete!</h2>
       <p id="rqBatchMsg"></p>
       <div id="rqAutoResearch" style="margin-bottom:1rem;padding:0.6rem 0.8rem;background:#0d1b2a;border-radius:6px;border:1px solid #2a3a4a;color:#aaa;font-size:0.85rem;display:none;">
-        <span id="rqArStatus">⚙️ Triggering autoresearch optimization in background…</span>
+        <span id="rqArStatus">Triggering autoresearch optimization in background...</span>
       </div>
       <button class="btn-load-batch" id="rqLoadNext">Load next batch</button>
     </div>
   </div>
+  </div>
+
+  <footer class="oc-footer">
+    <span>YouOS v0.1.0</span>
+    <span>&middot;</span>
+    <a href="https://github.com/DrBaher/youos" target="_blank">GitHub</a>
+    <span>&middot;</span>
+    <span>Your data stays local</span>
+  </footer>
 </div>
 
 <script>
 (function() {
-  // ═══ Tab switching ═══
+  // Fetch config and update app name / empty state
+  fetch('/api/config').then(r => r.json()).then(d => {
+    if (d.display_name) document.getElementById('appName').textContent = d.display_name;
+    if (!d.corpus_ready) {
+      document.getElementById('emptyState').style.display = 'block';
+      document.getElementById('mainContent').style.display = 'none';
+    }
+  }).catch(() => {});
+
+  // Tab switching
   const tabs = document.querySelectorAll('.tab');
   const tabContents = document.querySelectorAll('.tab-content');
   tabs.forEach(tab => {
@@ -332,7 +411,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     });
   });
 
-  // ═══ Draft Reply tab (original logic) ═══
+  // Draft Reply tab
   const inbound = document.getElementById('inbound');
   const draft = document.getElementById('draft');
   const note = document.getElementById('note');
@@ -347,7 +426,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
   const personalDomains = new Set(['gmail.com','yahoo.com','hotmail.com','icloud.com','me.com','outlook.com','live.com','aol.com','protonmail.com','proton.me']);
   const automatedPrefixes = ['no-reply','noreply','donotreply','do-not-reply','invoice','billing','mailer','notifications'];
-  const badgeColors = {internal:'#2ecc71',external_client:'#3498db',personal:'#9b59b6',automated:'#95a5a6',unknown:'#666'};
+  const badgeColors = {internal:'#2ecc71',external_client:'#00c4a7',personal:'#ff8c42',automated:'#555',unknown:'#666'};
 
   function classifySender(email) {
     if (!email) return 'unknown';
@@ -550,7 +629,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       if (!res.ok) throw new Error('Server error: ' + res.status);
       const data = await res.json();
       showInfo('Saved! Total feedback pairs: ' + data.total_pairs +
-        '. <a href="#" onclick="location.reload();return false" style="color:#6c63ff">Generate another?</a>', 'success');
+        '. <a href="#" onclick="location.reload();return false" style="color:#00c4a7">Generate another?</a>', 'success');
       btnSub.disabled = true;
       draft.readOnly = true;
     } catch (e) {
@@ -561,7 +640,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     }
   });
 
-  // ═══ Review Queue tab ═══
+  // Review Queue tab
   let rqLoaded = false;
   let rqItems = [];
   let rqIndex = 0;
@@ -581,6 +660,23 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     });
   });
 
+  function timeAgo(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now - d;
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 60) return mins + ' min ago';
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return hrs + ' hr ago';
+    const days = Math.floor(hrs / 24);
+    if (days < 30) return days + ' day' + (days !== 1 ? 's' : '') + ' ago';
+    const months = Math.floor(days / 30);
+    if (months < 12) return months + ' month' + (months !== 1 ? 's' : '') + ' ago';
+    const years = Math.floor(months / 12);
+    return years + ' year' + (years !== 1 ? 's' : '') + ' ago';
+  }
+
   function rqUpdateProgress() {
     const total = rqItems.length;
     const pct = total > 0 ? Math.round((rqReviewed / total) * 100) : 0;
@@ -592,25 +688,22 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   }
 
   function rqShowItem() {
-    // Find next non-skipped item
     while (rqIndex < rqItems.length && rqSkippedIds.includes(rqItems[rqIndex].reply_pair_id)) {
       rqIndex++;
     }
 
     if (rqIndex >= rqItems.length) {
-      // Batch exhausted
       document.getElementById('rqMain').style.display = 'none';
       document.getElementById('rqBatchComplete').style.display = 'block';
       document.getElementById('rqBatchMsg').textContent =
         rqReviewedToday + ' pairs reviewed today. ' + rqTotalUnreviewed.toLocaleString() + ' remaining.';
-      // Trigger autoresearch in background
       const arDiv = document.getElementById('rqAutoResearch');
       const arStatus = document.getElementById('rqArStatus');
       arDiv.style.display = 'block';
       fetch('/review-queue/trigger-autoresearch', { method: 'POST' })
         .then(r => r.json())
-        .then(d => { arStatus.textContent = d.message || '✅ Autoresearch optimization started in background.'; })
-        .catch(() => { arStatus.textContent = '⚠️ Could not trigger autoresearch — will run at 2 AM.'; });
+        .then(d => { arStatus.textContent = d.message || 'Autoresearch optimization started in background.'; })
+        .catch(() => { arStatus.textContent = 'Could not trigger autoresearch — will run at 2 AM.'; });
       return;
     }
 
@@ -622,7 +715,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     const fromName = nameMatch ? nameMatch[1].trim() : author;
     document.getElementById('rqFromName').textContent = fromName;
 
-    // Sender profile badge
+    // Sender type badge with colour coding
     const typeEl = document.getElementById('rqFromType');
     if (item.sender_profile && item.sender_profile.sender_type) {
       const st = item.sender_profile.sender_type;
@@ -643,12 +736,17 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       companyEl.style.display = 'none';
     }
 
-    // Subject
+    // Subject — prominent
     const subjectEl = document.getElementById('rqSubject');
-    subjectEl.textContent = item.subject ? 'Subject: ' + item.subject : '';
+    subjectEl.textContent = item.subject || '';
+    subjectEl.style.fontWeight = item.subject ? '600' : 'normal';
+    subjectEl.style.color = item.subject ? '#ccc' : '#999';
+
+    // Date
+    const dateEl = document.getElementById('rqDate');
+    dateEl.textContent = item.paired_at ? timeAgo(item.paired_at) : '';
 
     // Inbound text
-    // Decode HTML entities and display as plain text
     const tmp = document.createElement('textarea');
     tmp.innerHTML = item.inbound_text;
     document.getElementById('rqInboundText').textContent = tmp.value;
@@ -657,6 +755,15 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     const ta = document.getElementById('rqDraftTextarea');
     ta.value = item.generated_draft;
     ta.focus();
+
+    // Word count hint
+    const wordHint = document.getElementById('rqWordHint');
+    const draftWords = (item.generated_draft || '').split(/\s+/).filter(Boolean).length;
+    let hintText = '~' + draftWords + ' words';
+    if (item.sender_profile && item.sender_profile.avg_reply_words) {
+      hintText += ' · aim for ' + item.sender_profile.avg_reply_words;
+    }
+    wordHint.textContent = hintText;
 
     // Reset note and rating
     document.getElementById('rqNote').value = '';
@@ -756,7 +863,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     }
   });
 
-  // Compare button — show retrieval vs baseline side by side
+  // Compare button
   document.getElementById('rqCompare').addEventListener('click', async () => {
     const item = rqItems[rqIndex];
     if (!item) return;
@@ -784,14 +891,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     loadBatch();
   });
 
-  // ═══ URL param pre-fill (bookmarklet support) ═══
+  // URL param pre-fill (bookmarklet support)
   (function() {
     const params = new URLSearchParams(window.location.search);
     const pInbound = params.get('inbound');
     const pSender = params.get('sender');
     const pSubject = params.get('subject');
     if (pInbound || pSender || pSubject) {
-      // Switch to Draft Reply tab
       tabs.forEach(t => t.classList.remove('active'));
       tabContents.forEach(tc => tc.classList.remove('active'));
       document.querySelector('[data-tab="draft-reply"]').classList.add('active');
@@ -802,7 +908,6 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
         senderInput.value = pSender;
         senderInput.dispatchEvent(new Event('input'));
       }
-      // Focus inbound for quick review
       inbound.focus();
     }
   })();
