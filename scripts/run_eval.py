@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
 
 from app.evaluation.service import EvalRequest, EvalSuiteResult, run_eval_suite
 from app.generation.service import DraftRequest, generate_draft

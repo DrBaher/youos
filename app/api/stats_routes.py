@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -146,7 +145,9 @@ def stats_data(request: Request) -> dict[str, Any]:
                     log_text, re.DOTALL
                 )
                 for date_str, body in entries[-3:]:
-                    score_match = re.search(r"composite[_\s]?score[:\s]*([\d.]+)", body, re.IGNORECASE)
+                    score_match = re.search(
+                        r"composite[_\s]?score[:\s]*([\d.]+)", body, re.IGNORECASE
+                    )
                     kept_match = re.search(r"improvements?\s*kept[:\s]*(\d+)", body, re.IGNORECASE)
                     benchmark_trend.append({
                         "date": date_str.strip(),

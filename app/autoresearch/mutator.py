@@ -1,8 +1,7 @@
 """Config mutation engine for YouOS Autoresearch."""
 from __future__ import annotations
 
-import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -29,8 +28,8 @@ _NUMERIC_SURFACES: list[dict[str, Any]] = [
     {"name": "top_k_reply_pairs", "config_file": "retrieval/defaults.yaml", "yaml_key": "top_k_reply_pairs", "step_size": 1, "min_val": 3, "max_val": 10},
     {"name": "top_k_chunks", "config_file": "retrieval/defaults.yaml", "yaml_key": "top_k_chunks", "step_size": 1, "min_val": 1, "max_val": 6},
     {"name": "recency_boost_days", "config_file": "retrieval/defaults.yaml", "yaml_key": "recency_boost_days", "step_size": 30, "min_val": 30, "max_val": 365},
-    {"name": "recency_boost_weight", "config_file": "retrieval/defaults.yaml", "yaml_key": "recency_boost_weight", "step_size": 0.05, "min_val": 0.0, "max_val": 0.5},
-    {"name": "account_boost_weight", "config_file": "retrieval/defaults.yaml", "yaml_key": "account_boost_weight", "step_size": 0.05, "min_val": 0.0, "max_val": 0.4},
+    {"name": "recency_boost_weight", "config_file": "retrieval/defaults.yaml", "yaml_key": "recency_boost_weight", "step_size": 0.05, "min_val": 0.0, "max_val": 0.5},  # noqa: E501
+    {"name": "account_boost_weight", "config_file": "retrieval/defaults.yaml", "yaml_key": "account_boost_weight", "step_size": 0.05, "min_val": 0.0, "max_val": 0.4},  # noqa: E501
 ]
 
 # -- Prompt variant definitions ─────────────────────────────────────

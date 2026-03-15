@@ -26,7 +26,7 @@ def _load_model():
     if _model is not None:
         return _model, _tokenizer
     try:
-        import mlx.core as mx
+        import mlx.core as mx  # noqa: F401
         from mlx_lm import load
     except ImportError as exc:
         raise RuntimeError(
@@ -73,7 +73,7 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     """Compute cosine similarity between two embedding vectors."""
     if len(a) != len(b):
         raise ValueError(f"Dimension mismatch: {len(a)} vs {len(b)}")
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(x * x for x in b))
     if norm_a < 1e-12 or norm_b < 1e-12:

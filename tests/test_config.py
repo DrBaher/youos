@@ -1,19 +1,18 @@
 """Tests for YouOS user configuration loading."""
 from pathlib import Path
-import tempfile
 
 import yaml
 
 from app.core.config import (
     _load_raw_config,
-    get_user_name,
-    get_display_name,
-    get_user_emails,
-    get_user_names,
-    get_internal_domains,
-    get_ingestion_accounts,
     get_base_model,
+    get_display_name,
+    get_ingestion_accounts,
+    get_internal_domains,
     get_server_port,
+    get_user_emails,
+    get_user_name,
+    get_user_names,
     save_config,
 )
 

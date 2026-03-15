@@ -26,7 +26,6 @@ from app.core.embeddings import get_embedding, serialize_embedding
 from app.core.settings import get_settings
 from app.db.bootstrap import resolve_sqlite_path
 
-
 BATCH_SIZE = 50
 
 

@@ -3,8 +3,8 @@ from pathlib import Path
 
 from app.core.config import get_ingestion_accounts
 from app.ingestion.gmail_threads import (
-    GogLiveOptions,
     SUPPORTED_IMPORT_FORMAT,
+    GogLiveOptions,
     ingest_gmail_threads,
 )
 

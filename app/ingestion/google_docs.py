@@ -12,8 +12,12 @@ from typing import Any
 
 from app.core.config import get_ingestion_accounts
 from app.ingestion.models import IngestionResult
-from app.ingestion.run_log import IngestRunContext, IngestRunCounts, finish_ingest_run, start_ingest_run
-
+from app.ingestion.run_log import (
+    IngestRunContext,
+    IngestRunCounts,
+    finish_ingest_run,
+    start_ingest_run,
+)
 
 SUPPORTED_IMPORT_FORMAT = """
 Supported Google Docs import inputs:

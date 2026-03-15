@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from app.core.diff import similarity_ratio
 from app.core.sender import classify_sender
-from app.core.text_utils import strip_quoted_text, decode_html_entities
+from app.core.text_utils import decode_html_entities, strip_quoted_text
 from app.db.bootstrap import resolve_sqlite_path
 from app.generation.service import DraftRequest, generate_draft
 
@@ -172,7 +172,9 @@ def _fetch_candidates(
 
         # Second pass: score and select with diversity
         reviewed_sender_types: Counter = Counter()
-        scored = [(score_pair_for_review(p, reviewed_sender_types), i, p) for i, p in enumerate(pool)]
+        scored = [
+            (score_pair_for_review(p, reviewed_sender_types), i, p) for i, p in enumerate(pool)
+        ]
         scored.sort(key=lambda x: x[0], reverse=True)
 
         candidates: list[dict[str, Any]] = []
@@ -211,7 +213,6 @@ def _lookup_sender_profile_safe(
         ).fetchone()
         if not row:
             return None
-        import json
         return {
             "display_name": row["display_name"],
             "company": row["company"],
@@ -361,7 +362,8 @@ def review_queue_submit(body: ReviewSubmitBody, request: Request) -> dict:
 @router.post("/trigger-autoresearch")
 def trigger_autoresearch() -> dict:
     """Fire off the autoresearch loop in the background after a batch is complete."""
-    import subprocess, threading
+    import subprocess
+    import threading
 
     def _run() -> None:
         try:

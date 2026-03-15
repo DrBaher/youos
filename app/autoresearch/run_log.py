@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
 
 from app.db.bootstrap import resolve_sqlite_path
-
 
 _CREATE_TABLE_SQL = """\
 CREATE TABLE IF NOT EXISTS autoresearch_runs (

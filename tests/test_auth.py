@@ -1,5 +1,4 @@
 """Tests for PIN authentication."""
-import time
 
 from app.core.auth import (
     LoginRateLimiter,

@@ -4,13 +4,10 @@ from __future__ import annotations
 
 import json
 import os
-import platform
-import re
 import shutil
 import sqlite3
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -58,10 +55,10 @@ def _check_dependencies() -> bool:
         all_ok = False
 
     # mlx (optional but recommended)
-    try:
-        import mlx
+    import importlib.util as _ilu
+    if _ilu.find_spec("mlx") is not None:
         print("  mlx (Apple Silicon ML) OK")
-    except ImportError:
+    else:
         print("  mlx (Apple Silicon ML) MISSING (optional - needed for local model)")
         print("    Install: pip install mlx mlx-lm")
 
@@ -74,7 +71,6 @@ def _check_dependencies() -> bool:
 
     # RAM check
     try:
-        import resource
         # Use sysctl on macOS
         result = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
@@ -181,7 +177,7 @@ def _run_ingestion(config: dict) -> dict:
     print("--- Corpus Ingestion ---")
     print(f"  Accounts: {', '.join(emails)}")
     print(f"  Range: last {months} months of sent mail")
-    print(f"  Estimated time: 10-30 minutes depending on volume")
+    print("  Estimated time: 10-30 minutes depending on volume")
     print()
 
     proceed = input("Start ingestion? [Y/n] ").strip().lower()
@@ -322,13 +318,13 @@ def _run_persona_analysis(config: dict) -> dict | None:
         print()
         user_name = config.get("user", {}).get("name", "User")
         default_formal = f"Best,\\n{user_name}"
-        print(f"Preferred formal closing (e.g. partnership emails):")
+        print("Preferred formal closing (e.g. partnership emails):")
         formal_input = input(f"> [{default_formal}] ").strip()
         chosen_formal = formal_input if formal_input else f"Best,\n{user_name}"
 
         print()
         default_informal = f"Cheers,\\n{user_name}"
-        print(f"Preferred informal closing (e.g. supplier emails):")
+        print("Preferred informal closing (e.g. supplier emails):")
         informal_input = input(f"> [{default_informal}] ").strip()
         chosen_informal = informal_input if informal_input else f"Cheers,\n{user_name}"
 
@@ -392,7 +388,12 @@ def _generate_benchmarks() -> bool:
     try:
         from app.core.settings import get_settings
         from app.db.bootstrap import resolve_sqlite_path
-        from scripts.generate_benchmarks import generate_cases, write_fixtures, seed_to_db, update_refresh_count
+        from scripts.generate_benchmarks import (
+            generate_cases,
+            seed_to_db,
+            update_refresh_count,
+            write_fixtures,
+        )
 
         settings = get_settings()
         db_path = resolve_sqlite_path(settings.database_url)
@@ -559,7 +560,7 @@ def main() -> None:
     identity = _get_user_identity()
 
     # Step 3: Verify accounts
-    verified = _verify_accounts(identity["emails"])
+    _verify_accounts(identity["emails"])
 
     # Step 4: Build config
     import yaml
@@ -591,10 +592,10 @@ def main() -> None:
         print(f"  Database init failed: {exc}")
 
     # Step 6: Ingestion
-    stats = _run_ingestion(config)
+    _run_ingestion(config)
 
     # Step 7: Persona analysis
-    findings = _run_persona_analysis(config)
+    _run_persona_analysis(config)
 
     # Step 8: Benchmarks
     _generate_benchmarks()

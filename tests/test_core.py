@@ -1,8 +1,7 @@
 """Tests for core utilities."""
-from app.core.diff import similarity_ratio, is_meaningfully_different
-from app.core.text_utils import strip_quoted_text, decode_html_entities
+from app.core.diff import is_meaningfully_different, similarity_ratio
 from app.core.sender import classify_sender, extract_domain
-
+from app.core.text_utils import decode_html_entities, strip_quoted_text
 
 # ── diff tests ──
 

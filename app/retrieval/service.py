@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
 import json
-from pathlib import Path
 import re
 import sqlite3
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal
 
 import yaml
@@ -13,7 +13,6 @@ import yaml
 from app.core.embeddings import cosine_similarity, deserialize_embedding, get_embedding
 from app.core.sender import classify_sender, extract_domain
 from app.db.bootstrap import resolve_sqlite_path
-
 
 ResultType = Literal["document", "chunk", "reply_pair"]
 ScopeType = Literal["all", "documents", "reply_pairs"]

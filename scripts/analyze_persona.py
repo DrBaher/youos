@@ -83,7 +83,7 @@ def _extract_greeting(text: str) -> str | None:
 
 def _extract_closer(text: str) -> str | None:
     """Extract the closing pattern from last meaningful line."""
-    lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
+    lines = [ln.strip() for ln in text.strip().split("\n") if ln.strip()]
     if not lines:
         return None
     last = lines[-1].lower()
@@ -170,7 +170,7 @@ def analyze(db_path: Path) -> dict:
 
     # Compute stats
     word_counts_sorted = sorted(word_counts)
-    n = len(word_counts_sorted)
+    _n = len(word_counts_sorted)
 
     def percentile(data: list[int], p: float) -> int:
         idx = int(len(data) * p)
@@ -217,24 +217,24 @@ def print_report(findings: dict) -> None:
     print(f"\nTotal reply pairs analyzed: {findings['total_pairs']}")
 
     rl = findings["reply_length"]
-    print(f"\n--- Reply Length Distribution ---")
+    print("\n--- Reply Length Distribution ---")
     print(f"  Average words: {rl['avg_words']}")
     print(f"  p25: {rl['p25']}  p50: {rl['p50']}  p75: {rl['p75']}  p95: {rl['p95']}")
     print(f"  Range: {rl['min']} - {rl['max']}")
 
-    print(f"\n--- Greeting Patterns (top 20) ---")
+    print("\n--- Greeting Patterns (top 20) ---")
     for pattern, count in findings["greeting_patterns"].items():
         print(f"  {pattern}: {count}")
 
-    print(f"\n--- Closing Patterns (top 20) ---")
+    print("\n--- Closing Patterns (top 20) ---")
     for pattern, count in findings["closing_patterns"].items():
         print(f"  {pattern}: {count}")
 
-    print(f"\n--- Signature Detection ---")
+    print("\n--- Signature Detection ---")
     for sig, count in findings["signature_patterns"].items():
         print(f"  {sig}: {count}")
 
-    print(f"\n--- Tone by Sender Type ---")
+    print("\n--- Tone by Sender Type ---")
     for stype, stats in findings["tone_by_sender_type"].items():
         print(f"  {stype}: {stats['count']} replies, avg {stats['avg_words']} words, p50 {stats['p50']}")
 

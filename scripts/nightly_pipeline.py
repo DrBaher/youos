@@ -78,7 +78,7 @@ def step_auto_feedback() -> dict:
     print(f"{'='*60}")
     try:
         result = extract_auto_feedback(days=2)
-        print(f"  [OK] Auto-feedback completed")
+        print("  [OK] Auto-feedback completed")
         return result
     except Exception as exc:
         print(f"  [WARN] Auto-feedback failed: {exc}")

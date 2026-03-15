@@ -132,7 +132,7 @@ def run_training(args: argparse.Namespace) -> None:
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
 
-    print(f"\nTraining complete.")
+    print("\nTraining complete.")
     print(f"  Adapter saved to: {adapter_dir}")
     print(f"  Pairs used: {meta['pairs_used']}")
     print(f"  Val loss: {val_loss}")

@@ -4,10 +4,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from app.api.routes import router
-from app.api.feedback_routes import router as feedback_router, _BOOKMARKLET_ROUTER as bookmarklet_router
-from app.api.sender_routes import router as sender_router
+from app.api.feedback_routes import _BOOKMARKLET_ROUTER as bookmarklet_router
+from app.api.feedback_routes import router as feedback_router
 from app.api.review_queue_routes import router as review_queue_router
+from app.api.routes import router
+from app.api.sender_routes import router as sender_router
 from app.api.stats_routes import router as stats_router
 from app.core.auth import (
     LoginRateLimiter,

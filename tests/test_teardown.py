@@ -1,9 +1,7 @@
 """Tests for teardown script — uses mock filesystem."""
 import sqlite3
-from pathlib import Path
-from unittest.mock import patch
 
-from scripts.teardown import _dir_size, _file_size, _feedback_count
+from scripts.teardown import _dir_size, _feedback_count, _file_size
 
 
 def test_dir_size_nonexistent(tmp_path):

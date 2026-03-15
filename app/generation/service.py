@@ -4,14 +4,14 @@ import json
 import re
 import sqlite3
 import subprocess
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from app.core.config import get_base_model, get_model_fallback, get_user_name, get_user_names
-from app.core.sender import SenderType, classify_sender, extract_domain
+from app.core.sender import classify_sender, extract_domain
 from app.core.text_utils import strip_quoted_text
 from app.db.bootstrap import resolve_sqlite_path
 from app.retrieval.service import (

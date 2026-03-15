@@ -31,12 +31,12 @@ def setup():
 def status():
     """Show corpus size, model status, last run."""
     from app.core.config import (
-        load_config,
-        get_user_name,
         get_display_name,
-        get_user_emails,
         get_server_port,
         get_tailscale_hostname,
+        get_user_emails,
+        get_user_name,
+        load_config,
     )
     from app.core.settings import get_settings
     from app.db.bootstrap import resolve_sqlite_path
@@ -259,7 +259,7 @@ def run_eval():
 @app.command()
 def serve():
     """Start the YouOS web server."""
-    from app.core.config import get_server_port, get_server_host
+    from app.core.config import get_server_host, get_server_port
     port = get_server_port()
     host = get_server_host()
     subprocess.run([

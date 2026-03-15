@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from typing import Literal
 
-
 SourceType = Literal["gmail_thread", "google_doc", "whatsapp_export"]
 IngestionStatus = Literal["stub", "completed", "completed_with_warnings", "failed"]
 

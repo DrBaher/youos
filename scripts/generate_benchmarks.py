@@ -142,7 +142,7 @@ def generate_cases(db_path: Path, count: int = 15) -> list[dict]:
         # Build cases
         cases = []
         seen_keys: set[str] = set()
-        for i, row in enumerate(selected[:count]):
+        for _i, row in enumerate(selected[:count]):
             inbound = (row["inbound_text"] or "")[:500]
             reply = row["reply_text"] or ""
 

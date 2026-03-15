@@ -8,7 +8,7 @@ import sqlite3
 from collections import Counter
 from pathlib import Path
 
-from app.core.sender import classify_sender, extract_domain, _PERSONAL_DOMAINS
+from app.core.sender import _PERSONAL_DOMAINS, classify_sender, extract_domain
 from app.core.settings import get_settings
 from app.db.bootstrap import resolve_sqlite_path
 

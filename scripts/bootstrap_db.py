@@ -1,8 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-from app.db.bootstrap import bootstrap_database, resolve_sqlite_path
-from app.core.settings import get_settings
+from app.db.bootstrap import bootstrap_database
 
 
 def _migrate_auto_feedback_column(db_path: Path) -> bool:

@@ -1,6 +1,5 @@
 """Tests for the setup wizard dependency check."""
 import sys
-from unittest.mock import patch
 
 from scripts.setup_wizard import _check_dependencies
 

@@ -2,7 +2,6 @@ from pathlib import Path
 
 from app.ingestion.models import IngestionResult
 
-
 EXPECTED_EXPORT_FORMAT = """
 Expected WhatsApp export input:
 
