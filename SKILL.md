@@ -37,6 +37,12 @@ YouOS drafts email replies in your style, grounded in your real past replies.
 - "email response"
 - "how do I usually reply to"
 - "reply to this"
+- "help me write"
+- "write an email"
+- "compose a response"
+- "email assistant"
+- "my writing style"
+- "train on my emails"
 
 ## Requirements
 

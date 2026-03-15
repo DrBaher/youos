@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouOS — Your email. Your model.</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root { --teal: #00c4a7; --bg: #0d1117; --surface: #161b22; --border: #30363d; --text: #e6edf3; --muted: #8b949e; }
+  body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+  a { color: var(--teal); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+
+  /* Hero */
+  .hero { text-align: center; padding: 100px 24px 80px; }
+  .hero h1 { font-size: 2.8rem; font-weight: 700; margin-bottom: 16px; }
+  .hero .tagline { font-size: 1.25rem; color: var(--muted); margin-bottom: 40px; }
+  .hero .cta { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: 14px 28px; border-radius: 8px; font-weight: 600; font-size: 1rem; transition: opacity 0.2s; }
+  .btn:hover { text-decoration: none; opacity: 0.85; }
+  .btn-primary { background: var(--teal); color: var(--bg); }
+  .btn-secondary { border: 1px solid var(--border); color: var(--text); }
+
+  /* Columns */
+  .columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 32px; padding: 60px 0; }
+  .columns .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 28px; }
+  .card .bad { color: #f85149; font-weight: 600; margin-bottom: 8px; }
+  .card .good { color: var(--teal); font-weight: 600; }
+
+  /* Steps */
+  .steps { padding: 60px 0; }
+  .steps h2 { text-align: center; font-size: 2rem; margin-bottom: 48px; }
+  .steps-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 32px; }
+  .step { text-align: center; }
+  .step .icon { font-size: 2.5rem; margin-bottom: 12px; }
+  .step h3 { font-size: 1.1rem; margin-bottom: 8px; }
+  .step p { color: var(--muted); font-size: 0.95rem; }
+
+  /* Privacy */
+  .privacy { border: 2px solid var(--teal); border-radius: 12px; padding: 32px; margin: 60px auto; text-align: center; font-size: 1.1rem; max-width: 720px; }
+
+  /* Install */
+  .install { padding: 60px 0; text-align: center; }
+  .install h2 { font-size: 2rem; margin-bottom: 24px; }
+  .install pre { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px 32px; text-align: left; display: inline-block; font-size: 0.95rem; line-height: 1.8; overflow-x: auto; max-width: 100%; }
+  .install code { color: var(--teal); }
+
+  /* Footer */
+  footer { border-top: 1px solid var(--border); padding: 32px 0; text-align: center; color: var(--muted); font-size: 0.9rem; }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--teal); }
+</style>
+</head>
+<body>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="container">
+    <h1>✉️ YouOS — Your email. Your model.</h1>
+    <p class="tagline">The first email copilot that actually learns how <em>you</em> write.</p>
+    <div class="cta">
+      <a href="https://clawhub.com/skills/youos" class="btn btn-primary">Install via ClawHub</a>
+      <a href="https://github.com/DrBaher/youos" class="btn btn-secondary">View on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<!-- Problem / Solution -->
+<section class="container">
+  <div class="columns">
+    <div class="card">
+      <p class="bad">&#10060; Generic AI sounds like a robot</p>
+      <p class="good">&#9989; YouOS learns from your actual emails</p>
+    </div>
+    <div class="card">
+      <p class="bad">&#10060; Your emails uploaded to the cloud</p>
+      <p class="good">&#9989; Everything stays on your Mac</p>
+    </div>
+    <div class="card">
+      <p class="bad">&#10060; Same drafts for everyone</p>
+      <p class="good">&#9989; Improves nightly from your feedback</p>
+    </div>
+  </div>
+</section>
+
+<!-- How it works -->
+<section class="container steps">
+  <h2>How it works</h2>
+  <div class="steps-grid">
+    <div class="step">
+      <div class="icon">📥</div>
+      <h3>Connect Gmail</h3>
+      <p>5 minutes with the gog CLI</p>
+    </div>
+    <div class="step">
+      <div class="icon">🧠</div>
+      <h3>Build your corpus</h3>
+      <p>Ingests your sent history</p>
+    </div>
+    <div class="step">
+      <div class="icon">✉️</div>
+      <h3>Draft in your style</h3>
+      <p>Grounded in real past replies</p>
+    </div>
+    <div class="step">
+      <div class="icon">🔄</div>
+      <h3>Improves overnight</h3>
+      <p>Autoresearch tunes itself</p>
+    </div>
+  </div>
+</section>
+
+<!-- Privacy -->
+<section class="container">
+  <div class="privacy">
+    Your emails never leave your Mac. The model trains locally on Apple Silicon. No cloud. No subscriptions. No tracking.
+  </div>
+</section>
+
+<!-- Install -->
+<section class="install">
+  <div class="container">
+    <h2>Get started</h2>
+    <pre><code><span style="color:#8b949e"># Install YouOS</span>
+pip install youos
+
+<span style="color:#8b949e"># Run the setup wizard</span>
+youos setup</code></pre>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <p><a href="https://github.com/DrBaher/youos">GitHub</a> &middot; MIT License &middot; Built with <a href="https://openclaw.com">OpenClaw</a></p>
+  </div>
+</footer>
+
+</body>
+</html>
