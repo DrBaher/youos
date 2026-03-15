@@ -250,7 +250,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     </div>
   </div>
 
-  <div id="mainContent">
+  <div id="mainContent" style="display:none;">
   <div class="tabs">
     <div class="tab active" data-tab="draft-reply">Draft Reply</div>
     <div class="tab" data-tab="review-queue">Review Queue <span class="oc-tip" data-tip="Pre-loaded emails from your corpus. Edit drafts and submit to train your model.">?</span></div>
@@ -491,7 +491,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     if (d.display_name) document.getElementById('appName').textContent = d.display_name;
     if (!d.corpus_ready) {
       document.getElementById('emptyState').style.display = 'block';
-      document.getElementById('mainContent').style.display = 'none';
+    } else {
+      document.getElementById('mainContent').style.display = 'block';
     }
   }).catch(() => {});
 
