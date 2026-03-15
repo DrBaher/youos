@@ -26,7 +26,7 @@ Gmail (sent mail)          Your feedback
 **Privacy:** Everything stays local. Your corpus, model, and drafts never leave your Mac.
 
 <!-- Demo GIF -->
-> 📹 Demo coming soon — [watch the setup walkthrough](https://github.com/DrBaher/youos)
+> 🌐 [Landing page](https://dewy-haven-wgpz.here.now/) · 📹 Demo coming soon
 
 ## What it does
 
