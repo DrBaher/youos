@@ -1,6 +1,29 @@
-# YouOS
+# YouOS ✉️
 
-Your personal AI email copilot. Learns your writing style from your Gmail history and drafts replies that sound like you.
+> **Your email. Your model. Your style.**
+
+YouOS is a local-first AI email copilot that learns from your sent Gmail history and drafts replies that sound like *you* — not a generic AI. It runs entirely on your Mac. No cloud. No subscriptions. Your data never leaves your machine.
+
+```
+Gmail (sent mail)          Your feedback
+       │                        │
+       ▼                        ▼
+  Ingestion pipeline      Review Queue
+  (gog CLI + SQLite)      (10 emails/batch)
+       │                        │
+       ▼                        ▼
+  Reply Pairs DB  ──────► LoRA Fine-tuning
+  (FTS5 + BM25)           (Qwen, nightly)
+       │                        │
+       ▼                        ▼
+  Draft Generation ◄──── Autoresearch
+  (local Qwen MLX)        (80 iterations/night)
+       │
+       ▼
+  Draft Reply ✅
+```
+
+**Privacy:** Everything stays local. Your corpus, model, and drafts never leave your Mac.
 
 ## What it does
 
