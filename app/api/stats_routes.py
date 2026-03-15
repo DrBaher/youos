@@ -27,12 +27,15 @@ def get_api_config(request: Request) -> dict[str, Any]:
     db_path = resolve_sqlite_path(request.app.state.settings.database_url)
     corpus_ready = False
     model_ready = False
+    feedback_pair_count = 0
+    adapter_ready = (ADAPTER_PATH / "adapters.safetensors").exists()
     if db_path.exists():
         conn = sqlite3.connect(db_path)
         try:
             count = conn.execute("SELECT COUNT(*) FROM reply_pairs").fetchone()[0]
             corpus_ready = count > 0
-            model_ready = (ADAPTER_PATH / "adapters.safetensors").exists()
+            model_ready = adapter_ready
+            feedback_pair_count = conn.execute("SELECT COUNT(*) FROM feedback_pairs").fetchone()[0]
         except sqlite3.OperationalError:
             pass
         finally:
@@ -44,6 +47,8 @@ def get_api_config(request: Request) -> dict[str, Any]:
         "version": "0.1.0",
         "corpus_ready": corpus_ready,
         "model_ready": model_ready,
+        "feedback_pair_count": feedback_pair_count,
+        "adapter_ready": adapter_ready,
     }
 
 

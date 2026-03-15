@@ -252,7 +252,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   <div id="mainContent">
   <div class="tabs">
     <div class="tab active" data-tab="draft-reply">Draft Reply</div>
-    <div class="tab" data-tab="review-queue">Review Queue</div>
+    <div class="tab" data-tab="review-queue">Review Queue <span class="oc-tip" data-tip="Pre-loaded emails from your corpus. Edit drafts and submit to train your model.">?</span></div>
+  </div>
+
+  <!-- Progress nudge -->
+  <div id="progressNudge" class="progress-nudge" style="display:none;">
+    <div class="pn-text"><span id="pnCount">0</span>/10 feedback pairs collected<span class="pn-sub"> — <span id="pnRemaining">10</span> more until your first fine-tune tonight</span></div>
+    <div class="pn-bar-track"><div class="pn-bar-fill" id="pnBarFill" style="width:0%"></div></div>
   </div>
 
   <!-- Tab 1: Draft Reply -->
@@ -263,7 +269,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
         <textarea id="inbound" placeholder="Paste the inbound email here..."></textarea>
         <div style="margin-top: 0.5rem; display: flex; gap: 0.75rem; align-items: center;">
           <div style="flex: 1;">
-            <label for="sender" style="font-size: 0.85rem; color: #aaa; font-weight: 600;">Sender email</label>
+            <label for="sender" style="font-size: 0.85rem; color: #aaa; font-weight: 600;">Sender email <span class="oc-tip" data-tip="Helps YouOS find replies you sent to this person before and tailor the draft.">?</span></label>
             <input type="text" id="sender" placeholder="e.g. john@crelio.com" style="width:100%;padding:0.4rem 0.6rem;background:#16213e;border:1px solid #333;border-radius:6px;color:#e0e0e0;font-size:0.85rem;margin-top:0.2rem;">
           </div>
           <span id="senderBadge" style="font-size:0.75rem;padding:0.2rem 0.6rem;border-radius:4px;background:#333;color:#aaa;white-space:nowrap;margin-top:1.2rem;display:none;"></span>
@@ -298,7 +304,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     </div>
 
     <div class="btn-row">
-      <button class="btn-generate" id="btnGenerate">Generate Draft</button>
+      <button class="btn-generate" id="btnGenerate">Generate Draft <span class="oc-tip" data-tip="Retrieves similar past replies and generates a draft in your style." style="background:#005a4a;">?</span></button>
       <button class="btn-submit" id="btnSubmit" disabled>Submit Feedback</button>
     </div>
 
@@ -382,7 +388,36 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     <a href="https://github.com/DrBaher/youos" target="_blank">GitHub</a>
     <span>&middot;</span>
     <span>Your data stays local</span>
+    <span>&middot;</span>
+    <a href="#" id="showTourLink">Show tour</a>
   </footer>
+
+  <!-- ── Onboarding Tour ─────────────────────────────────── -->
+  <div id="tourOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9000;display:flex;align-items:center;justify-content:center;">
+    <div style="background:#0d1b2a;border:1px solid #00c4a7;border-radius:12px;padding:2.5rem;max-width:480px;width:90%;text-align:center;">
+      <div id="tourEmoji" style="font-size:2.5rem;margin-bottom:0.8rem;"></div>
+      <h2 id="tourTitle" style="color:#00c4a7;font-size:1.2rem;margin-bottom:0.6rem;"></h2>
+      <p id="tourBody" style="color:#aaa;font-size:0.9rem;line-height:1.6;margin-bottom:1.5rem;"></p>
+      <div style="display:flex;justify-content:center;gap:0.4rem;margin-bottom:1.5rem;" id="tourDots"></div>
+      <div style="display:flex;gap:0.8rem;justify-content:center;">
+        <button id="tourSkip" style="background:none;border:1px solid #333;color:#666;padding:0.5rem 1.2rem;border-radius:6px;cursor:pointer;font-size:0.85rem;">Skip</button>
+        <button id="tourNext" style="background:#00c4a7;border:none;color:#0d1b2a;padding:0.5rem 1.4rem;border-radius:6px;cursor:pointer;font-size:0.85rem;font-weight:600;">Next →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Progress Nudge ─────────────────────────────────── -->
+  <style>
+    .progress-nudge{background:#0d1b2a;border:1px solid #1e3a4a;border-radius:8px;padding:0.6rem 1rem;margin-bottom:1rem;}
+    .pn-text{font-size:0.82rem;color:#888;margin-bottom:0.4rem;}
+    .pn-text #pnCount{color:#00c4a7;font-weight:600;}
+    .pn-sub{color:#666;}
+    .pn-bar-track{background:#1e2a3a;border-radius:4px;height:4px;}
+    .pn-bar-fill{background:#00c4a7;height:4px;border-radius:4px;transition:width 0.4s ease;}
+    /* Tooltips */
+    .oc-tip{display:inline-block;width:14px;height:14px;border-radius:50%;background:#1e3a4a;color:#888;font-size:0.65rem;text-align:center;line-height:14px;cursor:help;margin-left:4px;position:relative;}
+    .oc-tip:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#0d1b2a;border:1px solid #00c4a7;color:#ccc;padding:0.4rem 0.6rem;border-radius:6px;font-size:0.75rem;white-space:normal;width:200px;z-index:100;text-align:left;line-height:1.4;}
+  </style>
 </div>
 
 <script>
@@ -911,6 +946,73 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       inbound.focus();
     }
   })();
+
+  // ── Onboarding Tour ──────────────────────────────────────
+  (function() {
+    const steps = [
+      { emoji: '✉️', title: 'Welcome to YouOS', body: 'Your personal email copilot. It learns how you write and drafts replies in your voice — grounded in your real past replies.' },
+      { emoji: '📝', title: 'Draft Reply tab', body: 'Paste an inbound email, add the sender\'s email for context, and click Generate Draft. Edit the result before submitting.' },
+      { emoji: '🔄', title: 'Review Queue tab', body: 'Review 10 pre-loaded emails at once. The fastest way to build training data for your model.' },
+      { emoji: '📊', title: 'Stats page', body: 'Track your corpus health, model status, benchmark scores, and cost savings over time.' },
+      { emoji: '🚀', title: 'You\'re ready!', body: 'Start by reviewing a batch of 10 emails. After 10 pairs, your model fine-tunes tonight and starts drafting in your exact style.' },
+    ];
+    let step = 0;
+    const overlay = document.getElementById('tourOverlay');
+    const title = document.getElementById('tourTitle');
+    const body = document.getElementById('tourBody');
+    const emoji = document.getElementById('tourEmoji');
+    const dots = document.getElementById('tourDots');
+    const nextBtn = document.getElementById('tourNext');
+    const skipBtn = document.getElementById('tourSkip');
+
+    function renderDots() {
+      dots.innerHTML = steps.map((_, i) =>
+        `<span style="width:8px;height:8px;border-radius:50%;background:${i===step?'#00c4a7':'#2a3a4a'};display:inline-block;"></span>`
+      ).join('');
+    }
+    function showStep(i) {
+      step = i;
+      const s = steps[i];
+      emoji.textContent = s.emoji;
+      title.textContent = s.title;
+      body.textContent = s.body;
+      nextBtn.textContent = i === steps.length - 1 ? 'Got it, let\'s go ✓' : 'Next →';
+      renderDots();
+    }
+    function startTour() {
+      overlay.style.display = 'flex';
+      showStep(0);
+    }
+    function endTour() {
+      overlay.style.display = 'none';
+      localStorage.setItem('youos_tour_done', '1');
+    }
+    nextBtn.addEventListener('click', () => {
+      if (step < steps.length - 1) showStep(step + 1);
+      else endTour();
+    });
+    skipBtn.addEventListener('click', endTour);
+    document.getElementById('showTourLink').addEventListener('click', (e) => {
+      e.preventDefault();
+      localStorage.removeItem('youos_tour_done');
+      startTour();
+    });
+    if (!localStorage.getItem('youos_tour_done')) startTour();
+  })();
+
+  // ── Progress Nudge ──────────────────────────────────────
+  (function() {
+    fetch('/api/config').then(r => r.json()).then(d => {
+      const count = d.feedback_pair_count || 0;
+      if (!d.adapter_ready && count < 10) {
+        document.getElementById('pnCount').textContent = count;
+        document.getElementById('pnRemaining').textContent = 10 - count;
+        document.getElementById('pnBarFill').style.width = (count / 10 * 100) + '%';
+        document.getElementById('progressNudge').style.display = 'block';
+      }
+    }).catch(() => {});
+  })();
+
 })();
 </script>
 </body>
