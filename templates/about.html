@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouOS — About</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: #1a1a2e; color: #e0e0e0; min-height: 100vh;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 2rem 1rem;
+}
+.container { width: 100%; max-width: 800px; }
+/* Header */
+.oc-header {
+  width: 100%; max-width: 800px;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 1rem 0 1.5rem; margin-bottom: 1rem;
+  border-bottom: 1px solid #2a3a4a;
+}
+.oc-logo { display: flex; align-items: center; gap: 0.5rem; }
+.oc-emoji { font-size: 1.4rem; }
+.oc-wordmark { font-size: 1.3rem; font-weight: 700; color: #00c4a7; letter-spacing: -0.02em; }
+.oc-nav { display: flex; gap: 1.5rem; }
+.oc-nav-link { color: #888; text-decoration: none; font-size: 0.85rem; font-weight: 500; transition: color 0.2s; }
+.oc-nav-link:hover, .oc-nav-link.active { color: #00c4a7; }
+/* Footer */
+.oc-footer {
+  width: 100%; max-width: 800px;
+  margin-top: 3rem; padding: 1rem 0;
+  border-top: 1px solid #1e2a3a;
+  display: flex; gap: 0.75rem; align-items: center;
+  font-size: 0.75rem; color: #444;
+}
+.oc-footer a { color: #555; text-decoration: none; }
+.oc-footer a:hover { color: #00c4a7; }
+/* Sections */
+.section { margin-bottom: 2.5rem; }
+.section-title {
+  font-size: 1.1rem; color: #00c4a7; font-weight: 700;
+  border-bottom: 1px solid #1e3a4a; padding-bottom: 0.5rem;
+  margin-bottom: 1rem;
+}
+/* Hero */
+.hero { text-align: center; padding: 2.5rem 0 2rem; }
+.hero-emoji { font-size: 2.5rem; margin-bottom: 0.5rem; }
+.hero-title { font-size: 1.8rem; color: #00c4a7; font-weight: 700; margin-bottom: 0.4rem; }
+.hero-sub { color: #aaa; font-size: 1rem; margin-bottom: 0.3rem; }
+.hero-tagline { color: #888; font-size: 0.9rem; margin-bottom: 1.5rem; }
+.hero-link {
+  display: inline-block; padding: 0.6rem 1.4rem;
+  background: transparent; border: 1px solid #00c4a7; color: #00c4a7;
+  border-radius: 6px; text-decoration: none; font-size: 0.9rem; font-weight: 600;
+  transition: background 0.2s, color 0.2s;
+}
+.hero-link:hover { background: #00c4a7; color: #1a1a2e; }
+/* Prose */
+.prose { color: #bbb; line-height: 1.7; font-size: 0.92rem; }
+.prose p { margin-bottom: 1rem; }
+/* Flow diagram */
+.flow-chain { display: flex; flex-direction: column; align-items: center; gap: 0; }
+.flow-box {
+  border: 1px solid #00c4a7; border-radius: 8px; padding: 0.6rem 1rem;
+  background: #0d1b2a; text-align: center; font-size: 0.88rem; color: #e0e0e0;
+  min-width: 220px;
+}
+.flow-box small { display: block; color: #888; font-size: 0.78rem; margin-top: 0.2rem; }
+.flow-arrow { color: #00c4a7; font-size: 1.3rem; line-height: 1; padding: 0.2rem 0; }
+.flow-row {
+  display: flex; gap: 1.5rem; align-items: center; justify-content: center; flex-wrap: wrap;
+}
+.flow-side-arrow { color: #00c4a7; font-size: 1.2rem; }
+/* Privacy table */
+.privacy-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.privacy-table th {
+  text-align: left; color: #00c4a7; font-weight: 600; padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid #1e3a4a;
+}
+.privacy-table td { padding: 0.6rem 0.8rem; color: #bbb; }
+.privacy-table tr:nth-child(even) td { background: #0d1b2a; }
+.privacy-table tr:nth-child(odd) td { background: #16213e; }
+.privacy-note {
+  margin-top: 1rem; padding: 0.75rem 1rem;
+  background: #0d1b2a; border-radius: 6px; border-left: 3px solid #00c4a7;
+  font-size: 0.85rem; color: #aaa; line-height: 1.5;
+}
+/* Autoresearch list */
+.ar-list { padding-left: 1.2rem; color: #bbb; font-size: 0.92rem; line-height: 1.8; }
+.ar-list li { margin-bottom: 0.3rem; }
+/* Tech stack grid */
+.tech-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem;
+}
+@media (max-width: 500px) { .tech-grid { grid-template-columns: 1fr; } }
+.tech-card {
+  background: #16213e; border: 1px solid #333; border-radius: 8px;
+  padding: 0.8rem 1rem; font-size: 0.88rem;
+}
+.tech-card strong { color: #00c4a7; }
+.tech-card span { color: #bbb; }
+/* FAQ */
+.faq-item { margin-bottom: 1rem; }
+.faq-q {
+  color: #00c4a7; font-weight: 600; font-size: 0.92rem;
+  cursor: pointer; padding: 0.5rem 0; user-select: none;
+}
+.faq-q::before { content: '+ '; color: #555; }
+.faq-q.open::before { content: '- '; }
+.faq-a {
+  display: none; color: #bbb; font-size: 0.88rem; line-height: 1.6;
+  padding: 0.3rem 0 0.5rem 1rem;
+}
+.faq-a.open { display: block; }
+/* CTA */
+.cta-row { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; margin-top: 1rem; }
+.cta-btn {
+  display: inline-block; padding: 0.7rem 1.6rem;
+  border-radius: 6px; text-decoration: none; font-size: 0.9rem; font-weight: 600;
+  transition: background 0.2s, color 0.2s;
+}
+.cta-primary { background: #00c4a7; color: #1a1a2e; }
+.cta-primary:hover { background: #00b398; }
+.cta-secondary { background: transparent; border: 1px solid #00c4a7; color: #00c4a7; }
+.cta-secondary:hover { background: #00c4a7; color: #1a1a2e; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header class="oc-header">
+    <div class="oc-logo">
+      <span class="oc-emoji">&#x2709;&#xFE0F;</span>
+      <span class="oc-wordmark" id="appName">YouOS</span>
+    </div>
+    <nav class="oc-nav">
+      <a href="/feedback" class="oc-nav-link">Draft</a>
+      <a href="/stats" class="oc-nav-link">Stats</a>
+      <a href="/bookmarklet" class="oc-nav-link">Bookmarklet</a>
+      <a href="/about" class="oc-nav-link active">About</a>
+    </nav>
+  </header>
+
+  <!-- Hero -->
+  <div class="hero">
+    <div class="hero-emoji">&#x2709;&#xFE0F;</div>
+    <h1 class="hero-title">YouOS</h1>
+    <p class="hero-sub">Your personal AI email copilot.</p>
+    <p class="hero-tagline">Local. Private. Self-improving.</p>
+    <a href="https://github.com/DrBaher/youos" target="_blank" class="hero-link">View on GitHub &#x2192;</a>
+  </div>
+
+  <!-- What is YouOS? -->
+  <div class="section">
+    <h2 class="section-title">What is YouOS?</h2>
+    <div class="prose">
+      <p>YouOS is not a generic AI email writer. It learns from YOUR sent emails &mdash; how you phrase things, how long you write, how you sign off &mdash; and drafts replies that actually sound like you.</p>
+      <p>It runs entirely on your Mac. No cloud. No subscriptions. Your data never leaves your machine.</p>
+    </div>
+  </div>
+
+  <!-- How it works -->
+  <div class="section">
+    <h2 class="section-title">How it works</h2>
+    <div class="flow-chain">
+      <div class="flow-box">Gmail (sent mail)</div>
+      <div class="flow-arrow">&darr;</div>
+      <div class="flow-box">Ingestion<small>gog CLI</small></div>
+      <div class="flow-arrow">&darr;</div>
+      <div class="flow-box">Reply Pairs DB<small>SQLite + FTS5</small></div>
+      <div class="flow-arrow">&darr;</div>
+      <div class="flow-row">
+        <div class="flow-box">Retrieval Engine<small>BM25 + semantic</small></div>
+        <div class="flow-side-arrow">&larr;</div>
+        <div class="flow-box">Your feedback<small>Review Queue</small></div>
+      </div>
+      <div class="flow-arrow">&darr;</div>
+      <div class="flow-row">
+        <div class="flow-box">Draft Generation<small>Qwen 1.5B local</small></div>
+        <div class="flow-side-arrow">&larr;</div>
+        <div class="flow-box">LoRA Fine-tuning<small>nightly</small></div>
+      </div>
+      <div class="flow-arrow">&darr;</div>
+      <div class="flow-row">
+        <div style="width:220px"></div>
+        <div class="flow-side-arrow" style="visibility:hidden">&larr;</div>
+        <div class="flow-box">Autoresearch<small>80 iterations</small></div>
+      </div>
+      <div class="flow-arrow">&darr;</div>
+      <div class="flow-box" style="border-color:#2ecc71;">Draft Reply</div>
+    </div>
+  </div>
+
+  <!-- Privacy model -->
+  <div class="section">
+    <h2 class="section-title">Privacy model</h2>
+    <table class="privacy-table">
+      <thead>
+        <tr><th>What</th><th>Where it lives</th><th>Leaves your machine?</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Your sent emails</td><td>~/Projects/youos/var/youos.db</td><td>&#x274C; Never</td></tr>
+        <tr><td>Raw email cache</td><td>~/Projects/youos/data/raw/</td><td>&#x274C; Never</td></tr>
+        <tr><td>LoRA model adapter</td><td>~/Projects/youos/models/</td><td>&#x274C; Never</td></tr>
+        <tr><td>Feedback pairs</td><td>SQLite (local)</td><td>&#x274C; Never</td></tr>
+        <tr><td>Draft generation (before local model)</td><td>Claude API call</td><td>&#x26A0;&#xFE0F; Email text sent to Anthropic</td></tr>
+        <tr><td>Draft generation (after local model trained)</td><td>Local Qwen (MLX)</td><td>&#x274C; Never</td></tr>
+      </tbody>
+    </table>
+    <div class="privacy-note">
+      Once your local Qwen model is trained (after ~10 feedback pairs), all generation happens on-device. No API calls.
+    </div>
+  </div>
+
+  <!-- Autoresearch -->
+  <div class="section">
+    <h2 class="section-title">Autoresearch</h2>
+    <div class="prose">
+      <p>YouOS uses an autoresearch loop inspired by Andrej Karpathy's autoresearch project. Every night, it:</p>
+    </div>
+    <ol class="ar-list">
+      <li>Ingests your new sent emails from the last 48 hours</li>
+      <li>Captures feedback pairs (comparing what YouOS would have drafted vs what you actually sent)</li>
+      <li>Fine-tunes the local Qwen model if enough new pairs exist</li>
+      <li>Runs 80 optimisation experiments &mdash; testing different retrieval settings and prompt variants</li>
+      <li>Keeps changes that improve your benchmark score, reverts changes that don't</li>
+    </ol>
+    <div class="prose" style="margin-top:1rem;">
+      <p>The result: YouOS gets a little better every night, automatically.</p>
+    </div>
+  </div>
+
+  <!-- Tech stack -->
+  <div class="section">
+    <h2 class="section-title">Tech stack</h2>
+    <div class="tech-grid">
+      <div class="tech-card"><strong>Model</strong><br><span>Qwen2.5-1.5B-Instruct (Apple Silicon, MLX)</span></div>
+      <div class="tech-card"><strong>Fine-tuning</strong><br><span>LoRA via mlx-lm (~3 min per run)</span></div>
+      <div class="tech-card"><strong>Database</strong><br><span>SQLite + FTS5 (local, no server)</span></div>
+      <div class="tech-card"><strong>Retrieval</strong><br><span>BM25 + sender-aware boosting + semantic embeddings</span></div>
+      <div class="tech-card"><strong>Backend</strong><br><span>Python + FastAPI</span></div>
+      <div class="tech-card"><strong>Email access</strong><br><span>gog CLI (Google Workspace)</span></div>
+      <div class="tech-card"><strong>Networking</strong><br><span>Tailscale (private HTTPS)</span></div>
+    </div>
+  </div>
+
+  <!-- FAQ -->
+  <div class="section">
+    <h2 class="section-title">FAQ</h2>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Does YouOS read my emails automatically?</div>
+      <div class="faq-a">Only sent mail, only when you run setup or nightly ingestion. It never reads in real-time.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">What if I want to delete my data?</div>
+      <div class="faq-a">Run <code>youos teardown</code>. Removes DB, model, and raw cache.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Can I use this without Apple Silicon?</div>
+      <div class="faq-a">Currently requires Apple Silicon (M1/M2/M3/M4) for the local model. The retrieval and drafting with Claude fallback work on any Mac.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Is this an OpenClaw skill?</div>
+      <div class="faq-a">Yes. Install via <code>clawhub install youos</code> or from <a href="https://github.com/DrBaher/youos" style="color:#00c4a7;">github.com/DrBaher/youos</a>.</div>
+    </div>
+  </div>
+
+  <!-- CTA -->
+  <div class="cta-row">
+    <a href="/feedback" class="cta-btn cta-primary">&#x2709;&#xFE0F; Open YouOS &#x2192;</a>
+    <a href="https://github.com/DrBaher/youos" target="_blank" class="cta-btn cta-secondary">View on GitHub &#x2192;</a>
+  </div>
+
+  <footer class="oc-footer">
+    <span>YouOS v0.1.0</span>
+    <span>&middot;</span>
+    <a href="https://github.com/DrBaher/youos" target="_blank">GitHub</a>
+    <span>&middot;</span>
+    <span>Your data stays local</span>
+  </footer>
+</div>
+
+<script>
+fetch('/api/config').then(r => r.json()).then(d => {
+  if (d.display_name) document.getElementById('appName').textContent = d.display_name;
+}).catch(() => {});
+</script>
+</body>
+</html>

@@ -33,6 +33,15 @@ _BOOKMARKLET_ROUTER = APIRouter(tags=["bookmarklet"])
 BOOKMARKLET_TEMPLATE = TEMPLATE_DIR / "bookmarklet.html"
 
 
+ABOUT_TEMPLATE = TEMPLATE_DIR / "about.html"
+
+
+@_BOOKMARKLET_ROUTER.get("/about", response_class=HTMLResponse)
+def about_page() -> HTMLResponse:
+    html = ABOUT_TEMPLATE.read_text(encoding="utf-8")
+    return HTMLResponse(content=html)
+
+
 @_BOOKMARKLET_ROUTER.get("/bookmarklet", response_class=HTMLResponse)
 def bookmarklet_page(request: Request) -> HTMLResponse:
     base_url = str(request.base_url).rstrip("/")

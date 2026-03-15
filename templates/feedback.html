@@ -234,6 +234,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       <a href="/feedback" class="oc-nav-link active">Draft</a>
       <a href="/stats" class="oc-nav-link">Stats</a>
       <a href="/bookmarklet" class="oc-nav-link">Bookmarklet</a>
+      <a href="/about" class="oc-nav-link">About</a>
     </nav>
   </header>
 
@@ -950,11 +951,12 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   // ── Onboarding Tour ──────────────────────────────────────
   (function() {
     const steps = [
-      { emoji: '✉️', title: 'Welcome to YouOS', body: 'Your personal email copilot. It learns how you write and drafts replies in your voice — grounded in your real past replies.' },
-      { emoji: '📝', title: 'Draft Reply tab', body: 'Paste an inbound email, add the sender\'s email for context, and click Generate Draft. Edit the result before submitting.' },
-      { emoji: '🔄', title: 'Review Queue tab', body: 'Review 10 pre-loaded emails at once. The fastest way to build training data for your model.' },
-      { emoji: '📊', title: 'Stats page', body: 'Track your corpus health, model status, benchmark scores, and cost savings over time.' },
-      { emoji: '🚀', title: 'You\'re ready!', body: 'Start by reviewing a batch of 10 emails. After 10 pairs, your model fine-tunes tonight and starts drafting in your exact style.' },
+      { emoji: '✉️', title: 'Your email. Your model.', body: 'YouOS is a personal AI that learns how you write — from your own sent emails. Not a generic assistant. Your voice, your patterns, your style.' },
+      { emoji: '🔒', title: 'Privacy by design', body: 'Your emails never leave your Mac. Everything runs locally: the database, the model, the training. No cloud subscriptions. No data sent to third parties.' },
+      { emoji: '🧠', title: 'It learns from you', body: 'YouOS ingests your Gmail history and builds a retrieval index of your real past replies. Every draft is grounded in how you\'ve actually responded to similar emails before.' },
+      { emoji: '🔄', title: 'Autoresearch: it improves overnight', body: 'Inspired by Andrej Karpathy\'s autoresearch, YouOS runs 80 optimisation experiments every night — testing retrieval weights, prompt variants, and model configs. It keeps what works, discards what doesn\'t. You wake up to a better system.' },
+      { emoji: '📝', title: 'Draft Reply tab', body: 'Paste an inbound email. Add the sender for contact context. Click Generate Draft — YouOS retrieves similar past replies and generates a draft grounded in your real writing.' },
+      { emoji: '🚀', title: 'Start with the Review Queue', body: 'Review 10 pre-loaded emails from your corpus. Each submission trains your local model. After 10 pairs, the fine-tune runs tonight and your model starts drafting in your exact style.' },
     ];
     let step = 0;
     const overlay = document.getElementById('tourOverlay');
