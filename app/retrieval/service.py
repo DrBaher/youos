@@ -122,6 +122,7 @@ class RetrievalConfig:
     semantic_min_coverage: float = 0.1
     sender_type_boost: float = 0.15
     sender_domain_boost: float = 0.10
+    sender_type_boost_map: dict[str, float] = field(default_factory=dict)
 
 
 def _has_fts5_table(connection: sqlite3.Connection, table_name: str) -> bool:
@@ -730,6 +731,7 @@ class RetrievalService:
 
         # Sender-aware boosts
         sender_bonus = 0.0
+        sender_multiplier = 1.0
         if sender_type_hint and inbound_author:
             stored_sender_type = classify_sender(inbound_author)
             if stored_sender_type == sender_type_hint:
@@ -738,8 +740,12 @@ class RetrievalService:
                 stored_domain = extract_domain(inbound_author)
                 if stored_domain and stored_domain == sender_domain_hint:
                     sender_bonus += self.config.sender_domain_boost
+            # Apply per-type boost multiplier if available
+            if self.config.sender_type_boost_map and sender_type_hint in self.config.sender_type_boost_map:
+                sender_multiplier = self.config.sender_type_boost_map[sender_type_hint]
 
-        return source_weight + recency_bonus + account_bonus + sender_bonus
+        base = source_weight + recency_bonus + account_bonus + sender_bonus
+        return base * sender_multiplier
 
 
 def retrieve_context(
@@ -802,6 +808,9 @@ def _load_retrieval_config(configs_dir: Path) -> RetrievalConfig:
             semantic_min_coverage=float(payload.get("semantic_min_coverage", 0.1)),
             sender_type_boost=float(payload.get("sender_type_boost", 0.15)),
             sender_domain_boost=float(payload.get("sender_domain_boost", 0.10)),
+            sender_type_boost_map={
+                str(k): float(v) for k, v in (payload.get("sender_type_boost_map") or {}).items()
+            },
         )
 
     # Legacy path

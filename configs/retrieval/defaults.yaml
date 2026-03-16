@@ -12,3 +12,10 @@ semantic_min_coverage: 0.1
 # Sender-aware retrieval boosts
 sender_type_boost: 0.15
 sender_domain_boost: 0.10
+
+# Per-sender-type boost multipliers (applied to match scores)
+sender_type_boost_map:
+  external_client: 1.3
+  personal: 0.8
+  automated: 0.3
+  internal: 1.5

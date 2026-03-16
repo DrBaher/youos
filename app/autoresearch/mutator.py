@@ -47,6 +47,12 @@ _NUMERIC_SURFACES: list[dict[str, Any]] = [
     },  # noqa: E501
 ]
 
+# Per-sender-type boost surfaces (nested under sender_type_boost_map)
+_SENDER_TYPE_BOOST_SURFACES: list[dict[str, Any]] = [
+    {"name": f"sender_type_boost_{st}", "sender_type": st, "step_size": 0.1, "min_val": 0.5, "max_val": 2.0}
+    for st in ("external_client", "personal", "automated", "internal")
+]
+
 # -- Prompt variant definitions ─────────────────────────────────────
 
 _DRAFTING_PROMPT_VARIANTS: list[str] = [
@@ -123,6 +129,24 @@ def get_mutable_surfaces(configs_dir: Path, *, surface_filter: str | None = None
                 )
             )
 
+        # Sender-type boost map surfaces
+        boost_map = retrieval_data.get("sender_type_boost_map", {})
+        for spec in _SENDER_TYPE_BOOST_SURFACES:
+            st = spec["sender_type"]
+            current = float(boost_map.get(st, 1.0))
+            surfaces.append(
+                ConfigSurface(
+                    name=spec["name"],
+                    config_file="retrieval/defaults.yaml",
+                    yaml_key=f"sender_type_boost_map.{st}",
+                    current_value=current,
+                    mutation_type="numeric_step",
+                    step_size=spec["step_size"],
+                    min_val=spec["min_val"],
+                    max_val=spec["max_val"],
+                )
+            )
+
     if surface_filter is None or surface_filter == "prompt_drafting":
         prompts_path = configs_dir / "prompts.yaml"
         prompts_data = yaml.safe_load(prompts_path.read_text(encoding="utf-8")) or {}
@@ -161,7 +185,7 @@ def apply_mutation(surface: ConfigSurface, configs_dir: Path) -> Any:
         new_value = _next_numeric_value(surface)
         if new_value == old_value:
             return old_value  # at boundary, no mutation possible
-        data[surface.yaml_key] = new_value
+        _set_nested(data, surface.yaml_key, new_value)
         surface.current_value = new_value
     elif surface.mutation_type == "template_variant":
         new_index = (surface.variant_index + 1) % len(surface.variants)
@@ -181,7 +205,7 @@ def revert_mutation(surface: ConfigSurface, old_value: Any, configs_dir: Path) -
     file_path = configs_dir / surface.config_file
     raw = file_path.read_text(encoding="utf-8")
     data = yaml.safe_load(raw) or {}
-    data[surface.yaml_key] = old_value
+    _set_nested(data, surface.yaml_key, old_value)
     surface.current_value = old_value
     # For template variants, find the matching index
     if surface.mutation_type == "template_variant" and surface.variants:
@@ -218,6 +242,18 @@ def _next_numeric_value(surface: ConfigSurface) -> Any:
             return surface.current_value  # at boundary
         return alt
     return new_val
+
+
+def _set_nested(data: dict[str, Any], key: str, value: Any) -> None:
+    """Set a value in a dict, supporting dotted keys like 'sender_type_boost_map.internal'."""
+    parts = key.split(".")
+    if len(parts) == 1:
+        data[key] = value
+    else:
+        obj = data
+        for part in parts[:-1]:
+            obj = obj.setdefault(part, {})
+        obj[parts[-1]] = value
 
 
 def _write_yaml(path: Path, data: dict[str, Any]) -> None:
