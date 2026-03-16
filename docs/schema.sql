@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS sender_profiles (
     relationship_note TEXT,
     reply_count INTEGER DEFAULT 0,
     avg_reply_words REAL,
+    avg_response_hours REAL,
     first_seen TEXT,
     last_seen TEXT,
     topics_json TEXT DEFAULT '[]',

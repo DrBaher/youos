@@ -24,6 +24,7 @@ def bootstrap_database() -> Path:
         connection.executescript(schema_sql)
         _migrate_feedback_pairs(connection)
         _migrate_reply_pairs(connection)
+        _migrate_sender_profiles(connection)
         _populate_fts(connection)
         connection.commit()
     finally:
@@ -46,6 +47,16 @@ def _migrate_reply_pairs(connection: sqlite3.Connection) -> None:
     cols = {row[1] for row in connection.execute("PRAGMA table_info(reply_pairs)").fetchall()}
     if "quality_score" not in cols:
         connection.execute("ALTER TABLE reply_pairs ADD COLUMN quality_score REAL DEFAULT 1.0")
+
+
+def _migrate_sender_profiles(connection: sqlite3.Connection) -> None:
+    """Add avg_response_hours column to sender_profiles if missing."""
+    try:
+        cols = {row[1] for row in connection.execute("PRAGMA table_info(sender_profiles)").fetchall()}
+    except Exception:
+        return
+    if "avg_response_hours" not in cols:
+        connection.execute("ALTER TABLE sender_profiles ADD COLUMN avg_response_hours REAL")
 
 
 def _populate_fts(connection: sqlite3.Connection) -> None:

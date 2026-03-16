@@ -228,7 +228,7 @@ def lookup_sender_profile(email: str, database_url: str) -> dict[str, Any] | Non
         row = conn.execute("SELECT * FROM sender_profiles WHERE email = ?", (email.lower(),)).fetchone()
         if not row:
             return None
-        return {
+        profile_dict = {
             "email": row["email"],
             "display_name": row["display_name"],
             "domain": row["domain"],
@@ -241,6 +241,12 @@ def lookup_sender_profile(email: str, database_url: str) -> dict[str, Any] | Non
             "last_seen": row["last_seen"],
             "topics": json.loads(row["topics_json"]) if row["topics_json"] else [],
         }
+        # Include avg_response_hours if available
+        try:
+            profile_dict["avg_response_hours"] = row["avg_response_hours"]
+        except (IndexError, KeyError):
+            pass
+        return profile_dict
     finally:
         conn.close()
 
@@ -311,7 +317,7 @@ def _format_sender_context(profile: dict[str, Any]) -> str:
     """Format sender profile into a prompt context block."""
     user_name = get_user_name()
     topics = ", ".join(profile.get("topics", [])) or "none recorded"
-    return (
+    result = (
         f"[SENDER CONTEXT]\n"
         f"Sender: {profile.get('display_name') or 'Unknown'} <{profile['email']}>\n"
         f"Company: {profile.get('company') or 'Unknown'}\n"
@@ -321,6 +327,10 @@ def _format_sender_context(profile: dict[str, Any]) -> str:
         f"Avg reply length: {profile.get('avg_reply_words') or 'N/A'} words.\n"
         f"Topics discussed: {topics}"
     )
+    avg_response_hours = profile.get("avg_response_hours")
+    if avg_response_hours is not None:
+        result += f"\nTypical reply time to this sender: ~{int(avg_response_hours)}h"
+    return result
 
 
 def assemble_prompt(

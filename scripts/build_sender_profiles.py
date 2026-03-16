@@ -6,7 +6,9 @@ import argparse
 import json
 import re
 import sqlite3
+import statistics
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 from app.core.sender import _PERSONAL_DOMAINS, classify_sender, extract_domain
@@ -148,13 +150,61 @@ def extract_topics(subjects: list[str], top_n: int = 3) -> list[str]:
     return [w for w, _ in counter.most_common(top_n)]
 
 
-def build_profiles(db_path: Path, *, limit: int | None = None, dry_run: bool = False) -> tuple[int, int]:
+def _compute_avg_response_hours(timestamps: list[str]) -> float | None:
+    """Compute median hours between consecutive paired_at timestamps.
+
+    Returns None if fewer than 3 data points.
+    """
+    if len(timestamps) < 3:
+        return None
+
+    parsed: list[datetime] = []
+    for ts in timestamps:
+        if not ts:
+            continue
+        try:
+            normalized = ts.strip()
+            if normalized.endswith("Z"):
+                normalized = normalized[:-1] + "+00:00"
+            parsed.append(datetime.fromisoformat(normalized))
+        except (ValueError, TypeError):
+            continue
+
+    if len(parsed) < 3:
+        return None
+
+    parsed.sort()
+    intervals = []
+    for i in range(1, len(parsed)):
+        delta = (parsed[i] - parsed[i - 1]).total_seconds() / 3600.0
+        if delta > 0:
+            intervals.append(delta)
+
+    if not intervals:
+        return None
+
+    return round(statistics.median(intervals), 1)
+
+
+def build_profiles(
+    db_path: Path,
+    *,
+    limit: int | None = None,
+    dry_run: bool = False,
+    sender_email: str | None = None,
+) -> tuple[int, int]:
     """Build sender profiles from reply_pairs. Returns (new_count, updated_count)."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
         # Get unique inbound authors
-        rows = conn.execute("SELECT DISTINCT inbound_author FROM reply_pairs WHERE inbound_author IS NOT NULL").fetchall()
+        if sender_email:
+            rows = conn.execute(
+                "SELECT DISTINCT inbound_author FROM reply_pairs WHERE inbound_author IS NOT NULL AND inbound_author LIKE ?",
+                (f"%{sender_email}%",),
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT DISTINCT inbound_author FROM reply_pairs WHERE inbound_author IS NOT NULL").fetchall()
         authors = [r["inbound_author"] for r in rows]
         if limit:
             authors = authors[:limit]
@@ -180,6 +230,7 @@ def build_profiles(db_path: Path, *, limit: int | None = None, dry_run: bool = F
             timestamps = [r["paired_at"] for r in pairs if r["paired_at"]]
             first_seen = min(timestamps) if timestamps else None
             last_seen = max(timestamps) if timestamps else None
+            avg_response_hours = _compute_avg_response_hours(timestamps)
 
             # Get subjects for topic extraction
             subject_rows = conn.execute(
@@ -206,19 +257,20 @@ def build_profiles(db_path: Path, *, limit: int | None = None, dry_run: bool = F
                 conn.execute(
                     """UPDATE sender_profiles SET
                         display_name = ?, domain = ?, company = ?, sender_type = ?,
-                        reply_count = ?, avg_reply_words = ?, first_seen = ?, last_seen = ?,
+                        reply_count = ?, avg_reply_words = ?, avg_response_hours = ?,
+                        first_seen = ?, last_seen = ?,
                         topics_json = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE email = ?""",
-                    (display_name, domain, company, sender_type, reply_count, avg_reply_words, first_seen, last_seen, json.dumps(topics), email),
+                    (display_name, domain, company, sender_type, reply_count, avg_reply_words, avg_response_hours, first_seen, last_seen, json.dumps(topics), email),
                 )
                 updated_count += 1
             else:
                 conn.execute(
                     """INSERT INTO sender_profiles
                         (email, display_name, domain, company, sender_type,
-                         reply_count, avg_reply_words, first_seen, last_seen, topics_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (email, display_name, domain, company, sender_type, reply_count, avg_reply_words, first_seen, last_seen, json.dumps(topics)),
+                         reply_count, avg_reply_words, avg_response_hours, first_seen, last_seen, topics_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (email, display_name, domain, company, sender_type, reply_count, avg_reply_words, avg_response_hours, first_seen, last_seen, json.dumps(topics)),
                 )
                 new_count += 1
 
