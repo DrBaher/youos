@@ -59,4 +59,4 @@ YouOS does not automatically delete any data. Your corpus grows over time as new
 
 ## Contact
 
-YouOS is open source. If you have privacy questions or concerns, open an issue at https://github.com/openclaw/youos.
+YouOS is open source. If you have privacy questions or concerns, open an issue at https://github.com/DrBaher/youos.

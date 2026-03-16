@@ -12,6 +12,6 @@ ranking:
     google_doc: 0.9
     whatsapp_export: 0.6
 deferred:
-  embedding_model: TODO
-  reranker: TODO
-  routing_policy: TODO
+  embedding_model: mlx-community/Qwen2.5-1.5B-Instruct-4bit  # used when embeddings enabled
+  reranker: none  # future: cross-encoder reranking
+  routing_policy: auto  # future: work/personal mode routing

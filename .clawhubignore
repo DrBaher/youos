@@ -1,0 +1,7 @@
+# Exclude from clawhub publish (gitignore is also applied automatically)
+.github/
+tests/
+fixtures/
+var/
+.herenow/
+configs/persona_analysis.json
