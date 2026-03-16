@@ -33,6 +33,7 @@ def test_analyze_empty_db():
     conn.execute("""
         CREATE TABLE reply_pairs (
             id INTEGER PRIMARY KEY,
+            inbound_text TEXT,
             reply_text TEXT,
             inbound_author TEXT,
             reply_author TEXT,
@@ -57,6 +58,7 @@ def test_analyze_with_data():
     conn.execute("""
         CREATE TABLE reply_pairs (
             id INTEGER PRIMARY KEY,
+            inbound_text TEXT,
             reply_text TEXT,
             inbound_author TEXT,
             reply_author TEXT,
@@ -101,6 +103,7 @@ def test_analyze_style_metrics_values():
     conn.execute("""
         CREATE TABLE reply_pairs (
             id INTEGER PRIMARY KEY,
+            inbound_text TEXT,
             reply_text TEXT,
             inbound_author TEXT,
             reply_author TEXT,
