@@ -30,12 +30,8 @@ def get_history(
         # Check which columns exist (intent/confidence may not be present in older schemas)
         col_names = {row[1] for row in conn.execute("PRAGMA table_info(draft_history)").fetchall()}
         has_intent = "intent" in col_names
-        has_confidence = "confidence" in col_names
 
-        select_cols = (
-            "id, inbound_text, sender, generated_draft, final_reply, "
-            "edit_distance_pct, confidence, model_used, retrieval_method, created_at"
-        )
+        select_cols = "id, inbound_text, sender, generated_draft, final_reply, edit_distance_pct, confidence, model_used, retrieval_method, created_at"
         if has_intent:
             select_cols += ", intent"
         rows = conn.execute(

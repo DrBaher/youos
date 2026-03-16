@@ -317,9 +317,7 @@ def annotate_intents(db_path: Path) -> int:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute(
-            "SELECT id, inbound_text, metadata_json FROM reply_pairs WHERE inbound_text IS NOT NULL"
-        ).fetchall()
+        rows = conn.execute("SELECT id, inbound_text, metadata_json FROM reply_pairs WHERE inbound_text IS NOT NULL").fetchall()
         count = 0
         for row in rows:
             meta = json.loads(row["metadata_json"]) if row["metadata_json"] else {}

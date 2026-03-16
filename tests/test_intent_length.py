@@ -1,8 +1,6 @@
 """Tests for per-intent reply length calibration (Item 4)."""
 
-import json
 import sqlite3
-import statistics
 
 from app.generation.service import _compute_max_tokens, assemble_prompt
 
