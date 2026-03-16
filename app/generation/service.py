@@ -245,18 +245,52 @@ def lookup_sender_profile(email: str, database_url: str) -> dict[str, Any] | Non
         conn.close()
 
 
+_GREETING_WORDS = frozenset({"hi", "hello", "hey", "dear"})
+
+
+def _subject_fallback(inbound_text: str) -> str | None:
+    """Rule-based subject line fallback.
+
+    1. If inbound has 'Subject:' header: strip 'Re:' prefixes, return 'Re: <subject>'
+    2. Else: first 8 non-greeting words, capitalized
+    3. If result < 3 chars: return None
+    """
+    # Check for Subject: header
+    for line in inbound_text.split("\n")[:5]:
+        stripped = line.strip()
+        if stripped.lower().startswith("subject:"):
+            subj = stripped[len("subject:"):].strip()
+            # Strip any existing Re: prefixes
+            while subj.lower().startswith("re:"):
+                subj = subj[3:].strip()
+            if subj and len(subj) >= 3:
+                return f"Re: {subj}"
+
+    # Take first 8 words, strip greeting words
+    words = inbound_text.split()[:12]
+    filtered = [w for w in words if w.lower().rstrip(",.!") not in _GREETING_WORDS][:8]
+    if filtered:
+        result = " ".join(filtered).capitalize()
+        # Clean trailing punctuation for subject line
+        result = result.rstrip(",.")
+        if len(result) >= 3:
+            return result
+
+    return None
+
+
 def generate_subject(inbound_text: str, draft: str, database_url: str, configs_dir: Path) -> str | None:
     """Generate a subject line for the draft reply."""
-    # If inbound has a subject-like line (Re: ..., Subject: ...), return that
-    for line in inbound_text.split("\n")[:5]:
-        line = line.strip()
-        if line.lower().startswith("subject:"):
-            subj = line[len("subject:") :].strip()
-            if subj:
-                if not subj.lower().startswith("re:"):
-                    return f"Re: {subj}"
-                return subj
-    # Generate via claude CLI
+    # Try rule-based fallback first
+    fallback = _subject_fallback(inbound_text)
+    if fallback is not None:
+        return fallback
+
+    # Only call Claude CLI if fallback returned None and model fallback != 'none'
+    model_fallback = get_model_fallback()
+    if model_fallback == "none":
+        return None
+
     try:
         prompt = (
             "Generate a concise email subject line (under 60 chars) for this reply.\n\n"
