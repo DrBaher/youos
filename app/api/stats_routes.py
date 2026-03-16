@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -112,6 +113,31 @@ def stats_data(request: Request) -> dict[str, Any]:
 
     total_feedback = corpus["total_feedback_pairs"]
 
+    # Style drift detection
+    drift_info: dict[str, Any] = {"status": "stable", "message": "Stable"}
+    drift_path = ROOT_DIR / "var" / "persona_drift.jsonl"
+    if drift_path.exists():
+        lines = drift_path.read_text(encoding="utf-8").strip().split("\n")
+        lines = [ln for ln in lines if ln.strip()]
+        if len(lines) >= 2:
+            try:
+                prev = json.loads(lines[-2])
+                curr = json.loads(lines[-1])
+                word_delta = curr.get("avg_reply_words", 0) - prev.get("avg_reply_words", 0)
+                directness_delta = curr.get("directness_score", 0) - prev.get("directness_score", 0)
+                if abs(word_delta) > 8 or abs(directness_delta) > 0.15:
+                    drift_info["status"] = "drifting"
+                    parts = []
+                    if abs(word_delta) > 8:
+                        direction = "shorter" if word_delta < 0 else "longer"
+                        parts.append(f"replies getting {direction} ({word_delta:+.0f} words)")
+                    if abs(directness_delta) > 0.15:
+                        direction = "more direct" if directness_delta > 0 else "less direct"
+                        parts.append(f"tone {direction}")
+                    drift_info["message"] = "Drifting: " + ", ".join(parts)
+            except (json.JSONDecodeError, IndexError):
+                pass
+
     return {
         "pipeline_last_run": pipeline_last_run,
         "corpus": corpus,
@@ -129,4 +155,5 @@ def stats_data(request: Request) -> dict[str, Any]:
             "local_drafts": 0,
             "claude_drafts": total_feedback,
         },
+        "style_drift": drift_info,
     }

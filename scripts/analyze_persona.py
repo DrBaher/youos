@@ -338,6 +338,22 @@ def main() -> None:
         output_path.write_text(json.dumps(findings, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"\nFindings written to {output_path}")
 
+        # Append drift entry
+        from datetime import datetime, timezone
+
+        drift_path = ROOT_DIR / "var" / "persona_drift.jsonl"
+        drift_path.parent.mkdir(parents=True, exist_ok=True)
+        drift_entry = {
+            "analyzed_at": datetime.now(timezone.utc).isoformat(),
+            "avg_reply_words": findings.get("reply_length", {}).get("avg_words", 0),
+            "directness_score": findings.get("directness_score", 0),
+            "bullet_point_pct": findings.get("bullet_point_pct", 0),
+            "avg_paragraphs": findings.get("avg_paragraphs", 0),
+        }
+        with open(drift_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(drift_entry, ensure_ascii=False) + "\n")
+        print(f"Drift entry appended to {drift_path}")
+
 
 if __name__ == "__main__":
     main()

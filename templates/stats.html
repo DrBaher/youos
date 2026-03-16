@@ -132,6 +132,7 @@ body {
         <div class="stat-row"><span class="stat-label">Adapter trained at</span><span class="stat-value" id="loraTrained">-</span></div>
         <div class="stat-row"><span class="stat-label">Pairs used for fine-tune</span><span class="stat-value" id="loraPairs">-</span></div>
         <div class="stat-row"><span class="stat-label">Last fine-tune run</span><span class="stat-value" id="lastFinetune">-</span></div>
+        <div class="stat-row"><span class="stat-label">Style Drift</span><span class="stat-value" id="styleDrift">-</span></div>
         <button class="btn-autoresearch" id="btnAutoresearch">Run autoresearch now</button>
       </div>
 
@@ -248,6 +249,16 @@ body {
       document.getElementById('loraTrained').textContent = d.model.lora_trained_at || 'N/A';
       document.getElementById('loraPairs').textContent = (d.model.lora_pairs_used || 0).toLocaleString();
       document.getElementById('lastFinetune').textContent = d.model.last_finetune_run || 'N/A';
+
+      // Style drift
+      if (d.style_drift) {
+        var driftEl = document.getElementById('styleDrift');
+        if (d.style_drift.status === 'drifting') {
+          driftEl.innerHTML = '<span style="color:#f0ad4e;font-weight:700;">\u26A0 ' + d.style_drift.message + '</span>';
+        } else {
+          driftEl.innerHTML = '<span style="color:#00c4a7;">\u2713 Stable</span>';
+        }
+      }
 
       // Pipeline status
       if (d.pipeline_last_run) {
