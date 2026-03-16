@@ -86,8 +86,23 @@ def _make_case_key(subject: str | None, inbound_text: str) -> str:
     return key[:50] if key else "case"
 
 
-def generate_cases(db_path: Path, count: int = 15) -> list[dict]:
-    """Sample reply pairs and generate benchmark cases."""
+def generate_cases(db_path: Path, count: int = 15, sample_size: int = 30, seed: int | None = None) -> list[dict]:
+    """Sample reply pairs and generate benchmark cases.
+
+    Args:
+        count: Number of benchmark cases to generate.
+        sample_size: Size of random sample pool from reply_pairs.
+        seed: Random seed for reproducibility. If None, uses hash of current ISO week.
+    """
+    import random
+
+    if seed is None:
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        seed = hash(now.isocalendar()[:2])  # (year, week_number)
+
+    rng = random.Random(seed)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
@@ -101,9 +116,15 @@ def generate_cases(db_path: Path, count: int = 15) -> list[dict]:
 
         all_rows = conn.execute(
             "SELECT id, inbound_text, reply_text, inbound_author, metadata_json "
-            "FROM reply_pairs WHERE reply_text IS NOT NULL AND LENGTH(reply_text) > 20 "
-            "ORDER BY RANDOM()"
+            "FROM reply_pairs WHERE reply_text IS NOT NULL AND LENGTH(reply_text) > 20"
         ).fetchall()
+
+        # Shuffle using our seeded RNG instead of SQL RANDOM()
+        all_rows = list(all_rows)
+        rng.shuffle(all_rows)
+        # Limit to sample_size for random rotation
+        if sample_size and len(all_rows) > sample_size:
+            all_rows = all_rows[:sample_size]
 
         if not all_rows:
             return []
@@ -235,6 +256,7 @@ def update_refresh_count(reply_pair_count: int) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate benchmark cases from email corpus")
     parser.add_argument("--count", type=int, default=15, help="Number of cases to generate")
+    parser.add_argument("--sample-size", type=int, default=30, help="Random sample pool size (default: 30)")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be generated")
     args = parser.parse_args()
 
@@ -248,7 +270,7 @@ def main() -> None:
         print("No database found. Run 'youos setup' first.")
         sys.exit(1)
 
-    cases = generate_cases(db_path, count=args.count)
+    cases = generate_cases(db_path, count=args.count, sample_size=args.sample_size)
     if not cases:
         print("Not enough reply pairs to generate benchmarks.")
         sys.exit(1)
