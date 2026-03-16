@@ -23,9 +23,13 @@ body {
 .oc-logo { display: flex; align-items: center; gap: 0.5rem; }
 .oc-emoji { font-size: 1.4rem; }
 .oc-wordmark { font-size: 1.3rem; font-weight: 700; color: #00c4a7; letter-spacing: -0.02em; }
-.oc-nav { display: flex; gap: 1.5rem; }
+.oc-nav { display: flex; gap: 1.5rem; flex-wrap: wrap; }
 .oc-nav-link { color: #888; text-decoration: none; font-size: 0.85rem; font-weight: 500; transition: color 0.2s; }
 .oc-nav-link:hover, .oc-nav-link.active { color: #00c4a7; }
+@media (max-width: 768px) {
+  .oc-header { flex-wrap: wrap; gap: 0.5rem; }
+  .oc-nav { gap: 1rem; }
+}
 /* Footer */
 .oc-footer {
   width: 100%; max-width: 1100px;
@@ -51,7 +55,7 @@ body {
   display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;
   margin-bottom: 1.5rem;
 }
-@media (max-width: 700px) { .panels { grid-template-columns: 1fr; } }
+@media (max-width: 768px) { .panels { grid-template-columns: 1fr; } }
 .panel { display: flex; flex-direction: column; }
 .panel label { font-size: 0.85rem; color: #aaa; margin-bottom: 0.4rem; font-weight: 600; }
 textarea {
@@ -66,6 +70,7 @@ textarea:focus { outline: none; border-color: #7b61ff; }
   flex-wrap: wrap; margin-bottom: 1.5rem;
 }
 .meta-row .field { flex: 1; min-width: 200px; }
+@media (max-width: 768px) { .meta-row { flex-direction: column; align-items: stretch; } .meta-row .field { min-width: 0; } }
 .meta-row .field label { font-size: 0.85rem; color: #aaa; display: block; margin-bottom: 0.3rem; font-weight: 600; }
 .meta-row .field input[type="text"] {
   width: 100%; padding: 0.5rem 0.75rem;
@@ -165,12 +170,12 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .rq-card-body {
   display: grid; grid-template-columns: 1fr 1fr; gap: 0; min-height: 300px;
 }
-@media (max-width: 700px) { .rq-card-body { grid-template-columns: 1fr; } }
+@media (max-width: 768px) { .rq-card-body { grid-template-columns: 1fr; } }
 .rq-inbound, .rq-draft {
   padding: 1rem; display: flex; flex-direction: column;
 }
 .rq-inbound { border-right: 1px solid #333; }
-@media (max-width: 700px) { .rq-inbound { border-right: none; border-bottom: 1px solid #333; } }
+@media (max-width: 768px) { .rq-inbound { border-right: none; border-bottom: 1px solid #333; } }
 .rq-section-title {
   font-size: 0.75rem; font-weight: 700; color: #888; text-transform: uppercase;
   letter-spacing: 0.05em; margin-bottom: 0.6rem;
