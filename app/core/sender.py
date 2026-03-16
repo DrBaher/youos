@@ -11,6 +11,43 @@ SenderType = Literal["internal", "external_client", "personal", "automated", "un
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
 
+_TITLE_PREFIXES = re.compile(r"^(dr\.?|prof\.?|mr\.?|mrs\.?|ms\.?|sir)\s+", re.IGNORECASE)
+
+
+def first_name_from_display_name(display_name: str | None) -> str | None:
+    """Extract first name from a display name string.
+
+    Handles: "Sarah Mitchell", "Dr. Baher", "sarah.mitchell@company.com", etc.
+    Returns None if unparseable.
+    """
+    if not display_name or not display_name.strip():
+        return None
+
+    name = display_name.strip()
+
+    # If it looks like an email, extract from local part
+    if "@" in name:
+        local = name.split("@")[0]
+        # Split on dots, hyphens, underscores
+        parts = re.split(r"[._\-]", local)
+        if parts and parts[0]:
+            return parts[0].capitalize()
+        return None
+
+    # Strip titles
+    name = _TITLE_PREFIXES.sub("", name).strip()
+
+    if not name:
+        return None
+
+    # Take first word as first name
+    first = name.split()[0]
+    # Remove any trailing punctuation
+    first = first.rstrip(",.")
+    if not first:
+        return None
+    return first[0].upper() + first[1:] if len(first) > 1 else first.upper()
+
 _AUTOMATED_PREFIXES = frozenset(
     {
         "no-reply",
