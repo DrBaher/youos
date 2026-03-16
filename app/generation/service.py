@@ -188,17 +188,19 @@ def _lookup_prior_reply_to_sender(sender: str, database_url: str) -> str | None:
         conn.close()
 
 
-def _format_exemplars(reply_pairs: list[RetrievalMatch]) -> str:
+def _format_exemplars(reply_pairs: list[RetrievalMatch], *, max_exemplars: int = 5) -> str:
     if not reply_pairs:
         return "(no exemplars found)"
-    user_name = get_user_name()
-    parts: list[str] = []
-    for i, rp in enumerate(reply_pairs, 1):
+    parts: list[str] = ["The following are examples of how you have replied to similar emails:"]
+    for i, rp in enumerate(reply_pairs[:max_exemplars], 1):
         inbound = (rp.inbound_text or "")[:800]
         reply = strip_signature(rp.reply_text or "")[:400]
-        source = rp.title or rp.source_id or "unknown"
-        account = rp.account_email or "unknown"
-        parts.append(f"--- Exemplar {i} ---\nInbound: {inbound}\n{user_name} replied: {reply}\nSource: {source} ({account})")
+        parts.append(
+            f"[EXAMPLE {i}]\n"
+            f"Inbound: {inbound}\n"
+            f"Your reply: {reply}\n"
+            f"---"
+        )
     return "\n\n".join(parts)
 
 
