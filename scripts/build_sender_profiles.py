@@ -306,6 +306,38 @@ def build_profiles(
         conn.close()
 
 
+def annotate_intents(db_path: Path) -> int:
+    """Annotate reply_pairs with predicted_intent in metadata_json.
+
+    Only annotates pairs that don't already have predicted_intent set.
+    Returns number of pairs annotated.
+    """
+    from app.core.intent import classify_intent
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT id, inbound_text, metadata_json FROM reply_pairs WHERE inbound_text IS NOT NULL"
+        ).fetchall()
+        count = 0
+        for row in rows:
+            meta = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+            if meta.get("predicted_intent"):
+                continue
+            intent = classify_intent(row["inbound_text"] or "")
+            meta["predicted_intent"] = intent
+            conn.execute(
+                "UPDATE reply_pairs SET metadata_json = ? WHERE id = ?",
+                (json.dumps(meta), row["id"]),
+            )
+            count += 1
+        conn.commit()
+        return count
+    finally:
+        conn.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build sender profiles from reply_pairs corpus.")
     parser.add_argument("--limit", type=int, default=None, help="Only process N senders.")
@@ -322,6 +354,12 @@ def main() -> None:
         print(f"Dry run: would build {total} sender profiles")
     else:
         print(f"Built {total} sender profiles ({new_count} new, {updated_count} updated)")
+
+    # Annotate reply_pairs with predicted_intent
+    if not args.dry_run:
+        annotated = annotate_intents(db_path)
+        if annotated:
+            print(f"Annotated {annotated} reply pairs with predicted_intent")
 
 
 if __name__ == "__main__":

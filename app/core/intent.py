@@ -39,3 +39,24 @@ def classify_intent(text: str) -> str:
         return "general"
 
     return max(scores, key=scores.get)
+
+
+def classify_intents_multi(text: str, *, max_intents: int = 3) -> list[str]:
+    """Return ALL intents with >= 1 keyword match, sorted by score DESC, max 3.
+
+    Returns ['general'] if none match.
+    """
+    if not text:
+        return ["general"]
+
+    scores: dict[str, int] = {}
+    for intent, pattern in _INTENT_PATTERNS.items():
+        matches = pattern.findall(text)
+        if matches:
+            scores[intent] = len(matches)
+
+    if not scores:
+        return ["general"]
+
+    sorted_intents = sorted(scores, key=scores.get, reverse=True)
+    return sorted_intents[:max_intents]
