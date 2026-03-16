@@ -155,7 +155,12 @@ class RetrievalService:
         if not query:
             raise ValueError("Retrieval query must not be empty.")
 
-        tokens = _tokenize(query)
+        # Expand query with synonyms for FTS (keep original for semantic)
+        from app.core.query_expansion import expand_query
+
+        fts_query_text = expand_query(query)
+
+        tokens = _tokenize(fts_query_text)
         detected_mode = _detect_mode(query)
         filters = {
             "scope": request.scope,
