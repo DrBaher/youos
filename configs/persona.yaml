@@ -27,6 +27,23 @@ closing_patterns:
   supplier: "Cheers,"
   default: "Best,"
 
+modes:
+  internal:
+    voice: casual, direct
+    avg_reply_words: 25
+    greeting: "Hey {name},"
+    closing: "Cheers,"
+  external_client:
+    voice: professional, clear
+    avg_reply_words: 50
+    greeting: "Hi {name},"
+    closing: "Best,"
+  personal:
+    voice: warm, casual
+    avg_reply_words: 30
+    greeting: "Hey {name},"
+    closing: "Talk soon,"
+
 behavior:
   retrieval_first: true
   cite_internal_evidence: true

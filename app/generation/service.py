@@ -555,6 +555,17 @@ def generate_draft(
     prompts = _load_prompts(configs_dir)
     persona = _load_persona(configs_dir)
 
+    # Per-sender-type persona mode override
+    _sender_type = sender_type_hint
+    modes = persona.get("modes", {})
+    if _sender_type and _sender_type in modes:
+        mode_config = modes[_sender_type]
+        # Merge mode values into persona style, but never override custom_constraints
+        style = persona.setdefault("style", {})
+        for key in ("voice", "avg_reply_words", "greeting", "closing"):
+            if key in mode_config:
+                style[key] = mode_config[key]
+
     # Look up sender profile if sender provided
     sender_profile = None
     sender_context = None
