@@ -701,11 +701,9 @@ def _generate_via_ollama(prompt: str, model: str = "mistral", base_url: str = "h
         raise RuntimeError(f"Ollama generation failed: {exc}") from exc
 
 
-def _call_claude_cli(prompt: str, *, max_tokens: int = 300) -> str:
-    cmd = ["claude", "--print"]
-    if max_tokens:
-        cmd.extend(["--max-tokens", str(max_tokens)])
-    cmd.append(prompt)
+def _call_claude_cli(prompt: str, *, max_tokens: int = 300) -> str:  # noqa: ARG001
+    # Note: claude CLI --print does not support --max-tokens; use -p to pass prompt
+    cmd = ["claude", "--print", "-p", prompt]
     result = subprocess.run(
         cmd,
         capture_output=True,
