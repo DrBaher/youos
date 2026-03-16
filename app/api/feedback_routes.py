@@ -32,7 +32,7 @@ def feedback_page() -> HTMLResponse:
 # Bookmarklet install page — mounted outside /feedback prefix via app-level include
 _BOOKMARKLET_ROUTER = APIRouter(tags=["bookmarklet"])
 BOOKMARKLET_TEMPLATE = TEMPLATE_DIR / "bookmarklet.html"
-
+POPUP_TEMPLATE = TEMPLATE_DIR / "draft_popup.html"
 
 ABOUT_TEMPLATE = TEMPLATE_DIR / "about.html"
 
@@ -47,8 +47,16 @@ def about_page() -> HTMLResponse:
 def bookmarklet_page(request: Request) -> HTMLResponse:
     base_url = str(request.base_url).rstrip("/")
     html = BOOKMARKLET_TEMPLATE.read_text(encoding="utf-8")
-    # Replace hardcoded localhost URL with actual server URL
     html = html.replace("http://localhost:8765/feedback", f"{base_url}/feedback")
+    html = html.replace("http://localhost:8765/draft-popup", f"{base_url}/draft-popup")
+    html = html.replace("YOUOS_BASE_URL", base_url)
+    return HTMLResponse(content=html)
+
+
+@_BOOKMARKLET_ROUTER.get("/draft-popup", response_class=HTMLResponse)
+def draft_popup_page() -> HTMLResponse:
+    """Minimal popup-optimised draft UI, embedded as iframe in Gmail."""
+    html = POPUP_TEMPLATE.read_text(encoding="utf-8")
     return HTMLResponse(content=html)
 
 
