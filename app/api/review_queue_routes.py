@@ -109,9 +109,7 @@ def _fetch_candidates(
         placeholders = ""
         params: list[Any] = []
         if exclude_ids:
-            placeholders = " AND rp.id NOT IN ({})".format(
-                ",".join("?" for _ in exclude_ids)
-            )
+            placeholders = " AND rp.id NOT IN ({})".format(",".join("?" for _ in exclude_ids))
             params.extend(exclude_ids)
 
         # Fetch a larger pool for scoring
@@ -143,8 +141,12 @@ def _fetch_candidates(
             if any(
                 prefix in author_lower
                 for prefix in [
-                    "no-reply", "noreply", "donotreply", "do-not-reply",
-                    "mailer-daemon", "notifications",
+                    "no-reply",
+                    "noreply",
+                    "donotreply",
+                    "do-not-reply",
+                    "mailer-daemon",
+                    "notifications",
                 ]
             ):
                 continue
@@ -160,21 +162,21 @@ def _fetch_candidates(
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-            pool.append({
-                "reply_pair_id": row["id"],
-                "inbound_text": row["inbound_text"],
-                "inbound_author": row["inbound_author"],
-                "subject": row["doc_title"],
-                "reply_text": row["reply_text"],
-                "paired_at": row["paired_at"],
-                "account_email": doc_meta.get("account_email"),
-            })
+            pool.append(
+                {
+                    "reply_pair_id": row["id"],
+                    "inbound_text": row["inbound_text"],
+                    "inbound_author": row["inbound_author"],
+                    "subject": row["doc_title"],
+                    "reply_text": row["reply_text"],
+                    "paired_at": row["paired_at"],
+                    "account_email": doc_meta.get("account_email"),
+                }
+            )
 
         # Second pass: score and select with diversity
         reviewed_sender_types: Counter = Counter()
-        scored = [
-            (score_pair_for_review(p, reviewed_sender_types), i, p) for i, p in enumerate(pool)
-        ]
+        scored = [(score_pair_for_review(p, reviewed_sender_types), i, p) for i, p in enumerate(pool)]
         scored.sort(key=lambda x: x[0], reverse=True)
 
         candidates: list[dict[str, Any]] = []
@@ -190,27 +192,22 @@ def _fetch_candidates(
         conn.close()
 
 
-def _lookup_sender_profile_safe(
-    db_path: Path, email: str
-) -> dict[str, Any] | None:
+def _lookup_sender_profile_safe(db_path: Path, email: str) -> dict[str, Any] | None:
     """Look up sender profile, returning None if table doesn't exist or no match."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        exists = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sender_profiles'"
-        ).fetchone()
+        exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sender_profiles'").fetchone()
         if not exists:
             return None
         # Extract email address from "Name <email>" format
         import re
+
         match = re.search(r"[\w.+-]+@[\w.-]+\.\w+", email)
         if not match:
             return None
         clean_email = match.group(0).lower()
-        row = conn.execute(
-            "SELECT * FROM sender_profiles WHERE email = ?", (clean_email,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM sender_profiles WHERE email = ?", (clean_email,)).fetchone()
         if not row:
             return None
         return {
@@ -228,9 +225,7 @@ def _lookup_sender_profile_safe(
 def _count_reviewed_today(db_path: Path) -> int:
     conn = sqlite3.connect(db_path)
     try:
-        row = conn.execute(
-            "SELECT COUNT(*) FROM feedback_pairs WHERE DATE(created_at) = DATE('now')"
-        ).fetchone()
+        row = conn.execute("SELECT COUNT(*) FROM feedback_pairs WHERE DATE(created_at) = DATE('now')").fetchone()
         return row[0] if row else 0
     finally:
         conn.close()
@@ -276,17 +271,19 @@ def review_queue_next(
         if cand["inbound_author"]:
             sender_profile = _lookup_sender_profile_safe(db_path, cand["inbound_author"])
 
-        items.append({
-            "reply_pair_id": cand["reply_pair_id"],
-            "inbound_text": clean_inbound,
-            "inbound_author": cand["inbound_author"],
-            "subject": cand["subject"],
-            "generated_draft": generated_draft,
-            "sender_profile": sender_profile,
-            "account_email": cand.get("account_email"),
-            "paired_at": cand["paired_at"],
-            "suggested_subject": getattr(draft_response, 'suggested_subject', None),
-        })
+        items.append(
+            {
+                "reply_pair_id": cand["reply_pair_id"],
+                "inbound_text": clean_inbound,
+                "inbound_author": cand["inbound_author"],
+                "subject": cand["subject"],
+                "generated_draft": generated_draft,
+                "sender_profile": sender_profile,
+                "account_email": cand.get("account_email"),
+                "paired_at": cand["paired_at"],
+                "suggested_subject": getattr(draft_response, "suggested_subject", None),
+            }
+        )
 
         if len(items) >= batch_size:
             break
@@ -317,9 +314,7 @@ class ReviewSubmitBody(BaseModel):
 @router.post("/submit")
 def review_queue_submit(body: ReviewSubmitBody, request: Request) -> dict:
     db_path = _get_db_path(request)
-    edit_distance_pct = round(
-        1.0 - similarity_ratio(body.generated_draft, body.edited_reply), 4
-    )
+    edit_distance_pct = round(1.0 - similarity_ratio(body.generated_draft, body.edited_reply), 4)
 
     conn = sqlite3.connect(db_path)
     try:
@@ -357,8 +352,7 @@ def review_queue_submit(body: ReviewSubmitBody, request: Request) -> dict:
                 """INSERT INTO draft_history
                    (inbound_text, sender, generated_draft, final_reply, edit_distance_pct)
                    VALUES (?, ?, ?, ?, ?)""",
-                (body.inbound_text, None, body.generated_draft,
-                 body.edited_reply, edit_distance_pct),
+                (body.inbound_text, None, body.generated_draft, body.edited_reply, edit_distance_pct),
             )
             conn.commit()
         except Exception:

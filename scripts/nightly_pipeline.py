@@ -3,6 +3,7 @@
 Runs all steps sequentially. Each step is best-effort — failures are logged
 but don't block subsequent steps.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -21,13 +22,11 @@ ACCOUNTS = get_ingestion_accounts()
 
 def _run_step(name: str, cmd: list[str], timeout: int = 600) -> bool:
     """Run a subprocess step. Returns True on success."""
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"STEP: {name}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         print(result.stdout)
         if result.stderr:
             print(result.stderr)
@@ -47,6 +46,7 @@ def _run_step(name: str, cmd: list[str], timeout: int = 600) -> bool:
 def _verbose_print(step_num: int, total: int, name: str, count: str | None = None) -> None:
     """Print Rich-style progress when verbose mode is active."""
     from rich import print as rprint
+
     suffix = f" done ({count})" if count else " done"
     rprint(f"[bold cyan][step {step_num}/{total}][/bold cyan] {name}...{suffix}")
 
@@ -77,9 +77,12 @@ def step_ingest_gmail(verbose: bool = False) -> bool:
                 sys.executable,
                 str(ROOT_DIR / "scripts" / "ingest_gmail_threads.py"),
                 "--live",
-                "--account", account,
-                "--query", query,
-                "--max-threads", "100",
+                "--account",
+                account,
+                "--query",
+                query,
+                "--max-threads",
+                "100",
             ],
             timeout=300,
         )
@@ -107,9 +110,9 @@ def step_auto_feedback(verbose: bool = False) -> dict:
     """Extract auto-feedback pairs from last 2 days."""
     from scripts.extract_auto_feedback import extract_auto_feedback
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("STEP: Auto-feedback extraction")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     try:
         result = extract_auto_feedback(days=2)
         print("  [OK] Auto-feedback completed")
@@ -169,9 +172,7 @@ def _count_unused_feedback(db_path: Path) -> int:
         return 0
     conn = sqlite3.connect(db_path)
     try:
-        return conn.execute(
-            "SELECT COUNT(*) FROM feedback_pairs WHERE used_in_finetune = 0"
-        ).fetchone()[0]
+        return conn.execute("SELECT COUNT(*) FROM feedback_pairs WHERE used_in_finetune = 0").fetchone()[0]
     except Exception:
         return 0
     finally:
@@ -180,6 +181,7 @@ def _count_unused_feedback(db_path: Path) -> int:
 
 def main() -> None:
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--autoresearch-only", action="store_true", help="Skip ingestion/finetune, run autoresearch only")
     parser.add_argument("--verbose", "-v", action="store_true", help="Print Rich progress for each step")
@@ -193,7 +195,7 @@ def main() -> None:
 
     start = datetime.now(timezone.utc)
     print(f"YouOS Nightly Pipeline — {start.isoformat()}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     results: dict[str, str] = {}
 
@@ -208,6 +210,7 @@ def main() -> None:
     # 1b. Benchmark auto-refresh
     try:
         from app.core.config import _load_raw_config
+
         cfg = _load_raw_config()
         last_count = cfg.get("benchmarks", {}).get("last_refresh_count", 0)
         if DEFAULT_DB.exists():
@@ -256,7 +259,10 @@ def main() -> None:
     try:
         git_log = subprocess.run(
             ["git", "log", "--oneline", "-5"],
-            capture_output=True, text=True, timeout=10, cwd=ROOT_DIR,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=ROOT_DIR,
         )
         if git_log.returncode == 0 and git_log.stdout.strip():
             results["recent_commits"] = git_log.stdout.strip()
@@ -265,9 +271,9 @@ def main() -> None:
 
     # Summary
     elapsed = (datetime.now(timezone.utc) - start).total_seconds()
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("NIGHTLY PIPELINE SUMMARY")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     for step, status in results.items():
         print(f"  {step}: {status}")
     print(f"\nCompleted in {elapsed:.0f}s")

@@ -63,6 +63,7 @@ def feedback_generate(body: GenerateBody, request: Request) -> dict:
     client_ip = request.client.host if request.client else "unknown"
     if not draft_limiter.is_allowed(client_ip):
         from fastapi.responses import JSONResponse
+
         return JSONResponse(status_code=429, content=RATE_LIMIT_RESPONSE)
     settings = request.app.state.settings
     response = generate_draft(
@@ -84,8 +85,7 @@ def feedback_generate(body: GenerateBody, request: Request) -> dict:
                 """INSERT INTO draft_history
                    (inbound_text, sender, generated_draft, confidence, model_used, retrieval_method)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (body.inbound_text, body.sender, response.draft,
-                 response.confidence, response.model_used, response.retrieval_method),
+                (body.inbound_text, body.sender, response.draft, response.confidence, response.model_used, response.retrieval_method),
             )
             conn.commit()
         finally:

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """YouOS CLI — your personal AI email copilot."""
+
 from __future__ import annotations
 
 import os
@@ -61,7 +62,9 @@ def status():
     try:
         result = subprocess.run(
             ["pgrep", "-f", "uvicorn.*app.main:app"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         server_running = result.returncode == 0
     except Exception:
@@ -99,9 +102,7 @@ def status():
         feedback = conn.execute("SELECT COUNT(*) FROM feedback_pairs").fetchone()[0]
 
         try:
-            reviewed_today = conn.execute(
-                "SELECT COUNT(*) FROM feedback_pairs WHERE DATE(created_at) = DATE('now')"
-            ).fetchone()[0]
+            reviewed_today = conn.execute("SELECT COUNT(*) FROM feedback_pairs WHERE DATE(created_at) = DATE('now')").fetchone()[0]
         except Exception:
             reviewed_today = 0
 
@@ -110,9 +111,7 @@ def status():
 
         # Embedding coverage
         try:
-            embedded = conn.execute(
-                "SELECT COUNT(*) FROM documents WHERE embedding IS NOT NULL"
-            ).fetchone()[0]
+            embedded = conn.execute("SELECT COUNT(*) FROM documents WHERE embedding IS NOT NULL").fetchone()[0]
             pct = (embedded / docs * 100) if docs > 0 else 0
             print(f"Embeddings:  {embedded:,}/{docs:,} ({pct:.0f}%)")
         except Exception:
@@ -146,9 +145,7 @@ def status():
     try:
         conn = sqlite3.connect(db_path)
         total = conn.execute("SELECT COUNT(*) FROM benchmark_cases").fetchone()[0]
-        passed = conn.execute(
-            "SELECT COUNT(*) FROM eval_runs WHERE status = 'pass'"
-        ).fetchone()[0]
+        passed = conn.execute("SELECT COUNT(*) FROM eval_runs WHERE status = 'pass'").fetchone()[0]
         conn.close()
         if total > 0:
             print(f"Benchmark:   {passed}/{total} pass")
@@ -162,6 +159,7 @@ def status():
 def ui():
     """Open the web UI in your browser."""
     from app.core.config import get_server_port
+
     port = get_server_port()
     url = f"http://localhost:{port}/feedback"
     print(f"Opening {url}")
@@ -217,8 +215,7 @@ def note(
     conn = sqlite3.connect(db_path)
     try:
         cur = conn.execute(
-            "UPDATE sender_profiles SET relationship_note = ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE email = ?",
+            "UPDATE sender_profiles SET relationship_note = ?, updated_at = CURRENT_TIMESTAMP WHERE email = ?",
             (text, email.lower()),
         )
         if cur.rowcount == 0:
@@ -257,9 +254,7 @@ def stats():
         print(f"  Feedback pairs: {feedback:,}")
 
         try:
-            reviewed_today = conn.execute(
-                "SELECT COUNT(*) FROM feedback_pairs WHERE DATE(created_at) = DATE('now')"
-            ).fetchone()[0]
+            reviewed_today = conn.execute("SELECT COUNT(*) FROM feedback_pairs WHERE DATE(created_at) = DATE('now')").fetchone()[0]
             print(f"  Reviewed today: {reviewed_today}")
         except Exception:
             pass
@@ -280,6 +275,7 @@ def ingest(
     """Run email ingestion manually."""
     if whatsapp:
         from app.ingestion.whatsapp import ingest_whatsapp_export
+
         result = ingest_whatsapp_export(Path(whatsapp))
         print(f"[{result.status}] {result.detail}")
         return
@@ -303,12 +299,22 @@ def run_eval():
 def serve():
     """Start the YouOS web server."""
     from app.core.config import get_server_host, get_server_port
+
     port = get_server_port()
     host = get_server_host()
-    subprocess.run([
-        sys.executable, "-m", "uvicorn", "app.main:app",
-        "--host", host, "--port", str(port),
-    ], cwd=str(ROOT_DIR))
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "app.main:app",
+            "--host",
+            host,
+            "--port",
+            str(port),
+        ],
+        cwd=str(ROOT_DIR),
+    )
 
 
 @app.command()
@@ -317,6 +323,7 @@ def teardown(
 ):
     """Remove all YouOS user data (corpus, model, database)."""
     from scripts.teardown import teardown as do_teardown
+
     do_teardown(delete_all=all_data)
 
 
@@ -328,7 +335,7 @@ def doctor():
 
     from rich.console import Console
 
-    from app.core.config import get_user_emails, load_config
+    from app.core.config import get_user_emails
 
     console = Console()
     all_required_pass = True
@@ -353,6 +360,7 @@ def doctor():
     # mlx_lm importable
     try:
         import importlib
+
         importlib.import_module("mlx_lm")
         mlx_ok = True
     except ImportError:
@@ -378,7 +386,7 @@ def doctor():
     # >= 3GB disk free (warning)
     try:
         stat = os.statvfs(ROOT_DIR)
-        free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
+        free_gb = (stat.f_bavail * stat.f_frsize) / (1024**3)
         check(f">= 3GB disk free ({free_gb:.1f}GB available)", free_gb >= 3.0, required=False)
     except Exception:
         check(">= 3GB disk free", False, required=False)
@@ -391,6 +399,7 @@ def doctor():
     # Port 8901 free (warning)
     try:
         from app.core.config import get_server_port
+
         port = get_server_port()
     except Exception:
         port = 8901
@@ -422,6 +431,7 @@ def model_set(
 ):
     """Set the base model for fine-tuning and generation."""
     import yaml
+
     config_path = ROOT_DIR / "youos_config.yaml"
     config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
     config.setdefault("model", {})["base"] = model_name
@@ -434,6 +444,7 @@ def model_set(
 def model_show():
     """Show the currently configured model."""
     import yaml
+
     config_path = ROOT_DIR / "youos_config.yaml"
     config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
     base = config.get("model", {}).get("base", "Qwen/Qwen2.5-1.5B-Instruct")
@@ -450,6 +461,7 @@ model_app.add_typer(ollama_app, name="ollama")
 def ollama_enable():
     """Enable Ollama as a generation backend."""
     from app.core.config import _load_raw_config, save_config
+
     config = _load_raw_config()
     config.setdefault("model", {}).setdefault("ollama", {})["enabled"] = True
     config["model"]["fallback"] = "ollama"
@@ -461,6 +473,7 @@ def ollama_enable():
 def ollama_disable():
     """Disable Ollama as a generation backend."""
     from app.core.config import _load_raw_config, save_config
+
     config = _load_raw_config()
     config.setdefault("model", {}).setdefault("ollama", {})["enabled"] = False
     if config.get("model", {}).get("fallback") == "ollama":

@@ -1,4 +1,5 @@
 """Tests for the in-memory rate limiter."""
+
 from app.core.rate_limit import RateLimiter
 
 

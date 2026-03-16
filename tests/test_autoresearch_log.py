@@ -1,6 +1,6 @@
 """Tests for structured autoresearch JSON run log."""
+
 import json
-from pathlib import Path
 
 from app.autoresearch.optimizer import AutoresearchReport, IterationResult, _write_jsonl_entry
 from app.autoresearch.scorer import Scorecard

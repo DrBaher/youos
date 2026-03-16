@@ -1,4 +1,5 @@
 """Autoresearch optimization loop for YouOS."""
+
 from __future__ import annotations
 
 import json
@@ -30,7 +31,7 @@ class IterationResult:
     mutation_desc: str
     baseline_composite: float
     candidate_composite: float
-    outcome: str   # "improved" | "neutral" | "regressed"
+    outcome: str  # "improved" | "neutral" | "regressed"
     kept: bool
 
 
@@ -173,12 +174,8 @@ def _write_jsonl_entry(report: AutoresearchReport, configs_dir: Path) -> None:
     jsonl_path = root / "var" / "autoresearch_runs.jsonl"
     jsonl_path.parent.mkdir(parents=True, exist_ok=True)
 
-    improvements = [
-        it.surface_name for it in report.iterations if it.kept
-    ]
-    regressions = [
-        it.surface_name for it in report.iterations if it.outcome == "regressed"
-    ]
+    improvements = [it.surface_name for it in report.iterations if it.kept]
+    regressions = [it.surface_name for it in report.iterations if it.outcome == "regressed"]
 
     entry = {
         "run_at": report.started_at,
@@ -205,8 +202,12 @@ def _dry_run_report(
     """Build a report showing what would be mutated without doing it."""
     dummy = Scorecard(
         config_tag="dry_run",
-        pass_rate=0.0, warn_rate=0.0, fail_rate=0.0,
-        avg_keyword_hit=0.0, avg_confidence=0.0, composite=0.0,
+        pass_rate=0.0,
+        warn_rate=0.0,
+        fail_rate=0.0,
+        avg_keyword_hit=0.0,
+        avg_confidence=0.0,
+        composite=0.0,
     )
     report = AutoresearchReport(
         run_tag=run_tag,
@@ -216,15 +217,17 @@ def _dry_run_report(
     )
     for surface in surfaces:
         desc = describe_mutation(surface)
-        report.iterations.append(IterationResult(
-            iteration=0,
-            surface_name=surface.name,
-            mutation_desc=desc,
-            baseline_composite=0.0,
-            candidate_composite=0.0,
-            outcome="dry_run",
-            kept=False,
-        ))
+        report.iterations.append(
+            IterationResult(
+                iteration=0,
+                surface_name=surface.name,
+                mutation_desc=desc,
+                baseline_composite=0.0,
+                candidate_composite=0.0,
+                outcome="dry_run",
+                kept=False,
+            )
+        )
     return report
 
 
@@ -243,30 +246,19 @@ def format_report(report: AutoresearchReport) -> str:
         if it.outcome == "dry_run":
             lines.append(f"  {it.mutation_desc}")
         elif it.outcome == "improved":
-            lines.append(
-                f"{prefix} Mutating {it.mutation_desc}\n"
-                f"  Improved: composite {it.baseline_composite:.2f} -> {it.candidate_composite:.2f} — keeping"
-            )
+            lines.append(f"{prefix} Mutating {it.mutation_desc}\n  Improved: composite {it.baseline_composite:.2f} -> {it.candidate_composite:.2f} — keeping")
         elif it.outcome == "neutral":
-            lines.append(
-                f"{prefix} Mutating {it.mutation_desc}\n"
-                f"  Neutral: composite {it.baseline_composite:.2f} -> {it.candidate_composite:.2f} — reverting"
-            )
+            lines.append(f"{prefix} Mutating {it.mutation_desc}\n  Neutral: composite {it.baseline_composite:.2f} -> {it.candidate_composite:.2f} — reverting")
         else:
             lines.append(
-                f"{prefix} Mutating {it.mutation_desc}\n"
-                f"  Regressed: composite {it.baseline_composite:.2f} -> {it.candidate_composite:.2f} — reverting"
+                f"{prefix} Mutating {it.mutation_desc}\n  Regressed: composite {it.baseline_composite:.2f} -> {it.candidate_composite:.2f} — reverting"
             )
 
     lines.append("━" * 50)
 
     if report.total_eval_runs > 0:
         lines.append(f"Final: {report.final.summary()}")
-        lines.append(
-            f"Improvements kept: {report.improvements_kept} | "
-            f"Reverted: {report.reverted} | "
-            f"Iterations: {report.total_eval_runs}"
-        )
+        lines.append(f"Improvements kept: {report.improvements_kept} | Reverted: {report.reverted} | Iterations: {report.total_eval_runs}")
     else:
         lines.append(f"Dry run: {len(report.iterations)} surfaces would be mutated")
 

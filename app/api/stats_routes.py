@@ -84,12 +84,8 @@ def stats_data(request: Request) -> dict[str, Any]:
         reviewed_week = 0
         avg_edit_dist = None
         try:
-            reviewed_today = conn.execute(
-                "SELECT COUNT(*) FROM feedback_pairs WHERE DATE(created_at) = DATE('now')"
-            ).fetchone()[0]
-            reviewed_week = conn.execute(
-                "SELECT COUNT(*) FROM feedback_pairs WHERE created_at >= DATE('now', '-7 days')"
-            ).fetchone()[0]
+            reviewed_today = conn.execute("SELECT COUNT(*) FROM feedback_pairs WHERE DATE(created_at) = DATE('now')").fetchone()[0]
+            reviewed_week = conn.execute("SELECT COUNT(*) FROM feedback_pairs WHERE created_at >= DATE('now', '-7 days')").fetchone()[0]
             row = conn.execute(
                 "SELECT AVG(edit_distance_pct) FROM "
                 "(SELECT edit_distance_pct FROM feedback_pairs "
@@ -105,9 +101,7 @@ def stats_data(request: Request) -> dict[str, Any]:
         try:
             total_rp = conn.execute("SELECT COUNT(*) FROM reply_pairs").fetchone()[0]
             if total_rp > 0:
-                with_emb = conn.execute(
-                    "SELECT COUNT(*) FROM reply_pairs WHERE embedding IS NOT NULL"
-                ).fetchone()[0]
+                with_emb = conn.execute("SELECT COUNT(*) FROM reply_pairs WHERE embedding IS NOT NULL").fetchone()[0]
                 embedding_pct = round((with_emb / total_rp) * 100, 1)
         except sqlite3.OperationalError:
             pass
@@ -118,17 +112,17 @@ def stats_data(request: Request) -> dict[str, Any]:
         if adapter_exists:
             try:
                 import os
+
                 mtime = os.path.getmtime(ADAPTER_PATH / "adapters.safetensors")
                 from datetime import datetime, timezone
+
                 lora_trained_at = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
             except Exception:
                 pass
 
         lora_pairs_used = 0
         try:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM feedback_pairs WHERE used_in_finetune = 1"
-            ).fetchone()
+            row = conn.execute("SELECT COUNT(*) FROM feedback_pairs WHERE used_in_finetune = 1").fetchone()
             lora_pairs_used = row[0] if row else 0
         except sqlite3.OperationalError:
             pass
@@ -140,34 +134,35 @@ def stats_data(request: Request) -> dict[str, Any]:
         if AUTORESEARCH_JSONL.exists():
             try:
                 import json as _json
+
                 lines = AUTORESEARCH_JSONL.read_text(encoding="utf-8").strip().splitlines()
                 for line in lines[-5:]:
                     entry = _json.loads(line)
-                    benchmark_trend.append({
-                        "date": entry.get("run_at", ""),
-                        "composite_score": entry.get("composite_score"),
-                        "improvements_kept": entry.get("config_snapshot", {}).get("improvements_kept"),
-                    })
+                    benchmark_trend.append(
+                        {
+                            "date": entry.get("run_at", ""),
+                            "composite_score": entry.get("composite_score"),
+                            "improvements_kept": entry.get("config_snapshot", {}).get("improvements_kept"),
+                        }
+                    )
             except Exception:
                 benchmark_trend = []
         if not benchmark_trend and AUTORESEARCH_LOG.exists():
             try:
                 import re
+
                 log_text = AUTORESEARCH_LOG.read_text(encoding="utf-8")
-                entries = re.findall(
-                    r"## Run (\d{4}-\d{2}-\d{2}[^\n]*)\n(.*?)(?=\n## Run |\Z)",
-                    log_text, re.DOTALL
-                )
+                entries = re.findall(r"## Run (\d{4}-\d{2}-\d{2}[^\n]*)\n(.*?)(?=\n## Run |\Z)", log_text, re.DOTALL)
                 for date_str, body in entries[-5:]:
-                    score_match = re.search(
-                        r"composite[_\s]?score[:\s]*([\d.]+)", body, re.IGNORECASE
-                    )
+                    score_match = re.search(r"composite[_\s]?score[:\s]*([\d.]+)", body, re.IGNORECASE)
                     kept_match = re.search(r"improvements?\s*kept[:\s]*(\d+)", body, re.IGNORECASE)
-                    benchmark_trend.append({
-                        "date": date_str.strip(),
-                        "composite_score": score_match.group(1) if score_match else None,
-                        "improvements_kept": int(kept_match.group(1)) if kept_match else None,
-                    })
+                    benchmark_trend.append(
+                        {
+                            "date": date_str.strip(),
+                            "composite_score": score_match.group(1) if score_match else None,
+                            "improvements_kept": int(kept_match.group(1)) if kept_match else None,
+                        }
+                    )
             except Exception:
                 pass
 
@@ -177,17 +172,18 @@ def stats_data(request: Request) -> dict[str, Any]:
         try:
             total_profiles = _safe_count(conn, "sender_profiles")
             rows = conn.execute(
-                "SELECT email, display_name, company, sender_type, reply_count "
-                "FROM sender_profiles ORDER BY reply_count DESC LIMIT 5"
+                "SELECT email, display_name, company, sender_type, reply_count FROM sender_profiles ORDER BY reply_count DESC LIMIT 5"
             ).fetchall()
             for r in rows:
-                top_senders.append({
-                    "email": r["email"],
-                    "display_name": r["display_name"],
-                    "company": r["company"],
-                    "sender_type": r["sender_type"],
-                    "reply_count": r["reply_count"],
-                })
+                top_senders.append(
+                    {
+                        "email": r["email"],
+                        "display_name": r["display_name"],
+                        "company": r["company"],
+                        "sender_type": r["sender_type"],
+                        "reply_count": r["reply_count"],
+                    }
+                )
         except sqlite3.OperationalError:
             pass
 

@@ -121,6 +121,7 @@ def draft_stream(body: StreamBody, request: Request):
     client_ip = request.client.host if request.client else "unknown"
     if not draft_limiter.is_allowed(client_ip):
         from fastapi.responses import JSONResponse
+
         return JSONResponse(status_code=429, content=RATE_LIMIT_RESPONSE)
     settings = request.app.state.settings
     return StreamingResponse(

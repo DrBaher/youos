@@ -1,11 +1,12 @@
 """WhatsApp chat export ingestion for YouOS."""
+
 from __future__ import annotations
 
 import json
 import re
 import sqlite3
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -26,9 +27,7 @@ Example:
 """.strip()
 
 # Regex: MM/DD/YY, H:MM AM/PM - Sender: Message
-LINE_RE = re.compile(
-    r"^(\d{1,2}/\d{1,2}/\d{2,4},\s*\d{1,2}:\d{2}\s*[APap][Mm])\s*-\s*(.+?):\s(.+)$"
-)
+LINE_RE = re.compile(r"^(\d{1,2}/\d{1,2}/\d{2,4},\s*\d{1,2}:\d{2}\s*[APap][Mm])\s*-\s*(.+?):\s(.+)$")
 
 
 @dataclass(slots=True)
@@ -55,11 +54,13 @@ def parse_whatsapp_export(text: str) -> list[ParsedMessage]:
             continue
         m = LINE_RE.match(line)
         if m:
-            messages.append(ParsedMessage(
-                timestamp=m.group(1).strip(),
-                sender=m.group(2).strip(),
-                text=m.group(3).strip(),
-            ))
+            messages.append(
+                ParsedMessage(
+                    timestamp=m.group(1).strip(),
+                    sender=m.group(2).strip(),
+                    text=m.group(3).strip(),
+                )
+            )
         elif messages:
             # Continuation line — append to previous message
             messages[-1].text += "\n" + line
@@ -138,6 +139,7 @@ def ingest_whatsapp_export(
     if db_path is None:
         from app.core.settings import get_settings
         from app.db.bootstrap import resolve_sqlite_path
+
         settings = get_settings()
         db_path = resolve_sqlite_path(settings.database_url)
 
@@ -187,9 +189,7 @@ def ingest_whatsapp_export(
 
             # Find the document_id for this inbound message
             doc_source_id = f"wa-{chat_name}-{inbound.timestamp}-{inbound.sender}"
-            doc_row = conn.execute(
-                "SELECT id FROM documents WHERE source_id = ?", (doc_source_id,)
-            ).fetchone()
+            doc_row = conn.execute("SELECT id FROM documents WHERE source_id = ?", (doc_source_id,)).fetchone()
             doc_id = doc_row[0] if doc_row else None
 
             try:

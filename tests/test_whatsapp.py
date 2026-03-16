@@ -1,6 +1,6 @@
 """Tests for WhatsApp export ingestion."""
+
 from app.ingestion.whatsapp import (
-    ParsedMessage,
     build_reply_pairs,
     parse_whatsapp_export,
 )
