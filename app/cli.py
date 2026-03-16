@@ -80,6 +80,69 @@ def quickstart():
     console.print("Run: [bold]youos ui[/bold] to launch the web interface.")
 
 
+@app.command(name="export")
+def export_data(
+    output: str = typer.Option(None, "--output", "-o", help="Output path for the archive"),
+):
+    """Export YouOS data to a tar.gz archive for backup."""
+    import tarfile
+
+    if output is None:
+        today = datetime.now().strftime("%Y-%m-%d")
+        output = str(Path.home() / f"youos-backup-{today}.tar.gz")
+
+    output_path = Path(output).expanduser().resolve()
+    include_paths = [
+        ("var/youos.db", ROOT_DIR / "var" / "youos.db"),
+        ("youos_config.yaml", ROOT_DIR / "youos_config.yaml"),
+    ]
+    # configs/ directory
+    configs_dir = ROOT_DIR / "configs"
+    if configs_dir.is_dir():
+        for f in configs_dir.rglob("*"):
+            if f.is_file():
+                include_paths.append((str(f.relative_to(ROOT_DIR)), f))
+    # models/adapters/latest/
+    adapters_dir = ROOT_DIR / "models" / "adapters" / "latest"
+    if adapters_dir.is_dir():
+        for f in adapters_dir.rglob("*"):
+            if f.is_file():
+                include_paths.append((str(f.relative_to(ROOT_DIR)), f))
+
+    with tarfile.open(output_path, "w:gz") as tar:
+        for arcname, filepath in include_paths:
+            if filepath.exists():
+                tar.add(str(filepath), arcname=arcname)
+
+    size_mb = output_path.stat().st_size / (1024 * 1024)
+    print(f"Archive created: {output_path} ({size_mb:.1f} MB)")
+
+
+@app.command(name="import")
+def import_data(
+    input_path: str = typer.Option(..., "--input", "-i", help="Path to a youos backup tar.gz"),
+):
+    """Import YouOS data from a tar.gz archive."""
+    import tarfile
+
+    archive = Path(input_path).expanduser().resolve()
+    if not archive.exists():
+        print(f"File not found: {archive}")
+        raise SystemExit(1)
+
+    db_path = ROOT_DIR / "var" / "youos.db"
+    if db_path.exists():
+        confirm = typer.confirm("var/youos.db already exists. Overwrite?", default=False)
+        if not confirm:
+            print("Import cancelled.")
+            raise SystemExit(0)
+
+    with tarfile.open(archive, "r:gz") as tar:
+        tar.extractall(path=ROOT_DIR, filter="data")
+
+    print(f"Imported from {archive}")
+
+
 @app.command()
 def setup():
     """Run the interactive setup wizard."""
