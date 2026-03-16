@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--configs-dir", type=str, default=str(CONFIGS_DIR), help="Configs directory")
     p.add_argument("--dpo", action="store_true", help="Export DPO preference pairs (chosen/rejected)")
     p.add_argument("--curriculum", action=argparse.BooleanOptionalAction, default=True, help="Sort first 20%% by quality (curriculum learning)")
+    p.add_argument("--no-dedup", action="store_true", help="Disable near-duplicate deduplication")
     return p.parse_args()
 
 
@@ -148,6 +149,42 @@ def export_dpo(args: argparse.Namespace) -> None:
     print(f"Exported {len(pairs)} DPO pairs to {output_path}")
 
 
+def deduplicate_pairs(
+    qualified: list[tuple[str, str, str, float]],
+    threshold: float = 0.95,
+) -> tuple[list[tuple[str, str, str, float]], int]:
+    """Deduplicate pairs by inbound text similarity.
+
+    If two pairs have hybrid_similarity >= threshold on their inbound text,
+    keep only the one with higher quality score (or more recent if tied).
+    Returns (deduped list, number removed).
+    """
+    from app.core.diff import hybrid_similarity
+
+    if len(qualified) <= 1:
+        return qualified, 0
+
+    keep = list(qualified)
+    removed = 0
+    i = 0
+    while i < len(keep):
+        j = i + 1
+        while j < len(keep):
+            sim = hybrid_similarity(keep[i][1], keep[j][1])  # compare inbound texts
+            if sim >= threshold:
+                # Keep the one with higher quality; if tied, keep more recent (later in list)
+                q_i, q_j = keep[i][3], keep[j][3]
+                if q_j > q_i:
+                    keep.pop(i)
+                else:
+                    keep.pop(j)
+                removed += 1
+                continue  # don't increment j since we removed an element
+            j += 1
+        i += 1
+    return keep, removed
+
+
 def export(args: argparse.Namespace) -> None:
     db_path = Path(args.db)
     if not db_path.exists():
@@ -224,6 +261,12 @@ def export(args: argparse.Namespace) -> None:
         return
 
     print(f"Exported {len(qualified)} pairs (filtered out {filtered_count} low-quality pairs)")
+
+    # Deduplication by inbound similarity (before temporal split)
+    if not getattr(args, "no_dedup", False):
+        qualified, dedup_count = deduplicate_pairs(qualified)
+        if dedup_count:
+            print(f"Deduped {dedup_count} near-duplicate training pairs")
 
     # Temporal split: sort by created_at ASC, most recent 15% as validation
     qualified.sort(key=lambda x: x[0])
