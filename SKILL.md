@@ -104,11 +104,23 @@ youos stats
 youos teardown
 ```
 
+## Gmail Bookmarklet
+
+Install from the Bookmarklet page in the web UI. Once installed:
+- Click bookmarklet on any Gmail thread → floating panel opens on the right
+- Click **Generate Draft** → draft appears in the panel
+- Click **Insert into Gmail** → draft injected into compose window
+- Rate the draft with stars and submit feedback — all without leaving Gmail
+- Click the bookmarklet again to close the panel
+
+```
+```
+
 ## How it works
 
 1. Ingests Gmail, Google Docs, WhatsApp exports — plus organic pairs from emails you sent without YouOS
 2. Builds a retrieval index — BM25 + query expansion + semantic (LRU-cached) + multi-intent + per-account isolation + same-thread 2× + subject + topic signals + sender-type boosts + quality scores + relative confidence thresholds
-3. When you ask for a draft: detects multi-intent, retrieves score-ranked thread-deduplicated exemplars (reply preserved 600 chars, inbound trimmed 400), prompt token budget enforced; generates using per-mode persona with first-name greeting; local model empty output falls back to Claude
+3. When you ask for a draft: detects multi-intent, retrieves score-ranked thread-deduplicated exemplars (reply preserved 600 chars, inbound trimmed 400), prompt token budget enforced; generates using per-mode persona with first-name greeting; local model empty/signature-only output falls back to Claude automatically
 4. Every email you review trains the model further — curriculum-ordered, quality-filtered, training pairs deduplicated by similarity, DPO pairs supported; nightly pipeline skips steps when data insufficient
 5. Nightly: ingests + organic pairs, incremental persona re-analysis (90-day weighted, EWMA avg words, p25/p75 confidence intervals), fine-tunes (with golden eval check), runs autoresearch on rotating benchmark sample
 6. Autoresearch benchmarks rotate weekly (seeded re-sample) — prevents overfitting to fixed test cases; golden eval composite tracked in pipeline log
