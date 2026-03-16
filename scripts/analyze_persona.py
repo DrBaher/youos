@@ -310,17 +310,25 @@ def analyze(db_path: Path, *, recent_days: int | None = None) -> dict:
     else:
         ewma_avg_words = 0.0
 
+    # Confidence interval stats for avg_reply_words
+    avg_reply_words_p25 = percentile(word_counts_sorted, 0.25) if word_counts_sorted else 0
+    avg_reply_words_p75 = percentile(word_counts_sorted, 0.75) if word_counts_sorted else 0
+    avg_reply_words_stddev = round(statistics.stdev(word_counts), 1) if len(word_counts) >= 2 else 0.0
+
     findings = {
         "total_pairs": total,
         "reply_length": {
             "avg_words": ewma_avg_words,
-            "p25": percentile(word_counts_sorted, 0.25),
+            "p25": avg_reply_words_p25,
             "p50": percentile(word_counts_sorted, 0.50),
-            "p75": percentile(word_counts_sorted, 0.75),
+            "p75": avg_reply_words_p75,
             "p95": percentile(word_counts_sorted, 0.95),
             "min": word_counts_sorted[0] if word_counts_sorted else 0,
             "max": word_counts_sorted[-1] if word_counts_sorted else 0,
         },
+        "avg_reply_words_p25": avg_reply_words_p25,
+        "avg_reply_words_p75": avg_reply_words_p75,
+        "avg_reply_words_stddev": avg_reply_words_stddev,
         "greeting_patterns": dict(greeting_counter.most_common(20)),
         "closing_patterns": dict(closer_counter.most_common(20)),
         "signature_patterns": dict(signature_counter.most_common(20)),
