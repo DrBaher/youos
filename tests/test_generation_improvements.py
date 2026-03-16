@@ -69,3 +69,45 @@ def test_assemble_prompt_includes_few_shot():
     assert "[EXAMPLE 1]" in prompt
     assert "Your reply:" in prompt
     assert "The following are examples" in prompt
+
+
+# --- Item 10: Draft length control ---
+
+
+def test_assemble_prompt_length_hint():
+    """assemble_prompt appends length guidance when avg_reply_words is set."""
+    from app.generation.service import assemble_prompt
+
+    with patch("app.generation.service.get_user_name", return_value="Test"):
+        prompt = assemble_prompt(
+            inbound_message="Hello",
+            reply_pairs=[],
+            persona={"style": {"voice": "direct", "avg_reply_words": 40}},
+            prompts={"system_prompt": "Test."},
+        )
+    assert "Target length: ~40 words. Be concise." in prompt
+
+
+def test_assemble_prompt_no_length_hint_without_avg_words():
+    """No length hint when avg_reply_words is not set."""
+    from app.generation.service import assemble_prompt
+
+    with patch("app.generation.service.get_user_name", return_value="Test"):
+        prompt = assemble_prompt(
+            inbound_message="Hello",
+            reply_pairs=[],
+            persona={"style": {"voice": "direct"}},
+            prompts={"system_prompt": "Test."},
+        )
+    assert "Target length:" not in prompt
+    assert "Be concise." not in prompt
+
+
+def test_compute_max_tokens():
+    """max_tokens scales with avg_reply_words, bounded 100-500."""
+    from app.generation.service import _compute_max_tokens
+
+    assert _compute_max_tokens(None) == 300
+    assert _compute_max_tokens(10) == 100  # 10*5=50, min 100
+    assert _compute_max_tokens(40) == 200  # 40*5=200
+    assert _compute_max_tokens(200) == 500  # 200*5=1000, max 500

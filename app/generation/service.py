@@ -351,7 +351,7 @@ def assemble_prompt(
     if language_hint and language_hint != "en":
         language_block = f"\n[LANGUAGE: {language_hint}] Reply in the same language as the inbound message.\n"
 
-    return (
+    result = (
         f"[SYSTEM]\n"
         f"{system.strip()}\n"
         f"{persona_block}\n"
@@ -368,10 +368,14 @@ def assemble_prompt(
         f"Do not copy them verbatim — use them as reference only.\n"
         f"Output the draft reply text only. No preamble, no explanation.\n"
         f"{tone_instruction}"
-        f"\n"
-        f"[INBOUND MESSAGE]\n"
-        f"{inbound_message}"
     )
+
+    # Append length guidance if avg_reply_words is set
+    if avg_words:
+        result += f"\nTarget length: ~{avg_words} words. Be concise.\n"
+
+    result += f"\n[INBOUND MESSAGE]\n{inbound_message}"
+    return result
 
 
 ADAPTER_PATH = Path(__file__).resolve().parents[2] / "models" / "adapters" / "latest"
@@ -385,7 +389,14 @@ def _adapter_available() -> bool:
     return (ADAPTER_PATH / "adapters.safetensors").exists()
 
 
-def _call_local_model(prompt: str) -> str:
+def _compute_max_tokens(avg_reply_words: int | None) -> int:
+    """Compute max_tokens as a rough upper bound from avg_reply_words."""
+    if avg_reply_words is None:
+        return 300
+    return max(100, min(500, avg_reply_words * 5))
+
+
+def _call_local_model(prompt: str, *, max_tokens: int = 300) -> str:
     result = subprocess.run(
         [
             "mlx_lm",
@@ -397,7 +408,7 @@ def _call_local_model(prompt: str) -> str:
             "--prompt",
             prompt,
             "--max-tokens",
-            "300",
+            str(max_tokens),
         ],
         capture_output=True,
         text=True,
@@ -408,11 +419,13 @@ def _call_local_model(prompt: str) -> str:
     return result.stdout.strip()
 
 
-def _generate_via_ollama(prompt: str, model: str = "mistral", base_url: str = "http://localhost:11434") -> str:
+def _generate_via_ollama(
+    prompt: str, model: str = "mistral", base_url: str = "http://localhost:11434", *, num_predict: int = 400
+) -> str:
     """Generate via Ollama HTTP API."""
     import urllib.request
 
-    payload = json.dumps({"model": model, "prompt": prompt, "stream": False, "options": {"temperature": 0.7, "num_predict": 400}}).encode()
+    payload = json.dumps({"model": model, "prompt": prompt, "stream": False, "options": {"temperature": 0.7, "num_predict": num_predict}}).encode()
     req = urllib.request.Request(f"{base_url}/api/generate", data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -422,9 +435,13 @@ def _generate_via_ollama(prompt: str, model: str = "mistral", base_url: str = "h
         raise RuntimeError(f"Ollama generation failed: {exc}") from exc
 
 
-def _call_claude_cli(prompt: str) -> str:
+def _call_claude_cli(prompt: str, *, max_tokens: int = 300) -> str:
+    cmd = ["claude", "--print"]
+    if max_tokens:
+        cmd.extend(["--max-tokens", str(max_tokens)])
+    cmd.append(prompt)
     result = subprocess.run(
-        ["claude", "--print", prompt],
+        cmd,
         capture_output=True,
         text=True,
         timeout=120,
@@ -511,10 +528,14 @@ def generate_draft(
 
     precedent_used = [_precedent_summary(rp) for rp in reply_pairs]
 
+    # Compute length-aware max_tokens
+    avg_reply_words = persona.get("style", {}).get("avg_reply_words")
+    max_tokens = _compute_max_tokens(avg_reply_words)
+
     fallback_model = get_model_fallback()
     try:
         if request.use_local_model and _adapter_available():
-            draft = _call_local_model(prompt)
+            draft = _call_local_model(prompt, max_tokens=max_tokens)
             model_used = "qwen2.5-1.5b-lora"
         elif fallback_model == "ollama":
             from app.core.config import get_ollama_config
@@ -522,13 +543,13 @@ def generate_draft(
             ollama_cfg = get_ollama_config()
             ollama_model = ollama_cfg.get("model", "mistral")
             ollama_url = ollama_cfg.get("base_url", "http://localhost:11434")
-            draft = _generate_via_ollama(prompt, model=ollama_model, base_url=ollama_url)
+            draft = _generate_via_ollama(prompt, model=ollama_model, base_url=ollama_url, num_predict=max_tokens)
             model_used = f"ollama:{ollama_model}"
         elif fallback_model == "claude":
-            draft = _call_claude_cli(prompt)
+            draft = _call_claude_cli(prompt, max_tokens=max_tokens)
             model_used = "claude"
         else:
-            draft = _call_claude_cli(prompt)
+            draft = _call_claude_cli(prompt, max_tokens=max_tokens)
             model_used = fallback_model
     except Exception as exc:
         draft = f"[draft generation failed: {exc}]"
