@@ -135,6 +135,14 @@ body {
         <button class="btn-autoresearch" id="btnAutoresearch">Run autoresearch now</button>
       </div>
 
+      <!-- Pipeline Status -->
+      <div class="card" id="pipelineCard" style="display:none;">
+        <h2>Pipeline</h2>
+        <div class="stat-row"><span class="stat-label">Last run</span><span class="stat-value" id="pipelineRunAt">-</span></div>
+        <div class="stat-row"><span class="stat-label">Status</span><span class="stat-value" id="pipelineStatus">-</span></div>
+        <div id="pipelineErrors"></div>
+      </div>
+
       <!-- Benchmark Trend -->
       <div class="card">
         <h2>Benchmark Trend</h2>
@@ -240,6 +248,25 @@ body {
       document.getElementById('loraTrained').textContent = d.model.lora_trained_at || 'N/A';
       document.getElementById('loraPairs').textContent = (d.model.lora_pairs_used || 0).toLocaleString();
       document.getElementById('lastFinetune').textContent = d.model.last_finetune_run || 'N/A';
+
+      // Pipeline status
+      if (d.pipeline_last_run) {
+        document.getElementById('pipelineCard').style.display = 'block';
+        document.getElementById('pipelineRunAt').textContent = d.pipeline_last_run.run_at || 'N/A';
+        var ps = d.pipeline_last_run.status || 'unknown';
+        var badgeColor = ps === 'ok' ? '#00c4a7' : (ps === 'partial' ? '#f0ad4e' : '#d9534f');
+        document.getElementById('pipelineStatus').innerHTML =
+          '<span style="color:' + badgeColor + '; font-weight:700;">' + ps.toUpperCase() + '</span>';
+        var errDiv = document.getElementById('pipelineErrors');
+        if (d.pipeline_last_run.errors && d.pipeline_last_run.errors.length > 0) {
+          var errHtml = '<div style="margin-top:0.5rem;">';
+          for (var ei = 0; ei < d.pipeline_last_run.errors.length; ei++) {
+            errHtml += '<div style="color:#d9534f; font-size:0.8rem;">\u2022 ' + d.pipeline_last_run.errors[ei] + '</div>';
+          }
+          errHtml += '</div>';
+          errDiv.innerHTML = errHtml;
+        }
+      }
 
       if (d.benchmark_trend && d.benchmark_trend.length > 0) {
         var html = '';

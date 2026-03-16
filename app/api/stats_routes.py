@@ -16,6 +16,7 @@ TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "templates" / "stats.html"
 ADAPTER_PATH = Path(__file__).resolve().parents[2] / "models" / "adapters" / "latest"
 AUTORESEARCH_LOG = Path(__file__).resolve().parents[2] / "var" / "autoresearch_log.md"
 AUTORESEARCH_JSONL = Path(__file__).resolve().parents[2] / "var" / "autoresearch_runs.jsonl"
+PIPELINE_LOG = Path(__file__).resolve().parents[2] / "var" / "pipeline_last_run.json"
 
 
 @router.get("/api/config")
@@ -192,7 +193,18 @@ def stats_data(request: Request) -> dict[str, Any]:
         local_drafts = 0
         claude_drafts = total_feedback
 
+        # Pipeline last run
+        pipeline_last_run = None
+        if PIPELINE_LOG.exists():
+            try:
+                import json as _pjson
+
+                pipeline_last_run = _pjson.loads(PIPELINE_LOG.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
         return {
+            "pipeline_last_run": pipeline_last_run,
             "corpus": {
                 "total_documents": total_docs,
                 "total_reply_pairs": total_pairs,

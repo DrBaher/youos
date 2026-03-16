@@ -179,6 +179,15 @@ def _count_unused_feedback(db_path: Path) -> int:
         conn.close()
 
 
+def _write_pipeline_log(run_log: dict) -> None:
+    """Write pipeline run log to var/pipeline_last_run.json."""
+    import json
+
+    log_path = ROOT_DIR / "var" / "pipeline_last_run.json"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(json.dumps(run_log, indent=2))
+
+
 def main() -> None:
     import argparse
 
@@ -198,14 +207,32 @@ def main() -> None:
     print(f"{'=' * 60}")
 
     results: dict[str, str] = {}
+    steps: dict[str, bool] = {}
+    errors: list[str] = []
 
     # 0. Corpus deduplication (best-effort, before ingestion)
-    ok = step_deduplicate(verbose=verbose)
-    results["dedup"] = "OK" if ok else "WARN"
+    try:
+        ok = step_deduplicate(verbose=verbose)
+        results["dedup"] = "OK" if ok else "WARN"
+        steps["dedup"] = ok
+        if not ok:
+            errors.append("Corpus deduplication failed")
+    except Exception as exc:
+        results["dedup"] = f"error: {exc}"
+        steps["dedup"] = False
+        errors.append(f"Corpus deduplication error: {exc}")
 
     # 1. Gmail ingestion
-    ok = step_ingest_gmail(verbose=verbose)
-    results["ingestion"] = "OK" if ok else "WARN"
+    try:
+        ok = step_ingest_gmail(verbose=verbose)
+        results["ingestion"] = "OK" if ok else "WARN"
+        steps["ingestion"] = ok
+        if not ok:
+            errors.append("Gmail ingestion failed")
+    except Exception as exc:
+        results["ingestion"] = f"error: {exc}"
+        steps["ingestion"] = False
+        errors.append(f"Gmail ingestion error: {exc}")
 
     # 1b. Benchmark auto-refresh
     try:
@@ -223,37 +250,85 @@ def main() -> None:
                     [sys.executable, str(ROOT_DIR / "scripts" / "generate_benchmarks.py")],
                 )
                 results["benchmark_refresh"] = "OK" if ok else "WARN"
+                steps["benchmark_refresh"] = ok
+                if not ok:
+                    errors.append("Benchmark refresh failed")
             else:
                 results["benchmark_refresh"] = "skipped (not enough new data)"
+                steps["benchmark_refresh"] = True
     except Exception as exc:
         results["benchmark_refresh"] = f"error: {exc}"
+        steps["benchmark_refresh"] = False
+        errors.append(f"Benchmark refresh error: {exc}")
 
     # 2. Auto-feedback extraction
-    feedback = step_auto_feedback(verbose=verbose)
-    results["auto_feedback"] = f"captured {feedback['captured']} pairs"
+    try:
+        feedback = step_auto_feedback(verbose=verbose)
+        results["auto_feedback"] = f"captured {feedback['captured']} pairs"
+        steps["auto_feedback"] = True
+    except Exception as exc:
+        feedback = {"captured": 0, "total": 0, "skipped": 0, "errors": 0}
+        results["auto_feedback"] = f"error: {exc}"
+        steps["auto_feedback"] = False
+        errors.append(f"Auto-feedback error: {exc}")
 
     # 3. Export + fine-tune (only if enough data)
     unused = _count_unused_feedback(DEFAULT_DB)
 
     if feedback["captured"] >= 5:
-        ok = step_export_feedback(verbose=verbose)
-        results["export"] = "OK" if ok else "WARN"
+        try:
+            ok = step_export_feedback(verbose=verbose)
+            results["export"] = "OK" if ok else "WARN"
+            steps["export"] = ok
+            if not ok:
+                errors.append("Feedback export failed")
+        except Exception as exc:
+            results["export"] = f"error: {exc}"
+            steps["export"] = False
+            errors.append(f"Feedback export error: {exc}")
     else:
         results["export"] = f"skipped (only {feedback['captured']} new pairs, need 5)"
+        steps["export"] = True
 
     if unused >= 10:
-        ok = step_finetune_lora(verbose=verbose)
-        results["finetune"] = "OK" if ok else "WARN"
+        try:
+            ok = step_finetune_lora(verbose=verbose)
+            results["finetune"] = "OK" if ok else "WARN"
+            steps["finetune"] = ok
+            if not ok:
+                errors.append("LoRA fine-tuning failed")
+        except Exception as exc:
+            results["finetune"] = f"error: {exc}"
+            steps["finetune"] = False
+            errors.append(f"LoRA fine-tuning error: {exc}")
     else:
         results["finetune"] = f"skipped (only {unused} unused pairs, need 10)"
+        steps["finetune"] = True
 
     # 4. Embedding indexer (after fine-tuning)
-    embed_result = step_index_embeddings(verbose=verbose)
-    results["embeddings"] = "OK" if embed_result["ok"] else "WARN"
+    try:
+        embed_result = step_index_embeddings(verbose=verbose)
+        ok = embed_result["ok"]
+        results["embeddings"] = "OK" if ok else "WARN"
+        steps["embeddings"] = ok
+        if not ok:
+            errors.append("Embedding indexer failed")
+    except Exception as exc:
+        results["embeddings"] = f"error: {exc}"
+        steps["embeddings"] = False
+        errors.append(f"Embedding indexer error: {exc}")
 
     # 5. Autoresearch
-    ok = step_autoresearch(verbose=verbose)
-    results["autoresearch"] = "OK" if ok else "WARN"
+    try:
+        ok = step_autoresearch(verbose=verbose)
+        results["autoresearch"] = "OK" if ok else "WARN"
+        steps["autoresearch"] = ok
+        if not ok:
+            errors.append("Autoresearch failed")
+    except Exception as exc:
+        results["autoresearch"] = f"error: {exc}"
+        steps["autoresearch"] = False
+        errors.append(f"Autoresearch error: {exc}")
 
     # Include recent git log after autoresearch
     try:
@@ -269,14 +344,34 @@ def main() -> None:
     except Exception:
         pass
 
+    # Determine overall status
+    all_ok = all(steps.values())
+    any_ok = any(steps.values())
+    if all_ok:
+        status = "ok"
+    elif any_ok:
+        status = "partial"
+    else:
+        status = "failed"
+
+    # Write pipeline log
+    run_log = {
+        "run_at": start.isoformat(),
+        "status": status,
+        "steps": steps,
+        "errors": errors,
+    }
+    _write_pipeline_log(run_log)
+
     # Summary
     elapsed = (datetime.now(timezone.utc) - start).total_seconds()
     print(f"\n{'=' * 60}")
     print("NIGHTLY PIPELINE SUMMARY")
     print(f"{'=' * 60}")
-    for step, status in results.items():
-        print(f"  {step}: {status}")
-    print(f"\nCompleted in {elapsed:.0f}s")
+    for step, step_status in results.items():
+        print(f"  {step}: {step_status}")
+    print(f"\nStatus: {status}")
+    print(f"Completed in {elapsed:.0f}s")
 
 
 if __name__ == "__main__":
