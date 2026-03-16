@@ -10,7 +10,11 @@ from typing import Any
 
 import yaml
 
+import logging
+
 from app.core.config import get_base_model, get_model_fallback, get_user_name, get_user_names
+
+logger = logging.getLogger(__name__)
 from app.core.sender import classify_sender, extract_domain, first_name_from_display_name
 from app.core.text_utils import strip_quoted_text
 from app.db.bootstrap import resolve_sqlite_path
@@ -48,6 +52,7 @@ class DraftResponse:
     model_used: str
     sender_profile: dict[str, Any] | None = None
     suggested_subject: str | None = None
+    token_estimate: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -515,6 +520,14 @@ def assemble_prompt(
     return result
 
 
+PROMPT_TOKEN_BUDGET: int = 2000
+
+
+def _estimate_tokens(text: str) -> int:
+    """Estimate token count using a simple word-count * 1.4 approximation."""
+    return int(len(text.split()) * 1.4)
+
+
 ADAPTER_PATH = Path(__file__).resolve().parents[2] / "models" / "adapters" / "latest"
 
 
@@ -712,6 +725,34 @@ def generate_draft(
         first_name=first_name,
     )
 
+    # Token budget check — trim exemplars if prompt is too long
+    token_estimate = _estimate_tokens(prompt)
+    if token_estimate > PROMPT_TOKEN_BUDGET and reply_pairs:
+        # Remove lowest-scoring exemplars (already sorted desc) from the end
+        trimmed_pairs = list(reply_pairs)
+        removed = 0
+        while trimmed_pairs and _estimate_tokens(prompt) > PROMPT_TOKEN_BUDGET:
+            trimmed_pairs.pop()
+            removed += 1
+            prompt = assemble_prompt(
+                inbound_message=inbound_for_prompt,
+                reply_pairs=trimmed_pairs,
+                persona=persona,
+                prompts=prompts,
+                detected_mode=detected_mode,
+                audience_hint=request.audience_hint,
+                tone_hint=request.tone_hint,
+                sender_context=sender_context,
+                language_hint=detected_lang,
+                intent_hint=detected_intent,
+                sender_type=sender_type_hint,
+                first_name=first_name,
+            )
+        if removed:
+            logger.info("Prompt truncated: removed %d exemplars to fit token budget", removed)
+            reply_pairs = trimmed_pairs
+        token_estimate = _estimate_tokens(prompt)
+
     precedent_used = [_precedent_summary(rp) for rp in reply_pairs]
 
     # Compute length-aware max_tokens (intent-specific if available)
@@ -758,4 +799,5 @@ def generate_draft(
         model_used=model_used,
         sender_profile=sender_profile,
         suggested_subject=suggested_subject,
+        token_estimate=token_estimate,
     )
