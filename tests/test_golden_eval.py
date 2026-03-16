@@ -16,7 +16,7 @@ from scripts.run_golden_eval import (
 def test_load_golden_cases():
     """Golden cases load from configs/benchmarks/golden.yaml."""
     cases = load_golden_cases()
-    assert len(cases) == 8
+    assert len(cases) == 10
     ids = [c["id"] for c in cases]
     assert "golden-schedule-meeting" in ids
     assert "golden-decline-request" in ids
@@ -26,6 +26,8 @@ def test_load_golden_cases():
     assert "golden-personal-mode" in ids
     assert "golden-multilang" in ids
     assert "golden-whatsapp-brief" in ids
+    assert "golden-internal-brevity" in ids
+    assert "golden-personal-warmth" in ids
 
 
 def test_golden_case_structure():
@@ -84,8 +86,8 @@ def test_score_case_warn():
 def test_run_golden_eval_without_generate():
     """Golden eval runs without a generate function (dry run)."""
     summary = run_golden_eval()
-    assert summary["total"] == 8
-    assert summary["failed"] == 8  # all fail with empty drafts
+    assert summary["total"] == 10
+    assert summary["failed"] == 10  # all fail with empty drafts
 
 
 def test_run_golden_eval_with_mock_generate(tmp_path):
@@ -164,6 +166,42 @@ def test_new_golden_cases_structure():
     assert multilang["expected_language"] == "de"
 
 
+def test_new_golden_internal_brevity():
+    cases = load_golden_cases()
+    case = [c for c in cases if c["id"] == "golden-internal-brevity"][0]
+    assert case["expected_mode"] == "work"
+    assert case["expected_sender_type"] == "internal"
+    assert case["max_words"] == 30
+
+
+def test_new_golden_personal_warmth():
+    cases = load_golden_cases()
+    case = [c for c in cases if c["id"] == "golden-personal-warmth"][0]
+    assert case["expected_mode"] == "personal"
+    assert case["max_words"] == 25
+    assert "hey" in case["expected_keywords"]
+    assert "catch" in case["expected_keywords"]
+
+
+def test_golden_count_is_10():
+    cases = load_golden_cases()
+    assert len(cases) == 10
+
+
+def test_max_words_is_fail_condition():
+    """Exceeding max_words should result in fail, not warn."""
+    case = {
+        "id": "test-brevity-fail",
+        "expected_keywords": ["hello"],
+        "expected_mode": "work",
+        "max_words": 5,
+    }
+    long_draft = "hello world this is a very long response with many words"
+    result = score_case(case, long_draft, "work")
+    assert result["status"] == "fail"
+    assert result["brevity_pass"] is False
+
+
 def test_save_and_format_results(tmp_path):
     """Results can be saved to JSON and formatted as scorecard."""
     summary = run_golden_eval()
@@ -173,4 +211,4 @@ def test_save_and_format_results(tmp_path):
 
     scorecard = format_scorecard(summary)
     assert "Golden Benchmark Results" in scorecard
-    assert "Total: 8" in scorecard
+    assert "Total: 10" in scorecard
