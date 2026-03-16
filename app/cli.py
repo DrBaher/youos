@@ -23,6 +23,64 @@ app = typer.Typer(
 
 
 @app.command()
+def quickstart():
+    """Lightweight 3-step onramp for users who already have gog configured."""
+    import yaml
+    from rich.console import Console
+    from rich.progress import Progress
+
+    console = Console()
+    config_path = ROOT_DIR / "youos_config.yaml"
+
+    # Step 1: Doctor checks
+    console.print("[bold]Step 1/3:[/bold] Running doctor checks...")
+    from app.core.doctor import run_doctor_checks
+
+    passed, failures = run_doctor_checks()
+    if not passed:
+        for msg in failures:
+            console.print(f"  [red]\u2717[/red] {msg}")
+        console.print("\n[bold red]Fix the above issues before continuing.[/bold red]")
+        raise SystemExit(1)
+    console.print("  [green]\u2713[/green] All required checks passed.")
+
+    # Step 2: Config
+    if not config_path.exists():
+        console.print("\n[bold]Step 2/3:[/bold] Creating config...")
+        emails_input = typer.prompt("Your email address(es), comma-separated")
+        emails = [e.strip() for e in emails_input.split(",") if e.strip()]
+        display_name = typer.prompt("Display name", default="YouOS")
+        config = {
+            "user": {
+                "name": display_name.replace("OS", "") if display_name.endswith("OS") else display_name,
+                "display_name": display_name,
+                "emails": emails,
+            },
+            "ingestion": {"accounts": emails},
+        }
+        config_path.write_text(yaml.dump(config, default_flow_style=False))
+        console.print(f"  Config written to {config_path}")
+    else:
+        console.print("\n[bold]Step 2/3:[/bold] Config already exists, skipping.")
+
+    # Step 3: Gmail ingestion
+    console.print("\n[bold]Step 3/3:[/bold] Running Gmail ingestion...")
+    from scripts.nightly_pipeline import step_ingest_gmail
+
+    with Progress(console=console) as progress:
+        task = progress.add_task("Ingesting emails...", total=None)
+        ok = step_ingest_gmail()
+        progress.update(task, completed=100, total=100)
+
+    if ok:
+        console.print("\n[bold green]Quickstart complete![/bold green]")
+    else:
+        console.print("\n[bold yellow]Ingestion had warnings, but setup is done.[/bold yellow]")
+
+    console.print("Run: [bold]youos ui[/bold] to launch the web interface.")
+
+
+@app.command()
 def setup():
     """Run the interactive setup wizard."""
     subprocess.run([sys.executable, str(ROOT_DIR / "scripts" / "setup_wizard.py")])
