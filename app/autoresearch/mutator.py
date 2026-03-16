@@ -99,6 +99,23 @@ Requirements:
 ]
 
 
+_COMPOSITE_WEIGHT_SURFACES: list[dict[str, Any]] = [
+    {"name": f"composite_weight_{k}", "yaml_key": f"composite_weights.{k}", "step_size": 0.05, "min_val": 0.0, "max_val": 1.0}
+    for k in ("pass_rate", "avg_keyword_hit", "avg_confidence")
+]
+
+
+def _normalize_composite_weights(data: dict[str, Any]) -> None:
+    """Enforce sum == 1.0 for composite weights after mutation."""
+    weights = data.get("composite_weights", {})
+    if not weights:
+        return
+    total = sum(float(v) for v in weights.values())
+    if total > 0:
+        for k in weights:
+            weights[k] = round(float(weights[k]) / total, 4)
+
+
 def get_mutable_surfaces(configs_dir: Path, *, surface_filter: str | None = None) -> list[ConfigSurface]:
     """Load current config values and return mutable surfaces."""
     surfaces: list[ConfigSurface] = []
@@ -147,6 +164,27 @@ def get_mutable_surfaces(configs_dir: Path, *, surface_filter: str | None = None
                 )
             )
 
+    if surface_filter is None or surface_filter == "autoresearch":
+        autoresearch_path = configs_dir / "autoresearch.yaml"
+        if autoresearch_path.exists():
+            ar_data = yaml.safe_load(autoresearch_path.read_text(encoding="utf-8")) or {}
+            weights = ar_data.get("composite_weights", {})
+            for spec in _COMPOSITE_WEIGHT_SURFACES:
+                key_parts = spec["yaml_key"].split(".")
+                current = float(weights.get(key_parts[-1], 0.0))
+                surfaces.append(
+                    ConfigSurface(
+                        name=spec["name"],
+                        config_file="autoresearch.yaml",
+                        yaml_key=spec["yaml_key"],
+                        current_value=current,
+                        mutation_type="numeric_step",
+                        step_size=spec["step_size"],
+                        min_val=spec["min_val"],
+                        max_val=spec["max_val"],
+                    )
+                )
+
     if surface_filter is None or surface_filter == "prompt_drafting":
         prompts_path = configs_dir / "prompts.yaml"
         prompts_data = yaml.safe_load(prompts_path.read_text(encoding="utf-8")) or {}
@@ -187,6 +225,9 @@ def apply_mutation(surface: ConfigSurface, configs_dir: Path) -> Any:
             return old_value  # at boundary, no mutation possible
         _set_nested(data, surface.yaml_key, new_value)
         surface.current_value = new_value
+        # Normalize composite weights if this is an autoresearch weight
+        if surface.config_file == "autoresearch.yaml" and "composite_weights" in surface.yaml_key:
+            _normalize_composite_weights(data)
     elif surface.mutation_type == "template_variant":
         new_index = (surface.variant_index + 1) % len(surface.variants)
         new_value = surface.variants[new_index]

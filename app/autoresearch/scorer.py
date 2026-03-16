@@ -3,8 +3,49 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 from app.evaluation.service import EvalSuiteResult
+
+_DEFAULT_WEIGHTS = {"pass_rate": 0.5, "avg_keyword_hit": 0.3, "avg_confidence": 0.2}
+_cached_weights: dict[str, float] | None = None
+
+
+def load_composite_weights(configs_dir: Path | None = None) -> dict[str, float]:
+    """Load composite weights from configs/autoresearch.yaml, with caching."""
+    global _cached_weights
+    if _cached_weights is not None:
+        return _cached_weights
+
+    if configs_dir is None:
+        configs_dir = Path(__file__).resolve().parents[2] / "configs"
+
+    config_path = configs_dir / "autoresearch.yaml"
+    if config_path.exists():
+        import yaml
+
+        try:
+            data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            weights = data.get("composite_weights", {})
+            result = {
+                "pass_rate": float(weights.get("pass_rate", _DEFAULT_WEIGHTS["pass_rate"])),
+                "avg_keyword_hit": float(weights.get("avg_keyword_hit", _DEFAULT_WEIGHTS["avg_keyword_hit"])),
+                "avg_confidence": float(weights.get("avg_confidence", _DEFAULT_WEIGHTS["avg_confidence"])),
+            }
+            _cached_weights = result
+            return result
+        except Exception:
+            pass
+
+    _cached_weights = dict(_DEFAULT_WEIGHTS)
+    return _cached_weights
+
+
+def reset_weight_cache() -> None:
+    """Clear cached weights (for testing)."""
+    global _cached_weights
+    _cached_weights = None
 
 
 @dataclass
@@ -41,7 +82,8 @@ def scorecard_from_eval_result(result: EvalSuiteResult) -> Scorecard:
     avg_kw = sum(cr.scores.get("keyword_hit_rate", 0.0) for cr in result.case_results) / total
     avg_conf = sum(cr.scores.get("confidence_score", 0.0) for cr in result.case_results) / total
 
-    composite = 0.5 * pass_rate + 0.3 * avg_kw + 0.2 * avg_conf
+    weights = load_composite_weights()
+    composite = weights["pass_rate"] * pass_rate + weights["avg_keyword_hit"] * avg_kw + weights["avg_confidence"] * avg_conf
 
     return Scorecard(
         config_tag=result.config_tag,
