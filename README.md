@@ -45,7 +45,8 @@ Gmail (sent mail)          Your feedback
 - Same-thread history gets a 2x retrieval boost
 - Handles full email threads — paste the whole thread, YouOS focuses on the latest message
 - Warns you when confidence is low; explain any draft inline via "How was this generated?"
-- Local model empty output → automatic Claude fallback
+- Local model empty or signature-only output → automatic Claude fallback
+- Subject line generated via smart content analysis — skips greeting/filler lines, extracts the actual topic
 - Improves from your feedback via LoRA fine-tuning — quality-filtered, deduplicated, curriculum-ordered, DPO preference pairs supported
 - Training export deduplicated by inbound similarity (≥0.95 → keep higher-rated pair)
 - Auto-scales training hyperparameters; nightly pipeline skips steps when data is insufficient
@@ -138,10 +139,10 @@ youos ingest --whatsapp ~/Downloads/WhatsApp-Chat.txt
 
 The web UI provides:
 - **Draft Reply**: Paste an inbound email (or full thread), generate a draft grounded in your style. See confidence, detected intent, and exemplar trace via "How was this generated?"
-- **Review Queue**: Review auto-generated drafts — configurable batch size (5/10/20), keyboard shortcuts (`j`/`k`)
+- **Review Queue**: Emails appear instantly, drafts stream in one by one as they generate. Automated senders filtered by address and content. Configurable batch size (5/10/20) and draft model (`claude`/`local`/`auto`). Keyboard shortcuts (`j`/`k`)
 - **History**: Past drafts with intent badges, confidence badges, and edit-distance indicators
 - **Stats Dashboard**: Corpus health, model status, pipeline status (with skipped steps), style drift indicator, benchmark trends
-- **Gmail Bookmarklet**: One-click drafting from Gmail
+- **Gmail Bookmarklet**: Injects a floating side panel directly into Gmail — generate a draft and click "Insert into Gmail" without leaving your inbox. Submit feedback with star rating from the panel
 
 ## Architecture
 

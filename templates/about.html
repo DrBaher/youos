@@ -172,7 +172,8 @@ body {
       <li>Subject line + topic-aware retrieval signals — known topics from sender profiles boost matching pairs</li>
       <li>FTS queries expanded with email vocabulary synonyms (reschedule → postpone, meeting, call…)</li>
       <li>Confidence-gated warnings — low-precedent drafts show a clear banner; explain any draft inline</li>
-      <li>Local model empty output → automatic Claude fallback</li>
+      <li>Local model empty or signature-only output → automatic Claude fallback</li>
+      <li>Subject line generated via smart content analysis — skips greeting/filler lines, finds the topic sentence</li>
       <li>Training data quality filters + deduplication by inbound similarity (≥0.95 → keep higher-rated pair)</li>
       <li>Curriculum learning for LoRA fine-tuning — quality-ordered warmup before temporal training</li>
       <li>DPO preference pairs supported — chosen vs rejected contrastive training data</li>
@@ -188,6 +189,7 @@ body {
       <li>Sender notes immediately rebuild that sender's profile: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos note</code></li>
       <li>Submit feedback directly from terminal: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos feedback</code></li>
       <li>Review queue: A/B comparison between adapter and base model; configurable batch size (5/10/20)</li>
+      <li>Gmail bookmarklet: floating side panel — generate draft, insert into compose, submit star-rated feedback without leaving Gmail</li>
       <li>History tab: intent and confidence badges on every past draft</li>
       <li>Optional cross-encoder reranking for higher retrieval precision</li>
       <li>Corpus health at a glance: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos corpus</code></li>
