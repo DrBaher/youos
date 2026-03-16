@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.config import get_review_batch_size
@@ -347,6 +348,83 @@ class ReviewSubmitBody(BaseModel):
     edited_reply: str = Field(min_length=1)
     feedback_note: str | None = None
     rating: int = Field(default=4, ge=1, le=5)
+
+
+@router.get("/next-stream")
+def review_queue_next_stream(
+    request: Request,
+    batch_size: int = Query(default=None, ge=1, le=50),
+    exclude_ids: str = Query(default=""),
+) -> StreamingResponse:
+    """Stream review queue items one by one as SSE, generating drafts progressively."""
+    db_path = _get_db_path(request)
+    settings = _get_settings(request)
+
+    if batch_size is None:
+        batch_size = get_review_batch_size()
+
+    excluded: list[int] = []
+    if exclude_ids.strip():
+        excluded = [int(x) for x in exclude_ids.split(",") if x.strip().isdigit()]
+
+    candidates, total_unreviewed = _fetch_candidates(db_path, batch_size, excluded)
+    reviewed_today = _count_reviewed_today(db_path)
+
+    def _generate() -> Any:
+        # Send metadata first
+        meta = json.dumps({
+            "type": "meta",
+            "total_unreviewed": total_unreviewed,
+            "reviewed_today": reviewed_today,
+            "batch_size": len(candidates),
+        })
+        yield f"data: {meta}\n\n"
+
+        item_count = 0
+        for cand in candidates:
+            if item_count >= batch_size:
+                break
+            clean_inbound = strip_quoted_text(decode_html_entities(cand["inbound_text"]))
+            try:
+                draft_response = generate_draft(
+                    DraftRequest(
+                        inbound_message=clean_inbound,
+                        sender=cand["inbound_author"],
+                    ),
+                    database_url=settings.database_url,
+                    configs_dir=settings.configs_dir,
+                )
+                generated_draft = draft_response.draft
+            except Exception as exc:
+                logger.warning("Draft generation failed for rp %s: %s", cand["reply_pair_id"], exc)
+                continue
+
+            sender_profile = None
+            if cand["inbound_author"]:
+                sender_profile = _lookup_sender_profile_safe(db_path, cand["inbound_author"])
+
+            item = {
+                "type": "item",
+                "reply_pair_id": cand["reply_pair_id"],
+                "inbound_text": clean_inbound,
+                "inbound_author": cand["inbound_author"],
+                "subject": cand["subject"],
+                "generated_draft": generated_draft,
+                "sender_profile": sender_profile,
+                "account_email": cand.get("account_email"),
+                "paired_at": cand["paired_at"],
+                "suggested_subject": getattr(draft_response, "suggested_subject", None),
+            }
+            yield f"data: {json.dumps(item)}\n\n"
+            item_count += 1
+
+        yield "data: {\"type\": \"done\"}\n\n"
+
+        global _last_sender_profile_rebuild
+        if item_count > 0 and (time.time() - _last_sender_profile_rebuild) > 3600:
+            _trigger_sender_profile_rebuild()
+
+    return StreamingResponse(_generate(), media_type="text/event-stream")
 
 
 @router.post("/submit")

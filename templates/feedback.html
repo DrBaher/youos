@@ -1041,35 +1041,79 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     rqItems = [];
     rqIndex = 0;
     rqReviewed = 0;
+    let firstItemShown = false;
 
     document.getElementById('rqLoading').style.display = 'block';
     document.getElementById('rqMain').style.display = 'none';
     document.getElementById('rqBatchComplete').style.display = 'none';
 
+    // Update loading text
+    const loadingProgress = document.getElementById('loadingProgress');
+    if (loadingProgress) loadingProgress.textContent = 'Generating first draft...';
+
     try {
-      let url = '/review-queue/next?batch_size=' + rqBatchSize;
+      let url = '/review-queue/next-stream?batch_size=' + rqBatchSize;
       if (rqSkippedIds.length > 0) {
         url += '&exclude_ids=' + rqSkippedIds.join(',');
       }
+
       const res = await fetch(url);
       if (!res.ok) throw new Error('Server error: ' + res.status);
-      const data = await res.json();
 
-      rqItems = data.items;
-      rqTotalUnreviewed = data.total_unreviewed;
-      rqReviewedToday = data.reviewed_today;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-      document.getElementById('rqLoading').style.display = 'none';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
 
-      if (rqItems.length === 0) {
-        document.getElementById('rqBatchComplete').style.display = 'block';
-        document.getElementById('rqBatchMsg').textContent =
-          'No unreviewed pairs available. ' + rqReviewedToday + ' reviewed today.';
-        return;
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const msg = JSON.parse(line.slice(6));
+
+            if (msg.type === 'meta') {
+              rqTotalUnreviewed = msg.total_unreviewed;
+              rqReviewedToday = msg.reviewed_today;
+              if (msg.batch_size === 0) {
+                document.getElementById('rqLoading').style.display = 'none';
+                document.getElementById('rqBatchComplete').style.display = 'block';
+                document.getElementById('rqBatchMsg').textContent =
+                  'No unreviewed pairs available. ' + rqReviewedToday + ' reviewed today.';
+                return;
+              }
+
+            } else if (msg.type === 'item') {
+              rqItems.push(msg);
+              if (loadingProgress) {
+                loadingProgress.textContent = rqItems.length + ' / ' + rqBatchSize + ' drafts ready';
+              }
+              // Show the first item immediately — don't wait for the full batch
+              if (!firstItemShown) {
+                firstItemShown = true;
+                document.getElementById('rqLoading').style.display = 'none';
+                document.getElementById('rqMain').style.display = 'block';
+                rqShowItem();
+              } else {
+                rqUpdateProgress();
+              }
+
+            } else if (msg.type === 'done') {
+              if (!firstItemShown) {
+                // No items at all
+                document.getElementById('rqLoading').style.display = 'none';
+                document.getElementById('rqBatchComplete').style.display = 'block';
+                document.getElementById('rqBatchMsg').textContent =
+                  'No unreviewed pairs available. ' + rqReviewedToday + ' reviewed today.';
+              }
+            }
+          } catch (e) { /* skip malformed */ }
+        }
       }
-
-      document.getElementById('rqMain').style.display = 'block';
-      rqShowItem();
     } catch (e) {
       document.getElementById('rqLoading').style.display = 'none';
       document.getElementById('rqBatchComplete').style.display = 'block';
