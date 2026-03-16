@@ -147,6 +147,51 @@ def set_last_ingest_at(account: str, timestamp: str, config: dict[str, Any] | No
     save_config(cfg)
 
 
+_PERSONAL_DOMAINS = frozenset({
+    "gmail.com", "yahoo.com", "hotmail.com", "icloud.com", "me.com",
+    "outlook.com", "live.com", "aol.com", "protonmail.com", "proton.me",
+    "fastmail.com",
+})
+
+
+def get_account_for_sender(sender: str, config: dict[str, Any] | None = None) -> str | None:
+    """Infer which user account email to use based on sender domain.
+
+    - If sender domain matches an internal domain → return work account email
+    - If sender is from a personal domain (gmail, yahoo, etc) → return personal account email
+    - If ambiguous → return None (use all accounts)
+    """
+    if not sender or "@" not in sender:
+        return None
+
+    cfg = config or load_config()
+    emails = get_user_emails(cfg)
+    if not emails:
+        return None
+
+    sender_domain = sender.rsplit("@", 1)[-1].lower()
+    internal_domains = get_internal_domains(cfg)
+
+    # Sender is from an internal domain → use work email (non-personal domain email)
+    if sender_domain in internal_domains:
+        for email in emails:
+            domain = email.split("@", 1)[-1].lower() if "@" in email else ""
+            if domain not in _PERSONAL_DOMAINS:
+                return email
+        return emails[0] if emails else None
+
+    # Sender is from a personal domain → use personal email
+    if sender_domain in _PERSONAL_DOMAINS:
+        for email in emails:
+            domain = email.split("@", 1)[-1].lower() if "@" in email else ""
+            if domain in _PERSONAL_DOMAINS:
+                return email
+        return emails[0] if emails else None
+
+    # External/ambiguous domain → return None (no filter)
+    return None
+
+
 def save_config(config: dict[str, Any], config_path: Path | None = None) -> None:
     path = config_path or CONFIG_PATH
     path.write_text(
