@@ -2,8 +2,6 @@
 
 import sqlite3
 
-from app.api.history_routes import router
-
 
 def test_history_endpoint_returns_intent_and_confidence(tmp_path):
     """History endpoint includes intent and confidence fields when available."""
@@ -41,10 +39,7 @@ def test_history_endpoint_returns_intent_and_confidence(tmp_path):
     has_intent = "intent" in col_names
     assert has_intent
 
-    select_cols = (
-        "id, inbound_text, sender, generated_draft, final_reply, "
-        "edit_distance_pct, confidence, model_used, retrieval_method, created_at"
-    )
+    select_cols = "id, inbound_text, sender, generated_draft, final_reply, edit_distance_pct, confidence, model_used, retrieval_method, created_at"
     if has_intent:
         select_cols += ", intent"
 
@@ -91,10 +86,7 @@ def test_history_endpoint_without_intent_column(tmp_path):
     has_intent = "intent" in col_names
     assert not has_intent
 
-    select_cols = (
-        "id, inbound_text, sender, generated_draft, final_reply, "
-        "edit_distance_pct, confidence, model_used, retrieval_method, created_at"
-    )
+    select_cols = "id, inbound_text, sender, generated_draft, final_reply, edit_distance_pct, confidence, model_used, retrieval_method, created_at"
     rows = conn.execute(f"SELECT {select_cols} FROM draft_history ORDER BY created_at DESC LIMIT 20").fetchall()
     items = [dict(row) for row in rows]
     conn.close()

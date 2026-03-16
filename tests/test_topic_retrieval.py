@@ -85,8 +85,9 @@ def test_topic_match_boost_in_config():
 
 
 def test_topic_match_boost_defaults_yaml():
-    import yaml
     from pathlib import Path
+
+    import yaml
 
     defaults_path = Path(__file__).resolve().parents[1] / "configs" / "retrieval" / "defaults.yaml"
     data = yaml.safe_load(defaults_path.read_text())

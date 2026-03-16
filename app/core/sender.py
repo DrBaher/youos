@@ -48,6 +48,7 @@ def first_name_from_display_name(display_name: str | None) -> str | None:
         return None
     return first[0].upper() + first[1:] if len(first) > 1 else first.upper()
 
+
 _AUTOMATED_PREFIXES = frozenset(
     {
         "no-reply",

@@ -22,15 +22,13 @@ def test_expand_max_expansions():
     text = "schedule update issue"
     result = expand_query(text, max_expansions=2)
     # Should have at most 2 groups
-    also_part = result.split("(also: ")[1].rstrip(")") if "(also:" in result else ""
-    # Count is limited
     assert result.startswith(text)
 
 
 def test_expand_caps_length():
     text = "schedule postpone urgent proposal confirm update issue team"
     result = expand_query(text, max_expansions=3)
-    expansion = result[len(text):]
+    expansion = result[len(text) :]
     # Expansion should be <=50 chars + the "(also: " prefix
     assert len(expansion) <= 60  # "(also: " + 50 chars + ")"
 

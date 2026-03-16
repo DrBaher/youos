@@ -1,0 +1,149 @@
+You are working on YouOS at /Users/bbot/Projects/youos. 333 tests currently pass. Implement the following 12 improvements, one at a time, committing each separately. Run tests after each.
+
+## Item 1 — Greeting/closing injection into prompts (app/generation/service.py, configs/persona.yaml)
+assemble_prompt() currently never uses greeting_patterns or closing_patterns from persona.yaml.
+Fix:
+- After building persona_block, extract the greeting for the current mode/sender_type from persona: prefer modes.{sender_type}.greeting, fall back to persona.greeting_patterns.{sender_type}, fall back to persona.greeting_patterns.default
+- Do the same for closing
+- If greeting contains '{name}', substitute the sender's first name (extracted in Item 2, or use empty string if unknown)
+- Append to the prompt's TASK section: "Begin your reply with: {greeting}\nEnd your reply with: {closing}"
+- Only inject if both greeting and closing are non-empty strings
+- Add tests in tests/test_greeting_injection.py
+
+## Item 2 — Sender first name extraction and injection (app/generation/service.py, app/core/sender.py)
+Add first_name_from_display_name(display_name: str | None) -> str | None to app/core/sender.py:
+- Takes display_name like "Sarah Mitchell" or "Dr. Baher" or "sarah.mitchell@company.com"
+- Returns first name: "Sarah", "Baher", or None if unparseable
+- Strip titles: Dr., Prof., Mr., Mrs., Ms., Sir
+- If display_name is an email address, extract from local part (sarah.mitchell -> Sarah)
+- Capitalize first letter
+In generate_draft(): after looking up sender_profile, extract first_name = first_name_from_display_name(sender_profile.get('display_name'))
+Pass first_name to assemble_prompt() as a new parameter.
+In assemble_prompt(): use first_name to fill {name} in greeting patterns.
+Add tests in tests/test_sender_name.py.
+
+## Item 3 — Learned intent from corpus + multi-intent support (app/core/intent.py, scripts/build_sender_profiles.py, app/retrieval/service.py)
+Multi-intent support:
+- Add classify_intents_multi(text: str) -> list[str] to intent.py — returns ALL intents with >= 1 keyword match, sorted by score DESC, max 3. Returns ['general'] if none.
+- Update generate_draft() to use classify_intents_multi(), pass primary intent as intent_hint and secondary as intent_hint_2: str | None = None to RetrievalRequest.
+
+Corpus-learned intent:
+- In scripts/build_sender_profiles.py after building profiles, annotate each reply_pair with its predicted_intent:
+  UPDATE reply_pairs SET metadata_json = json_patch(metadata_json, '{"predicted_intent": "..."}') WHERE id = ?
+  Only annotate pairs that don't already have predicted_intent set.
+- Add predicted_intent column awareness to retrieval: when matching by intent, check metadata_json predicted_intent as well as classifying live.
+
+Add tests in tests/test_intent_multi.py.
+
+## Item 4 — Per-intent reply length calibration (scripts/analyze_persona.py, app/generation/service.py)
+In analyze_persona.py analyze():
+- Group reply_pairs by intent (classify_intent on inbound_text)
+- Compute avg_reply_words per intent group
+- Add to findings: intent_avg_words: {meeting_request: 45, thank_you: 12, status_update: 60, ...}
+- Write to configs/persona_analysis.json
+
+In merge_into_persona(): merge intent_avg_words into persona.yaml under style.intent_avg_words.
+
+In generate_draft(): when assembling prompt, if intent is known and intent_avg_words[intent] exists, use that instead of global avg_reply_words for both the prompt hint and _compute_max_tokens().
+
+Add tests in tests/test_intent_length.py.
+
+## Item 5 — Organic pair capture from sent mail (scripts/extract_auto_feedback.py, scripts/nightly_pipeline.py)
+Add organic pair capture: emails you sent that have NO corresponding YouOS draft:
+- In extract_auto_feedback: after processing drafted pairs, also query sent emails from the last N days that have inbound context (i.e. are replies, not fresh sends)
+  SELECT rp.id, rp.inbound_text, rp.reply_text FROM reply_pairs rp
+  WHERE rp.auto_feedback_processed = 0
+  AND rp.id NOT IN (SELECT DISTINCT reply_pair_id FROM feedback_pairs WHERE reply_pair_id IS NOT NULL)
+  AND LENGTH(rp.reply_text) >= 15
+- Insert these as feedback_pairs with generated_draft = reply_text (treating the actual reply as both draft and final), edit_distance_pct = 0.0, rating = NULL, organic = 1
+- Add organic BOOLEAN column to feedback_pairs via migration
+- Add --organic flag to extract_auto_feedback (default True), --no-organic to disable
+- Print: 'Captured N organic pairs (no YouOS draft)'
+Add tests in tests/test_organic_pairs.py.
+
+## Item 6 — Query expansion for retrieval (app/retrieval/service.py, app/core/query_expansion.py)
+Create app/core/query_expansion.py:
+SYNONYMS = {
+  'schedule': ['meeting', 'call', 'sync', 'calendar', 'appointment'],
+  'postpone': ['reschedule', 'delay', 'move', 'push back', 'shift'],
+  'urgent': ['asap', 'immediately', 'critical', 'priority', 'time-sensitive'],
+  'proposal': ['offer', 'quote', 'pitch', 'suggestion'],
+  'confirm': ['approve', 'sign off', 'green light', 'authorize'],
+  'update': ['status', 'progress', 'news', 'latest'],
+  'issue': ['problem', 'bug', 'error', 'concern'],
+  'team': ['colleagues', 'staff', 'group', 'members'],
+}
+Function: expand_query(text: str, max_expansions: int = 3) -> str
+- Find words in text that have synonyms
+- Append up to max_expansions synonym groups as: 'text (also: synonym1 synonym2)'
+- Keep expansions brief — cap total expansion at 50 extra chars
+In RetrievalService.retrieve(): apply expand_query() to the query text before FTS search. Keep original query for semantic search (embeddings already handle semantic similarity).
+Add tests in tests/test_query_expansion.py.
+
+## Item 7 — Smart pipeline skip gates (scripts/nightly_pipeline.py)
+Add skip gates to avoid wasted compute:
+- Before step_finetune_lora: count new feedback_pairs since last run. If < 3, skip with message '[finetune] Skipping — only N new pairs (need >= 3)'
+- Before step_autoresearch: count new feedback_pairs since last run. If < 5, skip with '[autoresearch] Skipping — only N new pairs (need >= 5)'
+- Before step_index_embeddings: count documents with NULL embedding. If 0, skip with '[embeddings] Skipping — all documents already indexed'
+- Before step_deduplicate: count total pairs. If < 10, skip with '[dedup] Skipping — corpus too small'
+- Add skip counts to var/pipeline_last_run.json under 'skipped_steps': [...]
+Add tests in tests/test_pipeline_skip.py.
+
+## Item 8 — Per-mode max_tokens in generation (app/generation/service.py)
+_compute_max_tokens() currently reads only the top-level persona avg_reply_words.
+Fix:
+- Accept persona: dict as parameter (already available in generate_draft)
+- Prefer mode-specific avg_reply_words: check persona.get('_active_mode_config', {}).get('avg_reply_words') first
+- Then check intent_avg_words[intent] if intent is known (from Item 4)
+- Fall back to persona.style.avg_reply_words
+- Fall back to default 300
+Store the active mode config on persona dict as '_active_mode_config' after mode merge in generate_draft().
+Add tests in tests/test_mode_max_tokens.py.
+
+## Item 9 — Intent and confidence badges in History tab (templates/feedback.html)
+In the History tab, each history-item currently shows: date, sender, snippet, edit-distance badge.
+Add:
+- Intent badge: small pill with intent label (e.g. 'meeting' in teal, 'urgent' in red, 'thanks' in green)
+- Confidence badge: 'high' / 'medium' / 'low' with matching colour
+Both values are already stored in draft_history (via draft_explain traces and /history endpoint).
+In the JS loadHistory() function: if item.intent exists, render intent badge. If item.confidence exists, render confidence badge.
+Add intent and confidence to the /history endpoint response (app/api/history_routes.py) if not already present.
+Style badges consistently with existing .history-badge class.
+Add tests verifying history endpoint returns intent and confidence fields.
+
+## Item 10 — Golden benchmark mode-verification cases (configs/benchmarks/golden.yaml, scripts/run_golden_eval.py)
+Add 2 new golden cases:
+- golden-internal-brevity: inbound from internal colleague ('Hey, quick question about the Q2 numbers') — expected_mode: work, expected_sender_type: internal, max_words: 30, verify draft is short
+- golden-personal-warmth: inbound from personal contact ('Hey! Long time no speak, how are things?') — expected_mode: personal, max_words: 25, expected_keywords: ['hey', 'good', 'hope', 'well', 'catch']
+In run_golden_eval.py score_case(): add checks for max_words enforcement as fail condition (not just warn).
+Update golden case count from 8 to 10.
+Add tests in tests/test_golden_eval.py.
+
+## Item 11 — youos quickstart asks for internal domains (scripts/setup_wizard.py, app/core/config.py)
+In setup_wizard.py _get_user_identity():
+- After asking for email addresses, add: 'What domains are internal to your organisation? (e.g. company.com, subsidiary.com) [optional, press Enter to skip]'
+- Parse comma-separated input into list of domains
+- Write to youos_config.yaml as user.internal_domains: [...]
+
+In app/core/config.py get_internal_domains(): already reads from config — just ensure setup wizard writes the right key.
+
+In youos quickstart command (app/cli.py): also prompt for internal domains if not already set in config.
+
+Add tests in tests/test_setup_wizard.py (extend) verifying internal_domains is written.
+
+## Item 12 — Topic-aware retrieval boosting (app/retrieval/service.py, scripts/build_sender_profiles.py)
+Sender profiles already store topics_json. Use it in retrieval:
+In retrieval service _score_reply_pair_row_fts() and _score_reply_pair_row_legacy():
+- When a sender match exists (sender_domain_hint matches pair's sender), load that sender's topics_json
+- Tokenize the query and check for topic overlaps with the sender's known topics
+- If any topic token (>4 chars) matches, apply a topic_match_boost: 0.15 multiplier
+Add topic_match_boost: float = 0.15 to RetrievalConfig.
+In configs/retrieval/defaults.yaml: add topic_match_boost: 0.15
+Add tests in tests/test_topic_retrieval.py.
+
+## Finish up
+- source .venv/bin/activate && python -m pytest tests/ -q
+- ruff check . --fix && ruff format app/ scripts/ tests/
+- git add -A && git commit -m 'chore: final lint and format pass'
+- git push origin main
+- openclaw system event --text 'Done: YouOS round 5 fine-tuning complete (12 items)' --mode now
