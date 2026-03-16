@@ -529,13 +529,22 @@ def _adapter_available() -> bool:
 def _compute_max_tokens(avg_reply_words: int | None, *, persona: dict[str, Any] | None = None, intent: str | None = None) -> int:
     """Compute max_tokens as a rough upper bound from avg_reply_words.
 
-    Prefers intent-specific avg_reply_words from persona style if available.
+    Priority: mode-specific > intent-specific > global > default 300.
     """
     effective_words = avg_reply_words
-    if persona and intent and intent != "general":
-        intent_avg = persona.get("style", {}).get("intent_avg_words", {})
-        if isinstance(intent_avg, dict) and intent in intent_avg:
-            effective_words = intent_avg[intent]
+    if persona:
+        # 1. Mode-specific avg_reply_words (highest priority)
+        mode_words = persona.get("_active_mode_config", {}).get("avg_reply_words")
+        if mode_words is not None:
+            effective_words = mode_words
+        # 2. Intent-specific (only if mode didn't override)
+        elif intent and intent != "general":
+            intent_avg = persona.get("style", {}).get("intent_avg_words", {})
+            if isinstance(intent_avg, dict) and intent in intent_avg:
+                effective_words = intent_avg[intent]
+        # 3. Global fallback
+        if effective_words is None:
+            effective_words = persona.get("style", {}).get("avg_reply_words")
     if effective_words is None:
         return 300
     return max(100, min(500, effective_words * 5))
@@ -669,11 +678,14 @@ def generate_draft(
     modes = persona.get("modes", {})
     if _sender_type and _sender_type in modes:
         mode_config = modes[_sender_type]
+        persona["_active_mode_config"] = mode_config
         # Merge mode values into persona style, but never override custom_constraints
         style = persona.setdefault("style", {})
         for key in ("voice", "avg_reply_words", "greeting", "closing"):
             if key in mode_config:
                 style[key] = mode_config[key]
+    else:
+        persona["_active_mode_config"] = {}
 
     # Look up sender profile if sender provided
     sender_profile = None
