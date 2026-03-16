@@ -98,9 +98,7 @@ def export_dpo(args: argparse.Namespace) -> None:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        chosen_rows = conn.execute(
-            "SELECT inbound_text, edited_reply, rating FROM feedback_pairs WHERE rating >= 4 AND LENGTH(edited_reply) >= 15"
-        ).fetchall()
+        chosen_rows = conn.execute("SELECT inbound_text, edited_reply, rating FROM feedback_pairs WHERE rating >= 4 AND LENGTH(edited_reply) >= 15").fetchall()
         rejected_rows = conn.execute(
             "SELECT inbound_text, edited_reply, rating FROM feedback_pairs WHERE rating <= 2 AND LENGTH(edited_reply) >= 15"
         ).fetchall()

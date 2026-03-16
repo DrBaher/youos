@@ -49,9 +49,16 @@ def test_introduction():
 
 def test_intents_dict_has_all_keys():
     expected = {
-        "meeting_request", "approval_needed", "information_request",
-        "status_update", "introduction", "complaint", "thank_you",
-        "proposal", "urgent", "general",
+        "meeting_request",
+        "approval_needed",
+        "information_request",
+        "status_update",
+        "introduction",
+        "complaint",
+        "thank_you",
+        "proposal",
+        "urgent",
+        "general",
     }
     assert set(INTENTS.keys()) == expected
 

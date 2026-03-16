@@ -14,7 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
-from app.core.config import get_review_batch_size, load_config
+from app.core.config import get_review_batch_size
 from app.core.diff import similarity_ratio
 from app.core.sender import classify_sender
 from app.core.text_utils import decode_html_entities, strip_quoted_text

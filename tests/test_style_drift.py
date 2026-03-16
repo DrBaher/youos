@@ -1,9 +1,6 @@
 """Tests for style drift detection."""
 
 import json
-from pathlib import Path
-
-from unittest.mock import MagicMock, patch
 
 
 def test_drift_stable(tmp_path):

@@ -7,7 +7,6 @@ from app.core.diff import (
     token_similarity,
 )
 
-
 # --- token_similarity ---
 
 
@@ -81,7 +80,7 @@ def test_is_meaningfully_different_with_reordered_words():
     actual = "the proposal attached please review"
     # Token similarity is high (same words), sequence similarity is low
     # hybrid should be somewhere in between
-    result = is_meaningfully_different(draft, actual, threshold=0.80)
+    is_meaningfully_different(draft, actual, threshold=0.80)
     # Words are the same, so hybrid sim should be relatively high
     hyb = hybrid_similarity(draft, actual)
     assert hyb > 0.3  # not completely different
