@@ -27,10 +27,19 @@ def get_history(
         exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='draft_history'").fetchone()
         if not exists:
             return {"items": [], "total": 0}
+        # Check which columns exist (intent/confidence may not be present in older schemas)
+        col_names = {row[1] for row in conn.execute("PRAGMA table_info(draft_history)").fetchall()}
+        has_intent = "intent" in col_names
+        has_confidence = "confidence" in col_names
+
+        select_cols = (
+            "id, inbound_text, sender, generated_draft, final_reply, "
+            "edit_distance_pct, confidence, model_used, retrieval_method, created_at"
+        )
+        if has_intent:
+            select_cols += ", intent"
         rows = conn.execute(
-            """SELECT id, inbound_text, sender, generated_draft, final_reply,
-                      edit_distance_pct, confidence, model_used, retrieval_method,
-                      created_at
+            f"""SELECT {select_cols}
                FROM draft_history
                ORDER BY created_at DESC
                LIMIT ?""",

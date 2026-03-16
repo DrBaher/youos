@@ -1267,12 +1267,25 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
         const dateStr = item.created_at ? item.created_at.split('T')[0] : '';
         const senderSnippet = (item.sender || '').substring(0, 20);
         const draftSnippet = (item.generated_draft || '').substring(0, 80);
+        var intentBadge = '';
+        if (item.intent && item.intent !== 'general') {
+          var intentColors = {meeting_request:'teal',urgent:'red',thank_you:'green',complaint:'red',proposal:'#3366cc',approval_needed:'orange',status_update:'gray',information_request:'#3366cc',introduction:'purple'};
+          var ic = intentColors[item.intent] || 'gray';
+          intentBadge = '<span class="history-badge" style="background:' + ic + ';color:#fff;margin-left:4px">' + item.intent.replace(/_/g,' ') + '</span>';
+        }
+        var confBadge = '';
+        if (item.confidence) {
+          var confColors = {high:'green',medium:'orange',low:'red'};
+          var cc = confColors[item.confidence] || 'gray';
+          confBadge = '<span class="history-badge" style="background:' + cc + ';color:#fff;margin-left:4px">' + item.confidence + '</span>';
+        }
         el.innerHTML =
           '<div class="history-row">' +
           '<span class="history-date">' + dateStr + '</span>' +
           '<span class="history-sender">' + senderSnippet + '</span>' +
           '<span class="history-snippet">' + draftSnippet + '</span>' +
           (badgeClass ? '<span class="history-badge ' + badgeClass + '">' + badgeText + '</span>' : '') +
+          intentBadge + confBadge +
           '</div>' +
           '<div class="history-detail" id="hd-' + item.id + '">' +
           '<label>Inbound:</label><pre>' + (item.inbound_text || '').substring(0, 500) + '</pre>' +
