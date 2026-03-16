@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import subprocess
 import sys
@@ -23,6 +24,26 @@ from app.db.bootstrap import resolve_sqlite_path
 from app.generation.service import DraftRequest, generate_draft
 
 router = APIRouter(prefix="/review-queue", tags=["review-queue"])
+
+# Content patterns that indicate automated/machine-generated emails — not useful for training
+_AUTOMATED_CONTENT_PATTERNS = re.compile(
+    r"(multifunction printer|xerox scan|attachment file type|"
+    r"this is an automated (message|email|notification|response)|"
+    r"do not reply to this (email|message)|"
+    r"you are receiving this (email|message) because|"
+    r"unsubscribe|manage (your )?preferences|"
+    r"this message was sent to|"
+    r"view (this email|in browser)|"
+    r"privacy policy|terms of service|"
+    r"invoice #|order #|order confirmation|"
+    r"your (order|payment|subscription|account) (has been|is|was)|"
+    r"transaction (id|reference|number)|"
+    r"receipt for your|"
+    r"security (alert|notification|code)|"
+    r"verification code|one-time (password|code)|otp:|"
+    r"password (reset|change)|reset your password)",
+    re.IGNORECASE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +205,11 @@ def _fetch_candidates(
             # Also use classify_sender to catch automated senders not covered by prefixes
             sender_type = classify_sender(author)
             if sender_type == "automated":
+                continue
+
+            # Content-based filter: skip emails that look machine-generated
+            inbound_text = row["inbound_text"] or ""
+            if _AUTOMATED_CONTENT_PATTERNS.search(inbound_text[:500]):
                 continue
 
             # Skip very short replies (< 20 chars) — not useful training signal
