@@ -902,10 +902,12 @@ def generate_draft(
         draft = f"[draft generation failed: {exc}]"
         model_used = "error"
 
-    # Retry on empty local model output
+    # Retry on empty or signature-only local model output
     empty_output_retried = False
+    _draft_stripped = strip_signature(draft).strip()
     non_ws = len(draft.replace(" ", "").replace("\n", "").replace("\t", ""))
-    if non_ws < 10 and model_used not in ("error", "claude"):
+    _looks_like_only_signature = len(_draft_stripped) < 15 and non_ws > 0
+    if (non_ws < 10 or _looks_like_only_signature) and model_used not in ("error", "claude"):
         logger.warning("Local model returned empty output, falling back to Claude")
         if fallback_model != "none":
             try:
