@@ -363,6 +363,18 @@ def assemble_prompt(
         persona_lines.append(f"Target reply length: ~{avg_words} words.")
     for c in constraints:
         persona_lines.append(f"- {c}")
+
+    # Style-driven constraints from persona analysis
+    bullet_pct = style.get("bullet_point_pct")
+    if bullet_pct is not None and bullet_pct > 0.4:
+        persona_lines.append("- prefer bullet points for multi-item responses")
+    directness = style.get("directness_score")
+    if directness is not None and directness > 0.8:
+        persona_lines.append("- be direct, avoid hedging")
+    avg_para = style.get("avg_paragraphs")
+    if avg_para is not None and avg_para > 2:
+        persona_lines.append("- use clear paragraph breaks")
+
     persona_block = "\n".join(persona_lines)
 
     # Build optional context lines

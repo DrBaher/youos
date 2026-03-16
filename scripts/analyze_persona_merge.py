@@ -75,6 +75,33 @@ def merge_persona_analysis(
             if not dry_run:
                 persona.setdefault("closing_patterns", {})["default"] = dominant_closing
 
+    # Merge bullet_point_pct into style
+    new_bullet_pct = findings.get("bullet_point_pct")
+    if new_bullet_pct is not None:
+        current = persona.get("style", {}).get("bullet_point_pct")
+        if current is None or abs(new_bullet_pct - current) > 0.05:
+            changes.append(f"bullet_point_pct: {current} -> {round(new_bullet_pct, 4)}")
+            if not dry_run:
+                persona.setdefault("style", {})["bullet_point_pct"] = round(new_bullet_pct, 4)
+
+    # Merge directness_score into style
+    new_directness = findings.get("directness_score")
+    if new_directness is not None:
+        current = persona.get("style", {}).get("directness_score")
+        if current is None or abs(new_directness - current) > 0.05:
+            changes.append(f"directness_score: {current} -> {round(new_directness, 4)}")
+            if not dry_run:
+                persona.setdefault("style", {})["directness_score"] = round(new_directness, 4)
+
+    # Merge avg_paragraphs into style
+    new_paragraphs = findings.get("avg_paragraphs")
+    if new_paragraphs is not None:
+        current = persona.get("style", {}).get("avg_paragraphs")
+        if current is None or abs(new_paragraphs - current) > 0.2:
+            changes.append(f"avg_paragraphs: {current} -> {round(new_paragraphs, 2)}")
+            if not dry_run:
+                persona.setdefault("style", {})["avg_paragraphs"] = round(new_paragraphs, 2)
+
     # Never overwrite custom_constraints — they are user-set
 
     if changes:

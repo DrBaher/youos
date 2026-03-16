@@ -11,6 +11,7 @@ import json
 import re
 import sqlite3
 import statistics
+import unicodedata
 from collections import Counter
 from pathlib import Path
 
@@ -139,6 +140,31 @@ def analyze(db_path: Path) -> dict:
     signature_counter: Counter = Counter()
     tone_by_type: dict[str, list[int]] = {"internal": [], "external_client": [], "personal": [], "unknown": []}
 
+    # New style metrics accumulators
+    sentence_lengths: list[float] = []
+    bullet_count = 0
+    question_counts: list[int] = []
+    hedge_count = 0
+    emoji_count = 0
+    paragraph_counts: list[int] = []
+
+    _HEDGE_WORDS = re.compile(r"\b(perhaps|might|could|maybe|possibly|i think|i believe)\b", re.IGNORECASE)
+    _BULLET_PATTERN = re.compile(r"(^- |^\* |^\d+[\.\)] )", re.MULTILINE)
+    _EMOJI_PATTERN = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"
+        "\U0001F300-\U0001F5FF"
+        "\U0001F680-\U0001F6FF"
+        "\U0001F1E0-\U0001F1FF"
+        "\U00002702-\U000027B0"
+        "\U000024C2-\U0001F251"
+        "\U0001F900-\U0001F9FF"
+        "\U0001FA00-\U0001FA6F"
+        "\U0001FA70-\U0001FAFF"
+        "\U00002600-\U000026FF"
+        "]"
+    )
+
     for row in rows:
         reply_raw = row["reply_text"] or ""
         stripped = strip_signature(reply_raw)
@@ -167,6 +193,31 @@ def analyze(db_path: Path) -> dict:
         sender_type = _classify_sender_type(row["inbound_author"])
         tone_by_type.setdefault(sender_type, []).append(wc)
 
+        # Sentence length
+        sentences = [s.strip() for s in re.split(r"[.!?]+", stripped) if s.strip()]
+        if sentences:
+            avg_sent = statistics.mean(len(s.split()) for s in sentences)
+            sentence_lengths.append(avg_sent)
+
+        # Bullet points
+        if _BULLET_PATTERN.search(stripped):
+            bullet_count += 1
+
+        # Questions
+        question_counts.append(stripped.count("?"))
+
+        # Hedge words
+        if _HEDGE_WORDS.search(stripped):
+            hedge_count += 1
+
+        # Emoji
+        if _EMOJI_PATTERN.search(stripped):
+            emoji_count += 1
+
+        # Paragraphs (split on double newline)
+        paragraphs = [p.strip() for p in stripped.split("\n\n") if p.strip()]
+        paragraph_counts.append(len(paragraphs))
+
     # Compute stats
     word_counts_sorted = sorted(word_counts)
     _n = len(word_counts_sorted)
@@ -175,8 +226,12 @@ def analyze(db_path: Path) -> dict:
         idx = int(len(data) * p)
         return data[min(idx, len(data) - 1)]
 
+    total = len(rows)
+    bullet_point_pct = round(bullet_count / total, 4) if total else 0
+    hedge_word_pct = round(hedge_count / total, 4) if total else 0
+
     findings = {
-        "total_pairs": len(rows),
+        "total_pairs": total,
         "reply_length": {
             "avg_words": round(statistics.mean(word_counts), 1) if word_counts else 0,
             "p25": percentile(word_counts_sorted, 0.25),
@@ -198,6 +253,13 @@ def analyze(db_path: Path) -> dict:
             for k, v in tone_by_type.items()
             if v
         },
+        "sentence_length_avg": round(statistics.mean(sentence_lengths), 2) if sentence_lengths else 0,
+        "bullet_point_pct": bullet_point_pct,
+        "question_frequency": round(statistics.mean(question_counts), 2) if question_counts else 0,
+        "hedge_word_pct": hedge_word_pct,
+        "directness_score": round(1.0 - hedge_word_pct, 4),
+        "emoji_pct": round(emoji_count / total, 4) if total else 0,
+        "avg_paragraphs": round(statistics.mean(paragraph_counts), 2) if paragraph_counts else 0,
     }
 
     return findings
