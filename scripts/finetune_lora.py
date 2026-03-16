@@ -21,7 +21,10 @@ BASE_MODEL = get_base_model()
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="LoRA fine-tuning with mlx_lm")
-    p.add_argument("--iters", type=int, default=100, help="Training iterations (default: 100)")
+    p.add_argument("--iters", type=int, default=None, help="Training iterations (overrides auto-scaling)")
+    p.add_argument("--num-layers", type=int, default=None, help="Number of LoRA layers (overrides auto-scaling)")
+    p.add_argument("--learning-rate", type=float, default=None, help="Learning rate (overrides auto-scaling)")
+    p.add_argument("--auto", action=argparse.BooleanOptionalAction, default=True, help="Auto-scale hyperparameters (default: True)")
     p.add_argument("--data-dir", type=str, default=str(DEFAULT_DATA_DIR), help="Directory with train.jsonl/valid.jsonl")
     p.add_argument("--adapter-dir", type=str, default=str(DEFAULT_ADAPTER_DIR), help="Output adapter directory")
     p.add_argument("--db", type=str, default=str(DEFAULT_DB), help="Database path")
@@ -36,6 +39,14 @@ def count_jsonl_lines(path: Path) -> int:
         return sum(1 for _ in f)
 
 
+def compute_auto_config(train_count: int) -> dict[str, int | float]:
+    """Compute auto-scaled hyperparameters based on training set size."""
+    iters = min(300, max(50, train_count * 3))
+    num_layers = 16 if train_count >= 100 else 8
+    learning_rate = 5e-5 if train_count < 20 else 1e-5
+    return {"iters": iters, "num_layers": num_layers, "learning_rate": learning_rate}
+
+
 def run_training(args: argparse.Namespace) -> None:
     data_dir = Path(args.data_dir)
     adapter_dir = Path(args.adapter_dir)
@@ -45,16 +56,28 @@ def run_training(args: argparse.Namespace) -> None:
     train_count = count_jsonl_lines(train_path)
     valid_count = count_jsonl_lines(valid_path)
 
+    # Determine hyperparameters
+    if args.auto:
+        auto = compute_auto_config(train_count)
+        iters = args.iters if args.iters is not None else auto["iters"]
+        num_layers = args.num_layers if args.num_layers is not None else auto["num_layers"]
+        learning_rate = args.learning_rate if args.learning_rate is not None else auto["learning_rate"]
+    else:
+        iters = args.iters if args.iters is not None else 100
+        num_layers = args.num_layers if args.num_layers is not None else 8
+        learning_rate = args.learning_rate if args.learning_rate is not None else 1e-5
+
     config = {
         "base_model": BASE_MODEL,
         "data_dir": str(data_dir),
         "adapter_dir": str(adapter_dir),
-        "iters": args.iters,
+        "iters": iters,
         "batch_size": 1,
-        "num_layers": 8,
-        "learning_rate": 1e-5,
+        "num_layers": num_layers,
+        "learning_rate": learning_rate,
         "train_pairs": train_count,
         "valid_pairs": valid_count,
+        "auto_scaled": args.auto,
     }
 
     print("LoRA fine-tuning config:")
@@ -86,13 +109,13 @@ def run_training(args: argparse.Namespace) -> None:
         "--adapter-path",
         str(adapter_dir),
         "--iters",
-        str(args.iters),
+        str(iters),
         "--batch-size",
         "1",
         "--num-layers",
-        "8",
+        str(num_layers),
         "--learning-rate",
-        "1e-5",
+        str(learning_rate),
     ]
 
     if valid_path.exists() and valid_count > 0:
@@ -132,7 +155,9 @@ def run_training(args: argparse.Namespace) -> None:
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "base_model": BASE_MODEL,
         "pairs_used": pairs_used or train_count,
-        "iters": args.iters,
+        "iters": iters,
+        "num_layers": num_layers,
+        "learning_rate": learning_rate,
         "final_val_loss": val_loss,
     }
     meta_path = adapter_dir / "meta.json"
