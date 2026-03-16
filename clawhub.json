@@ -15,5 +15,11 @@
   },
   "emoji": "\u2709\ufe0f",
   "license": "MIT",
-  "screenshots": []
+  "screenshots": [
+    "screenshots/01-draft-reply.png",
+    "screenshots/02-stats.png",
+    "screenshots/03-bookmarklet.png",
+    "screenshots/04-about.jpg"
+  ],
+  "demo": "screenshots/demo.gif"
 }
