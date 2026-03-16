@@ -255,8 +255,8 @@ def _format_exemplars(reply_pairs: list[RetrievalMatch], *, max_exemplars: int =
 
     parts: list[str] = ["The following are examples of how you have replied to similar emails:"]
     for i, rp in enumerate(sorted_pairs[:max_exemplars], 1):
-        inbound = (rp.inbound_text or "")[:800]
-        reply = strip_signature(rp.reply_text or "")[:400]
+        inbound = (rp.inbound_text or "")[:400]
+        reply = strip_signature(rp.reply_text or "")[:600]
         # Normalize score to 0-1 range for confidence label (scores are typically 0-10+)
         norm_score = min(rp.score / 10.0, 1.0) if rp.score > 0 else 0
         conf = _confidence_label(norm_score)
