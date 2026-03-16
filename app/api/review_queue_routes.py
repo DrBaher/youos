@@ -151,6 +151,8 @@ def _fetch_candidates(
         for row in rows:
             author = row["inbound_author"] or ""
             author_lower = author.lower()
+
+            # Hard filter: automated sender prefixes
             if any(
                 prefix in author_lower
                 for prefix in [
@@ -160,8 +162,27 @@ def _fetch_candidates(
                     "do-not-reply",
                     "mailer-daemon",
                     "notifications",
+                    "notification",
+                    "receipt",
+                    "invoice",
+                    "billing",
+                    "payment",
+                    "confirm",
+                    "automated",
+                    "newsletter",
+                    "marketing",
+                    "support@",
+                    "info@",
+                    "hello@",
+                    "team@",
+                    "contact@",
                 ]
             ):
+                continue
+
+            # Also use classify_sender to catch automated senders not covered by prefixes
+            sender_type = classify_sender(author)
+            if sender_type == "automated":
                 continue
 
             # Skip very short replies (< 20 chars) — not useful training signal
