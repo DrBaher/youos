@@ -134,7 +134,12 @@ def _get_user_identity() -> dict:
         if n not in names:
             names.append(n)
 
-    return {"name": name, "emails": emails, "names": names}
+    print()
+    print("What domains are internal to your organisation? (e.g. company.com, subsidiary.com) [optional, press Enter to skip]")
+    domains_input = input("> ").strip()
+    internal_domains = [d.strip().lower() for d in domains_input.split(",") if d.strip()] if domains_input else []
+
+    return {"name": name, "emails": emails, "names": names, "internal_domains": internal_domains}
 
 
 def _verify_accounts(emails: list[str]) -> list[str]:
@@ -605,6 +610,8 @@ def main() -> None:
     config["user"]["display_name"] = f"{identity['name']}OS" if identity["name"] != "User" else "YouOS"
     config["user"]["emails"] = identity["emails"]
     config["user"]["names"] = identity["names"]
+    if identity.get("internal_domains"):
+        config["user"]["internal_domains"] = identity["internal_domains"]
     config.setdefault("ingestion", {})
     config["ingestion"]["accounts"] = identity["emails"]
     config.setdefault("review", {})["batch_size"] = 10

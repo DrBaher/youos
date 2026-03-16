@@ -50,12 +50,17 @@ def quickstart():
         emails_input = typer.prompt("Your email address(es), comma-separated")
         emails = [e.strip() for e in emails_input.split(",") if e.strip()]
         display_name = typer.prompt("Display name", default="YouOS")
+        domains_input = typer.prompt("Internal domains (comma-separated, optional)", default="")
+        internal_domains = [d.strip().lower() for d in domains_input.split(",") if d.strip()] if domains_input else []
+        user_cfg = {
+            "name": display_name.replace("OS", "") if display_name.endswith("OS") else display_name,
+            "display_name": display_name,
+            "emails": emails,
+        }
+        if internal_domains:
+            user_cfg["internal_domains"] = internal_domains
         config = {
-            "user": {
-                "name": display_name.replace("OS", "") if display_name.endswith("OS") else display_name,
-                "display_name": display_name,
-                "emails": emails,
-            },
+            "user": user_cfg,
             "ingestion": {"accounts": emails},
         }
         config_path.write_text(yaml.dump(config, default_flow_style=False))

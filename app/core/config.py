@@ -51,8 +51,15 @@ def get_user_names(config: dict[str, Any] | None = None) -> tuple[str, ...]:
 
 
 def get_internal_domains(config: dict[str, Any] | None = None) -> frozenset[str]:
-    """Derive internal domains from user email addresses."""
-    emails = get_user_emails(config)
+    """Get internal domains from explicit config or derive from user emails."""
+    cfg = config or load_config()
+    # Explicit internal_domains from config takes priority
+    explicit = cfg.get("user", {}).get("internal_domains", [])
+    if explicit:
+        return frozenset(d.lower() for d in explicit if d)
+
+    # Fall back to deriving from email addresses
+    emails = get_user_emails(cfg)
     domains: set[str] = set()
     personal = {
         "gmail.com",
