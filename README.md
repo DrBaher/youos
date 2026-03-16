@@ -31,11 +31,12 @@ Gmail (sent mail)          Your feedback
 
 ## What it does
 
-- Ingests your sent Gmail history
+- Ingests your sent Gmail history, Google Docs, and WhatsApp exports
 - Learns your writing style through corpus analysis
 - Drafts email replies grounded in your real past replies
+- Handles full email threads — paste the whole thread, YouOS focuses on the latest message
 - Improves from your feedback via LoRA fine-tuning
-- Self-optimizes nightly via autoresearch
+- Self-optimizes nightly via autoresearch (80 iterations)
 - Runs entirely locally on Apple Silicon
 
 ## Requirements
@@ -89,19 +90,25 @@ youos stats
 # Add a sender note
 youos note john@company.com "prefers bullet points, decision-maker"
 
-# Run nightly pipeline manually
-youos improve
+# Run nightly pipeline manually (with step-by-step output)
+youos improve --verbose
+
+# Check system requirements
+youos doctor
 
 # Start the web server
 youos serve
+
+# Ingest a WhatsApp export
+youos ingest --whatsapp ~/Downloads/WhatsApp-Chat.txt
 ```
 
 ## Web UI
 
 The web UI provides:
-- **Draft Reply**: Paste an inbound email, generate a draft, edit it, and submit feedback
-- **Review Queue**: Review auto-generated drafts against your real sent emails
-- **Stats Dashboard**: Corpus health, model status, benchmark trends
+- **Draft Reply**: Paste an inbound email (or full thread), generate a draft, edit, and submit feedback
+- **Review Queue**: Review auto-generated drafts against your real sent emails — keyboard shortcuts (`j`/`k`) for fast flow
+- **Stats Dashboard**: Corpus health, model status, benchmark trends (backed by structured autoresearch logs)
 - **Gmail Bookmarklet**: One-click drafting from Gmail
 
 ## Architecture

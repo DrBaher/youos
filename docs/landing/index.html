@@ -83,6 +83,10 @@
       <p class="bad">&#10060; Same drafts for everyone</p>
       <p class="good">&#9989; Improves nightly from your feedback</p>
     </div>
+    <div class="card">
+      <p class="bad">&#10060; Only works with Gmail</p>
+      <p class="good">&#9989; Gmail, Google Docs &amp; WhatsApp exports</p>
+    </div>
   </div>
 </section>
 
@@ -92,23 +96,23 @@
   <div class="steps-grid">
     <div class="step">
       <div class="icon">📥</div>
-      <h3>Connect Gmail</h3>
-      <p>5 minutes with the gog CLI</p>
+      <h3>Connect your sources</h3>
+      <p>Gmail, Google Docs, or WhatsApp — 5 min setup</p>
     </div>
     <div class="step">
       <div class="icon">🧠</div>
       <h3>Build your corpus</h3>
-      <p>Ingests your sent history</p>
+      <p>Ingests your sent history across all sources</p>
     </div>
     <div class="step">
       <div class="icon">✉️</div>
       <h3>Draft in your style</h3>
-      <p>Grounded in real past replies</p>
+      <p>Paste an email or full thread — grounded in real past replies</p>
     </div>
     <div class="step">
       <div class="icon">🔄</div>
       <h3>Improves overnight</h3>
-      <p>Autoresearch tunes itself</p>
+      <p>80 autoresearch iterations tune retrieval and model nightly</p>
     </div>
   </div>
 </section>
@@ -127,8 +131,14 @@
     <pre><code><span style="color:#8b949e"># Install YouOS</span>
 pip install youos
 
+<span style="color:#8b949e"># Check your setup</span>
+youos doctor
+
 <span style="color:#8b949e"># Run the setup wizard</span>
-youos setup</code></pre>
+youos setup
+
+<span style="color:#8b949e"># Optional: ingest WhatsApp export</span>
+youos ingest --whatsapp ~/Downloads/chat.txt</code></pre>
   </div>
 </section>
 

@@ -157,15 +157,23 @@ body {
       <p>YouOS is not a generic AI email writer. It learns from YOUR sent emails &mdash; how you phrase things, how long you write, how you sign off &mdash; and drafts replies that actually sound like you.</p>
       <p>It runs entirely on your Mac. No cloud. No subscriptions. Your data never leaves your machine.</p>
     </div>
+    <ul style="margin-top:1rem;color:#bbb;font-size:0.9rem;line-height:2;padding-left:1.2rem;">
+      <li>Ingests Gmail, Google Docs, and WhatsApp exports as corpus sources</li>
+      <li>Handles full email threads — paste the whole thread, YouOS focuses on the latest message</li>
+      <li>Rate-limited draft generation — your data is never over-shared</li>
+      <li>Mobile-friendly UI — use the Review Queue anywhere</li>
+      <li>Pre-flight health check: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos doctor</code></li>
+      <li>Verbose pipeline: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos improve --verbose</code></li>
+    </ul>
   </div>
 
   <!-- How it works -->
   <div class="section">
     <h2 class="section-title">How it works</h2>
     <div class="flow-chain">
-      <div class="flow-box">Gmail (sent mail)</div>
+      <div class="flow-box">Gmail · Google Docs · WhatsApp<small>your communication corpus</small></div>
       <div class="flow-arrow">&darr;</div>
-      <div class="flow-box">Ingestion<small>gog CLI</small></div>
+      <div class="flow-box">Ingestion<small>gog CLI + export parser</small></div>
       <div class="flow-arrow">&darr;</div>
       <div class="flow-box">Reply Pairs DB<small>SQLite + FTS5</small></div>
       <div class="flow-arrow">&darr;</div>
@@ -219,11 +227,12 @@ body {
       <p>YouOS uses an autoresearch loop inspired by Andrej Karpathy's autoresearch project. Every night, it:</p>
     </div>
     <ol class="ar-list">
-      <li>Ingests your new sent emails from the last 48 hours</li>
+      <li>Ingests your new sent emails, Docs, and WhatsApp messages from the last 48 hours</li>
       <li>Captures feedback pairs (comparing what YouOS would have drafted vs what you actually sent)</li>
       <li>Fine-tunes the local Qwen model if enough new pairs exist</li>
       <li>Runs 80 optimisation experiments &mdash; testing different retrieval settings and prompt variants</li>
       <li>Keeps changes that improve your benchmark score, reverts changes that don't</li>
+      <li>Writes a structured run log (JSONL) — benchmark trends visible in the Stats dashboard</li>
     </ol>
     <div class="prose" style="margin-top:1rem;">
       <p>The result: YouOS gets a little better every night, automatically.</p>
@@ -289,6 +298,8 @@ body {
       <div class="tech-card"><strong>Backend</strong><br><span>Python + FastAPI</span></div>
       <div class="tech-card"><strong>Email access</strong><br><span>gog CLI (Google Workspace)</span></div>
       <div class="tech-card"><strong>Networking</strong><br><span>Tailscale (private HTTPS)</span></div>
+      <div class="tech-card"><strong>WhatsApp</strong><br><span>Export file parser (no app access needed)</span></div>
+      <div class="tech-card"><strong>Rate limiting</strong><br><span>Per-IP sliding window (stdlib, no extra deps)</span></div>
     </div>
   </div>
 
@@ -310,6 +321,18 @@ body {
     <div class="faq-item">
       <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Is this an OpenClaw skill?</div>
       <div class="faq-a">Yes. Install via <code>clawhub install youos</code> or from <a href="https://github.com/DrBaher/youos" style="color:#00c4a7;">github.com/DrBaher/youos</a>.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Can I use WhatsApp messages to train my model?</div>
+      <div class="faq-a">Yes. Export a WhatsApp chat as a .txt file and run <code>youos ingest --whatsapp ~/path/to/chat.txt</code>. YouOS parses your messages and pairs them with inbound messages to build reply pairs.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Can I paste a whole email thread?</div>
+      <div class="faq-a">Yes — the Draft tab supports full threads. YouOS extracts the most recent message and uses the thread history as context automatically.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">How do I check if everything is set up correctly?</div>
+      <div class="faq-a">Run <code>youos doctor</code>. It checks Python version, gog CLI, mlx_lm, your config, disk space, and more — with green/red output.</div>
     </div>
   </div>
 
