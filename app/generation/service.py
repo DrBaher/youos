@@ -54,6 +54,7 @@ class DraftResponse:
     sender_profile: dict[str, Any] | None = None
     suggested_subject: str | None = None
     token_estimate: int | None = None
+    empty_output_retried: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -824,6 +825,31 @@ def generate_draft(
         draft = f"[draft generation failed: {exc}]"
         model_used = "error"
 
+    # Retry on empty local model output
+    empty_output_retried = False
+    non_ws = len(draft.replace(" ", "").replace("\n", "").replace("\t", ""))
+    if non_ws < 10 and model_used not in ("error", "claude"):
+        logger.warning("Local model returned empty output, falling back to Claude")
+        if fallback_model != "none":
+            try:
+                draft = _call_claude_cli(prompt, max_tokens=max_tokens)
+                model_used = "claude"
+                empty_output_retried = True
+            except Exception:
+                raise ValueError("Draft generation returned empty output")
+        else:
+            raise ValueError("Draft generation returned empty output")
+
+        # Increment counter in pipeline log
+        try:
+            log_path = Path(__file__).resolve().parents[1] / "var" / "pipeline_last_run.json"
+            if log_path.exists():
+                log_data = json.loads(log_path.read_text(encoding="utf-8"))
+                log_data["local_model_empty_retries"] = log_data.get("local_model_empty_retries", 0) + 1
+                log_path.write_text(json.dumps(log_data, indent=2))
+        except Exception:
+            pass
+
     # Generate subject line
     suggested_subject = generate_subject(request.inbound_message, draft, database_url, configs_dir)
 
@@ -838,4 +864,5 @@ def generate_draft(
         sender_profile=sender_profile,
         suggested_subject=suggested_subject,
         token_estimate=token_estimate,
+        empty_output_retried=empty_output_retried,
     )
