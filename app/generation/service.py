@@ -265,7 +265,7 @@ def _subject_fallback(inbound_text: str) -> str | None:
     for line in inbound_text.split("\n")[:5]:
         stripped = line.strip()
         if stripped.lower().startswith("subject:"):
-            subj = stripped[len("subject:"):].strip()
+            subj = stripped[len("subject:") :].strip()
             # Strip any existing Re: prefixes
             while subj.lower().startswith("re:"):
                 subj = subj[3:].strip()

@@ -23,11 +23,15 @@ def test_dominant_pattern_empty():
 
 def test_merge_updates_avg_reply_words(tmp_path):
     persona_path = tmp_path / "persona.yaml"
-    persona_path.write_text(yaml.dump({
-        "style": {"avg_reply_words": 40, "voice": "direct"},
-        "greeting_patterns": {"default": "Hi,"},
-        "closing_patterns": {"default": "Best,"},
-    }))
+    persona_path.write_text(
+        yaml.dump(
+            {
+                "style": {"avg_reply_words": 40, "voice": "direct"},
+                "greeting_patterns": {"default": "Hi,"},
+                "closing_patterns": {"default": "Best,"},
+            }
+        )
+    )
     log_path = tmp_path / "merge.log"
 
     findings = {
@@ -49,11 +53,15 @@ def test_merge_updates_avg_reply_words(tmp_path):
 
 def test_merge_skips_small_avg_change(tmp_path):
     persona_path = tmp_path / "persona.yaml"
-    persona_path.write_text(yaml.dump({
-        "style": {"avg_reply_words": 40},
-        "greeting_patterns": {},
-        "closing_patterns": {},
-    }))
+    persona_path.write_text(
+        yaml.dump(
+            {
+                "style": {"avg_reply_words": 40},
+                "greeting_patterns": {},
+                "closing_patterns": {},
+            }
+        )
+    )
     log_path = tmp_path / "merge.log"
 
     findings = {
@@ -73,11 +81,15 @@ def test_merge_skips_small_avg_change(tmp_path):
 
 def test_merge_updates_greeting_pattern(tmp_path):
     persona_path = tmp_path / "persona.yaml"
-    persona_path.write_text(yaml.dump({
-        "style": {"avg_reply_words": 40},
-        "greeting_patterns": {"default": "Hi,"},
-        "closing_patterns": {"default": "Best,"},
-    }))
+    persona_path.write_text(
+        yaml.dump(
+            {
+                "style": {"avg_reply_words": 40},
+                "greeting_patterns": {"default": "Hi,"},
+                "closing_patterns": {"default": "Best,"},
+            }
+        )
+    )
     log_path = tmp_path / "merge.log"
 
     findings = {
@@ -123,11 +135,15 @@ def test_merge_dry_run_does_not_write(tmp_path):
 
 def test_merge_writes_log(tmp_path):
     persona_path = tmp_path / "persona.yaml"
-    persona_path.write_text(yaml.dump({
-        "style": {"avg_reply_words": 40},
-        "greeting_patterns": {},
-        "closing_patterns": {},
-    }))
+    persona_path.write_text(
+        yaml.dump(
+            {
+                "style": {"avg_reply_words": 40},
+                "greeting_patterns": {},
+                "closing_patterns": {},
+            }
+        )
+    )
     log_path = tmp_path / "merge.log"
 
     findings = {
@@ -149,12 +165,16 @@ def test_merge_writes_log(tmp_path):
 
 def test_merge_preserves_custom_constraints(tmp_path):
     persona_path = tmp_path / "persona.yaml"
-    persona_path.write_text(yaml.dump({
-        "style": {"avg_reply_words": 40, "constraints": ["custom rule"]},
-        "greeting_patterns": {},
-        "closing_patterns": {},
-        "custom_constraints": ["never use emojis"],
-    }))
+    persona_path.write_text(
+        yaml.dump(
+            {
+                "style": {"avg_reply_words": 40, "constraints": ["custom rule"]},
+                "greeting_patterns": {},
+                "closing_patterns": {},
+                "custom_constraints": ["never use emojis"],
+            }
+        )
+    )
     log_path = tmp_path / "merge.log"
 
     findings = {

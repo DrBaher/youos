@@ -25,7 +25,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dry-run", action="store_true", help="Show pairs without saving")
     p.add_argument("--db", type=str, default=None, help="Database path override")
     p.add_argument("--threshold", type=float, default=0.80, help="Similarity threshold (default: 0.80)")
-    p.add_argument("--auto-threshold", action=argparse.BooleanOptionalAction, default=True, help="Auto-calibrate threshold based on corpus size (default: True)")
+    p.add_argument(
+        "--auto-threshold",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Auto-calibrate threshold based on corpus size (default: True)",
+    )
     return p.parse_args()
 
 

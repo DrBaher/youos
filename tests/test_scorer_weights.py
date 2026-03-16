@@ -24,9 +24,7 @@ def test_load_composite_weights_from_config(tmp_path):
     """Loads weights from autoresearch.yaml."""
     reset_weight_cache()
     config_path = tmp_path / "autoresearch.yaml"
-    config_path.write_text(yaml.dump({
-        "composite_weights": {"pass_rate": 0.6, "avg_keyword_hit": 0.2, "avg_confidence": 0.2}
-    }))
+    config_path.write_text(yaml.dump({"composite_weights": {"pass_rate": 0.6, "avg_keyword_hit": 0.2, "avg_confidence": 0.2}}))
     weights = load_composite_weights(tmp_path)
     assert weights["pass_rate"] == 0.6
     assert weights["avg_keyword_hit"] == 0.2
@@ -52,17 +50,19 @@ def test_normalize_composite_weights():
 def test_get_mutable_surfaces_includes_composite(tmp_path):
     """Composite weight surfaces appear in mutable surfaces."""
     # Create minimal config files
-    (tmp_path / "autoresearch.yaml").write_text(yaml.dump({
-        "composite_weights": {"pass_rate": 0.5, "avg_keyword_hit": 0.3, "avg_confidence": 0.2}
-    }))
+    (tmp_path / "autoresearch.yaml").write_text(yaml.dump({"composite_weights": {"pass_rate": 0.5, "avg_keyword_hit": 0.3, "avg_confidence": 0.2}}))
     (tmp_path / "retrieval").mkdir()
-    (tmp_path / "retrieval" / "defaults.yaml").write_text(yaml.dump({
-        "top_k_reply_pairs": 5,
-        "top_k_chunks": 3,
-        "recency_boost_days": 90,
-        "recency_boost_weight": 0.2,
-        "account_boost_weight": 0.15,
-    }))
+    (tmp_path / "retrieval" / "defaults.yaml").write_text(
+        yaml.dump(
+            {
+                "top_k_reply_pairs": 5,
+                "top_k_chunks": 3,
+                "recency_boost_days": 90,
+                "recency_boost_weight": 0.2,
+                "account_boost_weight": 0.15,
+            }
+        )
+    )
     (tmp_path / "prompts.yaml").write_text(yaml.dump({"drafting_prompt": "test"}))
 
     surfaces = get_mutable_surfaces(tmp_path, surface_filter="autoresearch")

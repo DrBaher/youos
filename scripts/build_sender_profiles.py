@@ -261,7 +261,19 @@ def build_profiles(
                         first_seen = ?, last_seen = ?,
                         topics_json = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE email = ?""",
-                    (display_name, domain, company, sender_type, reply_count, avg_reply_words, avg_response_hours, first_seen, last_seen, json.dumps(topics), email),
+                    (
+                        display_name,
+                        domain,
+                        company,
+                        sender_type,
+                        reply_count,
+                        avg_reply_words,
+                        avg_response_hours,
+                        first_seen,
+                        last_seen,
+                        json.dumps(topics),
+                        email,
+                    ),
                 )
                 updated_count += 1
             else:
@@ -270,7 +282,19 @@ def build_profiles(
                         (email, display_name, domain, company, sender_type,
                          reply_count, avg_reply_words, avg_response_hours, first_seen, last_seen, topics_json)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (email, display_name, domain, company, sender_type, reply_count, avg_reply_words, avg_response_hours, first_seen, last_seen, json.dumps(topics)),
+                    (
+                        email,
+                        display_name,
+                        domain,
+                        company,
+                        sender_type,
+                        reply_count,
+                        avg_reply_words,
+                        avg_response_hours,
+                        first_seen,
+                        last_seen,
+                        json.dumps(topics),
+                    ),
                 )
                 new_count += 1
 
