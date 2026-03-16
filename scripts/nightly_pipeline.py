@@ -128,15 +128,65 @@ def step_build_sender_profiles(verbose: bool = False) -> bool:
     )
 
 
+def _load_last_auto_feedback_at() -> str | None:
+    """Load last_auto_feedback_at from var/pipeline_last_run.json."""
+    import json
+
+    log_path = ROOT_DIR / "var" / "pipeline_last_run.json"
+    if not log_path.exists():
+        return None
+    try:
+        data = json.loads(log_path.read_text(encoding="utf-8"))
+        return data.get("last_auto_feedback_at")
+    except Exception:
+        return None
+
+
+def _save_last_auto_feedback_at() -> None:
+    """Write last_auto_feedback_at to var/pipeline_last_run.json."""
+    import json
+
+    log_path = ROOT_DIR / "var" / "pipeline_last_run.json"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    data = {}
+    if log_path.exists():
+        try:
+            data = json.loads(log_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    data["last_auto_feedback_at"] = datetime.now(timezone.utc).isoformat()
+    log_path.write_text(json.dumps(data, indent=2))
+
+
 def step_auto_feedback(verbose: bool = False) -> dict:
-    """Extract auto-feedback pairs from last 2 days."""
+    """Extract auto-feedback pairs with dynamic lookback window."""
+    import math
+
     from scripts.extract_auto_feedback import extract_auto_feedback
 
     print(f"\n{'=' * 60}")
     print("STEP: Auto-feedback extraction")
     print(f"{'=' * 60}")
+
+    # Compute lookback days from last run
+    last_at = _load_last_auto_feedback_at()
+    if last_at:
+        try:
+            last_dt = datetime.fromisoformat(last_at.replace("Z", "+00:00"))
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=timezone.utc)
+            seconds_since = (datetime.now(timezone.utc) - last_dt).total_seconds()
+            days_since = max(1, math.ceil(seconds_since / 86400))
+        except (ValueError, TypeError):
+            days_since = 2
+    else:
+        days_since = 2
+
+    print(f"  Lookback: {days_since} day(s)")
+
     try:
-        result = extract_auto_feedback(days=2)
+        result = extract_auto_feedback(days=days_since)
+        _save_last_auto_feedback_at()
         print("  [OK] Auto-feedback completed")
         return result
     except Exception as exc:
