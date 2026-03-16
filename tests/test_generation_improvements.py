@@ -41,8 +41,8 @@ def test_format_exemplars_few_shot_format():
     ]
     result = _format_exemplars(matches)
     assert "The following are examples of how you have replied to similar emails:" in result
-    assert "[EXAMPLE 1]" in result
-    assert "[EXAMPLE 2]" in result
+    assert "[EXAMPLE 1 " in result or "[EXAMPLE 1]" in result
+    assert "[EXAMPLE 2 " in result or "[EXAMPLE 2]" in result
     assert "Inbound: Can we meet Tuesday?" in result
     assert "Your reply: Sure, 2pm works." in result
     assert "---" in result
@@ -54,8 +54,8 @@ def test_format_exemplars_max_5():
 
     matches = [_make_reply_match(f"inbound {i}", f"reply {i}") for i in range(10)]
     result = _format_exemplars(matches)
-    assert "[EXAMPLE 5]" in result
-    assert "[EXAMPLE 6]" not in result
+    assert "[EXAMPLE 5 " in result or "[EXAMPLE 5]" in result
+    assert "[EXAMPLE 6 " not in result and "[EXAMPLE 6]" not in result
 
 
 def test_format_exemplars_empty():
@@ -77,7 +77,7 @@ def test_assemble_prompt_includes_few_shot():
             persona={"style": {"voice": "direct"}},
             prompts={"system_prompt": "You are YouOS."},
         )
-    assert "[EXAMPLE 1]" in prompt
+    assert "[EXAMPLE 1 " in prompt or "[EXAMPLE 1]" in prompt
     assert "Your reply:" in prompt
     assert "The following are examples" in prompt
 

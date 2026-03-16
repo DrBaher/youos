@@ -190,14 +190,32 @@ def _lookup_prior_reply_to_sender(sender: str, database_url: str) -> str | None:
         conn.close()
 
 
+def _confidence_label(score: float) -> str:
+    if score >= 0.7:
+        return "high"
+    if score >= 0.4:
+        return "medium"
+    return "low"
+
+
 def _format_exemplars(reply_pairs: list[RetrievalMatch], *, max_exemplars: int = 5) -> str:
     if not reply_pairs:
         return "(no exemplars found)"
+    # Sort by score descending
+    sorted_pairs = sorted(reply_pairs, key=lambda rp: rp.score, reverse=True)
+    # Drop exemplars with score < 0.2
+    sorted_pairs = [rp for rp in sorted_pairs if rp.score >= 0.2]
+    if not sorted_pairs:
+        return "(no exemplars found)"
+
     parts: list[str] = ["The following are examples of how you have replied to similar emails:"]
-    for i, rp in enumerate(reply_pairs[:max_exemplars], 1):
+    for i, rp in enumerate(sorted_pairs[:max_exemplars], 1):
         inbound = (rp.inbound_text or "")[:800]
         reply = strip_signature(rp.reply_text or "")[:400]
-        parts.append(f"[EXAMPLE {i}]\nInbound: {inbound}\nYour reply: {reply}\n---")
+        # Normalize score to 0-1 range for confidence label (scores are typically 0-10+)
+        norm_score = min(rp.score / 10.0, 1.0) if rp.score > 0 else 0
+        conf = _confidence_label(norm_score)
+        parts.append(f"[EXAMPLE {i} — confidence: {conf}]\nInbound: {inbound}\nYour reply: {reply}\n---")
     return "\n\n".join(parts)
 
 
