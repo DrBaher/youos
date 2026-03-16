@@ -195,6 +195,13 @@ class RetrievalService:
                 semantic_enabled = semantic_enabled or ch_semantic
                 partial_coverage = partial_coverage or ch_partial
 
+            # Thread-based boosting
+            if request.thread_id and reply_pairs:
+                for match in reply_pairs:
+                    if match.thread_id and match.thread_id == request.thread_id:
+                        match.score = round(match.score * 2.0, 4)
+                reply_pairs.sort(key=lambda m: (-m.score, m.result_type, m.source_id))
+
             # Intent-based boosting
             if request.intent_hint and request.intent_hint != "general" and reply_pairs:
                 from app.core.intent import classify_intent

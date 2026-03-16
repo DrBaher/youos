@@ -573,6 +573,7 @@ def generate_draft(
             sender_domain_hint=sender_domain_hint,
             language_hint=detected_lang,
             intent_hint=detected_intent,
+            thread_id=request.thread_id,
         ),
         database_url=database_url,
         configs_dir=configs_dir,
