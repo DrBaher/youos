@@ -32,7 +32,7 @@ def _make_db(pairs: list[tuple[str, str, int]]) -> Path:
     for i, (inbound, reply, rating) in enumerate(pairs):
         conn.execute(
             "INSERT INTO feedback_pairs (inbound_text, edited_reply, rating, created_at) VALUES (?, ?, ?, ?)",
-            (inbound, reply, rating, f"2025-01-{i+1:02d}T00:00:00Z"),
+            (inbound, reply, rating, f"2025-01-{i + 1:02d}T00:00:00Z"),
         )
     conn.commit()
     conn.close()
@@ -41,13 +41,15 @@ def _make_db(pairs: list[tuple[str, str, int]]) -> Path:
 
 def test_curriculum_metadata_line(tmp_path):
     """Curriculum export prepends a metadata line."""
-    db_path = _make_db([
-        ("Hello there, how are you doing today?", "I am doing well, thanks for asking!", 5),
-        ("Can you help me with the report analysis?", "Sure, I will take a look right away.", 4),
-        ("Please review the attached document asap", "Will review and get back to you soon.", 3),
-        ("What is the status of the project work?", "We are on track for the deadline date.", 5),
-        ("Are you available for a meeting tomorrow?", "Yes, afternoon works well for me today.", 4),
-    ])
+    db_path = _make_db(
+        [
+            ("Hello there, how are you doing today?", "I am doing well, thanks for asking!", 5),
+            ("Can you help me with the report analysis?", "Sure, I will take a look right away.", 4),
+            ("Please review the attached document asap", "Will review and get back to you soon.", 3),
+            ("What is the status of the project work?", "We are on track for the deadline date.", 5),
+            ("Are you available for a meeting tomorrow?", "Yes, afternoon works well for me today.", 4),
+        ]
+    )
 
     args = argparse.Namespace(
         db=str(db_path),
@@ -77,11 +79,13 @@ def test_curriculum_metadata_line(tmp_path):
 
 def test_curriculum_disabled(tmp_path):
     """When --no-curriculum, no metadata line is prepended."""
-    db_path = _make_db([
-        ("Hello there, how are you doing today?", "I am doing well, thanks for asking!", 5),
-        ("Can you help me with the report analysis?", "Sure, I will take a look right away.", 4),
-        ("Please review the attached document asap", "Will review and get back to you soon.", 3),
-    ])
+    db_path = _make_db(
+        [
+            ("Hello there, how are you doing today?", "I am doing well, thanks for asking!", 5),
+            ("Can you help me with the report analysis?", "Sure, I will take a look right away.", 4),
+            ("Please review the attached document asap", "Will review and get back to you soon.", 3),
+        ]
+    )
 
     args = argparse.Namespace(
         db=str(db_path),

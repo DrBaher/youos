@@ -28,24 +28,28 @@ def _store_trace(
     draft_id = os.urandom(4).hex()
     exemplars = []
     for p in response.precedent_used[:5]:
-        exemplars.append({
-            "source_id": p.get("source_id"),
-            "score": p.get("score"),
-            "quality_score": p.get("quality_score"),
-            "subject": p.get("title"),
-            "snippet": (p.get("snippet") or "")[:120],
-        })
-    _draft_traces.append({
-        "draft_id": draft_id,
-        "inbound_text": inbound_text[:500],
-        "sender": sender,
-        "exemplars": exemplars,
-        "confidence": response.confidence,
-        "model_used": response.model_used,
-        "intent": intent,
-        "detected_mode": detected_mode or response.detected_mode,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
+        exemplars.append(
+            {
+                "source_id": p.get("source_id"),
+                "score": p.get("score"),
+                "quality_score": p.get("quality_score"),
+                "subject": p.get("title"),
+                "snippet": (p.get("snippet") or "")[:120],
+            }
+        )
+    _draft_traces.append(
+        {
+            "draft_id": draft_id,
+            "inbound_text": inbound_text[:500],
+            "sender": sender,
+            "exemplars": exemplars,
+            "confidence": response.confidence,
+            "model_used": response.model_used,
+            "intent": intent,
+            "detected_mode": detected_mode or response.detected_mode,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
     return draft_id
 
 

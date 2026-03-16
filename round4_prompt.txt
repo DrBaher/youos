@@ -1,0 +1,121 @@
+You are working on YouOS at /Users/bbot/Projects/youos. 262 tests currently pass. Implement the following 12 improvements, one at a time, committing each separately. Run tests after each.
+
+## Item 1 — Richer persona style extraction (scripts/analyze_persona.py)
+Extend the analyze() function to extract additional style signals:
+- sentence_length_avg: avg words per sentence (split on '.', '!', '?')
+- bullet_point_pct: pct of replies containing '- ' or '* ' or numbered lists
+- question_frequency: avg questions per reply (count '?' chars)
+- hedge_word_pct: pct of replies containing hedge words ('perhaps', 'might', 'could', 'maybe', 'possibly', 'I think', 'I believe')
+- directness_score: 1.0 - hedge_word_pct
+- emoji_pct: pct of replies containing emoji (unicode ranges)
+- avg_paragraphs: avg number of paragraph breaks per reply
+
+Write all new metrics to configs/persona_analysis.json.
+Update merge_into_persona() to also merge bullet_point_pct, directness_score, avg_paragraphs into persona.yaml under style.*.
+Update assemble_prompt in app/generation/service.py to use these if present:
+- bullet_point_pct > 0.4: add constraint 'prefer bullet points for multi-item responses'
+- directness_score > 0.8: add constraint 'be direct, avoid hedging'
+- avg_paragraphs > 2: add constraint 'use clear paragraph breaks'
+Add tests in tests/test_persona_analysis.py (extend existing).
+
+## Item 2 — Per-sender-type persona variants (app/generation/service.py, configs/persona.yaml)
+Add modes sub-config to persona.yaml:
+  modes:
+    internal:
+      voice: casual, direct
+      avg_reply_words: 25
+      greeting: 'Hey {name},'
+      closing: 'Cheers,'
+    external_client:
+      voice: professional, clear
+      avg_reply_words: 50
+      greeting: 'Hi {name},'
+      closing: 'Best,'
+    personal:
+      voice: warm, casual
+      avg_reply_words: 30
+      greeting: 'Hey {name},'
+      closing: 'Talk soon,'
+
+In generate_draft(): after detecting sender_type, load matching mode sub-config and merge into persona dict before passing to assemble_prompt (mode values override top-level, never override custom_constraints).
+Fall back to top-level persona if no mode sub-config exists.
+Add tests in tests/test_per_mode_persona.py.
+
+## Item 3 — DPO preference pairs for fine-tuning (scripts/export_feedback_jsonl.py, scripts/finetune_lora.py)
+Add --dpo flag to export_feedback_jsonl.py:
+- Query pairs with rating >= 4 (chosen) and rating <= 2 (rejected)
+- Match chosen/rejected by finding pairs of similar inbound length (within 50%) from same sender_type
+- Format: {'prompt': inbound, 'chosen': high_rated_reply, 'rejected': low_rated_reply}
+- Write to data/dpo_train.jsonl
+In finetune_lora.py: if --dpo flag and data/dpo_train.jsonl exists, run mlx_lm.lora with --train-type dpo.
+Add tests in tests/test_dpo_export.py.
+
+## Item 4 — Intent classification (app/core/intent.py, app/retrieval/service.py, app/generation/service.py)
+Create app/core/intent.py with keyword-based classifier:
+INTENTS with keys: meeting_request, approval_needed, information_request, status_update, introduction, complaint, thank_you, proposal, urgent, general
+Function: classify_intent(text: str) -> str
+Add intent_hint: str | None to RetrievalRequest and DraftRequest.
+In generate_draft(): classify intent, pass to RetrievalRequest and inject into prompt ('Email intent: meeting_request').
+In retrieval: boost pairs whose inbound_text matches same intent by 1.2x.
+Add tests in tests/test_intent.py.
+
+## Item 5 — Score-weighted exemplar ordering (app/generation/service.py)
+In _format_exemplars():
+- Sort reply_pairs by score DESC
+- Add confidence annotation: [EXAMPLE 1 — confidence: high] (high>=0.7, medium>=0.4, low<0.4)
+- Drop exemplars with score < 0.2
+- Keep cap at 5
+Add tests in tests/test_exemplar_ordering.py.
+
+## Item 6 — Same-thread context retrieval (app/retrieval/service.py, app/generation/service.py)
+Add thread_id: str | None = None to RetrievalRequest.
+In retrieval: before general retrieval, query pairs with matching thread_id — boost their score by 2.0x.
+In generate_draft(): extract thread_id from request metadata if available and pass to RetrievalRequest.
+Add tests in tests/test_thread_retrieval.py.
+
+## Item 7 — Token-level similarity for auto-feedback (app/core/diff.py)
+Add to diff.py:
+- token_similarity(a, b) -> float: word-level Jaccard (intersection / union of word sets, lowercased)
+- hybrid_similarity(a, b) -> float: 0.5 * similarity_ratio + 0.5 * token_similarity
+Update is_meaningfully_different() to use hybrid_similarity().
+Keep similarity_ratio() unchanged for backward compat.
+Add tests in tests/test_diff.py.
+
+## Item 8 — Style drift detection (scripts/analyze_persona.py, app/api/stats_routes.py, templates/stats.html)
+In analyze_persona.py: append drift entry to var/persona_drift.jsonl after each analysis run: {analyzed_at, avg_reply_words, directness_score, bullet_point_pct, avg_paragraphs}
+In stats_routes.py: read last 2 entries from persona_drift.jsonl; compute deltas; flag as drifting if abs(word_delta) > 8 or directness_delta > 0.15. Include drift info in /api/stats response.
+In templates/stats.html: add 'Style Drift' row to Model Status card: green 'Stable' or yellow warning like 'Drifting: replies getting shorter (-12 words)'.
+Add tests in tests/test_style_drift.py.
+
+## Item 9 — Configurable review batch size (app/core/config.py, app/api/review_queue_routes.py, templates/feedback.html)
+Add get_review_batch_size(config: dict) -> int to config.py (reads config.review.batch_size, default 10, clamp 5-50).
+In review_queue_routes.py: read batch_size from config.
+In templates/feedback.html: add '5 / 10 / 20' batch size selector above Review Queue, persisted to localStorage.
+Add review.batch_size: 10 to setup_wizard.py generated config.
+Add tests in tests/test_review_batch.py.
+
+## Item 10 — Curriculum learning for fine-tuning (scripts/export_feedback_jsonl.py)
+In export_feedback_jsonl.py: when --curriculum flag (default True):
+- Sort first 20% of training examples by quality_score ASC (warmup on easier examples)
+- Sort remainder by created_at ASC (temporal)
+- Prepend metadata line: {'_curriculum': True, 'warmup_count': N, 'total': M}
+In finetune_lora.py: detect and skip metadata line if first line starts with '_curriculum', print curriculum info.
+Add tests in tests/test_curriculum.py.
+
+## Item 11 — Exemplar thread deduplication (app/generation/service.py)
+In _format_exemplars(): before formatting, deduplicate by thread_id — keep only highest-score pair per thread_id. If thread_id is None, treat as unique.
+Add tests in tests/test_exemplar_dedup.py.
+
+## Item 12 — Draft explain endpoint (app/api/routes.py, templates/feedback.html)
+Store last 20 draft traces in memory: {draft_id (8-char hex), inbound_text, sender, exemplars: [{source_id, score, quality_score, subject, snippet}], confidence, model_used, intent, detected_mode, created_at}
+Return draft_id in /feedback/generate and /draft responses.
+Add GET /draft/explain?draft_id=<id> endpoint returning the trace.
+In templates/feedback.html: show 'How was this generated?' link after draft appears; clicking expands inline panel with confidence badge, intent, top 3 exemplars with scores and subjects.
+Add tests in tests/test_draft_explain.py.
+
+## Finish up
+- source .venv/bin/activate && python -m pytest tests/ -q
+- ruff check . --fix && ruff format app/ scripts/ tests/
+- git add -A && git commit -m 'chore: final lint and format pass'
+- git push origin main
+- openclaw system event --text 'Done: YouOS round 4 fine-tuning complete (12 items)' --mode now

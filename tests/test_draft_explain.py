@@ -1,7 +1,6 @@
 """Tests for draft explain endpoint and trace storage."""
 
-from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime
 from unittest.mock import MagicMock
 
 from app.api.routes import _draft_traces, _store_trace
@@ -71,10 +70,7 @@ def test_trace_has_created_at():
 def test_trace_exemplars_capped_at_5():
     _draft_traces.clear()
     response = MagicMock()
-    response.precedent_used = [
-        {"source_id": f"s{i}", "score": float(i), "quality_score": 1.0, "title": f"Title {i}", "snippet": "text"}
-        for i in range(10)
-    ]
+    response.precedent_used = [{"source_id": f"s{i}", "score": float(i), "quality_score": 1.0, "title": f"Title {i}", "snippet": "text"} for i in range(10)]
     response.confidence = "high"
     response.model_used = "test"
     response.detected_mode = "work"
