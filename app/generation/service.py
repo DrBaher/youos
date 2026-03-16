@@ -373,6 +373,36 @@ def _format_sender_context(profile: dict[str, Any]) -> str:
     return result
 
 
+def _resolve_greeting(persona: dict[str, Any], sender_type: str | None, first_name: str | None = None) -> str:
+    """Resolve greeting from persona config: mode greeting > greeting_patterns > default."""
+    greeting = ""
+    modes = persona.get("modes", {})
+    greeting_patterns = persona.get("greeting_patterns", {})
+    if sender_type and sender_type in modes and "greeting" in modes[sender_type]:
+        greeting = modes[sender_type]["greeting"]
+    elif sender_type and sender_type in greeting_patterns:
+        greeting = greeting_patterns[sender_type]
+    elif "default" in greeting_patterns:
+        greeting = greeting_patterns["default"]
+    if greeting and "{name}" in greeting:
+        greeting = greeting.replace("{name}", first_name or "").replace("  ", " ")
+    return greeting
+
+
+def _resolve_closing(persona: dict[str, Any], sender_type: str | None) -> str:
+    """Resolve closing from persona config: mode closing > closing_patterns > default."""
+    closing = ""
+    modes = persona.get("modes", {})
+    closing_patterns = persona.get("closing_patterns", {})
+    if sender_type and sender_type in modes and "closing" in modes[sender_type]:
+        closing = modes[sender_type]["closing"]
+    elif sender_type and sender_type in closing_patterns:
+        closing = closing_patterns[sender_type]
+    elif "default" in closing_patterns:
+        closing = closing_patterns["default"]
+    return closing
+
+
 def assemble_prompt(
     *,
     inbound_message: str,
@@ -385,6 +415,8 @@ def assemble_prompt(
     sender_context: str | None = None,
     language_hint: str | None = None,
     intent_hint: str | None = None,
+    sender_type: str | None = None,
+    first_name: str | None = None,
 ) -> str:
     style = persona.get("style", {})
     voice = style.get("voice", "direct, clear, pragmatic")
@@ -467,6 +499,12 @@ def assemble_prompt(
     # Append length guidance if avg_reply_words is set
     if avg_words:
         result += f"\nTarget length: ~{avg_words} words. Be concise.\n"
+
+    # Greeting/closing injection
+    greeting = _resolve_greeting(persona, sender_type, first_name)
+    closing = _resolve_closing(persona, sender_type)
+    if greeting and closing:
+        result += f"\nBegin your reply with: {greeting}\nEnd your reply with: {closing}\n"
 
     result += f"\n[INBOUND MESSAGE]\n{inbound_message}"
     return result
@@ -636,6 +674,7 @@ def generate_draft(
         sender_context=sender_context,
         language_hint=detected_lang,
         intent_hint=detected_intent,
+        sender_type=sender_type_hint,
     )
 
     precedent_used = [_precedent_summary(rp) for rp in reply_pairs]
