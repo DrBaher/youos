@@ -286,6 +286,52 @@ def _check_benchmark_rotation() -> bool:
     return True
 
 
+def _count_feedback_pairs(db_path: Path) -> int:
+    """Count total feedback_pairs."""
+    if not db_path.exists():
+        return 0
+    conn = sqlite3.connect(db_path)
+    try:
+        return conn.execute("SELECT COUNT(*) FROM feedback_pairs").fetchone()[0]
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+
+def step_golden_eval(verbose: bool = False) -> bool:
+    """Run golden evaluation and return True if composite score >= 0.5."""
+    import json
+
+    # Skip if DB doesn't exist or < 5 feedback pairs
+    if not DEFAULT_DB.exists():
+        print("  [SKIP] golden_eval — no database")
+        return True
+    if _count_feedback_pairs(DEFAULT_DB) < 5:
+        print("  [SKIP] golden_eval — fewer than 5 feedback pairs")
+        return True
+
+    print(f"\n{'=' * 60}")
+    print("STEP: Golden evaluation")
+    print(f"{'=' * 60}")
+
+    try:
+        from scripts.run_golden_eval import run_golden_eval, save_results
+
+        summary = run_golden_eval()
+        save_results(summary)
+
+        total = summary.get("total", 0)
+        passed = summary.get("passed", 0)
+        composite = passed / total if total > 0 else 0.0
+        print(f"  Golden eval: {passed}/{total} passed (composite: {composite:.2f})")
+        print("  [OK] Golden evaluation completed")
+        return composite >= 0.5
+    except Exception as exc:
+        print(f"  [WARN] Golden evaluation failed: {exc}")
+        return False
+
+
 def step_autoresearch(verbose: bool = False) -> bool:
     """Run autoresearch optimization loop."""
     # Rotate benchmarks if stale
@@ -535,6 +581,26 @@ def main() -> None:
         results["finetune"] = f"skipped (only {unused} unused pairs, need 10)"
         steps["finetune"] = True
 
+    # 3b. Golden evaluation (after fine-tuning, before autoresearch)
+    golden_composite = None
+    try:
+        ok = step_golden_eval(verbose=verbose)
+        results["golden_eval"] = "OK" if ok else "WARN"
+        steps["golden_eval"] = ok
+        # Read composite score from results file
+        golden_results_path = ROOT_DIR / "var" / "golden_results.json"
+        if golden_results_path.exists():
+            import json as _json2
+
+            golden_data = _json2.loads(golden_results_path.read_text(encoding="utf-8"))
+            total_g = golden_data.get("total", 0)
+            passed_g = golden_data.get("passed", 0)
+            golden_composite = round(passed_g / total_g, 4) if total_g > 0 else 0.0
+    except Exception as exc:
+        results["golden_eval"] = f"error: {exc}"
+        steps["golden_eval"] = False
+        errors.append(f"Golden evaluation error: {exc}")
+
     # 4. Embedding indexer (after fine-tuning) — with skip gate
     skip_emb, skip_emb_msg = should_skip_embeddings(DEFAULT_DB)
     if skip_emb:
@@ -621,6 +687,7 @@ def main() -> None:
         "errors": errors,
         "skipped_steps": skipped_steps,
         "benchmark_rotated": benchmark_rotated,
+        "golden_composite": golden_composite,
     }
     _write_pipeline_log(run_log)
 
