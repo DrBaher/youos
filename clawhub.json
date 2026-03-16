@@ -1,6 +1,6 @@
 {
   "name": "youos",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "displayName": "YouOS \u2014 Personal Email Copilot",
   "description": "Learns your email writing style from your Gmail history and drafts replies that sound like you. Self-improving via LoRA fine-tuning and autoresearch. Runs locally on Apple Silicon. Privacy-first: your emails never leave your Mac.",
   "author": "DrBaher",

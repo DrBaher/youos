@@ -48,7 +48,7 @@ def _log_git_hash_to_autoresearch_log() -> None:
     if not commit_hash:
         logger.warning("Could not get git commit hash for autoresearch log")
         return
-    log_path = ROOT_DIR / "autoresearch_log.md"
+    log_path = ROOT_DIR / "var" / "autoresearch_log.md"
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     entry = f"\n## Run started — {timestamp}\n- Git commit: {commit_hash}\n"
     with open(log_path, "a", encoding="utf-8") as f:

@@ -14,7 +14,7 @@ router = APIRouter(tags=["stats"])
 
 TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "templates" / "stats.html"
 ADAPTER_PATH = Path(__file__).resolve().parents[2] / "models" / "adapters" / "latest"
-AUTORESEARCH_LOG = Path(__file__).resolve().parents[2] / "autoresearch_log.md"
+AUTORESEARCH_LOG = Path(__file__).resolve().parents[2] / "var" / "autoresearch_log.md"
 AUTORESEARCH_JSONL = Path(__file__).resolve().parents[2] / "var" / "autoresearch_runs.jsonl"
 
 
