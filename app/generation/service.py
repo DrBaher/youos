@@ -615,10 +615,16 @@ def generate_draft(
         sender_type_hint = classify_sender(request.sender)
         sender_domain_hint = extract_domain(request.sender)
 
-    # Classify intent
-    from app.core.intent import classify_intent
+    # Classify intent (multi-intent support)
+    from app.core.intent import classify_intents_multi
 
-    detected_intent = request.intent_hint or classify_intent(clean_inbound)
+    if request.intent_hint:
+        detected_intent = request.intent_hint
+        intent_hint_2 = None
+    else:
+        intents = classify_intents_multi(clean_inbound)
+        detected_intent = intents[0]
+        intent_hint_2 = intents[1] if len(intents) > 1 else None
 
     retrieval_response: RetrievalResponse = retrieve_context(
         RetrievalRequest(
@@ -631,6 +637,7 @@ def generate_draft(
             sender_domain_hint=sender_domain_hint,
             language_hint=detected_lang,
             intent_hint=detected_intent,
+            intent_hint_2=intent_hint_2,
             thread_id=request.thread_id,
         ),
         database_url=database_url,

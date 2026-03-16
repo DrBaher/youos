@@ -55,6 +55,7 @@ class RetrievalRequest:
     sender_domain_hint: str | None = None
     language_hint: str | None = None
     intent_hint: str | None = None
+    intent_hint_2: str | None = None
     thread_id: str | None = None
 
 
@@ -206,11 +207,17 @@ class RetrievalService:
             if request.intent_hint and request.intent_hint != "general" and reply_pairs:
                 from app.core.intent import classify_intent
 
+                intent_targets = {request.intent_hint}
+                if request.intent_hint_2 and request.intent_hint_2 != "general":
+                    intent_targets.add(request.intent_hint_2)
+
                 for match in reply_pairs:
                     if match.inbound_text:
-                        match_intent = classify_intent(match.inbound_text)
-                        if match_intent == request.intent_hint:
-                            match.score = round(match.score * 1.2, 4)
+                        # Check predicted_intent from metadata first, fall back to live classification
+                        match_intent = match.metadata.get("predicted_intent") or classify_intent(match.inbound_text)
+                        if match_intent in intent_targets:
+                            boost = 1.2 if match_intent == request.intent_hint else 1.1
+                            match.score = round(match.score * boost, 4)
                 reply_pairs.sort(key=lambda m: (-m.score, m.result_type, m.source_id))
 
             # Optional cross-encoder reranking
