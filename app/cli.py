@@ -651,5 +651,55 @@ def ollama_disable():
     typer.echo("Ollama disabled. Fallback set to claude.")
 
 
+@app.command()
+def feedback(
+    inbound: str = typer.Option(None, "--inbound", help="Inbound email text"),
+    reply: str = typer.Option(None, "--reply", help="Your reply text"),
+    rating: int = typer.Option(4, "--rating", help="Rating 1-5", min=1, max=5),
+    note: str = typer.Option(None, "--note", help="Optional feedback note"),
+    sender: str = typer.Option(None, "--sender", help="Sender email address"),
+    stdin: bool = typer.Option(False, "--stdin", help="Read inbound from stdin"),
+    reply_stdin: bool = typer.Option(False, "--reply-stdin", help="Read reply from stdin"),
+):
+    """Submit a feedback pair directly (bypasses draft generation)."""
+    import sys as _sys
+
+    from app.core.settings import get_settings
+    from app.db.bootstrap import resolve_sqlite_path
+
+    if stdin:
+        inbound = _sys.stdin.read()
+    if reply_stdin:
+        reply = _sys.stdin.read()
+
+    if not inbound:
+        print("Error: --inbound is required (or use --stdin)")
+        raise SystemExit(1)
+    if not reply:
+        print("Error: --reply is required (or use --reply-stdin)")
+        raise SystemExit(1)
+
+    settings = get_settings()
+    db_path = resolve_sqlite_path(settings.database_url)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO feedback_pairs
+                (inbound_text, generated_draft, edited_reply, feedback_note,
+                 rating, edit_distance_pct, used_in_finetune)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (inbound, reply, reply, note, rating, 0.0, 0),
+        )
+        conn.commit()
+        total = conn.execute("SELECT COUNT(*) FROM feedback_pairs").fetchone()[0]
+    finally:
+        conn.close()
+
+    print(f"Feedback pair saved. Total pairs: {total}")
+
+
 if __name__ == "__main__":
     app()
