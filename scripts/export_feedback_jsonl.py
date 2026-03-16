@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import random
 import sqlite3
 from pathlib import Path
 
@@ -106,7 +105,7 @@ def export(args: argparse.Namespace) -> None:
     conn.row_factory = sqlite3.Row
     try:
         query = (
-            "SELECT inbound_text, edited_reply, rating, edit_distance_pct "
+            "SELECT inbound_text, edited_reply, rating, edit_distance_pct, created_at "
             "FROM feedback_pairs WHERE 1=1"
         )
         params: list = []
@@ -129,7 +128,7 @@ def export(args: argparse.Namespace) -> None:
     # Quality filters
     min_rating = args.min_rating
     min_edit_pct = args.min_edit_pct
-    records = []
+    qualified: list[tuple[str, str, str]] = []
     filtered_count = 0
     null_rating_count = 0
 
@@ -155,28 +154,35 @@ def export(args: argparse.Namespace) -> None:
             filtered_count += 1
             continue
 
-        records.append(
-            build_record(
-                row["inbound_text"],
-                edited_reply,
-                system_message=system_message,
-            )
+        qualified.append(
+            (row["created_at"] or "", row["inbound_text"], edited_reply)
         )
 
     if null_rating_count > 0:
         print(f"Warning: {null_rating_count} pairs have null rating (included)")
 
-    if not records:
+    if not qualified:
         print(f"No qualifying pairs after filtering. Filtered out {filtered_count} low-quality pairs.")
         return
 
-    print(f"Exported {len(records)} pairs (filtered out {filtered_count} low-quality pairs)")
+    print(f"Exported {len(qualified)} pairs (filtered out {filtered_count} low-quality pairs)")
 
-    # Shuffle and split 90/10
-    random.shuffle(records)
-    split_idx = max(1, int(len(records) * 0.9))
-    train = records[:split_idx]
-    valid = records[split_idx:] if len(records) > 1 else []
+    # Temporal split: sort by created_at ASC, most recent 15% as validation
+    qualified.sort(key=lambda x: x[0])
+    records = [
+        build_record(inbound, reply, system_message=system_message)
+        for _, inbound, reply in qualified
+    ]
+
+    val_count = max(1, min(20, int(len(records) * 0.15)))
+    if len(records) <= 1:
+        train = records
+        valid = []
+    else:
+        train = records[:-val_count]
+        valid = records[-val_count:]
+
+    print(f"Train: {len(train)} pairs | Val: {len(valid)} pairs (temporal split, val = most recent 15%)")
 
     # Determine output paths
     if args.output:

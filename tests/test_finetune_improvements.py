@@ -266,3 +266,108 @@ def test_quality_filter_summary_output(tmp_path, capsys):
 
     captured = capsys.readouterr()
     assert "filtered out 2 low-quality pairs" in captured.out
+
+
+# --- Item 3: Temporal train/validation split ---
+
+
+def _create_feedback_db_with_dates(db_path, rows):
+    """Helper: create feedback_pairs with created_at dates."""
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE feedback_pairs (id INTEGER PRIMARY KEY, inbound_text TEXT, "
+        "generated_draft TEXT, edited_reply TEXT, feedback_note TEXT, rating INTEGER, "
+        "used_in_finetune INTEGER DEFAULT 0, edit_distance_pct REAL, reply_pair_id INTEGER, "
+        "created_at TEXT DEFAULT CURRENT_TIMESTAMP)"
+    )
+    for inbound, draft, reply, rating, edit_pct, created_at in rows:
+        conn.execute(
+            "INSERT INTO feedback_pairs (inbound_text, generated_draft, edited_reply, rating, edit_distance_pct, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (inbound, draft, reply, rating, edit_pct, created_at),
+        )
+    conn.commit()
+    conn.close()
+
+
+def test_temporal_split_most_recent_in_validation(tmp_path, capsys):
+    """Most recent pairs end up in the validation set."""
+    db_path = tmp_path / "test.db"
+    # 10 pairs with increasing dates — val should be last 15% = 1-2 pairs
+    rows = [
+        (f"inbound {i}", "draft", f"a long enough reply text {i}", 5, 0.3, f"2026-03-{i+1:02d}T00:00:00")
+        for i in range(10)
+    ]
+    _create_feedback_db_with_dates(db_path, rows)
+
+    train_path = tmp_path / "train.jsonl"
+    valid_path = tmp_path / "valid.jsonl"
+    from scripts.export_feedback_jsonl import export
+
+    args = Namespace(
+        all=True, since=None, output=str(train_path), min_rating=3,
+        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        configs_dir=str(tmp_path),
+    )
+    export(args)
+
+    train_lines = train_path.read_text().strip().split("\n")
+    valid_lines = valid_path.read_text().strip().split("\n")
+
+    # 15% of 10 = 1.5 -> max(1, min(20, 1)) = 1
+    assert len(valid_lines) >= 1
+    assert len(train_lines) + len(valid_lines) == 10
+
+    # Validation should contain the most recent pair (reply text 9)
+    last_valid = json.loads(valid_lines[-1])
+    assert "reply text 9" in last_valid["messages"][-1]["content"]
+
+    captured = capsys.readouterr()
+    assert "temporal split" in captured.out
+
+
+def test_temporal_split_single_pair(tmp_path, capsys):
+    """Single pair goes to train, nothing to valid."""
+    db_path = tmp_path / "test.db"
+    _create_feedback_db_with_dates(db_path, [
+        ("inbound", "draft", "a long enough reply text here", 5, 0.3, "2026-03-01T00:00:00"),
+    ])
+    train_path = tmp_path / "train.jsonl"
+    valid_path = tmp_path / "valid.jsonl"
+    from scripts.export_feedback_jsonl import export
+
+    args = Namespace(
+        all=True, since=None, output=str(train_path), min_rating=3,
+        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        configs_dir=str(tmp_path),
+    )
+    export(args)
+
+    assert len(train_path.read_text().strip().split("\n")) == 1
+    # Valid file is empty or has 0 lines
+    valid_content = valid_path.read_text().strip()
+    assert valid_content == ""
+
+
+def test_temporal_split_val_capped_at_20(tmp_path, capsys):
+    """Validation set is capped at 20 even for large datasets."""
+    db_path = tmp_path / "test.db"
+    rows = [
+        (f"inbound {i}", "draft", f"a long enough reply text {i}", 5, 0.3, f"2026-01-{(i % 28) + 1:02d}T00:00:00")
+        for i in range(200)
+    ]
+    _create_feedback_db_with_dates(db_path, rows)
+
+    train_path = tmp_path / "train.jsonl"
+    valid_path = tmp_path / "valid.jsonl"
+    from scripts.export_feedback_jsonl import export
+
+    args = Namespace(
+        all=True, since=None, output=str(train_path), min_rating=3,
+        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        configs_dir=str(tmp_path),
+    )
+    export(args)
+
+    valid_lines = valid_path.read_text().strip().split("\n")
+    assert len(valid_lines) == 20
