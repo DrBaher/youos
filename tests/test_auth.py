@@ -1,5 +1,8 @@
 """Tests for PIN authentication."""
 
+import hashlib
+import warnings
+
 from app.core.auth import (
     LoginRateLimiter,
     create_session_token,
@@ -9,10 +12,17 @@ from app.core.auth import (
 )
 
 
-def test_get_pin_hash():
+def test_get_pin_hash_pbkdf2_format():
     h = get_pin_hash("1234")
-    assert isinstance(h, str)
-    assert len(h) == 64  # SHA-256 hex
+    assert h.startswith("pbkdf2:sha256:260000:")
+    parts = h.split(":")
+    assert len(parts) == 5
+
+
+def test_get_pin_hash_unique_salts():
+    h1 = get_pin_hash("1234")
+    h2 = get_pin_hash("1234")
+    assert h1 != h2  # Different salts
 
 
 def test_verify_pin_correct():
@@ -23,6 +33,30 @@ def test_verify_pin_correct():
 def test_verify_pin_wrong():
     h = get_pin_hash("mypin")
     assert verify_pin("wrongpin", h) is False
+
+
+def test_verify_pin_legacy_sha256():
+    """Legacy SHA-256 hashes should still verify with deprecation warning."""
+    legacy_hash = hashlib.sha256(b"oldpin").hexdigest()
+    assert ":" not in legacy_hash  # Confirm it's legacy format
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        result = verify_pin("oldpin", legacy_hash)
+        assert result is True
+        assert len(w) == 1
+        assert "legacy SHA-256" in str(w[0].message)
+
+
+def test_verify_pin_legacy_wrong():
+    legacy_hash = hashlib.sha256(b"oldpin").hexdigest()
+    with warnings.catch_warnings(record=True):
+        warnings.simplefilter("always")
+        assert verify_pin("wrongpin", legacy_hash) is False
+
+
+def test_verify_pin_invalid_format():
+    assert verify_pin("pin", "totally:invalid:format") is False
 
 
 def test_is_auth_enabled_with_pin():

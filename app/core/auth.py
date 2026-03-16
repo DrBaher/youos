@@ -12,14 +12,40 @@ SESSIONS_PATH = Path(__file__).resolve().parents[2] / "var" / "sessions.json"
 SESSION_MAX_AGE = 86400  # 24 hours
 
 
+PBKDF2_ITERATIONS = 260000
+
+
 def get_pin_hash(pin: str) -> str:
-    """Hash a PIN using SHA-256."""
-    return hashlib.sha256(pin.encode("utf-8")).hexdigest()
+    """Hash a PIN using PBKDF2-HMAC-SHA256."""
+    salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", pin.encode("utf-8"), bytes.fromhex(salt), PBKDF2_ITERATIONS)
+    return f"pbkdf2:sha256:{PBKDF2_ITERATIONS}:{salt}:{dk.hex()}"
 
 
 def verify_pin(pin: str, stored_hash: str) -> bool:
-    """Verify a PIN against a stored hash."""
-    return secrets.compare_digest(get_pin_hash(pin), stored_hash)
+    """Verify a PIN against a stored hash.
+
+    Supports both new PBKDF2 format and legacy SHA-256 (no ':' separator).
+    """
+    if ":" not in stored_hash:
+        # Legacy SHA-256 format
+        import warnings
+
+        warnings.warn(
+            "PIN stored in legacy SHA-256 format. Re-set your PIN to upgrade to PBKDF2.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        legacy_hash = hashlib.sha256(pin.encode("utf-8")).hexdigest()
+        return secrets.compare_digest(legacy_hash, stored_hash)
+
+    # PBKDF2 format: pbkdf2:sha256:<iterations>:<salt_hex>:<hash_hex>
+    parts = stored_hash.split(":")
+    if len(parts) != 5 or parts[0] != "pbkdf2":
+        return False
+    _, algo, iterations_str, salt_hex, hash_hex = parts
+    dk = hashlib.pbkdf2_hmac(algo, pin.encode("utf-8"), bytes.fromhex(salt_hex), int(iterations_str))
+    return secrets.compare_digest(dk.hex(), hash_hex)
 
 
 def is_auth_enabled(config: dict[str, Any]) -> bool:
