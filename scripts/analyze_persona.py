@@ -121,17 +121,43 @@ def _classify_sender_type(author: str | None) -> str:
     return "external_client"
 
 
-def analyze(db_path: Path) -> dict:
-    """Run corpus analysis and return findings."""
+def analyze(db_path: Path, *, recent_days: int | None = None) -> dict:
+    """Run corpus analysis and return findings.
+
+    Args:
+        recent_days: If set, weight pairs from last N days 3x in style metrics.
+                     If None (--full mode), all pairs are weighted equally.
+    """
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute("SELECT reply_text, inbound_text, inbound_author, reply_author, metadata_json FROM reply_pairs").fetchall()
+        rows = conn.execute("SELECT reply_text, inbound_text, inbound_author, reply_author, metadata_json, paired_at FROM reply_pairs").fetchall()
     finally:
         conn.close()
 
     if not rows:
         return {"error": "No reply pairs found", "total_pairs": 0}
+
+    # Compute recency weights
+    import math
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    weights: list[float] = []
+    for row in rows:
+        paired_at = row["paired_at"] if "paired_at" in row.keys() else None
+        weight = 1.0
+        if recent_days is not None and paired_at:
+            try:
+                dt = datetime.fromisoformat(str(paired_at).replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                days_ago = (now - dt).days
+                if days_ago <= recent_days:
+                    weight = 3.0
+            except (ValueError, TypeError):
+                pass
+        weights.append(weight)
 
     word_counts = []
     greeting_counter: Counter = Counter()
@@ -249,10 +275,45 @@ def analyze(db_path: Path) -> dict:
         if wcs:
             intent_avg_words[intent_key] = round(statistics.mean(wcs))
 
+    # EWMA avg_reply_words with 60-day half-life
+    ewma_avg_words = 0.0
+    if word_counts:
+        # Sort pairs by paired_at for temporal ordering
+        paired_wc: list[tuple[str | None, int]] = []
+        for row_idx, row in enumerate(rows):
+            paired_at_str = row["paired_at"] if "paired_at" in row.keys() else None
+            paired_wc.append((paired_at_str, word_counts[row_idx]))
+        paired_wc.sort(key=lambda x: x[0] or "")
+
+        # Compute EWMA: weight = exp(-0.693 * days_ago / 60)
+        ewma_weights = []
+        ewma_values = []
+        for paired_at_str, wc in paired_wc:
+            days_ago = 365.0  # default for unknown dates
+            if paired_at_str:
+                try:
+                    dt = datetime.fromisoformat(str(paired_at_str).replace("Z", "+00:00"))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    days_ago = max(0, (now - dt).days)
+                except (ValueError, TypeError):
+                    pass
+            w = math.exp(-0.693 * days_ago / 60)
+            ewma_weights.append(w)
+            ewma_values.append(wc)
+
+        total_weight = sum(ewma_weights)
+        if total_weight > 0:
+            ewma_avg_words = round(sum(w * v for w, v in zip(ewma_weights, ewma_values)) / total_weight, 1)
+        else:
+            ewma_avg_words = round(statistics.mean(word_counts), 1)
+    else:
+        ewma_avg_words = 0.0
+
     findings = {
         "total_pairs": total,
         "reply_length": {
-            "avg_words": round(statistics.mean(word_counts), 1) if word_counts else 0,
+            "avg_words": ewma_avg_words,
             "p25": percentile(word_counts_sorted, 0.25),
             "p50": percentile(word_counts_sorted, 0.50),
             "p75": percentile(word_counts_sorted, 0.75),
@@ -330,7 +391,14 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Analyze persona patterns from corpus")
     parser.add_argument("--dry-run", action="store_true", help="Print what would change without writing")
+    parser.add_argument("--recent-days", type=int, default=None, help="Weight pairs from last N days 3x (default: 90)")
+    parser.add_argument("--full", action="store_true", help="Process all pairs with equal weight")
     args = parser.parse_args()
+
+    # Determine recent_days: --full → None (equal weight), --recent-days → value, default → 90
+    recent_days: int | None = None
+    if not args.full:
+        recent_days = args.recent_days if args.recent_days is not None else 90
 
     from app.core.settings import get_settings
     from app.db.bootstrap import resolve_sqlite_path
@@ -338,7 +406,7 @@ def main() -> None:
     settings = get_settings()
     db_path = resolve_sqlite_path(settings.database_url)
 
-    findings = analyze(db_path)
+    findings = analyze(db_path, recent_days=recent_days)
     print_report(findings)
 
     if args.dry_run:

@@ -37,7 +37,8 @@ def test_analyze_empty_db():
             reply_text TEXT,
             inbound_author TEXT,
             reply_author TEXT,
-            metadata_json TEXT DEFAULT '{}'
+            metadata_json TEXT DEFAULT '{}',
+            paired_at TEXT
         )
     """)
     conn.commit()
@@ -62,7 +63,8 @@ def test_analyze_with_data():
             reply_text TEXT,
             inbound_author TEXT,
             reply_author TEXT,
-            metadata_json TEXT DEFAULT '{}'
+            metadata_json TEXT DEFAULT '{}',
+            paired_at TEXT
         )
     """)
     conn.execute(
@@ -107,7 +109,8 @@ def test_analyze_style_metrics_values():
             reply_text TEXT,
             inbound_author TEXT,
             reply_author TEXT,
-            metadata_json TEXT DEFAULT '{}'
+            metadata_json TEXT DEFAULT '{}',
+            paired_at TEXT
         )
     """)
     # Reply with bullets, hedge word, question, and emoji
