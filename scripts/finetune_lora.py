@@ -29,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--adapter-dir", type=str, default=str(DEFAULT_ADAPTER_DIR), help="Output adapter directory")
     p.add_argument("--db", type=str, default=str(DEFAULT_DB), help="Database path")
     p.add_argument("--dry-run", action="store_true", help="Show config without training")
+    p.add_argument("--dpo", action="store_true", help="Use DPO training with data/dpo_train.jsonl")
     return p.parse_args()
 
 
@@ -98,6 +99,14 @@ def run_training(args: argparse.Namespace) -> None:
 
     adapter_dir.mkdir(parents=True, exist_ok=True)
 
+    # DPO mode
+    dpo_path = ROOT_DIR / "data" / "dpo_train.jsonl"
+    train_type_args: list[str] = []
+    if getattr(args, "dpo", False) and dpo_path.exists():
+        train_type_args = ["--train-type", "dpo"]
+        data_dir = dpo_path.parent
+        print("Using DPO training mode with", str(dpo_path))
+
     cmd = [
         "mlx_lm",
         "lora",
@@ -116,6 +125,7 @@ def run_training(args: argparse.Namespace) -> None:
         str(num_layers),
         "--learning-rate",
         str(learning_rate),
+        *train_type_args,
     ]
 
     if valid_path.exists() and valid_count > 0:

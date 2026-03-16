@@ -25,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--db", type=str, default=str(DEFAULT_DB), help="Database path")
     p.add_argument("--no-persona", action="store_true", help="Use bare format without persona/system prompt")
     p.add_argument("--configs-dir", type=str, default=str(CONFIGS_DIR), help="Configs directory")
+    p.add_argument("--dpo", action="store_true", help="Export DPO preference pairs (chosen/rejected)")
     return p.parse_args()
 
 
@@ -84,6 +85,68 @@ def build_record(
     messages.append({"role": "user", "content": inbound})
     messages.append({"role": "assistant", "content": edited_reply})
     return {"messages": messages}
+
+
+def export_dpo(args: argparse.Namespace) -> None:
+    """Export DPO preference pairs: chosen (rating >= 4) vs rejected (rating <= 2)."""
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Database not found at {db_path}")
+        return
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        chosen_rows = conn.execute(
+            "SELECT inbound_text, edited_reply, rating FROM feedback_pairs WHERE rating >= 4 AND LENGTH(edited_reply) >= 15"
+        ).fetchall()
+        rejected_rows = conn.execute(
+            "SELECT inbound_text, edited_reply, rating FROM feedback_pairs WHERE rating <= 2 AND LENGTH(edited_reply) >= 15"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not chosen_rows or not rejected_rows:
+        print(f"Not enough DPO pairs: {len(chosen_rows)} chosen, {len(rejected_rows)} rejected")
+        return
+
+    pairs: list[dict] = []
+    used_rejected: set[int] = set()
+
+    for chosen in chosen_rows:
+        c_len = len(chosen["inbound_text"] or "")
+        if c_len == 0:
+            continue
+        for j, rejected in enumerate(rejected_rows):
+            if j in used_rejected:
+                continue
+            r_len = len(rejected["inbound_text"] or "")
+            if r_len == 0:
+                continue
+            # Match by similar inbound length (within 50%)
+            ratio = min(c_len, r_len) / max(c_len, r_len)
+            if ratio >= 0.5:
+                pairs.append(
+                    {
+                        "prompt": chosen["inbound_text"],
+                        "chosen": chosen["edited_reply"],
+                        "rejected": rejected["edited_reply"],
+                    }
+                )
+                used_rejected.add(j)
+                break
+
+    if not pairs:
+        print("No DPO pairs could be matched.")
+        return
+
+    output_path = ROOT_DIR / "data" / "dpo_train.jsonl"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        for pair in pairs:
+            f.write(json.dumps(pair, ensure_ascii=False) + "\n")
+
+    print(f"Exported {len(pairs)} DPO pairs to {output_path}")
 
 
 def export(args: argparse.Namespace) -> None:
@@ -203,7 +266,10 @@ def export(args: argparse.Namespace) -> None:
 
 def main() -> None:
     args = parse_args()
-    export(args)
+    if args.dpo:
+        export_dpo(args)
+    else:
+        export(args)
 
 
 if __name__ == "__main__":
