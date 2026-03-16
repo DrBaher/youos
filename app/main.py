@@ -16,6 +16,8 @@ from app.core.auth import (
     LoginRateLimiter,
     create_session_token,
     is_auth_enabled,
+    load_sessions,
+    persist_new_session,
     verify_pin,
 )
 from app.core.config import load_config
@@ -34,7 +36,9 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, config: dict):
         super().__init__(app)
         self.config = config
-        self.sessions: set[str] = set()
+        # Load persisted sessions, prune expired
+        persisted = load_sessions()
+        self.sessions: set[str] = set(persisted.keys())
         self.limiter = LoginRateLimiter()
 
     async def dispatch(self, request: Request, call_next):
@@ -97,6 +101,7 @@ def create_app() -> FastAPI:
             auth_middleware.limiter.reset(client_ip)
             token = create_session_token()
             auth_middleware.sessions.add(token)
+            persist_new_session(token)
             response = RedirectResponse(url="/feedback", status_code=303)
             response.set_cookie(
                 SESSION_COOKIE, token, max_age=SESSION_MAX_AGE, httponly=True, samesite="lax"

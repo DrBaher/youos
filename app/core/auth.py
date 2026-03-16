@@ -2,9 +2,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 import time
+from pathlib import Path
 from typing import Any
+
+SESSIONS_PATH = Path(__file__).resolve().parents[2] / "var" / "sessions.json"
+SESSION_MAX_AGE = 86400  # 24 hours
 
 
 def get_pin_hash(pin: str) -> str:
@@ -26,6 +31,39 @@ def is_auth_enabled(config: dict[str, Any]) -> bool:
 def create_session_token() -> str:
     """Create a cryptographically secure session token."""
     return secrets.token_urlsafe(32)
+
+
+def load_sessions(path: Path | None = None) -> dict[str, float]:
+    """Load sessions from JSON file, prune expired tokens.
+
+    Returns dict of {token: created_at_unix}.
+    """
+    if path is None:
+        path = SESSIONS_PATH
+    now = time.time()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return {}
+        # Prune expired
+        return {tok: ts for tok, ts in data.items() if now - ts < SESSION_MAX_AGE}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_sessions(sessions: dict[str, float], path: Path | None = None) -> None:
+    """Write sessions dict to JSON file."""
+    if path is None:
+        path = SESSIONS_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(sessions), encoding="utf-8")
+
+
+def persist_new_session(token: str, path: Path | None = None) -> None:
+    """Add a new session token and persist to disk."""
+    sessions = load_sessions(path)
+    sessions[token] = time.time()
+    save_sessions(sessions, path)
 
 
 class LoginRateLimiter:
