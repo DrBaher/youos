@@ -15,6 +15,7 @@ router = APIRouter(tags=["stats"])
 TEMPLATE_PATH = Path(__file__).resolve().parents[2] / "templates" / "stats.html"
 ADAPTER_PATH = Path(__file__).resolve().parents[2] / "models" / "adapters" / "latest"
 AUTORESEARCH_LOG = Path(__file__).resolve().parents[2] / "autoresearch_log.md"
+AUTORESEARCH_JSONL = Path(__file__).resolve().parents[2] / "var" / "autoresearch_runs.jsonl"
 
 
 @router.get("/api/config")
@@ -134,9 +135,22 @@ def stats_data(request: Request) -> dict[str, Any]:
 
         gen_model = "qwen2.5-1.5b-lora" if adapter_exists else "claude"
 
-        # Benchmark trend (last 3 autoresearch entries from log)
+        # Benchmark trend (last 5 entries from JSONL, fallback to markdown)
         benchmark_trend: list[dict[str, Any]] = []
-        if AUTORESEARCH_LOG.exists():
+        if AUTORESEARCH_JSONL.exists():
+            try:
+                import json as _json
+                lines = AUTORESEARCH_JSONL.read_text(encoding="utf-8").strip().splitlines()
+                for line in lines[-5:]:
+                    entry = _json.loads(line)
+                    benchmark_trend.append({
+                        "date": entry.get("run_at", ""),
+                        "composite_score": entry.get("composite_score"),
+                        "improvements_kept": entry.get("config_snapshot", {}).get("improvements_kept"),
+                    })
+            except Exception:
+                benchmark_trend = []
+        if not benchmark_trend and AUTORESEARCH_LOG.exists():
             try:
                 import re
                 log_text = AUTORESEARCH_LOG.read_text(encoding="utf-8")
@@ -144,7 +158,7 @@ def stats_data(request: Request) -> dict[str, Any]:
                     r"## Run (\d{4}-\d{2}-\d{2}[^\n]*)\n(.*?)(?=\n## Run |\Z)",
                     log_text, re.DOTALL
                 )
-                for date_str, body in entries[-3:]:
+                for date_str, body in entries[-5:]:
                     score_match = re.search(
                         r"composite[_\s]?score[:\s]*([\d.]+)", body, re.IGNORECASE
                     )

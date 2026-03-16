@@ -1,6 +1,7 @@
 """Autoresearch optimization loop for YouOS."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -159,7 +160,41 @@ def run_autoresearch(
 
     report.total_eval_runs = eval_count
     report.final = current_baseline
+
+    # Write structured JSON run log
+    _write_jsonl_entry(report, configs_dir)
+
     return report
+
+
+def _write_jsonl_entry(report: AutoresearchReport, configs_dir: Path) -> None:
+    """Append a JSON line to var/autoresearch_runs.jsonl."""
+    root = configs_dir.parent
+    jsonl_path = root / "var" / "autoresearch_runs.jsonl"
+    jsonl_path.parent.mkdir(parents=True, exist_ok=True)
+
+    improvements = [
+        it.surface_name for it in report.iterations if it.kept
+    ]
+    regressions = [
+        it.surface_name for it in report.iterations if it.outcome == "regressed"
+    ]
+
+    entry = {
+        "run_at": report.started_at,
+        "iterations": report.total_eval_runs,
+        "composite_score": report.final.composite,
+        "improvements": improvements,
+        "regressions": regressions,
+        "config_snapshot": {
+            "baseline_composite": report.baseline.composite,
+            "final_composite": report.final.composite,
+            "improvements_kept": report.improvements_kept,
+            "reverted": report.reverted,
+        },
+    }
+    with open(jsonl_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, default=str) + "\n")
 
 
 def _dry_run_report(
