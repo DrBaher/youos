@@ -95,11 +95,34 @@ def step_ingest_gmail(verbose: bool = False) -> bool:
 
 def step_analyze_persona(verbose: bool = False, dry_run: bool = False) -> bool:
     """Run persona analysis and merge results into persona.yaml."""
-    # Run analysis
-    ok = _run_step(
-        "Persona analysis",
-        [sys.executable, str(ROOT_DIR / "scripts" / "analyze_persona.py")],
-    )
+    # Decide whether to run --full or --recent-days
+    last_full_path = ROOT_DIR / "var" / "persona_last_full_analysis.txt"
+    use_full = False
+    if last_full_path.exists():
+        try:
+            last_full_str = last_full_path.read_text(encoding="utf-8").strip()
+            last_full_dt = datetime.fromisoformat(last_full_str.replace("Z", "+00:00"))
+            if last_full_dt.tzinfo is None:
+                last_full_dt = last_full_dt.replace(tzinfo=timezone.utc)
+            if (datetime.now(timezone.utc) - last_full_dt).days > 7:
+                use_full = True
+        except (ValueError, TypeError):
+            use_full = True
+    else:
+        use_full = True
+
+    cmd = [sys.executable, str(ROOT_DIR / "scripts" / "analyze_persona.py")]
+    if use_full:
+        cmd.append("--full")
+    else:
+        cmd.extend(["--recent-days", "90"])
+
+    ok = _run_step("Persona analysis", cmd)
+
+    # Track last full analysis
+    if ok and use_full:
+        last_full_path.parent.mkdir(parents=True, exist_ok=True)
+        last_full_path.write_text(datetime.now(timezone.utc).isoformat())
     if not ok:
         return False
 
