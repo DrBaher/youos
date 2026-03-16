@@ -79,6 +79,7 @@ class RetrievalMatch:
     content: str | None = None
     inbound_text: str | None = None
     reply_text: str | None = None
+    subject: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -126,6 +127,7 @@ class RetrievalConfig:
     sender_domain_boost: float = 0.10
     sender_type_boost_map: dict[str, float] = field(default_factory=dict)
     reranker_enabled: bool = False
+    subject_match_boost: float = 0.2
 
 
 def _has_fts5_table(connection: sqlite3.Connection, table_name: str) -> bool:
@@ -438,6 +440,12 @@ class RetrievalService:
         reply_text = row["reply_text"] or ""
         raw_rank = abs(row["fts_rank"]) if row["fts_rank"] else 0.0
         lexical_score = min(raw_rank * 2.0, 10.0)
+
+        # Subject match boost
+        pair_subject = metadata.get("subject", "")
+        if pair_subject:
+            lexical_score += _field_match_bonus(pair_subject, tokens) * 0.5
+
         metadata_score = self._metadata_score(
             source_type=row["source_type"],
             timestamp=row["paired_at"] or row["updated_at"] or row["created_at"],
@@ -450,6 +458,15 @@ class RetrievalService:
         # Apply quality_score multiplier from feedback
         quality_score = float(row["quality_score"]) if "quality_score" in row.keys() else 1.0
         combined = (lexical_score + metadata_score) * quality_score
+
+        # Apply subject_match_boost for query word matches
+        if pair_subject and self.config.subject_match_boost > 0:
+            subject_lower = pair_subject.lower()
+            for token in tokens:
+                if len(token) > 4 and token in subject_lower:
+                    combined *= 1.0 + self.config.subject_match_boost
+                    break
+
         return RetrievalMatch(
             result_type="reply_pair",
             score=round(combined, 4),
@@ -469,6 +486,7 @@ class RetrievalService:
             snippet=_make_snippet(inbound_text, tokens=tokens),
             inbound_text=inbound_text,
             reply_text=reply_text,
+            subject=pair_subject or None,
             metadata=metadata,
         )
 
@@ -699,7 +717,10 @@ class RetrievalService:
         metadata = _loads_json(row["metadata_json"])
         inbound_text = row["inbound_text"] or ""
         reply_text = row["reply_text"] or ""
+        pair_subject = metadata.get("subject", "")
         lexical_score = _score_text(query, tokens, inbound_text) + (_score_text(query, tokens, reply_text) * 0.35)
+        if pair_subject:
+            lexical_score += _field_match_bonus(pair_subject, tokens) * 0.5
         if lexical_score <= 0:
             return None
         metadata_score = self._metadata_score(
@@ -713,6 +734,15 @@ class RetrievalService:
         )
         quality_score = float(row["quality_score"]) if "quality_score" in row.keys() else 1.0
         combined = (lexical_score + metadata_score) * quality_score
+
+        # Apply subject_match_boost for query word matches
+        if pair_subject and self.config.subject_match_boost > 0:
+            subject_lower = pair_subject.lower()
+            for token in tokens:
+                if len(token) > 4 and token in subject_lower:
+                    combined *= 1.0 + self.config.subject_match_boost
+                    break
+
         return RetrievalMatch(
             result_type="reply_pair",
             score=round(combined, 4),
@@ -732,6 +762,7 @@ class RetrievalService:
             snippet=_make_snippet(inbound_text, tokens=tokens),
             inbound_text=inbound_text,
             reply_text=reply_text,
+            subject=pair_subject or None,
             metadata=metadata,
         )
 
