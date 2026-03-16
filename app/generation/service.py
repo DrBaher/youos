@@ -198,9 +198,29 @@ def _confidence_label(score: float) -> str:
     return "low"
 
 
+def _deduplicate_by_thread(reply_pairs: list[RetrievalMatch]) -> list[RetrievalMatch]:
+    """Keep only the highest-score pair per thread_id. None thread_ids are treated as unique."""
+    seen_threads: dict[str, RetrievalMatch] = {}
+    result: list[RetrievalMatch] = []
+    for rp in reply_pairs:
+        if rp.thread_id is None:
+            result.append(rp)
+        elif rp.thread_id not in seen_threads:
+            seen_threads[rp.thread_id] = rp
+            result.append(rp)
+        elif rp.score > seen_threads[rp.thread_id].score:
+            # Replace with higher score
+            result = [r for r in result if r is not seen_threads[rp.thread_id]]
+            seen_threads[rp.thread_id] = rp
+            result.append(rp)
+    return result
+
+
 def _format_exemplars(reply_pairs: list[RetrievalMatch], *, max_exemplars: int = 5) -> str:
     if not reply_pairs:
         return "(no exemplars found)"
+    # Deduplicate by thread_id
+    reply_pairs = _deduplicate_by_thread(reply_pairs)
     # Sort by score descending
     sorted_pairs = sorted(reply_pairs, key=lambda rp: rp.score, reverse=True)
     # Drop exemplars with score < 0.2
