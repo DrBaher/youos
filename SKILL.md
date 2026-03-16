@@ -94,6 +94,9 @@ youos ingest --whatsapp ~/Downloads/WhatsApp-Chat.txt
 # Add sender note (immediately rebuilds their profile)
 youos note john@company.com "integration partner, prefers bullet points"
 
+# Submit a feedback pair directly from the terminal
+youos feedback --inbound "email text" --reply "your reply" --rating 4
+
 # View stats
 youos stats
 
@@ -104,14 +107,16 @@ youos teardown
 ## How it works
 
 1. Ingests Gmail, Google Docs, WhatsApp exports — plus organic pairs from emails you sent without YouOS
-2. Builds a retrieval index — BM25 + query expansion + semantic (LRU-cached) + multi-intent + same-thread 2× + subject + topic signals + sender-type boosts + quality scores
-3. When you ask for a draft: detects multi-intent, retrieves score-ranked thread-deduplicated exemplars, generates a reply using the matching per-mode persona with first-name greeting and correct closing — per-intent reply length calibrated from corpus
-4. Every email you review trains the model further — curriculum-ordered, quality-filtered, DPO pairs supported; nightly pipeline uses smart skip gates (no compute wasted on quiet days)
-5. Nightly: ingests new emails + organic pairs, re-analyzes 8 persona style signals, fine-tunes (when enough data), runs autoresearch (80 iterations) to optimize retrieval, intent boosts, prompt variants, and composite score weights
-6. Style drift detection: Stats dashboard flags when your writing patterns shift significantly
-7. Your best-rated, least-edited replies surface higher in future retrievals via quality scoring
-8. Sender profiles track reply-time patterns and topics; `youos note` immediately rebuilds that contact's profile
-9. Setup wizard asks for internal domains — accurate sender classification from day one
+2. Builds a retrieval index — BM25 + query expansion + semantic (LRU-cached) + multi-intent + per-account isolation + same-thread 2× + subject + topic signals + sender-type boosts + quality scores + relative confidence thresholds
+3. When you ask for a draft: detects multi-intent, retrieves score-ranked thread-deduplicated exemplars (reply preserved 600 chars, inbound trimmed 400), prompt token budget enforced; generates using per-mode persona with first-name greeting; local model empty output falls back to Claude
+4. Every email you review trains the model further — curriculum-ordered, quality-filtered, training pairs deduplicated by similarity, DPO pairs supported; nightly pipeline skips steps when data insufficient
+5. Nightly: ingests + organic pairs, incremental persona re-analysis (90-day weighted, EWMA avg words, p25/p75 confidence intervals), fine-tunes (with golden eval check), runs autoresearch on rotating benchmark sample
+6. Autoresearch benchmarks rotate weekly (seeded re-sample) — prevents overfitting to fixed test cases; golden eval composite tracked in pipeline log
+7. Style drift detection: Stats dashboard flags when your writing patterns shift significantly
+8. Your best-rated, least-edited replies surface higher in future retrievals via quality scoring
+9. Sender profiles track reply-time patterns and topics; `youos note` immediately rebuilds that contact's profile
+10. Submit feedback from terminal: `youos feedback --inbound "..." --reply "..." --rating 4`
+11. Setup wizard asks for internal domains — accurate sender classification from day one
 
 ## Privacy
 
