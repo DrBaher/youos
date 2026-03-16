@@ -17,6 +17,8 @@ sender_domain_boost: 0.10
 # Cross-encoder reranking (requires sentence-transformers)
 reranker_enabled: false
 
+topic_match_boost: 0.15
+
 sender_type_boost_map:
   external_client: 1.3
   personal: 0.8
