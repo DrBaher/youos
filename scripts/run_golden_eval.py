@@ -25,6 +25,7 @@ def score_case(
     case: dict[str, Any],
     draft: str,
     detected_mode: str,
+    detected_language: str | None = None,
 ) -> dict[str, Any]:
     """Score a single golden benchmark case."""
     draft_lower = draft.lower()
@@ -47,15 +48,21 @@ def score_case(
     max_words = case.get("max_words", 100)
     brevity_pass = word_count <= max_words
 
+    # Language detection check
+    expected_language = case.get("expected_language")
+    language_match = True
+    if expected_language and detected_language:
+        language_match = detected_language == expected_language
+
     # Overall pass/warn/fail
-    if keyword_hit_rate >= 0.5 and mode_match and brevity_pass:
+    if keyword_hit_rate >= 0.5 and mode_match and brevity_pass and language_match:
         status = "pass"
     elif keyword_hit_rate >= 0.25 or (mode_match and brevity_pass):
         status = "warn"
     else:
         status = "fail"
 
-    return {
+    result = {
         "case_id": case["id"],
         "description": case.get("description", ""),
         "keyword_hit_rate": round(keyword_hit_rate, 2),
@@ -67,6 +74,11 @@ def score_case(
         "brevity_pass": brevity_pass,
         "status": status,
     }
+    if expected_language:
+        result["expected_language"] = expected_language
+        result["detected_language"] = detected_language
+        result["language_match"] = language_match
+    return result
 
 
 def run_golden_eval(
@@ -92,11 +104,13 @@ def run_golden_eval(
             )
             draft = output.get("draft", "")
             detected_mode = output.get("detected_mode", "unknown")
+            detected_language = output.get("detected_language")
         else:
             draft = ""
             detected_mode = "unknown"
+            detected_language = None
 
-        result = score_case(case, draft, detected_mode)
+        result = score_case(case, draft, detected_mode, detected_language)
         results.append(result)
 
     total = len(results)

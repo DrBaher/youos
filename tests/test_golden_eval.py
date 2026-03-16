@@ -16,13 +16,16 @@ from scripts.run_golden_eval import (
 def test_load_golden_cases():
     """Golden cases load from configs/benchmarks/golden.yaml."""
     cases = load_golden_cases()
-    assert len(cases) == 5
+    assert len(cases) == 8
     ids = [c["id"] for c in cases]
     assert "golden-schedule-meeting" in ids
     assert "golden-decline-request" in ids
     assert "golden-follow-up-proposal" in ids
     assert "golden-thank-intro" in ids
     assert "golden-ask-clarification" in ids
+    assert "golden-personal-mode" in ids
+    assert "golden-multilang" in ids
+    assert "golden-whatsapp-brief" in ids
 
 
 def test_golden_case_structure():
@@ -81,8 +84,8 @@ def test_score_case_warn():
 def test_run_golden_eval_without_generate():
     """Golden eval runs without a generate function (dry run)."""
     summary = run_golden_eval()
-    assert summary["total"] == 5
-    assert summary["failed"] == 5  # all fail with empty drafts
+    assert summary["total"] == 8
+    assert summary["failed"] == 8  # all fail with empty drafts
 
 
 def test_run_golden_eval_with_mock_generate(tmp_path):
@@ -118,6 +121,49 @@ def test_run_golden_eval_with_mock_generate(tmp_path):
     assert summary["passed"] == 1
 
 
+def test_score_case_with_language_match():
+    """Language detection assertion works for multilang case."""
+    case = {
+        "id": "test-lang",
+        "expected_keywords": ["Woche"],
+        "expected_mode": "work",
+        "max_words": 60,
+        "expected_language": "de",
+    }
+    result = score_case(case, "Nächste Woche passt mir gut.", "work", detected_language="de")
+    assert result["language_match"] is True
+    assert result["status"] == "pass"
+
+
+def test_score_case_language_mismatch():
+    """Language mismatch prevents pass status."""
+    case = {
+        "id": "test-lang",
+        "expected_keywords": ["Woche"],
+        "expected_mode": "work",
+        "max_words": 60,
+        "expected_language": "de",
+    }
+    result = score_case(case, "Next Woche sounds good.", "work", detected_language="en")
+    assert result["language_match"] is False
+    assert result["status"] != "pass"
+
+
+def test_new_golden_cases_structure():
+    """New golden cases have required fields."""
+    cases = load_golden_cases()
+    new_ids = {"golden-personal-mode", "golden-multilang", "golden-whatsapp-brief"}
+    for case in cases:
+        if case["id"] in new_ids:
+            assert "inbound" in case
+            assert "expected_keywords" in case
+            assert "expected_mode" in case
+            assert "max_words" in case
+    # Multilang case has expected_language
+    multilang = [c for c in cases if c["id"] == "golden-multilang"][0]
+    assert multilang["expected_language"] == "de"
+
+
 def test_save_and_format_results(tmp_path):
     """Results can be saved to JSON and formatted as scorecard."""
     summary = run_golden_eval()
@@ -127,4 +173,4 @@ def test_save_and_format_results(tmp_path):
 
     scorecard = format_scorecard(summary)
     assert "Golden Benchmark Results" in scorecard
-    assert "Total: 5" in scorecard
+    assert "Total: 8" in scorecard

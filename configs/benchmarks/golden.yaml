@@ -64,3 +64,47 @@ cases:
     expected_mode: work
     max_words: 40
     notes: Should ask specifically what 'that thing' refers to without being dismissive.
+
+  - id: golden-personal-mode
+    description: Casual personal email from a friend
+    inbound: |
+      Hey! It's been ages. We should totally catch up soon — coffee or drinks this weekend?
+      Miss hanging out with you!
+    expected_keywords:
+      - sounds
+      - weekend
+      - catch
+    expected_mode: personal
+    max_words: 30
+    notes: Should be warm, brief, and enthusiastic about catching up.
+
+  - id: golden-multilang
+    description: Formal German business email
+    inbound: |
+      Sehr geehrter Herr Müller,
+
+      ich möchte Sie gerne zu einem Gespräch über die geplante Zusammenarbeit einladen.
+      Wären Sie nächste Woche verfügbar?
+
+      Mit freundlichen Grüßen,
+      Anna Schmidt
+    expected_keywords:
+      - Woche
+      - Gespräch
+      - freundlichen
+    expected_mode: work
+    expected_language: de
+    max_words: 60
+    notes: Should detect German language and reply in German.
+
+  - id: golden-whatsapp-brief
+    description: Very short conversational message about rescheduling
+    inbound: |
+      Can we push the meeting?
+    expected_keywords:
+      - when
+      - reschedule
+      - works
+    expected_mode: work
+    max_words: 20
+    notes: Ultra-brief reply expected. Confirm and ask for new time.
