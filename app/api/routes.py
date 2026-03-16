@@ -1,6 +1,9 @@
-from typing import Literal
+import os
+from collections import deque
+from datetime import datetime, timezone
+from typing import Any, Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from app.core.text_utils import strip_quoted_text
@@ -8,6 +11,42 @@ from app.generation.service import DraftRequest, generate_draft
 from app.retrieval.service import RetrievalRequest, retrieve_context
 
 router = APIRouter()
+
+# In-memory store for last 20 draft traces
+_draft_traces: deque[dict[str, Any]] = deque(maxlen=20)
+
+
+def _store_trace(
+    *,
+    inbound_text: str,
+    sender: str | None,
+    response: Any,
+    intent: str | None = None,
+    detected_mode: str | None = None,
+) -> str:
+    """Store a draft trace and return the draft_id."""
+    draft_id = os.urandom(4).hex()
+    exemplars = []
+    for p in response.precedent_used[:5]:
+        exemplars.append({
+            "source_id": p.get("source_id"),
+            "score": p.get("score"),
+            "quality_score": p.get("quality_score"),
+            "subject": p.get("title"),
+            "snippet": (p.get("snippet") or "")[:120],
+        })
+    _draft_traces.append({
+        "draft_id": draft_id,
+        "inbound_text": inbound_text[:500],
+        "sender": sender,
+        "exemplars": exemplars,
+        "confidence": response.confidence,
+        "model_used": response.model_used,
+        "intent": intent,
+        "detected_mode": detected_mode or response.detected_mode,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return draft_id
 
 
 @router.get("/healthz")
@@ -89,7 +128,23 @@ def draft(body: DraftBody, request: Request) -> dict[str, object]:
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return response.to_dict()
+    draft_id = _store_trace(
+        inbound_text=body.inbound_message,
+        sender=body.sender,
+        response=response,
+    )
+    result = response.to_dict()
+    result["draft_id"] = draft_id
+    return result
+
+
+@router.get("/draft/explain")
+def draft_explain(draft_id: str = Query(..., min_length=1)) -> dict:
+    """Return the trace for a given draft_id."""
+    for trace in _draft_traces:
+        if trace["draft_id"] == draft_id:
+            return trace
+    raise HTTPException(status_code=404, detail="Draft trace not found")
 
 
 class DraftCompareBody(BaseModel):

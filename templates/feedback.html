@@ -806,6 +806,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
         extra += '<div class="precedent" style="color:#f0a500;margin-top:0.4rem;">' +
           '\u26A0\uFE0F Low confidence \u2014 no strong precedents found in your corpus. This draft may not reflect your style.</div>';
       }
+      if (data.draft_id) {
+        extra += '<div style="margin-top:0.4rem;"><a href="#" class="explain-link" data-draftid="' + data.draft_id + '" style="color:#00c4a7;font-size:0.82rem;">How was this generated?</a><div class="explain-panel" id="explain-' + data.draft_id + '" style="display:none;margin-top:0.4rem;padding:0.6rem;background:#0d1b2a;border-radius:6px;font-size:0.82rem;"></div></div>';
+      }
       showInfo('Draft generated. Edit as needed, then submit.' + extra, data.confidence_warning ? 'warning' : '');
     } catch (e) {
       showInfo('Error: ' + e.message);
@@ -813,6 +816,34 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       btnGen.disabled = false;
       btnGen.textContent = 'Generate Draft';
     }
+  });
+
+  // Explain link handler
+  document.addEventListener('click', async (e) => {
+    if (!e.target.classList.contains('explain-link')) return;
+    e.preventDefault();
+    const draftId = e.target.dataset.draftid;
+    const panel = document.getElementById('explain-' + draftId);
+    if (!panel) return;
+    if (panel.style.display === 'block') { panel.style.display = 'none'; return; }
+    panel.textContent = 'Loading...';
+    panel.style.display = 'block';
+    try {
+      const res = await fetch('/draft/explain?draft_id=' + encodeURIComponent(draftId));
+      if (!res.ok) throw new Error('Not found');
+      const d = await res.json();
+      const confColors = {high:'#2ecc71',medium:'#f0ad4e',low:'#e74c3c'};
+      let html = '<span style="display:inline-block;padding:0.15rem 0.5rem;border-radius:4px;background:' + (confColors[d.confidence]||'#555') + ';color:#fff;font-size:0.75rem;font-weight:600;">' + (d.confidence||'unknown') + '</span>';
+      if (d.intent && d.intent !== 'general') html += ' <span style="color:#888;">Intent: ' + d.intent + '</span>';
+      if (d.detected_mode) html += ' <span style="color:#888;">Mode: ' + d.detected_mode + '</span>';
+      if (d.exemplars && d.exemplars.length > 0) {
+        html += '<div style="margin-top:0.4rem;color:#aaa;">Top exemplars:</div>';
+        d.exemplars.slice(0, 3).forEach((ex, i) => {
+          html += '<div style="margin-left:0.5rem;color:#ccc;font-size:0.78rem;">' + (i+1) + '. ' + (ex.subject || ex.source_id || 'unknown') + ' (score: ' + (ex.score != null ? ex.score.toFixed(2) : 'N/A') + ')</div>';
+        });
+      }
+      panel.innerHTML = html;
+    } catch(e) { panel.textContent = 'Could not load trace.'; }
   });
 
   btnSub.addEventListener('click', async () => {
