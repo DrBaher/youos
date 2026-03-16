@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,43 @@ from app.db.bootstrap import resolve_sqlite_path
 from app.generation.service import DraftRequest, generate_draft
 
 router = APIRouter(prefix="/review-queue", tags=["review-queue"])
+
+_RQ_MAX_WORKERS = 4  # parallel draft generation threads
+
+
+def _generate_draft_for_candidate(
+    cand: dict[str, Any],
+    *,
+    database_url: str,
+    configs_dir: Any,
+) -> dict[str, Any] | None:
+    """Generate a draft for a single candidate. Returns item dict or None on failure."""
+    clean_inbound = strip_quoted_text(decode_html_entities(cand["inbound_text"]))
+    try:
+        draft_response = generate_draft(
+            DraftRequest(
+                inbound_message=clean_inbound,
+                sender=cand["inbound_author"],
+                use_local_model=False,  # Use Claude in Review Queue — faster, good enough for training signal
+            ),
+            database_url=database_url,
+            configs_dir=configs_dir,
+        )
+        return {
+            "reply_pair_id": cand["reply_pair_id"],
+            "inbound_text": clean_inbound,
+            "inbound_author": cand["inbound_author"],
+            "subject": cand["subject"],
+            "generated_draft": draft_response.draft,
+            "sender_profile": None,  # filled in after
+            "account_email": cand.get("account_email"),
+            "paired_at": cand["paired_at"],
+            "suggested_subject": getattr(draft_response, "suggested_subject", None),
+            "_cand_author": cand["inbound_author"],  # for profile lookup
+        }
+    except Exception as exc:
+        logger.warning("Draft generation failed for rp %s: %s", cand.get("reply_pair_id"), exc)
+        return None
 
 # Content patterns that indicate automated/machine-generated emails — not useful for training
 _AUTOMATED_CONTENT_PATTERNS = re.compile(
@@ -312,46 +350,28 @@ def review_queue_next(
 
     candidates, total_unreviewed = _fetch_candidates(db_path, batch_size, excluded)
 
-    # Generate drafts for each candidate
+    # Generate all drafts in parallel using Claude (faster for Review Queue)
     items = []
-    for cand in candidates:
-        # Decode HTML entities and strip quoted text before display and generation
-        clean_inbound = strip_quoted_text(decode_html_entities(cand["inbound_text"]))
-        try:
-            draft_response = generate_draft(
-                DraftRequest(
-                    inbound_message=clean_inbound,
-                    sender=cand["inbound_author"],
-                ),
+    with ThreadPoolExecutor(max_workers=_RQ_MAX_WORKERS) as executor:
+        futures = {
+            executor.submit(
+                _generate_draft_for_candidate,
+                cand,
                 database_url=settings.database_url,
                 configs_dir=settings.configs_dir,
-            )
-            generated_draft = draft_response.draft
-        except Exception as exc:
-            logger.warning("Draft generation failed for rp %s: %s", cand["reply_pair_id"], exc)
-            continue
-
-        # Look up sender profile
-        sender_profile = None
-        if cand["inbound_author"]:
-            sender_profile = _lookup_sender_profile_safe(db_path, cand["inbound_author"])
-
-        items.append(
-            {
-                "reply_pair_id": cand["reply_pair_id"],
-                "inbound_text": clean_inbound,
-                "inbound_author": cand["inbound_author"],
-                "subject": cand["subject"],
-                "generated_draft": generated_draft,
-                "sender_profile": sender_profile,
-                "account_email": cand.get("account_email"),
-                "paired_at": cand["paired_at"],
-                "suggested_subject": getattr(draft_response, "suggested_subject", None),
-            }
-        )
-
-        if len(items) >= batch_size:
-            break
+            ): cand
+            for cand in candidates[:batch_size]
+        }
+        for future in as_completed(futures):
+            result = future.result()
+            if result is None:
+                continue
+            author = result.pop("_cand_author", None)
+            if author:
+                result["sender_profile"] = _lookup_sender_profile_safe(db_path, author)
+            items.append(result)
+            if len(items) >= batch_size:
+                break
 
     # Trigger sender profile rebuild if last rebuild was > 1 hour ago
     global _last_sender_profile_rebuild
@@ -406,45 +426,35 @@ def review_queue_next_stream(
         })
         yield f"data: {meta}\n\n"
 
+        if not candidates:
+            yield 'data: {"type": "done"}\n\n'
+            return
+
+        # Generate all drafts in parallel — yields each item as it completes
         item_count = 0
-        for cand in candidates:
-            if item_count >= batch_size:
-                break
-            clean_inbound = strip_quoted_text(decode_html_entities(cand["inbound_text"]))
-            try:
-                draft_response = generate_draft(
-                    DraftRequest(
-                        inbound_message=clean_inbound,
-                        sender=cand["inbound_author"],
-                    ),
+        with ThreadPoolExecutor(max_workers=_RQ_MAX_WORKERS) as executor:
+            future_to_cand = {
+                executor.submit(
+                    _generate_draft_for_candidate,
+                    cand,
                     database_url=settings.database_url,
                     configs_dir=settings.configs_dir,
-                )
-                generated_draft = draft_response.draft
-            except Exception as exc:
-                logger.warning("Draft generation failed for rp %s: %s", cand["reply_pair_id"], exc)
-                continue
-
-            sender_profile = None
-            if cand["inbound_author"]:
-                sender_profile = _lookup_sender_profile_safe(db_path, cand["inbound_author"])
-
-            item = {
-                "type": "item",
-                "reply_pair_id": cand["reply_pair_id"],
-                "inbound_text": clean_inbound,
-                "inbound_author": cand["inbound_author"],
-                "subject": cand["subject"],
-                "generated_draft": generated_draft,
-                "sender_profile": sender_profile,
-                "account_email": cand.get("account_email"),
-                "paired_at": cand["paired_at"],
-                "suggested_subject": getattr(draft_response, "suggested_subject", None),
+                ): cand
+                for cand in candidates[:batch_size]
             }
-            yield f"data: {json.dumps(item)}\n\n"
-            item_count += 1
+            for future in as_completed(future_to_cand):
+                result = future.result()
+                if result is None:
+                    continue
+                # Enrich with sender profile
+                author = result.pop("_cand_author", None)
+                if author:
+                    result["sender_profile"] = _lookup_sender_profile_safe(db_path, author)
+                result["type"] = "item"
+                yield f"data: {json.dumps(result)}\n\n"
+                item_count += 1
 
-        yield "data: {\"type\": \"done\"}\n\n"
+        yield 'data: {"type": "done"}\n\n'
 
         global _last_sender_profile_rebuild
         if item_count > 0 and (time.time() - _last_sender_profile_rebuild) > 3600:
