@@ -281,8 +281,16 @@ def stats():
 
 
 @app.command()
-def ingest():
+def ingest(
+    whatsapp: str = typer.Option(None, "--whatsapp", help="Path to a WhatsApp chat export .txt file"),
+):
     """Run email ingestion manually."""
+    if whatsapp:
+        from app.ingestion.whatsapp import ingest_whatsapp_export
+        from pathlib import Path as P
+        result = ingest_whatsapp_export(P(whatsapp))
+        print(f"[{result.status}] {result.detail}")
+        return
     subprocess.run([sys.executable, str(ROOT_DIR / "scripts" / "ingest_gmail_threads.py"), "--live"])
 
 
