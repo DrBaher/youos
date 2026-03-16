@@ -95,6 +95,7 @@ class RetrievalResponse:
     documents: list[RetrievalMatch]
     chunks: list[RetrievalMatch]
     reply_pairs: list[RetrievalMatch]
+    partial_semantic_coverage: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -106,6 +107,7 @@ class RetrievalResponse:
             "documents": [match.to_dict() for match in self.documents],
             "chunks": [match.to_dict() for match in self.chunks],
             "reply_pairs": [match.to_dict() for match in self.reply_pairs],
+            "partial_semantic_coverage": self.partial_semantic_coverage,
         }
 
 
@@ -119,7 +121,7 @@ class RetrievalConfig:
     account_boost_weight: float
     source_weights: dict[str, float]
     semantic_weight: float = 0.4
-    semantic_min_coverage: float = 0.1
+    semantic_min_coverage: float = 0.01
     sender_type_boost: float = 0.15
     sender_domain_boost: float = 0.10
     sender_type_boost_map: dict[str, float] = field(default_factory=dict)
@@ -178,11 +180,15 @@ class RetrievalService:
 
             # Hybrid semantic re-ranking
             semantic_enabled = False
+            partial_coverage = False
             if reply_pairs:
-                semantic_enabled = self._apply_semantic_reranking(connection, query, reply_pairs, "reply_pairs")
+                rp_semantic, rp_partial = self._apply_semantic_reranking(connection, query, reply_pairs, "reply_pairs")
+                semantic_enabled = rp_semantic
+                partial_coverage = rp_partial
             if chunks:
-                chunks_semantic = self._apply_semantic_reranking(connection, query, chunks, "chunks")
-                semantic_enabled = semantic_enabled or chunks_semantic
+                ch_semantic, ch_partial = self._apply_semantic_reranking(connection, query, chunks, "chunks")
+                semantic_enabled = semantic_enabled or ch_semantic
+                partial_coverage = partial_coverage or ch_partial
 
         method = "fts5_bm25" if use_fts else "lexical_v1"
         if semantic_enabled:
@@ -197,6 +203,7 @@ class RetrievalService:
             documents=documents,
             chunks=chunks,
             reply_pairs=reply_pairs,
+            partial_semantic_coverage=partial_coverage,
         )
 
     # -- Semantic reranking ────────────────────────────────────────────────
@@ -207,18 +214,20 @@ class RetrievalService:
         query: str,
         matches: list[RetrievalMatch],
         table: str,
-    ) -> bool:
+    ) -> tuple[bool, bool]:
         """Re-score matches using hybrid FTS + semantic similarity.
 
-        Returns True if semantic search was enabled, False otherwise.
+        Returns (semantic_enabled, partial_coverage) tuple.
         Only operates on top-20 FTS candidates for efficiency.
         """
         if not _has_embedding_column(connection, table):
-            return False
+            return False, False
 
         coverage = _embedding_coverage(connection, table)
         if coverage < self.config.semantic_min_coverage:
-            return False
+            return False, False
+
+        partial_coverage = 0.01 <= coverage < 0.3
 
         # Get query embedding — if embedding generation fails, skip semantic
         try:
@@ -247,7 +256,7 @@ class RetrievalService:
 
         # Re-sort after reranking
         matches.sort(key=lambda m: (-m.score, m.result_type, m.source_id))
-        return True
+        return True, partial_coverage
 
     # -- FTS5 paths ──────────────────────────────────────────────────────
 

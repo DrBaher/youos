@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import field
 from pathlib import Path
 
 import yaml
+
+from app.retrieval.service import RetrievalConfig
 
 
 # --- Item 5: Sender-type retrieval boosting ---
@@ -85,3 +88,40 @@ def test_sender_type_boost_mutation(tmp_path):
 
     revert_mutation(ext_surface, old, configs_dir)
     assert abs(ext_surface.current_value - 1.3) < 0.01
+
+
+# --- Item 6: Lower semantic reranking threshold ---
+
+
+def test_semantic_min_coverage_default():
+    """Default semantic_min_coverage is 0.01."""
+    config = RetrievalConfig(
+        top_k_documents=3, top_k_chunks=3, top_k_reply_pairs=5,
+        recency_boost_days=60, recency_boost_weight=0.2,
+        account_boost_weight=0.15, source_weights={},
+    )
+    assert config.semantic_min_coverage == 0.01
+
+
+def test_semantic_min_coverage_from_config():
+    """Config file now loads 0.01 threshold."""
+    from app.retrieval.service import _load_retrieval_config
+
+    configs_dir = Path(__file__).resolve().parents[1] / "configs"
+    config = _load_retrieval_config(configs_dir)
+    assert config.semantic_min_coverage == 0.01
+
+
+def test_partial_semantic_coverage_flag():
+    """RetrievalResponse tracks partial_semantic_coverage flag."""
+    from app.retrieval.service import RetrievalResponse
+
+    resp = RetrievalResponse(
+        query="test", retrieval_method="fts5_bm25+semantic",
+        semantic_search_enabled=True, applied_filters={},
+        detected_mode="work", documents=[], chunks=[], reply_pairs=[],
+        partial_semantic_coverage=True,
+    )
+    assert resp.partial_semantic_coverage is True
+    d = resp.to_dict()
+    assert d["partial_semantic_coverage"] is True
