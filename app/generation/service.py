@@ -12,7 +12,7 @@ import yaml
 
 import logging
 
-from app.core.config import get_base_model, get_model_fallback, get_user_name, get_user_names
+from app.core.config import get_account_for_sender, get_base_model, get_model_fallback, get_user_name, get_user_names
 
 logger = logging.getLogger(__name__)
 from app.core.sender import classify_sender, extract_domain, first_name_from_display_name
@@ -666,7 +666,14 @@ def generate_draft(
         if prior_reply and _has_thread_context(clean_inbound):
             inbound_for_prompt += f"\n\n[PRIOR REPLY TO THIS SENDER]\n{user_name} previously wrote: {prior_reply}"
 
-    account_emails = (request.account_email,) if request.account_email else ()
+    # Infer account email from sender if not explicitly provided
+    if request.account_email:
+        account_emails = (request.account_email,)
+    elif request.sender:
+        inferred = get_account_for_sender(request.sender)
+        account_emails = (inferred,) if inferred else ()
+    else:
+        account_emails = ()
     sender_type_hint = None
     sender_domain_hint = None
     if request.sender:
