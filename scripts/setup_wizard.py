@@ -545,6 +545,18 @@ def _offer_nightly_pipeline(config: dict) -> None:
 
 def main() -> None:
     _print_banner()
+
+    # Pre-flight: run doctor checks
+    from app.core.doctor import run_doctor_checks
+
+    passed, failures = run_doctor_checks()
+    if not passed:
+        print("System check failed:")
+        for msg in failures:
+            print(f"  \u2717 {msg}")
+        print("\nFix the above issues first.")
+        sys.exit(1)
+
     input("Press Enter to continue...")
     print()
 
