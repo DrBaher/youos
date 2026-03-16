@@ -1,0 +1,66 @@
+cases:
+  - id: golden-schedule-meeting
+    description: Schedule a meeting with a colleague
+    inbound: |
+      Hi, would you be available for a 30-minute call this week to discuss the Q2 roadmap?
+      Let me know what works for you.
+    expected_keywords:
+      - available
+      - time
+      - call
+      - week
+    expected_mode: work
+    max_words: 60
+    notes: Should propose specific times, stay concise.
+
+  - id: golden-decline-request
+    description: Politely decline a request
+    inbound: |
+      We'd love for you to speak at our conference next month.
+      It's a great opportunity for exposure and networking.
+      Would you be interested?
+    expected_keywords:
+      - thank
+      - unfortunately
+      - schedule
+    expected_mode: work
+    max_words: 80
+    notes: Should be gracious but clear about declining.
+
+  - id: golden-follow-up-proposal
+    description: Follow up on a sent proposal
+    inbound: |
+      Just checking in on the proposal I sent over last week.
+      Have you had a chance to review it? Happy to answer any questions.
+    expected_keywords:
+      - proposal
+      - review
+      - follow
+    expected_mode: work
+    max_words: 60
+    notes: Should acknowledge receipt and give timeline.
+
+  - id: golden-thank-intro
+    description: Thank someone for an introduction
+    inbound: |
+      Hey! Just wanted to introduce you to Sarah — she runs product at Acme Corp
+      and I think you two would have a lot to talk about. Connecting you both here.
+    expected_keywords:
+      - thank
+      - intro
+      - connect
+    expected_mode: personal
+    max_words: 50
+    notes: Should be warm, brief, and express intent to follow up with the introduced person.
+
+  - id: golden-ask-clarification
+    description: Ask for clarification on a vague request
+    inbound: |
+      Can you send me that thing we talked about?
+    expected_keywords:
+      - which
+      - clarify
+      - referring
+    expected_mode: work
+    max_words: 40
+    notes: Should ask specifically what 'that thing' refers to without being dismissive.

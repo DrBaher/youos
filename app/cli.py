@@ -411,9 +411,14 @@ def finetune():
 
 
 @app.command(name="eval")
-def run_eval():
+def run_eval(
+    golden: bool = typer.Option(False, "--golden", help="Run golden benchmark evaluation"),
+):
     """Run benchmark evaluation."""
-    subprocess.run([sys.executable, str(ROOT_DIR / "scripts" / "run_eval.py")])
+    if golden:
+        subprocess.run([sys.executable, str(ROOT_DIR / "scripts" / "run_golden_eval.py")])
+    else:
+        subprocess.run([sys.executable, str(ROOT_DIR / "scripts" / "run_eval.py")])
 
 
 @app.command()
