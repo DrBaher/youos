@@ -30,6 +30,8 @@ YouOS drafts email replies in your style, grounded in your real past replies.
 - "draft in my style"
 - "youos"
 - "my email copilot"
+- "email copilot"
+- "my copilot"
 - "generate a draft"
 - "reply draft" / "email draft" / "draft reply"
 - "compose reply"

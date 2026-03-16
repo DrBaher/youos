@@ -15,3 +15,5 @@ data/
 models/adapters/latest/*.safetensors
 models/adapters/latest/*.json
 gif-frames/
+gif-frames/
+models/adapters/latest/
