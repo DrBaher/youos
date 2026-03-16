@@ -353,40 +353,40 @@ def note(
 @app.command()
 def stats():
     """Print stats summary."""
+    from rich.console import Console
+    from rich.table import Table
+
     from app.core.settings import get_settings
-    from app.db.bootstrap import resolve_sqlite_path
+    from app.core.stats import get_corpus_stats, get_model_status, get_pipeline_status
 
     settings = get_settings()
-    db_path = resolve_sqlite_path(settings.database_url)
-    if not db_path.exists():
-        print("No database found. Run 'youos setup' first.")
-        return
+    console = Console()
 
-    conn = sqlite3.connect(db_path)
-    try:
-        docs = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
-        pairs = conn.execute("SELECT COUNT(*) FROM reply_pairs").fetchone()[0]
-        feedback = conn.execute("SELECT COUNT(*) FROM feedback_pairs").fetchone()[0]
+    corpus = get_corpus_stats(settings.database_url)
+    model = get_model_status(Path(settings.configs_dir))
+    pipeline = get_pipeline_status(ROOT_DIR)
 
-        print("YouOS Stats")
-        print("=" * 30)
-        print(f"  Documents:      {docs:,}")
-        print(f"  Reply pairs:    {pairs:,}")
-        print(f"  Feedback pairs: {feedback:,}")
+    table = Table(title="YouOS Stats", show_header=True, header_style="bold cyan")
+    table.add_column("Metric", style="dim")
+    table.add_column("Value")
 
-        try:
-            reviewed_today = conn.execute("SELECT COUNT(*) FROM feedback_pairs WHERE DATE(created_at) = DATE('now')").fetchone()[0]
-            print(f"  Reviewed today: {reviewed_today}")
-        except Exception:
-            pass
+    table.add_row("Documents", f"{corpus['total_documents']:,}")
+    table.add_row("Reply pairs", f"{corpus['total_reply_pairs']:,}")
+    table.add_row("Feedback pairs", f"{corpus['total_feedback_pairs']:,}")
+    table.add_row("Reviewed today", str(corpus["reviewed_today"]))
+    table.add_row("Reviewed this week", str(corpus["reviewed_this_week"]))
+    emb = corpus["embedding_pct"]
+    table.add_row("Embedding coverage", f"{emb:.1f}%" if emb is not None else "N/A")
+    table.add_row("Generation model", model["generation_model"])
+    table.add_row("LoRA adapter", "Yes" if model["lora_adapter_exists"] else "No")
+    table.add_row("Last fine-tune", model.get("lora_trained_at") or "N/A")
 
-        try:
-            profiles = conn.execute("SELECT COUNT(*) FROM sender_profiles").fetchone()[0]
-            print(f"  Sender profiles: {profiles}")
-        except Exception:
-            pass
-    finally:
-        conn.close()
+    if pipeline:
+        status = pipeline.get("status", "unknown")
+        table.add_row("Pipeline status", status.upper())
+        table.add_row("Pipeline last run", pipeline.get("run_at", "N/A"))
+
+    console.print(table)
 
 
 @app.command()
