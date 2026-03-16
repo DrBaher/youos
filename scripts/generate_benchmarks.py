@@ -115,8 +115,7 @@ def generate_cases(db_path: Path, count: int = 15, sample_size: int = 30, seed: 
         }
 
         all_rows = conn.execute(
-            "SELECT id, inbound_text, reply_text, inbound_author, metadata_json "
-            "FROM reply_pairs WHERE reply_text IS NOT NULL AND LENGTH(reply_text) > 20"
+            "SELECT id, inbound_text, reply_text, inbound_author, metadata_json FROM reply_pairs WHERE reply_text IS NOT NULL AND LENGTH(reply_text) > 20"
         ).fetchall()
 
         # Shuffle using our seeded RNG instead of SQL RANDOM()

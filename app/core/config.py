@@ -147,11 +147,21 @@ def set_last_ingest_at(account: str, timestamp: str, config: dict[str, Any] | No
     save_config(cfg)
 
 
-_PERSONAL_DOMAINS = frozenset({
-    "gmail.com", "yahoo.com", "hotmail.com", "icloud.com", "me.com",
-    "outlook.com", "live.com", "aol.com", "protonmail.com", "proton.me",
-    "fastmail.com",
-})
+_PERSONAL_DOMAINS = frozenset(
+    {
+        "gmail.com",
+        "yahoo.com",
+        "hotmail.com",
+        "icloud.com",
+        "me.com",
+        "outlook.com",
+        "live.com",
+        "aol.com",
+        "protonmail.com",
+        "proton.me",
+        "fastmail.com",
+    }
+)
 
 
 def get_account_for_sender(sender: str, config: dict[str, Any] | None = None) -> str | None:

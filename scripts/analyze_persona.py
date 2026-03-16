@@ -304,7 +304,7 @@ def analyze(db_path: Path, *, recent_days: int | None = None) -> dict:
 
         total_weight = sum(ewma_weights)
         if total_weight > 0:
-            ewma_avg_words = round(sum(w * v for w, v in zip(ewma_weights, ewma_values)) / total_weight, 1)
+            ewma_avg_words = round(sum(w * v for w, v in zip(ewma_weights, ewma_values, strict=True)) / total_weight, 1)
         else:
             ewma_avg_words = round(statistics.mean(word_counts), 1)
     else:

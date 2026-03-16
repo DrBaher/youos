@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 import subprocess
@@ -10,11 +11,7 @@ from typing import Any
 
 import yaml
 
-import logging
-
 from app.core.config import get_account_for_sender, get_base_model, get_model_fallback, get_user_name, get_user_names
-
-logger = logging.getLogger(__name__)
 from app.core.sender import classify_sender, extract_domain, first_name_from_display_name
 from app.core.text_utils import strip_quoted_text
 from app.db.bootstrap import resolve_sqlite_path
@@ -24,6 +21,8 @@ from app.retrieval.service import (
     RetrievalResponse,
     retrieve_context,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -598,12 +597,14 @@ def _call_local_model(prompt: str, *, max_tokens: int = 300, use_adapter: bool =
     ]
     if use_adapter:
         cmd.extend(["--adapter-path", str(ADAPTER_PATH)])
-    cmd.extend([
-        "--prompt",
-        prompt,
-        "--max-tokens",
-        str(max_tokens),
-    ])
+    cmd.extend(
+        [
+            "--prompt",
+            prompt,
+            "--max-tokens",
+            str(max_tokens),
+        ]
+    )
     result = subprocess.run(
         cmd,
         capture_output=True,
@@ -840,8 +841,8 @@ def generate_draft(
                 draft = _call_claude_cli(prompt, max_tokens=max_tokens)
                 model_used = "claude"
                 empty_output_retried = True
-            except Exception:
-                raise ValueError("Draft generation returned empty output")
+            except Exception as fallback_exc:
+                raise ValueError("Draft generation returned empty output") from fallback_exc
         else:
             raise ValueError("Draft generation returned empty output")
 

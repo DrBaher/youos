@@ -47,13 +47,10 @@ def test_feedback_basic(tmp_path, monkeypatch):
 
     monkeypatch.setattr("app.cli.get_settings", fake_settings, raising=False)
     # Monkeypatch the import inside the function
-    import app.cli
 
-    original_get_settings = None
     try:
         from app.core import settings as settings_mod
 
-        original_get_settings = settings_mod.get_settings
         settings_mod.get_settings = fake_settings
         monkeypatch.setattr("app.core.settings.get_settings", fake_settings)
     except Exception:

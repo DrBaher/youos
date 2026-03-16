@@ -79,9 +79,9 @@ def test_ewma_weights_recent_more(tmp_path):
     recent = now.isoformat()
     # Old pairs: 5 words, recent pairs: 50 words
     pairs = []
-    for i in range(5):
+    for _i in range(5):
         pairs.append(("old", "one two three four five", "a@b.com", old))
-    for i in range(5):
+    for _i in range(5):
         pairs.append(("recent", " ".join(["word"] * 50), "c@d.com", recent))
     db = _create_db(tmp_path, pairs)
     findings = analyze(db, recent_days=None)

@@ -25,7 +25,7 @@ def _create_db(tmp_path: Path) -> Path:
     for i in range(50):
         conn.execute(
             "INSERT INTO reply_pairs (inbound_text, reply_text, inbound_author) VALUES (?, ?, ?)",
-            (f"Inbound email number {i} about project timeline and delivery schedule", f"Reply {i} with details about the project timeline and schedule delivery", f"sender{i}@example.com"),
+            (f"Inbound email number {i} about project timeline", f"Reply {i} with details about the project", f"sender{i}@example.com"),
         )
     conn.commit()
     conn.close()

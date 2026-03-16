@@ -301,7 +301,6 @@ def _count_feedback_pairs(db_path: Path) -> int:
 
 def step_golden_eval(verbose: bool = False) -> bool:
     """Run golden evaluation and return True if composite score >= 0.5."""
-    import json
 
     # Skip if DB doesn't exist or < 5 feedback pairs
     if not DEFAULT_DB.exists():
