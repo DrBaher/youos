@@ -6,6 +6,7 @@ Embeddings are optional at runtime; the system falls back to FTS5-only retrieval
 
 from __future__ import annotations
 
+import functools
 import math
 import struct
 from typing import TYPE_CHECKING
@@ -36,8 +37,12 @@ def _load_model():
     return _model, _tokenizer
 
 
-def get_embedding(text: str) -> list[float]:
-    """Generate a normalized embedding for *text* using mean-pooled Qwen hidden states."""
+@functools.lru_cache(maxsize=512)
+def get_embedding(text: str) -> tuple[float, ...]:
+    """Generate a normalized embedding for *text* using mean-pooled Qwen hidden states.
+
+    Returns a tuple (hashable) for lru_cache compatibility.
+    """
     import mlx.core as mx
 
     model, tokenizer = _load_model()
@@ -45,7 +50,7 @@ def get_embedding(text: str) -> list[float]:
     if not tokens:
         # Empty text — return zero vector of expected dimension
         dim = model.model.embed_tokens.weight.shape[1]
-        return [0.0] * dim
+        return tuple([0.0] * dim)
 
     input_ids = mx.array([tokens])
     hidden = model.model(input_ids)  # (1, seq_len, hidden_dim)
@@ -58,10 +63,21 @@ def get_embedding(text: str) -> list[float]:
     norm = mx.maximum(norm, mx.array(1e-12))
     embedding = embedding / norm
 
-    return embedding.tolist()
+    return tuple(embedding.tolist())
 
 
-def get_embedding_batch(texts: list[str]) -> list[list[float]]:
+def get_embedding_cache_info() -> dict[str, int]:
+    """Return cache stats for get_embedding."""
+    info = get_embedding.cache_info()
+    return {"hits": info.hits, "misses": info.misses, "size": info.currsize}
+
+
+def clear_embedding_cache() -> None:
+    """Clear the embedding LRU cache."""
+    get_embedding.cache_clear()
+
+
+def get_embedding_batch(texts: list[str]) -> list[tuple[float, ...]]:
     """Generate embeddings for a batch of texts (processes sequentially)."""
     return [get_embedding(t) for t in texts]
 

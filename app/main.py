@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -56,6 +57,15 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
         return RedirectResponse(url="/login", status_code=303)
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    yield
+    # Clear embedding cache on shutdown
+    from app.core.embeddings import clear_embedding_cache
+
+    clear_embedding_cache()
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     config = load_config()
@@ -64,6 +74,7 @@ def create_app() -> FastAPI:
         title="YouOS",
         version="0.1.0",
         description="Your personal AI email copilot — learns your style from your Gmail history.",
+        lifespan=_lifespan,
     )
     app.state.settings = settings
     app.state.config = config

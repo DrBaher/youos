@@ -58,6 +58,14 @@ def stats_page() -> HTMLResponse:
     return HTMLResponse(content=html)
 
 
+@router.get("/api/stats")
+def api_stats() -> dict[str, Any]:
+    """Return API-level stats including embedding cache."""
+    from app.core.embeddings import get_embedding_cache_info
+
+    return {"embedding_cache": get_embedding_cache_info()}
+
+
 @router.get("/stats/data")
 def stats_data(request: Request) -> dict[str, Any]:
     settings = request.app.state.settings
