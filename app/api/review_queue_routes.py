@@ -15,7 +15,7 @@ from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
 from app.core.config import get_review_batch_size
-from app.core.diff import similarity_ratio
+from app.core.diff import hybrid_similarity, similarity_ratio
 from app.core.sender import classify_sender
 from app.core.text_utils import decode_html_entities, strip_quoted_text
 from app.db.bootstrap import resolve_sqlite_path
@@ -410,47 +410,60 @@ class CompareBody(BaseModel):
 
 @router.post("/compare")
 def draft_compare(body: CompareBody, request: Request) -> dict:
-    """Generate two drafts: retrieval-grounded vs baseline (persona-only)."""
+    """Compare Qwen+LoRA adapter vs Qwen base (no adapter)."""
     settings = _get_settings(request)
     clean_inbound = strip_quoted_text(body.inbound_text)
 
-    # Full retrieval-grounded draft
+    # Adapter draft (with LoRA adapter + exemplars)
     try:
-        retrieval_response = generate_draft(
+        adapter_response = generate_draft(
             DraftRequest(
                 inbound_message=clean_inbound,
                 sender=body.sender,
+                use_adapter=True,
             ),
             database_url=settings.database_url,
             configs_dir=settings.configs_dir,
         )
-        retrieval_draft = retrieval_response.draft
-        retrieval_confidence = retrieval_response.confidence
-        exemplar_count = len(retrieval_response.precedent_used)
+        adapter_draft = adapter_response.draft
+        adapter_confidence = adapter_response.confidence
+        exemplar_count = len(adapter_response.precedent_used)
     except Exception as exc:
-        retrieval_draft = f"[generation failed: {exc}]"
-        retrieval_confidence = "error"
+        adapter_draft = f"[generation failed: {exc}]"
+        adapter_confidence = "error"
         exemplar_count = 0
 
-    # Baseline draft (no exemplars — just persona + inbound)
+    # Base draft (no adapter, no exemplars)
     try:
-        baseline_response = generate_draft(
+        base_response = generate_draft(
             DraftRequest(
                 inbound_message=clean_inbound,
                 sender=body.sender,
+                use_adapter=False,
                 top_k_reply_pairs=0,
                 top_k_chunks=0,
             ),
             database_url=settings.database_url,
             configs_dir=settings.configs_dir,
         )
-        baseline_draft = baseline_response.draft
+        base_draft = base_response.draft
     except Exception as exc:
-        baseline_draft = f"[generation failed: {exc}]"
+        base_draft = f"[generation failed: {exc}]"
+
+    # Compute improvement hint based on similarity
+    try:
+        sim = hybrid_similarity(adapter_draft, base_draft)
+        if sim < 0.7:
+            improvement_hint = "Adapter appears to be helping"
+        else:
+            improvement_hint = "Drafts similar — adapter may need more training"
+    except Exception:
+        improvement_hint = "Unable to compare drafts"
 
     return {
-        "retrieval_draft": retrieval_draft,
-        "baseline_draft": baseline_draft,
-        "retrieval_confidence": retrieval_confidence,
+        "adapter_draft": adapter_draft,
+        "base_draft": base_draft,
+        "adapter_confidence": adapter_confidence,
         "exemplar_count": exemplar_count,
+        "improvement_hint": improvement_hint,
     }

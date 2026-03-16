@@ -39,6 +39,7 @@ class DraftRequest:
     sender: str | None = None
     intent_hint: str | None = None
     thread_id: str | None = None
+    use_adapter: bool = True
 
 
 @dataclass(slots=True)
@@ -563,20 +564,23 @@ def _compute_max_tokens(avg_reply_words: int | None, *, persona: dict[str, Any] 
     return max(100, min(500, effective_words * 5))
 
 
-def _call_local_model(prompt: str, *, max_tokens: int = 300) -> str:
+def _call_local_model(prompt: str, *, max_tokens: int = 300, use_adapter: bool = True) -> str:
+    cmd = [
+        "mlx_lm",
+        "generate",
+        "--model",
+        _get_base_model_id(),
+    ]
+    if use_adapter:
+        cmd.extend(["--adapter-path", str(ADAPTER_PATH)])
+    cmd.extend([
+        "--prompt",
+        prompt,
+        "--max-tokens",
+        str(max_tokens),
+    ])
     result = subprocess.run(
-        [
-            "mlx_lm",
-            "generate",
-            "--model",
-            _get_base_model_id(),
-            "--adapter-path",
-            str(ADAPTER_PATH),
-            "--prompt",
-            prompt,
-            "--max-tokens",
-            str(max_tokens),
-        ],
+        cmd,
         capture_output=True,
         text=True,
         timeout=120,
@@ -766,7 +770,7 @@ def generate_draft(
     fallback_model = get_model_fallback()
     try:
         if request.use_local_model and _adapter_available():
-            draft = _call_local_model(prompt, max_tokens=max_tokens)
+            draft = _call_local_model(prompt, max_tokens=max_tokens, use_adapter=request.use_adapter)
             model_used = "qwen2.5-1.5b-lora"
         elif fallback_model == "ollama":
             from app.core.config import get_ollama_config
