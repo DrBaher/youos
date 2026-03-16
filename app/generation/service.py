@@ -634,6 +634,31 @@ def _compute_max_tokens(avg_reply_words: int | None, *, persona: dict[str, Any] 
     return max(100, min(500, effective_words * 5))
 
 
+def _strip_mlx_output(raw: str) -> str:
+    """Extract just the generated text from mlx_lm generate output.
+
+    mlx_lm wraps output like:
+        ==========
+        <generated text>
+        ==========
+        Prompt: N tokens, X tokens-per-sec
+        Generation: N tokens, X tokens-per-sec
+        Peak memory: X GB
+    """
+    # Split on the separator lines
+    parts = re.split(r"={5,}", raw)
+    # The generated text is the second segment (index 1) if separators exist
+    if len(parts) >= 2:
+        return parts[1].strip()
+    # No separators — strip stats lines from the end as fallback
+    lines = raw.strip().splitlines()
+    clean = [
+        line for line in lines
+        if not re.match(r"^(Prompt:|Generation:|Peak memory:|Fetching)", line)
+    ]
+    return "\n".join(clean).strip()
+
+
 def _call_local_model(prompt: str, *, max_tokens: int = 300, use_adapter: bool = True) -> str:
     cmd = [
         "mlx_lm",
@@ -659,7 +684,7 @@ def _call_local_model(prompt: str, *, max_tokens: int = 300, use_adapter: bool =
     )
     if result.returncode != 0:
         raise RuntimeError(f"mlx_lm generate failed (exit {result.returncode}): {result.stderr.strip()}")
-    return result.stdout.strip()
+    return _strip_mlx_output(result.stdout)
 
 
 def _generate_via_ollama(prompt: str, model: str = "mistral", base_url: str = "http://localhost:11434", *, num_predict: int = 400) -> str:
