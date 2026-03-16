@@ -327,7 +327,7 @@ def note(
     email: str = typer.Argument(..., help="Sender email address"),
     text: str = typer.Argument(..., help="Relationship note"),
 ):
-    """Add a sender relationship note."""
+    """Add a sender relationship note and rebuild profile for that sender."""
     from app.core.settings import get_settings
     from app.db.bootstrap import resolve_sqlite_path
 
@@ -348,6 +348,19 @@ def note(
         print(f"Note saved for {email.lower()}")
     finally:
         conn.close()
+
+    # Rebuild profile for this sender
+    from scripts.build_sender_profiles import build_profiles
+
+    try:
+        new_count, updated_count = build_profiles(db_path, sender_email=email.lower())
+        total = new_count + updated_count
+        if total > 0:
+            print(f"Profile updated for {email.lower()}")
+        else:
+            print(f"No reply pairs found for {email.lower()}, profile not rebuilt")
+    except Exception as exc:
+        print(f"Profile rebuild failed: {exc}")
 
 
 @app.command()
