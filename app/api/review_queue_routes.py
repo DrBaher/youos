@@ -436,45 +436,67 @@ def review_queue_next_stream(
     candidates, total_unreviewed = _fetch_candidates(db_path, batch_size, excluded)
     reviewed_today = _count_reviewed_today(db_path)
 
-    def _generate() -> Any:
-        # Send metadata first
-        meta = json.dumps({
-            "type": "meta",
-            "total_unreviewed": total_unreviewed,
-            "reviewed_today": reviewed_today,
-            "batch_size": len(candidates),
-        })
-        yield f"data: {meta}\n\n"
+    # Pre-enrich candidates with sender profiles (fast DB lookup, no model needed)
+    enriched: list[dict[str, Any]] = []
+    for cand in candidates[:batch_size]:
+        clean_inbound = strip_quoted_text(decode_html_entities(cand["inbound_text"]))
+        sender_profile = _lookup_sender_profile_safe(db_path, cand["inbound_author"]) if cand["inbound_author"] else None
+        enriched.append({**cand, "_clean_inbound": clean_inbound, "_sender_profile": sender_profile})
 
-        if not candidates:
+    def _generate() -> Any:
+        # 1. Send metadata
+        yield f"data: {json.dumps({'type': 'meta', 'total_unreviewed': total_unreviewed, 'reviewed_today': reviewed_today, 'batch_size': len(enriched)})}\n\n"
+
+        if not enriched:
             yield 'data: {"type": "done"}\n\n'
             return
 
-        # Generate all drafts in parallel — yields each item as it completes
+        # 2. Send all email previews immediately — no waiting for drafts
+        for i, cand in enumerate(enriched):
+            preview = {
+                "type": "item_preview",
+                "index": i,
+                "reply_pair_id": cand["reply_pair_id"],
+                "inbound_text": cand["_clean_inbound"],
+                "inbound_author": cand["inbound_author"],
+                "subject": cand["subject"],
+                "sender_profile": cand["_sender_profile"],
+                "account_email": cand.get("account_email"),
+                "paired_at": cand["paired_at"],
+                "generated_draft": None,  # draft pending
+            }
+            yield f"data: {json.dumps(preview)}\n\n"
+
+        # 3. Generate drafts and stream each one as it completes
         use_local = _resolve_use_local_model()
         workers = 1 if use_local else _RQ_MAX_WORKERS
         item_count = 0
+
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            future_to_cand = {
+            future_to_idx = {
                 executor.submit(
                     _generate_draft_for_candidate,
                     cand,
                     database_url=settings.database_url,
                     configs_dir=settings.configs_dir,
                     use_local_model=use_local,
-                ): cand
-                for cand in candidates[:batch_size]
+                ): i
+                for i, cand in enumerate(enriched)
             }
-            for future in as_completed(future_to_cand):
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
                 result = future.result()
                 if result is None:
+                    yield f"data: {json.dumps({'type': 'item_draft', 'index': idx, 'error': True})}\n\n"
                     continue
-                # Enrich with sender profile
-                author = result.pop("_cand_author", None)
-                if author:
-                    result["sender_profile"] = _lookup_sender_profile_safe(db_path, author)
-                result["type"] = "item"
-                yield f"data: {json.dumps(result)}\n\n"
+                result.pop("_cand_author", None)
+                draft_msg = {
+                    "type": "item_draft",
+                    "index": idx,
+                    "generated_draft": result["generated_draft"],
+                    "suggested_subject": result.get("suggested_subject"),
+                }
+                yield f"data: {json.dumps(draft_msg)}\n\n"
                 item_count += 1
 
         yield 'data: {"type": "done"}\n\n'

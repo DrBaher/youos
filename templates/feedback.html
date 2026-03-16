@@ -1014,7 +1014,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
     // Draft textarea
     const ta = document.getElementById('rqDraftTextarea');
-    ta.value = item.generated_draft;
+    ta.value = item.generated_draft || '⏳ Generating draft...';
     ta.focus();
 
     // Word count hint
@@ -1041,21 +1041,19 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     rqItems = [];
     rqIndex = 0;
     rqReviewed = 0;
-    let firstItemShown = false;
+    let previewsShown = false;
+    let draftsReady = 0;
 
     document.getElementById('rqLoading').style.display = 'block';
     document.getElementById('rqMain').style.display = 'none';
     document.getElementById('rqBatchComplete').style.display = 'none';
 
-    // Update loading text
     const loadingProgress = document.getElementById('loadingProgress');
-    if (loadingProgress) loadingProgress.textContent = 'Generating first draft...';
+    if (loadingProgress) loadingProgress.textContent = 'Loading emails...';
 
     try {
       let url = '/review-queue/next-stream?batch_size=' + rqBatchSize;
-      if (rqSkippedIds.length > 0) {
-        url += '&exclude_ids=' + rqSkippedIds.join(',');
-      }
+      if (rqSkippedIds.length > 0) url += '&exclude_ids=' + rqSkippedIds.join(',');
 
       const res = await fetch(url);
       if (!res.ok) throw new Error('Server error: ' + res.status);
@@ -1087,29 +1085,50 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
                 return;
               }
 
-            } else if (msg.type === 'item') {
-              rqItems.push(msg);
-              if (loadingProgress) {
-                loadingProgress.textContent = rqItems.length + ' / ' + rqBatchSize + ' drafts ready';
-              }
-              // Show the first item immediately — don't wait for the full batch
-              if (!firstItemShown) {
-                firstItemShown = true;
+            } else if (msg.type === 'item_preview') {
+              // Email arrived — push with null draft (spinner placeholder)
+              rqItems.push({...msg, generated_draft: null});
+              // Show UI immediately when first email arrives
+              if (!previewsShown) {
+                previewsShown = true;
                 document.getElementById('rqLoading').style.display = 'none';
                 document.getElementById('rqMain').style.display = 'block';
+                if (loadingProgress) loadingProgress.textContent = 'Generating draft 1 of ' + rqBatchSize + '...';
                 rqShowItem();
-              } else {
-                rqUpdateProgress();
+              }
+              rqUpdateProgress();
+
+            } else if (msg.type === 'item_draft') {
+              // Draft arrived — patch into the matching item
+              if (msg.index < rqItems.length) {
+                rqItems[msg.index].generated_draft = msg.error ? '[Draft generation failed]' : msg.generated_draft;
+                if (msg.suggested_subject) rqItems[msg.index].suggested_subject = msg.suggested_subject;
+              }
+              draftsReady++;
+              if (loadingProgress && previewsShown) {
+                loadingProgress.textContent = draftsReady + ' / ' + rqItems.length + ' drafts ready';
+              }
+              // If user is currently viewing this item, refresh the draft textarea
+              if (rqItems[rqIndex] && rqItems[rqIndex].reply_pair_id === (rqItems[msg.index] || {}).reply_pair_id) {
+                const ta = document.getElementById('rqDraftTextarea');
+                if (ta && (ta.value === '' || ta.value === '⏳ Generating draft...')) {
+                  ta.value = rqItems[msg.index].generated_draft || '';
+                  const hint = document.getElementById('rqWordHint');
+                  if (hint) {
+                    const wc = (ta.value || '').split(/\s+/).filter(Boolean).length;
+                    hint.textContent = '~' + wc + ' words';
+                  }
+                }
               }
 
             } else if (msg.type === 'done') {
-              if (!firstItemShown) {
-                // No items at all
+              if (!previewsShown) {
                 document.getElementById('rqLoading').style.display = 'none';
                 document.getElementById('rqBatchComplete').style.display = 'block';
                 document.getElementById('rqBatchMsg').textContent =
                   'No unreviewed pairs available. ' + rqReviewedToday + ' reviewed today.';
               }
+              if (loadingProgress) loadingProgress.textContent = 'All drafts ready';
             }
           } catch (e) { /* skip malformed */ }
         }
