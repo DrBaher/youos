@@ -366,7 +366,7 @@ def _subject_fallback(inbound_text: str) -> str | None:
                 return f"Re: {subj}"
 
     # 2. Find first substantive sentence — prefer topic keywords, strip "I am/I'm" openers
-    lines = [l.strip() for l in inbound_text.split("\n") if l.strip()]
+    lines = [line.strip() for line in inbound_text.split("\n") if line.strip()]
 
     def _clean_subject(text: str) -> str | None:
         # Strip leading "I am/I'm/We are/We're" to get to the point
