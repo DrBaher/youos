@@ -108,3 +108,29 @@ cases:
     expected_mode: work
     max_words: 20
     notes: Ultra-brief reply expected. Confirm and ask for new time.
+
+  - id: golden-internal-brevity
+    description: Brief reply to internal colleague about Q2 numbers
+    inbound: |
+      Hey, quick question about the Q2 numbers
+    expected_keywords:
+      - Q2
+      - numbers
+    expected_mode: work
+    expected_sender_type: internal
+    max_words: 30
+    notes: Should be short and direct for internal colleague.
+
+  - id: golden-personal-warmth
+    description: Warm reply to personal contact reconnecting
+    inbound: |
+      Hey! Long time no speak, how are things?
+    expected_keywords:
+      - hey
+      - good
+      - hope
+      - well
+      - catch
+    expected_mode: personal
+    max_words: 25
+    notes: Should be warm, brief, and personal.

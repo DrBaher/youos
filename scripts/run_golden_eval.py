@@ -54,10 +54,12 @@ def score_case(
     if expected_language and detected_language:
         language_match = detected_language == expected_language
 
-    # Overall pass/warn/fail
-    if keyword_hit_rate >= 0.5 and mode_match and brevity_pass and language_match:
+    # Overall pass/warn/fail — max_words violation is now a fail condition
+    if not brevity_pass:
+        status = "fail"
+    elif keyword_hit_rate >= 0.5 and mode_match and language_match:
         status = "pass"
-    elif keyword_hit_rate >= 0.25 or (mode_match and brevity_pass):
+    elif keyword_hit_rate >= 0.25 or mode_match:
         status = "warn"
     else:
         status = "fail"
