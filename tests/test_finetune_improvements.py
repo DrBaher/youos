@@ -73,7 +73,7 @@ def test_export_with_persona(tmp_path):
     )
     conn.execute(
         "INSERT INTO feedback_pairs (inbound_text, generated_draft, edited_reply, rating) "
-        "VALUES ('test inbound', 'draft', 'edited reply', 5)"
+        "VALUES ('test inbound', 'draft', 'this is a sufficiently long edited reply text', 5)"
     )
     conn.commit()
     conn.close()
@@ -91,8 +91,9 @@ def test_export_with_persona(tmp_path):
     from scripts.export_feedback_jsonl import export
 
     args = Namespace(
-        all=True, since=None, output=str(output), min_rating=None,
-        db=str(db_path), no_persona=False, configs_dir=str(configs_dir),
+        all=True, since=None, output=str(output), min_rating=3,
+        min_edit_pct=0.05, db=str(db_path), no_persona=False,
+        configs_dir=str(configs_dir),
     )
     export(args)
 
@@ -115,7 +116,7 @@ def test_export_no_persona_flag(tmp_path):
     )
     conn.execute(
         "INSERT INTO feedback_pairs (inbound_text, generated_draft, edited_reply, rating) "
-        "VALUES ('test inbound', 'draft', 'edited reply', 5)"
+        "VALUES ('test inbound', 'draft', 'this is a sufficiently long edited reply text', 5)"
     )
     conn.commit()
     conn.close()
@@ -124,8 +125,9 @@ def test_export_no_persona_flag(tmp_path):
     from scripts.export_feedback_jsonl import export
 
     args = Namespace(
-        all=True, since=None, output=str(output), min_rating=None,
-        db=str(db_path), no_persona=True, configs_dir=str(tmp_path / "configs"),
+        all=True, since=None, output=str(output), min_rating=3,
+        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        configs_dir=str(tmp_path / "configs"),
     )
     export(args)
 
@@ -133,3 +135,134 @@ def test_export_no_persona_flag(tmp_path):
         rec = json.loads(f.readline())
     assert len(rec["messages"]) == 2
     assert rec["messages"][0]["role"] == "user"
+
+
+# --- Item 2: Training data quality filter ---
+
+
+def _create_feedback_db(db_path, rows):
+    """Helper: create feedback_pairs table with given rows."""
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE feedback_pairs (id INTEGER PRIMARY KEY, inbound_text TEXT, "
+        "generated_draft TEXT, edited_reply TEXT, feedback_note TEXT, rating INTEGER, "
+        "used_in_finetune INTEGER DEFAULT 0, edit_distance_pct REAL, reply_pair_id INTEGER, "
+        "created_at TEXT DEFAULT CURRENT_TIMESTAMP)"
+    )
+    for r in rows:
+        conn.execute(
+            "INSERT INTO feedback_pairs (inbound_text, generated_draft, edited_reply, rating, edit_distance_pct) "
+            "VALUES (?, ?, ?, ?, ?)",
+            r,
+        )
+    conn.commit()
+    conn.close()
+
+
+def test_quality_filter_excludes_low_rating(tmp_path):
+    """Pairs with rating < 3 are excluded."""
+    db_path = tmp_path / "test.db"
+    _create_feedback_db(db_path, [
+        ("inbound", "draft", "a long enough edited reply text", 2, 0.3),
+        ("inbound", "draft", "a long enough edited reply text", 4, 0.3),
+    ])
+    output = tmp_path / "train.jsonl"
+    from scripts.export_feedback_jsonl import export
+
+    args = Namespace(
+        all=True, since=None, output=str(output), min_rating=3,
+        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        configs_dir=str(tmp_path),
+    )
+    export(args)
+
+    lines = output.read_text().strip().split("\n")
+    assert len(lines) == 1  # only the rating=4 pair
+
+
+def test_quality_filter_excludes_short_replies(tmp_path):
+    """Pairs with edited_reply < 15 chars are excluded."""
+    db_path = tmp_path / "test.db"
+    _create_feedback_db(db_path, [
+        ("inbound", "draft", "short", 5, 0.3),
+        ("inbound", "draft", "a sufficiently long reply text here", 5, 0.3),
+    ])
+    output = tmp_path / "train.jsonl"
+    from scripts.export_feedback_jsonl import export
+
+    args = Namespace(
+        all=True, since=None, output=str(output), min_rating=3,
+        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        configs_dir=str(tmp_path),
+    )
+    export(args)
+
+    lines = output.read_text().strip().split("\n")
+    assert len(lines) == 1
+
+
+def test_quality_filter_excludes_low_edit_not_five_star(tmp_path, capsys):
+    """Pairs with edit_distance_pct < 0.05 and rating < 5 are excluded."""
+    db_path = tmp_path / "test.db"
+    _create_feedback_db(db_path, [
+        ("inbound", "draft", "a long enough edited reply text", 4, 0.02),  # low edit + not 5-star
+        ("inbound", "draft", "a long enough edited reply text", 5, 0.02),  # low edit + 5-star = keep
+        ("inbound", "draft", "a long enough edited reply text", 4, 0.10),  # high edit + 4-star = keep
+    ])
+    output = tmp_path / "train.jsonl"
+    from scripts.export_feedback_jsonl import export
+
+    args = Namespace(
+        all=True, since=None, output=str(output), min_rating=3,
+        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        configs_dir=str(tmp_path),
+    )
+    export(args)
+
+    captured = capsys.readouterr()
+    assert "Exported 2 pairs" in captured.out
+    assert "filtered out 1 low-quality pairs" in captured.out
+
+
+def test_quality_filter_null_rating_included_with_warning(tmp_path, capsys):
+    """Null-rated pairs are included with a warning."""
+    db_path = tmp_path / "test.db"
+    _create_feedback_db(db_path, [
+        ("inbound", "draft", "a long enough edited reply text", None, 0.3),
+    ])
+    output = tmp_path / "train.jsonl"
+    from scripts.export_feedback_jsonl import export
+
+    args = Namespace(
+        all=True, since=None, output=str(output), min_rating=3,
+        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        configs_dir=str(tmp_path),
+    )
+    export(args)
+
+    lines = output.read_text().strip().split("\n")
+    assert len(lines) == 1
+    captured = capsys.readouterr()
+    assert "null rating" in captured.out
+
+
+def test_quality_filter_summary_output(tmp_path, capsys):
+    """Export prints summary with filtered count."""
+    db_path = tmp_path / "test.db"
+    _create_feedback_db(db_path, [
+        ("inbound", "draft", "a long enough edited reply text", 5, 0.3),
+        ("inbound", "draft", "short", 5, 0.3),  # filtered: too short
+        ("inbound", "draft", "a long enough edited reply text", 1, 0.3),  # filtered: low rating
+    ])
+    output = tmp_path / "train.jsonl"
+    from scripts.export_feedback_jsonl import export
+
+    args = Namespace(
+        all=True, since=None, output=str(output), min_rating=3,
+        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        configs_dir=str(tmp_path),
+    )
+    export(args)
+
+    captured = capsys.readouterr()
+    assert "filtered out 2 low-quality pairs" in captured.out

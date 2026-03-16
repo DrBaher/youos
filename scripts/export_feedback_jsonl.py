@@ -21,7 +21,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--all", action="store_true", help="Export all pairs, not just unused")
     p.add_argument("--since", type=str, default=None, help="Only pairs created after this date (YYYY-MM-DD)")
     p.add_argument("--output", type=str, default=None, help="Output file path (default: data/feedback/train.jsonl)")
-    p.add_argument("--min-rating", type=int, default=None, help="Minimum rating to include")
+    p.add_argument("--min-rating", type=int, default=3, help="Minimum rating to include (default: 3)")
+    p.add_argument("--min-edit-pct", type=float, default=0.05, help="Minimum edit distance pct (default: 0.05)")
     p.add_argument("--db", type=str, default=str(DEFAULT_DB), help="Database path")
     p.add_argument("--no-persona", action="store_true", help="Use bare format without persona/system prompt")
     p.add_argument("--configs-dir", type=str, default=str(CONFIGS_DIR), help="Configs directory")
@@ -104,7 +105,10 @@ def export(args: argparse.Namespace) -> None:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        query = "SELECT inbound_text, edited_reply FROM feedback_pairs WHERE 1=1"
+        query = (
+            "SELECT inbound_text, edited_reply, rating, edit_distance_pct "
+            "FROM feedback_pairs WHERE 1=1"
+        )
         params: list = []
 
         if not args.all:
@@ -114,10 +118,6 @@ def export(args: argparse.Namespace) -> None:
             query += " AND created_at >= ?"
             params.append(args.since)
 
-        if args.min_rating is not None:
-            query += " AND rating >= ?"
-            params.append(args.min_rating)
-
         rows = conn.execute(query, params).fetchall()
     finally:
         conn.close()
@@ -126,16 +126,51 @@ def export(args: argparse.Namespace) -> None:
         print("No matching feedback pairs found. Exported 0 pairs.")
         return
 
-    # Build JSONL records
+    # Quality filters
+    min_rating = args.min_rating
+    min_edit_pct = args.min_edit_pct
     records = []
+    filtered_count = 0
+    null_rating_count = 0
+
     for row in rows:
+        rating = row["rating"]
+        edit_pct = row["edit_distance_pct"]
+        edited_reply = row["edited_reply"] or ""
+
+        # Exclude pairs with short edited replies
+        if len(edited_reply) < 15:
+            filtered_count += 1
+            continue
+
+        # Handle null rating: include with warning
+        if rating is None:
+            null_rating_count += 1
+        elif rating < min_rating:
+            filtered_count += 1
+            continue
+
+        # Exclude pairs with low edit + not 5-star (no signal)
+        if edit_pct is not None and edit_pct < min_edit_pct and (rating is None or rating < 5):
+            filtered_count += 1
+            continue
+
         records.append(
             build_record(
                 row["inbound_text"],
-                row["edited_reply"],
+                edited_reply,
                 system_message=system_message,
             )
         )
+
+    if null_rating_count > 0:
+        print(f"Warning: {null_rating_count} pairs have null rating (included)")
+
+    if not records:
+        print(f"No qualifying pairs after filtering. Filtered out {filtered_count} low-quality pairs.")
+        return
+
+    print(f"Exported {len(records)} pairs (filtered out {filtered_count} low-quality pairs)")
 
     # Shuffle and split 90/10
     random.shuffle(records)
