@@ -126,7 +126,7 @@ def analyze(db_path: Path) -> dict:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute("SELECT reply_text, inbound_author, reply_author, metadata_json FROM reply_pairs").fetchall()
+        rows = conn.execute("SELECT reply_text, inbound_text, inbound_author, reply_author, metadata_json FROM reply_pairs").fetchall()
     finally:
         conn.close()
 
@@ -229,6 +229,26 @@ def analyze(db_path: Path) -> dict:
     bullet_point_pct = round(bullet_count / total, 4) if total else 0
     hedge_word_pct = round(hedge_count / total, 4) if total else 0
 
+    # Per-intent average word counts
+    from app.core.intent import classify_intent as _classify_intent
+
+    intent_word_buckets: dict[str, list[int]] = {}
+    for row in rows:
+        reply_raw = row["reply_text"] or ""
+        stripped_reply = strip_signature(reply_raw)
+        wc = len(stripped_reply.split())
+        inbound = row["inbound_text"] if "inbound_text" in row.keys() else None
+        if inbound:
+            intent = _classify_intent(inbound)
+        else:
+            intent = "general"
+        intent_word_buckets.setdefault(intent, []).append(wc)
+
+    intent_avg_words: dict[str, int] = {}
+    for intent_key, wcs in intent_word_buckets.items():
+        if wcs:
+            intent_avg_words[intent_key] = round(statistics.mean(wcs))
+
     findings = {
         "total_pairs": total,
         "reply_length": {
@@ -259,6 +279,7 @@ def analyze(db_path: Path) -> dict:
         "directness_score": round(1.0 - hedge_word_pct, 4),
         "emoji_pct": round(emoji_count / total, 4) if total else 0,
         "avg_paragraphs": round(statistics.mean(paragraph_counts), 2) if paragraph_counts else 0,
+        "intent_avg_words": intent_avg_words,
     }
 
     return findings

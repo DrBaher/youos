@@ -422,6 +422,11 @@ def assemble_prompt(
     voice = style.get("voice", "direct, clear, pragmatic")
     avg_words = style.get("avg_reply_words")
     constraints = style.get("constraints", [])
+    # Prefer intent-specific avg_words if available
+    if intent_hint and intent_hint != "general":
+        intent_avg = style.get("intent_avg_words", {})
+        if isinstance(intent_avg, dict) and intent_hint in intent_avg:
+            avg_words = intent_avg[intent_hint]
     system = prompts.get(
         "system_prompt",
         "You are YouOS, a local-first email copilot.",
@@ -521,11 +526,19 @@ def _adapter_available() -> bool:
     return (ADAPTER_PATH / "adapters.safetensors").exists()
 
 
-def _compute_max_tokens(avg_reply_words: int | None) -> int:
-    """Compute max_tokens as a rough upper bound from avg_reply_words."""
-    if avg_reply_words is None:
+def _compute_max_tokens(avg_reply_words: int | None, *, persona: dict[str, Any] | None = None, intent: str | None = None) -> int:
+    """Compute max_tokens as a rough upper bound from avg_reply_words.
+
+    Prefers intent-specific avg_reply_words from persona style if available.
+    """
+    effective_words = avg_reply_words
+    if persona and intent and intent != "general":
+        intent_avg = persona.get("style", {}).get("intent_avg_words", {})
+        if isinstance(intent_avg, dict) and intent in intent_avg:
+            effective_words = intent_avg[intent]
+    if effective_words is None:
         return 300
-    return max(100, min(500, avg_reply_words * 5))
+    return max(100, min(500, effective_words * 5))
 
 
 def _call_local_model(prompt: str, *, max_tokens: int = 300) -> str:
@@ -689,9 +702,13 @@ def generate_draft(
 
     precedent_used = [_precedent_summary(rp) for rp in reply_pairs]
 
-    # Compute length-aware max_tokens
+    # Compute length-aware max_tokens (intent-specific if available)
     avg_reply_words = persona.get("style", {}).get("avg_reply_words")
-    max_tokens = _compute_max_tokens(avg_reply_words)
+    # Use intent-specific avg if available
+    intent_avg = persona.get("style", {}).get("intent_avg_words", {})
+    if isinstance(intent_avg, dict) and detected_intent in intent_avg:
+        avg_reply_words = intent_avg[detected_intent]
+    max_tokens = _compute_max_tokens(avg_reply_words, persona=persona, intent=detected_intent)
 
     fallback_model = get_model_fallback()
     try:

@@ -102,6 +102,15 @@ def merge_persona_analysis(
             if not dry_run:
                 persona.setdefault("style", {})["avg_paragraphs"] = round(new_paragraphs, 2)
 
+    # Merge intent_avg_words into style
+    new_intent_avg = findings.get("intent_avg_words")
+    if new_intent_avg:
+        current = persona.get("style", {}).get("intent_avg_words")
+        if current != new_intent_avg:
+            changes.append(f"intent_avg_words: updated ({len(new_intent_avg)} intents)")
+            if not dry_run:
+                persona.setdefault("style", {})["intent_avg_words"] = new_intent_avg
+
     # Never overwrite custom_constraints — they are user-set
 
     if changes:
