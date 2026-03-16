@@ -193,9 +193,14 @@ def draft(
 
 
 @app.command()
-def improve():
+def improve(
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Print Rich progress for each step"),
+):
     """Run the nightly pipeline manually (ingest, feedback, finetune, autoresearch)."""
-    subprocess.run([sys.executable, str(ROOT_DIR / "scripts" / "nightly_pipeline.py")])
+    cmd = [sys.executable, str(ROOT_DIR / "scripts" / "nightly_pipeline.py")]
+    if verbose:
+        cmd.append("--verbose")
+    subprocess.run(cmd)
 
 
 @app.command()

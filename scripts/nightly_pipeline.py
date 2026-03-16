@@ -44,7 +44,19 @@ def _run_step(name: str, cmd: list[str], timeout: int = 600) -> bool:
         return False
 
 
-def step_ingest_gmail() -> bool:
+def _verbose_print(step_num: int, total: int, name: str, count: str | None = None) -> None:
+    """Print Rich-style progress when verbose mode is active."""
+    from rich import print as rprint
+    suffix = f" done ({count})" if count else " done"
+    rprint(f"[bold cyan][step {step_num}/{total}][/bold cyan] {name}...{suffix}")
+
+
+def step_ingest(verbose: bool = False) -> bool:
+    """Ingest sent emails incrementally for all accounts."""
+    return step_ingest_gmail(verbose=verbose)
+
+
+def step_ingest_gmail(verbose: bool = False) -> bool:
     """Ingest sent emails incrementally for all accounts."""
     success = True
     for account in ACCOUNTS:
@@ -78,7 +90,20 @@ def step_ingest_gmail() -> bool:
     return success
 
 
-def step_auto_feedback() -> dict:
+def step_analyze_persona(verbose: bool = False) -> bool:
+    """Placeholder for persona analysis step."""
+    return True
+
+
+def step_build_sender_profiles(verbose: bool = False) -> bool:
+    """Run sender profile builder."""
+    return _run_step(
+        "Build sender profiles",
+        [sys.executable, str(ROOT_DIR / "scripts" / "build_sender_profiles.py")],
+    )
+
+
+def step_auto_feedback(verbose: bool = False) -> dict:
     """Extract auto-feedback pairs from last 2 days."""
     from scripts.extract_auto_feedback import extract_auto_feedback
 
@@ -94,7 +119,7 @@ def step_auto_feedback() -> dict:
         return {"captured": 0, "total": 0, "skipped": 0, "errors": 0}
 
 
-def step_export_feedback() -> bool:
+def step_export_feedback(verbose: bool = False) -> bool:
     """Export feedback JSONL for fine-tuning."""
     return _run_step(
         "Export feedback JSONL",
@@ -102,7 +127,7 @@ def step_export_feedback() -> bool:
     )
 
 
-def step_finetune() -> bool:
+def step_finetune_lora(verbose: bool = False) -> bool:
     """Run LoRA fine-tuning if enough unused pairs exist."""
     return _run_step(
         "LoRA fine-tuning",
@@ -111,7 +136,7 @@ def step_finetune() -> bool:
     )
 
 
-def step_index_embeddings() -> dict:
+def step_index_embeddings(verbose: bool = False) -> dict:
     """Run incremental embedding indexer."""
     result = _run_step(
         "Embedding indexer",
@@ -121,7 +146,7 @@ def step_index_embeddings() -> dict:
     return {"ok": result}
 
 
-def step_deduplicate() -> bool:
+def step_deduplicate(verbose: bool = False) -> bool:
     """Run corpus deduplication (best-effort)."""
     return _run_step(
         "Corpus deduplication",
@@ -130,7 +155,7 @@ def step_deduplicate() -> bool:
     )
 
 
-def step_autoresearch() -> bool:
+def step_autoresearch(verbose: bool = False) -> bool:
     """Run autoresearch optimization loop."""
     return _run_step(
         "Autoresearch",
@@ -157,11 +182,13 @@ def main() -> None:
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--autoresearch-only", action="store_true", help="Skip ingestion/finetune, run autoresearch only")
+    parser.add_argument("--verbose", "-v", action="store_true", help="Print Rich progress for each step")
     args = parser.parse_args()
+    verbose = args.verbose
 
     if args.autoresearch_only:
         print("YouOS Autoresearch (on-demand trigger)")
-        step_autoresearch()
+        step_autoresearch(verbose=verbose)
         return
 
     start = datetime.now(timezone.utc)
@@ -171,11 +198,11 @@ def main() -> None:
     results: dict[str, str] = {}
 
     # 0. Corpus deduplication (best-effort, before ingestion)
-    ok = step_deduplicate()
+    ok = step_deduplicate(verbose=verbose)
     results["dedup"] = "OK" if ok else "WARN"
 
     # 1. Gmail ingestion
-    ok = step_ingest_gmail()
+    ok = step_ingest_gmail(verbose=verbose)
     results["ingestion"] = "OK" if ok else "WARN"
 
     # 1b. Benchmark auto-refresh
@@ -199,30 +226,30 @@ def main() -> None:
         results["benchmark_refresh"] = f"error: {exc}"
 
     # 2. Auto-feedback extraction
-    feedback = step_auto_feedback()
+    feedback = step_auto_feedback(verbose=verbose)
     results["auto_feedback"] = f"captured {feedback['captured']} pairs"
 
     # 3. Export + fine-tune (only if enough data)
     unused = _count_unused_feedback(DEFAULT_DB)
 
     if feedback["captured"] >= 5:
-        ok = step_export_feedback()
+        ok = step_export_feedback(verbose=verbose)
         results["export"] = "OK" if ok else "WARN"
     else:
         results["export"] = f"skipped (only {feedback['captured']} new pairs, need 5)"
 
     if unused >= 10:
-        ok = step_finetune()
+        ok = step_finetune_lora(verbose=verbose)
         results["finetune"] = "OK" if ok else "WARN"
     else:
         results["finetune"] = f"skipped (only {unused} unused pairs, need 10)"
 
     # 4. Embedding indexer (after fine-tuning)
-    embed_result = step_index_embeddings()
+    embed_result = step_index_embeddings(verbose=verbose)
     results["embeddings"] = "OK" if embed_result["ok"] else "WARN"
 
     # 5. Autoresearch
-    ok = step_autoresearch()
+    ok = step_autoresearch(verbose=verbose)
     results["autoresearch"] = "OK" if ok else "WARN"
 
     # Include recent git log after autoresearch
