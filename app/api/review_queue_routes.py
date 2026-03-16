@@ -17,16 +17,32 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.core.config import get_review_batch_size
+from app.core.config import get_review_batch_size, get_review_draft_model
 from app.core.diff import hybrid_similarity, similarity_ratio
 from app.core.sender import classify_sender
 from app.core.text_utils import decode_html_entities, strip_quoted_text
 from app.db.bootstrap import resolve_sqlite_path
-from app.generation.service import DraftRequest, generate_draft
+from app.generation.service import DraftRequest, _adapter_available, generate_draft
 
 router = APIRouter(prefix="/review-queue", tags=["review-queue"])
 
 _RQ_MAX_WORKERS = 4  # parallel draft generation threads
+
+
+def _resolve_use_local_model() -> bool:
+    """Resolve whether to use the local model for Review Queue drafts based on config.
+
+    review.draft_model:
+      'claude' (default) — always use Claude (faster)
+      'local'            — always use local Qwen adapter
+      'auto'             — use local if adapter is ready, else Claude
+    """
+    model_pref = get_review_draft_model()
+    if model_pref == "local":
+        return True
+    if model_pref == "auto":
+        return _adapter_available()
+    return False  # 'claude'
 
 
 def _generate_draft_for_candidate(
@@ -34,6 +50,7 @@ def _generate_draft_for_candidate(
     *,
     database_url: str,
     configs_dir: Any,
+    use_local_model: bool = False,
 ) -> dict[str, Any] | None:
     """Generate a draft for a single candidate. Returns item dict or None on failure."""
     clean_inbound = strip_quoted_text(decode_html_entities(cand["inbound_text"]))
@@ -42,7 +59,7 @@ def _generate_draft_for_candidate(
             DraftRequest(
                 inbound_message=clean_inbound,
                 sender=cand["inbound_author"],
-                use_local_model=False,  # Use Claude in Review Queue — faster, good enough for training signal
+                use_local_model=use_local_model,
             ),
             database_url=database_url,
             configs_dir=configs_dir,
@@ -350,15 +367,18 @@ def review_queue_next(
 
     candidates, total_unreviewed = _fetch_candidates(db_path, batch_size, excluded)
 
-    # Generate all drafts in parallel using Claude (faster for Review Queue)
+    # Generate all drafts in parallel (model determined by review.draft_model config)
+    use_local = _resolve_use_local_model()
+    workers = 1 if use_local else _RQ_MAX_WORKERS  # local model can't run in parallel
     items = []
-    with ThreadPoolExecutor(max_workers=_RQ_MAX_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {
             executor.submit(
                 _generate_draft_for_candidate,
                 cand,
                 database_url=settings.database_url,
                 configs_dir=settings.configs_dir,
+                use_local_model=use_local,
             ): cand
             for cand in candidates[:batch_size]
         }
@@ -431,14 +451,17 @@ def review_queue_next_stream(
             return
 
         # Generate all drafts in parallel — yields each item as it completes
+        use_local = _resolve_use_local_model()
+        workers = 1 if use_local else _RQ_MAX_WORKERS
         item_count = 0
-        with ThreadPoolExecutor(max_workers=_RQ_MAX_WORKERS) as executor:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
             future_to_cand = {
                 executor.submit(
                     _generate_draft_for_candidate,
                     cand,
                     database_url=settings.database_url,
                     configs_dir=settings.configs_dir,
+                    use_local_model=use_local,
                 ): cand
                 for cand in candidates[:batch_size]
             }
