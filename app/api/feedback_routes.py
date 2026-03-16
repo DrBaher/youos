@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from app.core.diff import similarity_ratio
+from app.core.rate_limit import RATE_LIMIT_RESPONSE, draft_limiter
 from app.db.bootstrap import resolve_sqlite_path
 from app.generation.service import DraftRequest, generate_draft
 
@@ -59,6 +60,10 @@ class GenerateBody(BaseModel):
 
 @router.post("/generate")
 def feedback_generate(body: GenerateBody, request: Request) -> dict:
+    client_ip = request.client.host if request.client else "unknown"
+    if not draft_limiter.is_allowed(client_ip):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=429, content=RATE_LIMIT_RESPONSE)
     settings = request.app.state.settings
     response = generate_draft(
         DraftRequest(

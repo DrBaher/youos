@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.core.rate_limit import RATE_LIMIT_RESPONSE, draft_limiter
 from app.core.sender import classify_sender, extract_domain
 from app.core.text_utils import strip_quoted_text
 from app.generation.service import (
@@ -117,6 +118,10 @@ def _stream_generate(body: StreamBody, settings):
 
 @router.post("/stream")
 def draft_stream(body: StreamBody, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    if not draft_limiter.is_allowed(client_ip):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=429, content=RATE_LIMIT_RESPONSE)
     settings = request.app.state.settings
     return StreamingResponse(
         _stream_generate(body, settings),
