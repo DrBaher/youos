@@ -135,9 +135,7 @@ def main() -> None:
         default=None,
         help="Only process this table",
     )
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Show unembedded counts without processing"
-    )
+    parser.add_argument("--dry-run", action="store_true", help="Show unembedded counts without processing")
     args = parser.parse_args()
 
     settings = get_settings()

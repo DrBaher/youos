@@ -5,9 +5,7 @@ from pathlib import Path
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Report YouOS ingestion health from the local SQLite corpus database."
-    )
+    parser = argparse.ArgumentParser(description="Report YouOS ingestion health from the local SQLite corpus database.")
     parser.add_argument(
         "--db-path",
         type=Path,

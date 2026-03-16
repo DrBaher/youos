@@ -1,6 +1,5 @@
 """Tests for session token persistence."""
 
-import json
 import time
 
 from app.core.auth import load_sessions, persist_new_session, save_sessions

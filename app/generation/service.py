@@ -68,16 +68,18 @@ def _build_signature_patterns() -> list[re.Pattern[str]]:
         if name.strip():
             patterns.append(re.compile(rf"^{re.escape(name)}", re.MULTILINE))
     # Standard signature delimiters
-    patterns.extend([
-        re.compile(r"^-- $", re.MULTILINE),
-        re.compile(r"^--$", re.MULTILINE),
-        re.compile(r"^Best,\s*$", re.MULTILINE),
-        re.compile(r"^Cheers,\s*$", re.MULTILINE),
-        re.compile(r"^Regards,\s*$", re.MULTILINE),
-        re.compile(r"^Kind regards,\s*$", re.MULTILINE),
-        re.compile(r"^Thanks,\s*$", re.MULTILINE),
-        re.compile(r"^Sent from my iPhone", re.MULTILINE),
-    ])
+    patterns.extend(
+        [
+            re.compile(r"^-- $", re.MULTILINE),
+            re.compile(r"^--$", re.MULTILINE),
+            re.compile(r"^Best,\s*$", re.MULTILINE),
+            re.compile(r"^Cheers,\s*$", re.MULTILINE),
+            re.compile(r"^Regards,\s*$", re.MULTILINE),
+            re.compile(r"^Kind regards,\s*$", re.MULTILINE),
+            re.compile(r"^Thanks,\s*$", re.MULTILINE),
+            re.compile(r"^Sent from my iPhone", re.MULTILINE),
+        ]
+    )
     return patterns
 
 
@@ -196,12 +198,7 @@ def _format_exemplars(reply_pairs: list[RetrievalMatch]) -> str:
         reply = strip_signature(rp.reply_text or "")[:400]
         source = rp.title or rp.source_id or "unknown"
         account = rp.account_email or "unknown"
-        parts.append(
-            f"--- Exemplar {i} ---\n"
-            f"Inbound: {inbound}\n"
-            f"{user_name} replied: {reply}\n"
-            f"Source: {source} ({account})"
-        )
+        parts.append(f"--- Exemplar {i} ---\nInbound: {inbound}\n{user_name} replied: {reply}\nSource: {source} ({account})")
     return "\n\n".join(parts)
 
 
@@ -228,14 +225,10 @@ def lookup_sender_profile(email: str, database_url: str) -> dict[str, Any] | Non
     conn.row_factory = sqlite3.Row
     try:
         # Check if sender_profiles table exists
-        exists = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sender_profiles'"
-        ).fetchone()
+        exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sender_profiles'").fetchone()
         if not exists:
             return None
-        row = conn.execute(
-            "SELECT * FROM sender_profiles WHERE email = ?", (email.lower(),)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM sender_profiles WHERE email = ?", (email.lower(),)).fetchone()
         if not row:
             return None
         return {
@@ -258,12 +251,12 @@ def lookup_sender_profile(email: str, database_url: str) -> dict[str, Any] | Non
 def generate_subject(inbound_text: str, draft: str, database_url: str, configs_dir: Path) -> str | None:
     """Generate a subject line for the draft reply."""
     # If inbound has a subject-like line (Re: ..., Subject: ...), return that
-    for line in inbound_text.split('\n')[:5]:
+    for line in inbound_text.split("\n")[:5]:
         line = line.strip()
-        if line.lower().startswith('subject:'):
-            subj = line[len('subject:'):].strip()
+        if line.lower().startswith("subject:"):
+            subj = line[len("subject:") :].strip()
             if subj:
-                if not subj.lower().startswith('re:'):
+                if not subj.lower().startswith("re:"):
                     return f"Re: {subj}"
                 return subj
     # Generate via claude CLI
@@ -276,8 +269,8 @@ def generate_subject(inbound_text: str, draft: str, database_url: str, configs_d
         result = _call_claude_cli(prompt)
         # Clean up: remove quotes, "Subject:" prefix
         result = result.strip().strip('"').strip("'")
-        if result.lower().startswith('subject:'):
-            result = result[len('subject:'):].strip()
+        if result.lower().startswith("subject:"):
+            result = result[len("subject:") :].strip()
         return result[:80] if result else None
     except Exception:
         return None
@@ -338,10 +331,7 @@ def assemble_prompt(
     if audience_hint:
         context_lines.append(f"Audience: {audience_hint}")
     if _has_thread_context(inbound_message):
-        context_lines.append(
-            "Note: This inbound message contains a multi-message thread. "
-            "Consider the full conversation context when drafting your reply."
-        )
+        context_lines.append("Note: This inbound message contains a multi-message thread. Consider the full conversation context when drafting your reply.")
     context_block = ""
     if context_lines:
         context_block = "\n" + "\n".join(context_lines) + "\n"
@@ -396,11 +386,16 @@ def _adapter_available() -> bool:
 def _call_local_model(prompt: str) -> str:
     result = subprocess.run(
         [
-            "mlx_lm", "generate",
-            "--model", _get_base_model_id(),
-            "--adapter-path", str(ADAPTER_PATH),
-            "--prompt", prompt,
-            "--max-tokens", "300",
+            "mlx_lm",
+            "generate",
+            "--model",
+            _get_base_model_id(),
+            "--adapter-path",
+            str(ADAPTER_PATH),
+            "--prompt",
+            prompt,
+            "--max-tokens",
+            "300",
         ],
         capture_output=True,
         text=True,
@@ -414,18 +409,9 @@ def _call_local_model(prompt: str) -> str:
 def _generate_via_ollama(prompt: str, model: str = "mistral", base_url: str = "http://localhost:11434") -> str:
     """Generate via Ollama HTTP API."""
     import urllib.request
-    payload = json.dumps({
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"temperature": 0.7, "num_predict": 400}
-    }).encode()
-    req = urllib.request.Request(
-        f"{base_url}/api/generate",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST"
-    )
+
+    payload = json.dumps({"model": model, "prompt": prompt, "stream": False, "options": {"temperature": 0.7, "num_predict": 400}}).encode()
+    req = urllib.request.Request(f"{base_url}/api/generate", data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             result = json.loads(resp.read())
@@ -457,6 +443,7 @@ def generate_draft(
     clean_inbound = strip_quoted_text(request.inbound_message)
 
     from app.core.text_utils import detect_language
+
     detected_lang = detect_language(clean_inbound)
 
     # Handle thread context for ongoing threads
@@ -529,6 +516,7 @@ def generate_draft(
             model_used = "qwen2.5-1.5b-lora"
         elif fallback_model == "ollama":
             from app.core.config import get_ollama_config
+
             ollama_cfg = get_ollama_config()
             ollama_model = ollama_cfg.get("model", "mistral")
             ollama_url = ollama_cfg.get("base_url", "http://localhost:11434")

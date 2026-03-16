@@ -1,4 +1,5 @@
 """Tests for the setup wizard dependency check."""
+
 import sys
 
 from scripts.setup_wizard import _check_dependencies

@@ -1,4 +1,5 @@
 """Sender profiles API routes."""
+
 from __future__ import annotations
 
 import json
@@ -38,8 +39,7 @@ def _infer_profile_from_corpus(conn: sqlite3.Connection, email: str) -> dict | N
     from app.core.sender import classify_sender, extract_domain
 
     rows = conn.execute(
-        "SELECT inbound_author, reply_text, paired_at FROM reply_pairs "
-        "WHERE inbound_author LIKE ? ORDER BY paired_at DESC",
+        "SELECT inbound_author, reply_text, paired_at FROM reply_pairs WHERE inbound_author LIKE ? ORDER BY paired_at DESC",
         (f"%{email}%",),
     ).fetchall()
     if not rows:
@@ -98,9 +98,7 @@ def sender_lookup(email: str, request: Request) -> dict:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        row = conn.execute(
-            "SELECT * FROM sender_profiles WHERE email = ?", (email.lower(),)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM sender_profiles WHERE email = ?", (email.lower(),)).fetchone()
         if row:
             return {"found": True, "profile": _row_to_profile(row)}
         # Try inferring from corpus
@@ -137,8 +135,7 @@ def update_note(email: str, body: NoteBody, request: Request) -> dict:
     conn = sqlite3.connect(db_path)
     try:
         cur = conn.execute(
-            "UPDATE sender_profiles SET relationship_note = ?, updated_at = CURRENT_TIMESTAMP "
-            "WHERE email = ?",
+            "UPDATE sender_profiles SET relationship_note = ?, updated_at = CURRENT_TIMESTAMP WHERE email = ?",
             (body.relationship_note, email.lower()),
         )
         conn.commit()
@@ -161,8 +158,7 @@ def sender_history(email: str, request: Request) -> dict:
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
-            "SELECT inbound_text, reply_text, paired_at FROM reply_pairs "
-            "WHERE inbound_author LIKE ? ORDER BY paired_at DESC LIMIT 5",
+            "SELECT inbound_text, reply_text, paired_at FROM reply_pairs WHERE inbound_author LIKE ? ORDER BY paired_at DESC LIMIT 5",
             (f"%{email}%",),
         ).fetchall()
         history = [

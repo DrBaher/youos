@@ -1,4 +1,5 @@
 """Evaluation service — rule-based scoring for YouOS benchmark cases."""
+
 from __future__ import annotations
 
 import json
@@ -12,8 +13,8 @@ from typing import Any
 
 @dataclass
 class EvalRequest:
-    case_key: str | None = None   # run specific case; None = run all
-    config_tag: str = "default"   # label for this run set
+    case_key: str | None = None  # run specific case; None = run all
+    config_tag: str = "default"  # label for this run set
 
 
 @dataclass
@@ -26,7 +27,7 @@ class CaseResult:
     confidence: str
     precedent_count: int
     scores: dict[str, Any]
-    pass_fail: str            # "pass" | "fail" | "warn"
+    pass_fail: str  # "pass" | "fail" | "warn"
     notes: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -51,6 +52,7 @@ class EvalSuiteResult:
 
 
 # -- Scoring helpers (deterministic, rule-based) ──────────────────────
+
 
 def score_keyword_hit_rate(draft: str, keywords: list[str]) -> float:
     if not keywords:
@@ -97,6 +99,7 @@ def compute_pass_fail(
 
 
 # -- Case evaluation ──────────────────────────────────────────────────
+
 
 def evaluate_case(
     case: dict[str, Any],
@@ -146,6 +149,7 @@ def evaluate_case(
 
 # -- Persistence ──────────────────────────────────────────────────────
 
+
 def persist_case_result(
     conn: sqlite3.Connection,
     case_result: CaseResult,
@@ -178,12 +182,11 @@ def persist_case_result(
 
 # -- Suite runner ─────────────────────────────────────────────────────
 
+
 def load_benchmark_cases(conn: sqlite3.Connection, case_key: str | None = None) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     if case_key:
-        rows = conn.execute(
-            "SELECT * FROM benchmark_cases WHERE case_key = ?", (case_key,)
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM benchmark_cases WHERE case_key = ?", (case_key,)).fetchall()
     else:
         rows = conn.execute("SELECT * FROM benchmark_cases").fetchall()
     return [dict(r) for r in rows]
@@ -239,7 +242,10 @@ def run_eval_suite(
 
             if persist:
                 persist_case_result(
-                    conn, cr, request.config_tag, case.get("id"),
+                    conn,
+                    cr,
+                    request.config_tag,
+                    case.get("id"),
                 )
 
         if persist:

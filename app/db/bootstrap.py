@@ -33,10 +33,7 @@ def bootstrap_database() -> Path:
 
 def _migrate_feedback_pairs(connection: sqlite3.Connection) -> None:
     """Add missing columns if needed (migration for existing DBs)."""
-    cols = {
-        row[1]
-        for row in connection.execute("PRAGMA table_info(feedback_pairs)").fetchall()
-    }
+    cols = {row[1] for row in connection.execute("PRAGMA table_info(feedback_pairs)").fetchall()}
     if "edit_distance_pct" not in cols:
         connection.execute("ALTER TABLE feedback_pairs ADD COLUMN edit_distance_pct REAL")
     if "reply_pair_id" not in cols:

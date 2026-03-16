@@ -123,10 +123,7 @@ def ingest_google_docs(
             load_result = _load_doc_payloads(export_path, live=live)
         except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
             source_label = _import_source_label(export_path, live=live)
-            detail = (
-                f"Failed to load Google Docs import from {source_label}: {exc}\n\n"
-                f"{SUPPORTED_IMPORT_FORMAT}"
-            )
+            detail = f"Failed to load Google Docs import from {source_label}: {exc}\n\n{SUPPORTED_IMPORT_FORMAT}"
             finish_ingest_run(
                 connection,
                 run_id=ingestion_run_id,
@@ -303,11 +300,7 @@ def _load_live_doc_payloads(live: GogDocsLiveOptions) -> tuple[list[dict[str, An
     discovered_docs = 0
     for account in live.accounts:
         try:
-            doc_targets = (
-                [(doc_id, None) for doc_id in live.doc_ids]
-                if live.doc_ids
-                else _discover_doc_ids(account=account, live=live)
-            )
+            doc_targets = [(doc_id, None) for doc_id in live.doc_ids] if live.doc_ids else _discover_doc_ids(account=account, live=live)
             discovered_docs += len(doc_targets)
             for doc_id, search_result in doc_targets:
                 docs_info = _gog_docs_info(account=account, doc_id=doc_id)
@@ -358,8 +351,7 @@ def _discover_doc_ids(account: str, *, live: GogDocsLiveOptions) -> list[tuple[s
         doc_id = _doc_id_from_search_result(result)
         if not doc_id:
             raise GoogleDocsLoadError(
-                f"gog drive search returned a result without a doc id for account {account}: "
-                f"{json.dumps(result, sort_keys=True)}",
+                f"gog drive search returned a result without a doc id for account {account}: {json.dumps(result, sort_keys=True)}",
                 discovered_docs=len(doc_targets) + len(search_results),
             )
         doc_targets.append((doc_id, result))
@@ -373,10 +365,7 @@ def _load_doc_payload_file(path: Path) -> list[dict[str, Any]]:
     elif isinstance(payload, dict) and isinstance(payload.get("documents"), list):
         payloads = payload["documents"]
     else:
-        raise ValueError(
-            f"{path} is not a supported YouOS Google Docs cache file. "
-            "Only cached gog snapshot JSON is accepted for local Docs import."
-        )
+        raise ValueError(f"{path} is not a supported YouOS Google Docs cache file. Only cached gog snapshot JSON is accepted for local Docs import.")
 
     if not all(isinstance(item, dict) for item in payloads):
         raise ValueError(f"{path} contains a malformed Google Docs payload list.")

@@ -85,8 +85,7 @@ def stats_data(request: Request) -> dict[str, Any]:
         try:
             total_profiles = conn.execute("SELECT COUNT(*) FROM sender_profiles").fetchone()[0]
             rows = conn.execute(
-                "SELECT email, display_name, company, sender_type, reply_count "
-                "FROM sender_profiles ORDER BY reply_count DESC LIMIT 5"
+                "SELECT email, display_name, company, sender_type, reply_count FROM sender_profiles ORDER BY reply_count DESC LIMIT 5"
             ).fetchall()
             for r in rows:
                 top_senders.append(

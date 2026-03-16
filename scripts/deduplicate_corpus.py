@@ -5,6 +5,7 @@ Usage:
     python3 scripts/deduplicate_corpus.py --dry-run   # show duplicates
     python3 scripts/deduplicate_corpus.py              # remove duplicates
 """
+
 from __future__ import annotations
 
 import argparse
@@ -43,9 +44,7 @@ def find_duplicate_reply_pairs(conn: sqlite3.Connection) -> list[int]:
         dupe_ids.extend(ids[1:])  # Keep first, remove rest
 
     # Duplicates by (thread_id, inbound_text hash)
-    all_pairs = conn.execute(
-        "SELECT id, thread_id, inbound_text FROM reply_pairs WHERE thread_id IS NOT NULL"
-    ).fetchall()
+    all_pairs = conn.execute("SELECT id, thread_id, inbound_text FROM reply_pairs WHERE thread_id IS NOT NULL").fetchall()
     seen: dict[tuple[str, str], int] = {}
     for pair_id, thread_id, inbound_text in all_pairs:
         key = (thread_id, _hash_text(inbound_text))

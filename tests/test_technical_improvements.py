@@ -1,4 +1,5 @@
 """Tests for Items 6-9: Ollama, embedding indexer, incremental ingestion, dedup."""
+
 from __future__ import annotations
 
 import json
@@ -21,6 +22,7 @@ runner = CliRunner()
 
 
 # --- Item 6: Ollama backend ---
+
 
 def test_generate_via_ollama_returns_string():
     """Ollama backend returns a string (mock urllib)."""
@@ -59,13 +61,16 @@ def test_status_shows_ollama_field():
 
 # --- Item 7: Embedding indexer in nightly pipeline ---
 
+
 def test_nightly_pipeline_includes_embedding_step():
     """Nightly pipeline has step_index_embeddings function."""
     from scripts.nightly_pipeline import step_index_embeddings
+
     assert callable(step_index_embeddings)
 
 
 # --- Item 8: Incremental ingestion ---
+
 
 def test_get_last_ingest_at_returns_none_when_not_set():
     """get_last_ingest_at returns None for unknown accounts."""
@@ -94,6 +99,7 @@ def test_set_last_ingest_at_updates_config(tmp_path):
 
 # --- Item 9: Corpus deduplication ---
 
+
 def _setup_dedup_db(db_path: Path) -> None:
     """Create a test DB with duplicate rows."""
     conn = sqlite3.connect(db_path)
@@ -103,33 +109,14 @@ def _setup_dedup_db(db_path: Path) -> None:
         "thread_id TEXT, inbound_text TEXT, inbound_author TEXT, "
         "reply_text TEXT, paired_at TEXT)"
     )
-    conn.execute(
-        "CREATE TABLE documents ("
-        "id INTEGER PRIMARY KEY, source_type TEXT, source_id TEXT, "
-        "content TEXT, embedding BLOB)"
-    )
+    conn.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, source_type TEXT, source_id TEXT, content TEXT, embedding BLOB)")
     # Insert duplicate reply_pairs (same source_type + source_id)
-    conn.execute(
-        "INSERT INTO reply_pairs (source_type, source_id, thread_id, inbound_text) "
-        "VALUES ('gmail', 'msg-1', 't1', 'hello')"
-    )
-    conn.execute(
-        "INSERT INTO reply_pairs (source_type, source_id, thread_id, inbound_text) "
-        "VALUES ('gmail', 'msg-1', 't1', 'hello')"
-    )
-    conn.execute(
-        "INSERT INTO reply_pairs (source_type, source_id, thread_id, inbound_text) "
-        "VALUES ('gmail', 'msg-2', 't2', 'world')"
-    )
+    conn.execute("INSERT INTO reply_pairs (source_type, source_id, thread_id, inbound_text) VALUES ('gmail', 'msg-1', 't1', 'hello')")
+    conn.execute("INSERT INTO reply_pairs (source_type, source_id, thread_id, inbound_text) VALUES ('gmail', 'msg-1', 't1', 'hello')")
+    conn.execute("INSERT INTO reply_pairs (source_type, source_id, thread_id, inbound_text) VALUES ('gmail', 'msg-2', 't2', 'world')")
     # Insert duplicate documents
-    conn.execute(
-        "INSERT INTO documents (source_type, source_id, content) "
-        "VALUES ('gmail', 'doc-1', 'content A')"
-    )
-    conn.execute(
-        "INSERT INTO documents (source_type, source_id, content) "
-        "VALUES ('gmail', 'doc-1', 'content A')"
-    )
+    conn.execute("INSERT INTO documents (source_type, source_id, content) VALUES ('gmail', 'doc-1', 'content A')")
+    conn.execute("INSERT INTO documents (source_type, source_id, content) VALUES ('gmail', 'doc-1', 'content A')")
     conn.commit()
     conn.close()
 
@@ -145,6 +132,7 @@ def test_deduplicate_dry_run(tmp_path):
     with patch("scripts.deduplicate_corpus.get_settings", return_value=mock_settings):
         with patch("scripts.deduplicate_corpus.resolve_sqlite_path", return_value=db_path):
             from scripts.deduplicate_corpus import deduplicate
+
             result = deduplicate(dry_run=True)
 
     assert result["reply_pairs"] >= 1

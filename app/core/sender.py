@@ -1,4 +1,5 @@
 """Sender classification for sender-aware retrieval."""
+
 from __future__ import annotations
 
 import re
@@ -10,17 +11,38 @@ SenderType = Literal["internal", "external_client", "personal", "automated", "un
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
 
-_AUTOMATED_PREFIXES = frozenset({
-    "no-reply", "noreply", "donotreply", "do-not-reply",
-    "invoice", "billing", "mailer", "notifications",
-    "support", "bounce", "postmaster", "daemon",
-})
+_AUTOMATED_PREFIXES = frozenset(
+    {
+        "no-reply",
+        "noreply",
+        "donotreply",
+        "do-not-reply",
+        "invoice",
+        "billing",
+        "mailer",
+        "notifications",
+        "support",
+        "bounce",
+        "postmaster",
+        "daemon",
+    }
+)
 
-_PERSONAL_DOMAINS = frozenset({
-    "gmail.com", "yahoo.com", "hotmail.com", "icloud.com",
-    "me.com", "outlook.com", "live.com", "aol.com",
-    "protonmail.com", "proton.me", "fastmail.com",
-})
+_PERSONAL_DOMAINS = frozenset(
+    {
+        "gmail.com",
+        "yahoo.com",
+        "hotmail.com",
+        "icloud.com",
+        "me.com",
+        "outlook.com",
+        "live.com",
+        "aol.com",
+        "protonmail.com",
+        "proton.me",
+        "fastmail.com",
+    }
+)
 
 
 def extract_domain(author: str | None) -> str | None:

@@ -1,4 +1,5 @@
 """CLI runner for YouOS Autoresearch optimizer."""
+
 from __future__ import annotations
 
 import argparse
@@ -21,7 +22,9 @@ def _git_available() -> bool:
     try:
         result = subprocess.run(
             ["git", "status"],
-            capture_output=True, timeout=10, cwd=ROOT_DIR,
+            capture_output=True,
+            timeout=10,
+            cwd=ROOT_DIR,
         )
         return result.returncode == 0
     except Exception:
@@ -33,7 +36,10 @@ def _git_commit_hash() -> str | None:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=10, cwd=ROOT_DIR,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=ROOT_DIR,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -63,18 +69,19 @@ def _git_commit_kept_change(
     candidate_composite: float,
 ) -> None:
     """Commit config changes for a kept autoresearch improvement."""
-    msg = (
-        f"autoresearch: keep {surface_name} {old_value} → {new_value} "
-        f"(composite {baseline_composite:.4f} → {candidate_composite:.4f})"
-    )
+    msg = f"autoresearch: keep {surface_name} {old_value} → {new_value} (composite {baseline_composite:.4f} → {candidate_composite:.4f})"
     try:
         subprocess.run(
             ["git", "add", "configs/retrieval/defaults.yaml", "configs/prompts.yaml"],
-            capture_output=True, timeout=10, cwd=ROOT_DIR,
+            capture_output=True,
+            timeout=10,
+            cwd=ROOT_DIR,
         )
         subprocess.run(
             ["git", "commit", "-m", msg],
-            capture_output=True, timeout=10, cwd=ROOT_DIR,
+            capture_output=True,
+            timeout=10,
+            cwd=ROOT_DIR,
         )
     except Exception as exc:
         logger.warning("Failed to git commit autoresearch change: %s", exc)
@@ -88,14 +95,13 @@ def _git_tag_run(
     """Tag the end of an autoresearch run with improvements."""
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     tag_name = f"autoresearch-{timestamp}"
-    tag_msg = (
-        f"composite {baseline_composite:.4f} → {final_composite:.4f}, "
-        f"{improvements_kept} improvements"
-    )
+    tag_msg = f"composite {baseline_composite:.4f} → {final_composite:.4f}, {improvements_kept} improvements"
     try:
         subprocess.run(
             ["git", "tag", tag_name, "-m", tag_msg],
-            capture_output=True, timeout=10, cwd=ROOT_DIR,
+            capture_output=True,
+            timeout=10,
+            cwd=ROOT_DIR,
         )
     except Exception as exc:
         logger.warning("Failed to create autoresearch git tag: %s", exc)
@@ -124,20 +130,26 @@ def _generate_for_eval(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run YouOS Autoresearch optimizer")
     parser.add_argument(
-        "--max-iter", type=int, default=10,
+        "--max-iter",
+        type=int,
+        default=10,
         help="Maximum number of eval iterations (default: 10)",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Show mutation plan without executing",
     )
     parser.add_argument(
-        "--surface", type=str, default=None,
+        "--surface",
+        type=str,
+        default=None,
         choices=["retrieval", "prompt_drafting"],
         help="Only tune a specific config surface",
     )
     parser.add_argument(
-        "--db-path", type=Path,
+        "--db-path",
+        type=Path,
         default=ROOT_DIR / "var" / "youos.db",
         help="Path to SQLite database",
     )
@@ -179,8 +191,11 @@ def main() -> None:
                 else:
                     old_val, new_val = "?", "?"
                 _git_commit_kept_change(
-                    it.surface_name, old_val, new_val,
-                    it.baseline_composite, it.candidate_composite,
+                    it.surface_name,
+                    old_val,
+                    new_val,
+                    it.baseline_composite,
+                    it.candidate_composite,
                 )
 
         if report.improvements_kept > 0:

@@ -6,6 +6,7 @@ Usage:
     python3 scripts/generate_benchmarks.py --count 20
     python3 scripts/generate_benchmarks.py --dry-run
 """
+
 from __future__ import annotations
 
 import argparse
@@ -93,9 +94,9 @@ def generate_cases(db_path: Path, count: int = 15) -> list[dict]:
         # Stratified sampling: try to get a mix of sender types
         target = {
             "external_client": max(1, int(count * 0.53)),  # ~8 of 15
-            "internal": max(1, int(count * 0.27)),          # ~4 of 15
-            "personal": max(1, int(count * 0.13)),          # ~2 of 15
-            "edge": 1,                                       # 1 edge case
+            "internal": max(1, int(count * 0.27)),  # ~4 of 15
+            "personal": max(1, int(count * 0.13)),  # ~2 of 15
+            "edge": 1,  # 1 edge case
         }
 
         all_rows = conn.execute(
@@ -108,9 +109,7 @@ def generate_cases(db_path: Path, count: int = 15) -> list[dict]:
             return []
 
         # Classify all rows
-        classified: dict[str, list] = {
-            "external_client": [], "internal": [], "personal": [], "automated": [], "unknown": []
-        }
+        classified: dict[str, list] = {"external_client": [], "internal": [], "personal": [], "automated": [], "unknown": []}
         for row in all_rows:
             st = _classify_sender_type(row["inbound_author"], row["metadata_json"])
             classified.setdefault(st, []).append(row)
@@ -147,9 +146,7 @@ def generate_cases(db_path: Path, count: int = 15) -> list[dict]:
             reply = row["reply_text"] or ""
 
             # Strip quoted text from inbound
-            inbound_clean = re.split(
-                r"(?i)(on\s+.{5,40}\s+wrote:|from:\s|---+\s*forwarded)", inbound
-            )[0].strip()
+            inbound_clean = re.split(r"(?i)(on\s+.{5,40}\s+wrote:|from:\s|---+\s*forwarded)", inbound)[0].strip()
             if len(inbound_clean) < 30:
                 inbound_clean = inbound
 
@@ -174,16 +171,18 @@ def generate_cases(db_path: Path, count: int = 15) -> list[dict]:
             keywords = _extract_keywords(reply, max_keywords=3)
             max_words = int(len(reply.split()) * 1.5)
 
-            cases.append({
-                "case_key": case_key,
-                "category": sender_type,
-                "prompt_text": inbound_clean,
-                "expected_properties": {
-                    "should_contain_keywords": keywords,
-                    "mode": "personal" if sender_type == "personal" else "work",
-                    "max_words": max(20, max_words),
-                },
-            })
+            cases.append(
+                {
+                    "case_key": case_key,
+                    "category": sender_type,
+                    "prompt_text": inbound_clean,
+                    "expected_properties": {
+                        "should_contain_keywords": keywords,
+                        "mode": "personal" if sender_type == "personal" else "work",
+                        "max_words": max(20, max_words),
+                    },
+                }
+            )
 
         return cases
     finally:

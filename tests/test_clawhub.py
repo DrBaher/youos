@@ -1,4 +1,5 @@
 """Tests for clawhub.json metadata."""
+
 import json
 from pathlib import Path
 
@@ -20,8 +21,7 @@ def test_clawhub_required_fields():
     path = ROOT_DIR / "clawhub.json"
     data = json.loads(path.read_text(encoding="utf-8"))
 
-    required = ["name", "version", "displayName", "description", "author",
-                "homepage", "category", "tags", "requires", "emoji", "license"]
+    required = ["name", "version", "displayName", "description", "author", "homepage", "category", "tags", "requires", "emoji", "license"]
     for field in required:
         assert field in data, f"Missing required field: {field}"
 

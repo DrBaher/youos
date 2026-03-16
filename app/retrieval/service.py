@@ -125,9 +125,7 @@ class RetrievalConfig:
 
 
 def _has_fts5_table(connection: sqlite3.Connection, table_name: str) -> bool:
-    row = connection.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,)
-    ).fetchone()
+    row = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table_name,)).fetchone()
     return row is not None
 
 
@@ -165,38 +163,24 @@ class RetrievalService:
             reply_pairs: list[RetrievalMatch] = []
 
             if request.scope in ("all", "documents"):
-                documents = self._retrieve_documents(
-                    connection, query=query, tokens=tokens, request=request
-                )
+                documents = self._retrieve_documents(connection, query=query, tokens=tokens, request=request)
                 if use_fts:
-                    chunks = self._retrieve_chunks_fts(
-                        connection, query=query, tokens=tokens, request=request
-                    )
+                    chunks = self._retrieve_chunks_fts(connection, query=query, tokens=tokens, request=request)
                 else:
-                    chunks = self._retrieve_chunks_legacy(
-                        connection, query=query, tokens=tokens, request=request
-                    )
+                    chunks = self._retrieve_chunks_legacy(connection, query=query, tokens=tokens, request=request)
 
             if request.scope in ("all", "reply_pairs"):
                 if use_fts:
-                    reply_pairs = self._retrieve_reply_pairs_fts(
-                        connection, query=query, tokens=tokens, request=request
-                    )
+                    reply_pairs = self._retrieve_reply_pairs_fts(connection, query=query, tokens=tokens, request=request)
                 else:
-                    reply_pairs = self._retrieve_reply_pairs_legacy(
-                        connection, query=query, tokens=tokens, request=request
-                    )
+                    reply_pairs = self._retrieve_reply_pairs_legacy(connection, query=query, tokens=tokens, request=request)
 
             # Hybrid semantic re-ranking
             semantic_enabled = False
             if reply_pairs:
-                semantic_enabled = self._apply_semantic_reranking(
-                    connection, query, reply_pairs, "reply_pairs"
-                )
+                semantic_enabled = self._apply_semantic_reranking(connection, query, reply_pairs, "reply_pairs")
             if chunks:
-                chunks_semantic = self._apply_semantic_reranking(
-                    connection, query, chunks, "chunks"
-                )
+                chunks_semantic = self._apply_semantic_reranking(connection, query, chunks, "chunks")
                 semantic_enabled = semantic_enabled or chunks_semantic
 
         method = "fts5_bm25" if use_fts else "lexical_v1"
@@ -250,9 +234,7 @@ class RetrievalService:
             row_id = getattr(match, id_field)
             if row_id is None:
                 continue
-            row = connection.execute(
-                f"SELECT embedding FROM {table} WHERE id = ?", (row_id,)
-            ).fetchone()
+            row = connection.execute(f"SELECT embedding FROM {table} WHERE id = ?", (row_id,)).fetchone()
             if not row or not row["embedding"] or len(row["embedding"]) < 4:
                 continue
             emb = deserialize_embedding(row["embedding"])
@@ -260,9 +242,7 @@ class RetrievalService:
             # Normalize sim from [-1,1] to [0,1] range, then scale to match FTS score range
             sim_normalized = (sim + 1.0) / 2.0
             sim_score = sim_normalized * 10.0  # scale to comparable range with FTS scores
-            match.score = round(
-                fts_weight * match.score + sem_weight * sim_score, 4
-            )
+            match.score = round(fts_weight * match.score + sem_weight * sim_score, 4)
 
         # Re-sort after reranking
         matches.sort(key=lambda m: (-m.score, m.result_type, m.source_id))
@@ -371,9 +351,7 @@ class RetrievalService:
                 account_emails=request.account_emails,
             ):
                 continue
-            match = self._score_reply_pair_row_fts(
-                row, query=query, tokens=tokens, request=request
-            )
+            match = self._score_reply_pair_row_fts(row, query=query, tokens=tokens, request=request)
             if match is not None:
                 matches.append(match)
         return _top_matches(matches, request.top_k_reply_pairs or self.config.top_k_reply_pairs)
@@ -593,9 +571,7 @@ class RetrievalService:
                 account_emails=request.account_emails,
             )
         ]
-        return _top_matches(
-            matches, request.top_k_reply_pairs or self.config.top_k_reply_pairs
-        )
+        return _top_matches(matches, request.top_k_reply_pairs or self.config.top_k_reply_pairs)
 
     # -- Legacy scoring ──────────────────────────────────────────────────
 
@@ -651,9 +627,7 @@ class RetrievalService:
         chunk_metadata = _loads_json(row["chunk_metadata_json"])
         content = row["content"] or ""
         title = row["title"] or ""
-        lexical_score = (
-            _score_text(query, tokens, f"{title}\n{content}") + _field_match_bonus(title, tokens)
-        )
+        lexical_score = _score_text(query, tokens, f"{title}\n{content}") + _field_match_bonus(title, tokens)
         if lexical_score <= 0:
             return None
         metadata_score = self._metadata_score(
@@ -697,10 +671,7 @@ class RetrievalService:
         metadata = _loads_json(row["metadata_json"])
         inbound_text = row["inbound_text"] or ""
         reply_text = row["reply_text"] or ""
-        lexical_score = (
-            _score_text(query, tokens, inbound_text)
-            + (_score_text(query, tokens, reply_text) * 0.35)
-        )
+        lexical_score = _score_text(query, tokens, inbound_text) + (_score_text(query, tokens, reply_text) * 0.35)
         if lexical_score <= 0:
             return None
         metadata_score = self._metadata_score(
@@ -818,9 +789,7 @@ def _load_retrieval_config(configs_dir: Path) -> RetrievalConfig:
         if legacy_path.exists():
             legacy = yaml.safe_load(legacy_path.read_text(encoding="utf-8")) or {}
             ranking = legacy.get("ranking", {})
-            source_weights = {
-                str(k): float(v) for k, v in ranking.get("source_weights", {}).items()
-            }
+            source_weights = {str(k): float(v) for k, v in ranking.get("source_weights", {}).items()}
         return RetrievalConfig(
             top_k_documents=int(payload.get("top_k_documents", 3)),
             top_k_chunks=int(payload.get("top_k_chunks", 3)),
@@ -865,9 +834,7 @@ def _embedding_coverage(connection: sqlite3.Connection, table: str) -> float:
     total = row[0] if row else 0
     if total == 0:
         return 0.0
-    row = connection.execute(
-        f"SELECT COUNT(*) FROM {table} WHERE embedding IS NOT NULL AND LENGTH(embedding) > 0"
-    ).fetchone()
+    row = connection.execute(f"SELECT COUNT(*) FROM {table} WHERE embedding IS NOT NULL AND LENGTH(embedding) > 0").fetchone()
     embedded = row[0] if row else 0
     return embedded / total
 

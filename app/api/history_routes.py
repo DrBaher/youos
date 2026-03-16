@@ -24,9 +24,7 @@ def get_history(
     conn.row_factory = sqlite3.Row
     try:
         # Check if table exists
-        exists = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='draft_history'"
-        ).fetchone()
+        exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='draft_history'").fetchone()
         if not exists:
             return {"items": [], "total": 0}
         rows = conn.execute(

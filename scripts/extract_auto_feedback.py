@@ -3,6 +3,7 @@
 Compares YouOS-generated drafts against your actual replies to create
 implicit training signal for fine-tuning.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -34,9 +35,7 @@ def _get_db_path(db_override: str | None) -> Path:
     return resolve_sqlite_path(settings.database_url)
 
 
-def _get_unprocessed_pairs(
-    conn: sqlite3.Connection, since: str
-) -> list[sqlite3.Row]:
+def _get_unprocessed_pairs(conn: sqlite3.Connection, since: str) -> list[sqlite3.Row]:
     return conn.execute(
         """
         SELECT id, inbound_text, reply_text, source_type, source_id

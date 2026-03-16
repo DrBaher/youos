@@ -1,4 +1,5 @@
 """LoRA fine-tuning script using mlx_lm on exported feedback pairs."""
+
 from __future__ import annotations
 
 import argparse
@@ -75,15 +76,23 @@ def run_training(args: argparse.Namespace) -> None:
     adapter_dir.mkdir(parents=True, exist_ok=True)
 
     cmd = [
-        "mlx_lm", "lora",
-        "--model", BASE_MODEL,
+        "mlx_lm",
+        "lora",
+        "--model",
+        BASE_MODEL,
         "--train",
-        "--data", str(data_dir),
-        "--adapter-path", str(adapter_dir),
-        "--iters", str(args.iters),
-        "--batch-size", "1",
-        "--num-layers", "8",
-        "--learning-rate", "1e-5",
+        "--data",
+        str(data_dir),
+        "--adapter-path",
+        str(adapter_dir),
+        "--iters",
+        str(args.iters),
+        "--batch-size",
+        "1",
+        "--num-layers",
+        "8",
+        "--learning-rate",
+        "1e-5",
     ]
 
     if valid_path.exists() and valid_count > 0:
@@ -112,9 +121,7 @@ def run_training(args: argparse.Namespace) -> None:
     if db_path.exists():
         conn = sqlite3.connect(db_path)
         try:
-            cursor = conn.execute(
-                "UPDATE feedback_pairs SET used_in_finetune = 1 WHERE used_in_finetune = 0"
-            )
+            cursor = conn.execute("UPDATE feedback_pairs SET used_in_finetune = 1 WHERE used_in_finetune = 0")
             pairs_used = cursor.rowcount
             conn.commit()
         finally:

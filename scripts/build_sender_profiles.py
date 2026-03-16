@@ -1,4 +1,5 @@
 """Build sender profiles from reply_pairs corpus."""
+
 from __future__ import annotations
 
 import argparse
@@ -13,19 +14,100 @@ from app.core.settings import get_settings
 from app.db.bootstrap import resolve_sqlite_path
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
-_STOPWORDS = frozenset({
-    "re", "fw", "fwd", "the", "and", "for", "you", "your", "our", "are",
-    "was", "were", "will", "can", "has", "have", "had", "not", "but",
-    "this", "that", "with", "from", "about", "just", "new", "all",
-    "get", "got", "one", "two", "also", "been", "more", "some", "any",
-    "out", "its", "let", "may", "how", "who", "what", "when", "where",
-    "which", "would", "could", "should", "into", "than", "then", "them",
-    "they", "their", "there", "here", "very", "much", "many", "each",
-    "other", "only", "over", "such", "like", "well", "back", "even",
-    "still", "after", "before", "between", "make", "made", "take",
-    "need", "want", "know", "think", "see", "use", "way", "time",
-    "please", "thanks", "thank", "dear", "hello", "hi",
-})
+_STOPWORDS = frozenset(
+    {
+        "re",
+        "fw",
+        "fwd",
+        "the",
+        "and",
+        "for",
+        "you",
+        "your",
+        "our",
+        "are",
+        "was",
+        "were",
+        "will",
+        "can",
+        "has",
+        "have",
+        "had",
+        "not",
+        "but",
+        "this",
+        "that",
+        "with",
+        "from",
+        "about",
+        "just",
+        "new",
+        "all",
+        "get",
+        "got",
+        "one",
+        "two",
+        "also",
+        "been",
+        "more",
+        "some",
+        "any",
+        "out",
+        "its",
+        "let",
+        "may",
+        "how",
+        "who",
+        "what",
+        "when",
+        "where",
+        "which",
+        "would",
+        "could",
+        "should",
+        "into",
+        "than",
+        "then",
+        "them",
+        "they",
+        "their",
+        "there",
+        "here",
+        "very",
+        "much",
+        "many",
+        "each",
+        "other",
+        "only",
+        "over",
+        "such",
+        "like",
+        "well",
+        "back",
+        "even",
+        "still",
+        "after",
+        "before",
+        "between",
+        "make",
+        "made",
+        "take",
+        "need",
+        "want",
+        "know",
+        "think",
+        "see",
+        "use",
+        "way",
+        "time",
+        "please",
+        "thanks",
+        "thank",
+        "dear",
+        "hello",
+        "hi",
+    }
+)
 _WORD_RE = re.compile(r"[a-z]{3,}")
 
 
@@ -72,9 +154,7 @@ def build_profiles(db_path: Path, *, limit: int | None = None, dry_run: bool = F
     conn.row_factory = sqlite3.Row
     try:
         # Get unique inbound authors
-        rows = conn.execute(
-            "SELECT DISTINCT inbound_author FROM reply_pairs WHERE inbound_author IS NOT NULL"
-        ).fetchall()
+        rows = conn.execute("SELECT DISTINCT inbound_author FROM reply_pairs WHERE inbound_author IS NOT NULL").fetchall()
         authors = [r["inbound_author"] for r in rows]
         if limit:
             authors = authors[:limit]
@@ -103,9 +183,7 @@ def build_profiles(db_path: Path, *, limit: int | None = None, dry_run: bool = F
 
             # Get subjects for topic extraction
             subject_rows = conn.execute(
-                "SELECT d.title FROM reply_pairs rp "
-                "LEFT JOIN documents d ON d.id = rp.document_id "
-                "WHERE rp.inbound_author = ? AND d.title IS NOT NULL",
+                "SELECT d.title FROM reply_pairs rp LEFT JOIN documents d ON d.id = rp.document_id WHERE rp.inbound_author = ? AND d.title IS NOT NULL",
                 (author,),
             ).fetchall()
             subjects = [r["title"] for r in subject_rows if r["title"]]
@@ -122,9 +200,7 @@ def build_profiles(db_path: Path, *, limit: int | None = None, dry_run: bool = F
                 continue
 
             # Upsert
-            existing = conn.execute(
-                "SELECT id FROM sender_profiles WHERE email = ?", (email,)
-            ).fetchone()
+            existing = conn.execute("SELECT id FROM sender_profiles WHERE email = ?", (email,)).fetchone()
 
             if existing:
                 conn.execute(
@@ -133,9 +209,7 @@ def build_profiles(db_path: Path, *, limit: int | None = None, dry_run: bool = F
                         reply_count = ?, avg_reply_words = ?, first_seen = ?, last_seen = ?,
                         topics_json = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE email = ?""",
-                    (display_name, domain, company, sender_type,
-                     reply_count, avg_reply_words, first_seen, last_seen,
-                     json.dumps(topics), email),
+                    (display_name, domain, company, sender_type, reply_count, avg_reply_words, first_seen, last_seen, json.dumps(topics), email),
                 )
                 updated_count += 1
             else:
@@ -144,9 +218,7 @@ def build_profiles(db_path: Path, *, limit: int | None = None, dry_run: bool = F
                         (email, display_name, domain, company, sender_type,
                          reply_count, avg_reply_words, first_seen, last_seen, topics_json)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (email, display_name, domain, company, sender_type,
-                     reply_count, avg_reply_words, first_seen, last_seen,
-                     json.dumps(topics)),
+                    (email, display_name, domain, company, sender_type, reply_count, avg_reply_words, first_seen, last_seen, json.dumps(topics)),
                 )
                 new_count += 1
 

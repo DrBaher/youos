@@ -1,4 +1,5 @@
 """Tests for teardown script — uses mock filesystem."""
+
 import sqlite3
 
 from scripts.teardown import _dir_size, _feedback_count, _file_size
@@ -75,6 +76,7 @@ def test_teardown_removes_dirs(tmp_path):
 
     # Simulate teardown by removing them
     import shutil
+
     for d in [data_dir, models_dir, var_dir]:
         if d.exists():
             shutil.rmtree(d)

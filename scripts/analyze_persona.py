@@ -4,6 +4,7 @@
 Queries the reply_pairs table and produces a structured report plus
 configs/persona_analysis.json with real observed patterns.
 """
+
 from __future__ import annotations
 
 import json
@@ -26,18 +27,20 @@ def _build_signature_patterns() -> list[re.Pattern]:
         if name.strip():
             patterns.append(re.compile(rf"^{re.escape(name)}", re.MULTILINE))
     # Common signature separators and closings
-    patterns.extend([
-        re.compile(r"^-- $", re.MULTILINE),
-        re.compile(r"^--$", re.MULTILINE),
-        re.compile(r"^Best,\s*$", re.MULTILINE),
-        re.compile(r"^Cheers,\s*$", re.MULTILINE),
-        re.compile(r"^Regards,\s*$", re.MULTILINE),
-        re.compile(r"^Kind regards,\s*$", re.MULTILINE),
-        re.compile(r"^Thanks,\s*$", re.MULTILINE),
-        re.compile(r"^Thank you,\s*$", re.MULTILINE),
-        re.compile(r"^Sent from my iPhone", re.MULTILINE),
-        re.compile(r"^Sent from my iPad", re.MULTILINE),
-    ])
+    patterns.extend(
+        [
+            re.compile(r"^-- $", re.MULTILINE),
+            re.compile(r"^--$", re.MULTILINE),
+            re.compile(r"^Best,\s*$", re.MULTILINE),
+            re.compile(r"^Cheers,\s*$", re.MULTILINE),
+            re.compile(r"^Regards,\s*$", re.MULTILINE),
+            re.compile(r"^Kind regards,\s*$", re.MULTILINE),
+            re.compile(r"^Thanks,\s*$", re.MULTILINE),
+            re.compile(r"^Thank you,\s*$", re.MULTILINE),
+            re.compile(r"^Sent from my iPhone", re.MULTILINE),
+            re.compile(r"^Sent from my iPad", re.MULTILINE),
+        ]
+    )
     return patterns
 
 
@@ -123,9 +126,7 @@ def analyze(db_path: Path) -> dict:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute(
-            "SELECT reply_text, inbound_author, reply_author, metadata_json FROM reply_pairs"
-        ).fetchall()
+        rows = conn.execute("SELECT reply_text, inbound_author, reply_author, metadata_json FROM reply_pairs").fetchall()
     finally:
         conn.close()
 
@@ -136,9 +137,7 @@ def analyze(db_path: Path) -> dict:
     greeting_counter: Counter = Counter()
     closer_counter: Counter = Counter()
     signature_counter: Counter = Counter()
-    tone_by_type: dict[str, list[int]] = {
-        "internal": [], "external_client": [], "personal": [], "unknown": []
-    }
+    tone_by_type: dict[str, list[int]] = {"internal": [], "external_client": [], "personal": [], "unknown": []}
 
     for row in rows:
         reply_raw = row["reply_text"] or ""
@@ -243,6 +242,7 @@ def print_report(findings: dict) -> None:
 
 def main() -> None:
     import sys
+
     sys.path.insert(0, str(ROOT_DIR))
 
     from app.core.settings import get_settings

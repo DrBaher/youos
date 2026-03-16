@@ -1,7 +1,6 @@
 """Tests for youos export/import commands."""
 
 import tarfile
-from pathlib import Path
 
 import pytest
 

@@ -1,4 +1,5 @@
 """Tests for product gap features: streaming, subjects, history, keyboard shortcuts, language detection."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -88,12 +89,7 @@ def test_draft_history_table_created():
     schema = schema_path.read_text(encoding="utf-8")
     conn = sqlite3.connect(":memory:")
     conn.executescript(schema)
-    tables = [
-        row[0]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    ]
+    tables = [row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
     conn.close()
     assert "draft_history" in tables
 
@@ -106,8 +102,18 @@ def test_draft_history_table_columns():
     conn.executescript(schema)
     cols = [row[1] for row in conn.execute("PRAGMA table_info(draft_history)").fetchall()]
     conn.close()
-    expected = {"id", "inbound_text", "sender", "generated_draft", "final_reply",
-                "edit_distance_pct", "confidence", "model_used", "retrieval_method", "created_at"}
+    expected = {
+        "id",
+        "inbound_text",
+        "sender",
+        "generated_draft",
+        "final_reply",
+        "edit_distance_pct",
+        "confidence",
+        "model_used",
+        "retrieval_method",
+        "created_at",
+    }
     assert expected.issubset(set(cols))
 
 

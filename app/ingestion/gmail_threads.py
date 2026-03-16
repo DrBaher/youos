@@ -187,10 +187,7 @@ def ingest_gmail_threads(
             load_result = _load_thread_payloads(export_path, live=live)
         except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
             source_label = _import_source_label(export_path, live=live)
-            detail = (
-                f"Failed to load Gmail import from {source_label}: {exc}\n\n"
-                f"{SUPPORTED_IMPORT_FORMAT}"
-            )
+            detail = f"Failed to load Gmail import from {source_label}: {exc}\n\n{SUPPORTED_IMPORT_FORMAT}"
             finish_ingest_run(
                 connection,
                 run_id=ingestion_run_id,
@@ -389,8 +386,7 @@ def _load_live_thread_payloads(live: GogLiveOptions) -> tuple[list[dict[str, Any
                 thread_id = _gog_thread_id_from_search_result(result)
                 if not thread_id:
                     raise GmailLoadError(
-                        "gog gmail search returned a result without a thread id for account "
-                        f"{account}: {json.dumps(result, sort_keys=True)}",
+                        f"gog gmail search returned a result without a thread id for account {account}: {json.dumps(result, sort_keys=True)}",
                         discovered_threads=discovered_threads,
                         fetched_threads=len(payloads),
                     )
@@ -572,10 +568,7 @@ def _normalize_gog_thread_payload(payload: dict[str, Any], *, requested_thread_i
         if not _payload_has_messages(normalized):
             raise
         thread_id = requested_thread_id
-        warning = (
-            "gog gmail thread get returned messages without a thread id; "
-            "YouOS used the requested thread id."
-        )
+        warning = "gog gmail thread get returned messages without a thread id; YouOS used the requested thread id."
 
     normalized.setdefault("thread_id", thread_id)
     if warning is not None:
@@ -794,11 +787,7 @@ def _thread_level_metadata(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _thread_id_from_payload(payload: dict[str, Any]) -> str:
-    thread_id = (
-        _string(payload.get("thread_id"))
-        or _string(payload.get("threadId"))
-        or _string(payload.get("id"))
-    )
+    thread_id = _string(payload.get("thread_id")) or _string(payload.get("threadId")) or _string(payload.get("id"))
     if thread_id:
         return thread_id
 
@@ -813,23 +802,14 @@ def _thread_id_from_payload(payload: dict[str, Any]) -> str:
     raise ValueError("A thread payload is missing thread_id/threadId/id.")
 
 
-def _message_id_from_payload(
-    payload: dict[str, Any], *, thread_id: str, order_index: int
-) -> str:
+def _message_id_from_payload(payload: dict[str, Any], *, thread_id: str, order_index: int) -> str:
     return (
-        _string(payload.get("id"))
-        or _string(payload.get("message_id"))
-        or _string(payload.get("gmail_message_id"))
-        or f"{thread_id}-message-{order_index + 1}"
+        _string(payload.get("id")) or _string(payload.get("message_id")) or _string(payload.get("gmail_message_id")) or f"{thread_id}-message-{order_index + 1}"
     )
 
 
 def _message_subject(payload: dict[str, Any]) -> str | None:
-    return (
-        _string(payload.get("subject"))
-        or _header_value(payload, "Subject")
-        or _header_value(payload, "subject")
-    )
+    return _string(payload.get("subject")) or _header_value(payload, "Subject") or _header_value(payload, "subject")
 
 
 def _message_sender(payload: dict[str, Any]) -> tuple[str | None, str | None]:
@@ -1145,9 +1125,7 @@ def _build_reply_pair(
             "reply_message_id": reply_message.message_id,
             "inbound_recipient_contexts": [message.recipient_context for message in inbound_messages],
             "reply_recipient_context": reply_message.recipient_context,
-            "inbound_authors": [
-                _display_author(message.sender_name, message.sender_email) for message in inbound_messages
-            ],
+            "inbound_authors": [_display_author(message.sender_name, message.sender_email) for message in inbound_messages],
             "reply_labels": reply_message.label_ids,
         },
     )

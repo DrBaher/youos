@@ -1,4 +1,5 @@
 """Tests for persona analysis."""
+
 import sqlite3
 import tempfile
 from pathlib import Path

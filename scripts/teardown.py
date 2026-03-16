@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """YouOS teardown — remove all user data while keeping the code."""
+
 from __future__ import annotations
 
 import argparse
@@ -50,10 +51,12 @@ def _feedback_count(db_path: Path) -> int:
 def _stop_server() -> None:
     """Stop any running uvicorn server."""
     import subprocess
+
     try:
         subprocess.run(
             ["pkill", "-f", "uvicorn.*app.main:app"],
-            capture_output=True, timeout=5,
+            capture_output=True,
+            timeout=5,
         )
         print("  Stopped running server.")
     except Exception:
@@ -63,11 +66,13 @@ def _stop_server() -> None:
 def _remove_cron() -> None:
     """Remove nightly cron job if OpenClaw is available."""
     import subprocess
+
     try:
         if shutil.which("openclaw"):
             subprocess.run(
                 ["openclaw", "cron", "remove", "--name", "youos:nightly"],
-                capture_output=True, timeout=10,
+                capture_output=True,
+                timeout=10,
             )
             print("  Removed nightly cron job.")
     except Exception:

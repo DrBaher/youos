@@ -11,9 +11,7 @@ from app.ingestion.gmail_threads import (
 
 def build_parser() -> argparse.ArgumentParser:
     default_accounts = get_ingestion_accounts()
-    parser = argparse.ArgumentParser(
-        description="Import Gmail threads into the YouOS SQLite database from live gog access or local JSON dumps."
-    )
+    parser = argparse.ArgumentParser(description="Import Gmail threads into the YouOS SQLite database from live gog access or local JSON dumps.")
     parser.add_argument(
         "export_path",
         nargs="?",
@@ -47,10 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--account",
         action="append",
         default=[],
-        help=(
-            "Gmail account to ingest via gog. Repeat for multiple accounts. "
-            f"Defaults to {', '.join(default_accounts)} when --live is used."
-        ),
+        help=(f"Gmail account to ingest via gog. Repeat for multiple accounts. Defaults to {', '.join(default_accounts)} when --live is used."),
     )
     parser.add_argument(
         "--query",

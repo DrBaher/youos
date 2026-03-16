@@ -29,10 +29,7 @@ def _load_model():
         import mlx.core as mx  # noqa: F401
         from mlx_lm import load
     except ImportError as exc:
-        raise RuntimeError(
-            "mlx_lm is required for embedding generation. "
-            "Install with: pip install mlx-lm"
-        ) from exc
+        raise RuntimeError("mlx_lm is required for embedding generation. Install with: pip install mlx-lm") from exc
 
     model_id = get_base_model()
     _model, _tokenizer = load(model_id)

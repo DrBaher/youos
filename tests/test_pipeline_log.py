@@ -1,10 +1,7 @@
 """Tests for pipeline failure log."""
 
 import json
-from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 
 def test_write_pipeline_log(tmp_path):

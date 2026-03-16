@@ -1,4 +1,5 @@
 """Tests for benchmark generation."""
+
 import json
 import sqlite3
 from pathlib import Path
@@ -85,21 +86,39 @@ def _create_test_db(tmp_path: Path) -> Path:
 
     # Insert test data - enough for benchmarks
     pairs = [
-        ("src_1", "Can you review the Q4 budget proposal?", "Sure, I'll take a look at the numbers and get back to you by Friday.",
-         "john@company.com", '{"subject": "Q4 Budget"}'),
-        ("src_2", "Hey, are we still on for Saturday?", "Yes! Looking forward to it. Let's meet at noon.",
-         "friend@gmail.com", '{}'),
-        ("src_3", "Please confirm the delivery schedule for next month", "The delivery is scheduled for March 15. I've attached the updated timeline.",
-         "supplier@logistics.com", '{}'),
-        ("src_4", "Following up on the partnership proposal we discussed", "Thanks for following up. We're interested in moving forward with the integration.",
-         "partner@techco.com", '{"sender_type": "external_client"}'),
-        ("src_5", "Quick question about the API rate limits", "The current limit is 1000 requests per minute. Let me know if you need it increased.",
-         "dev@startup.io", '{}'),
+        (
+            "src_1",
+            "Can you review the Q4 budget proposal?",
+            "Sure, I'll take a look at the numbers and get back to you by Friday.",
+            "john@company.com",
+            '{"subject": "Q4 Budget"}',
+        ),
+        ("src_2", "Hey, are we still on for Saturday?", "Yes! Looking forward to it. Let's meet at noon.", "friend@gmail.com", "{}"),
+        (
+            "src_3",
+            "Please confirm the delivery schedule for next month",
+            "The delivery is scheduled for March 15. I've attached the updated timeline.",
+            "supplier@logistics.com",
+            "{}",
+        ),
+        (
+            "src_4",
+            "Following up on the partnership proposal we discussed",
+            "Thanks for following up. We're interested in moving forward with the integration.",
+            "partner@techco.com",
+            '{"sender_type": "external_client"}',
+        ),
+        (
+            "src_5",
+            "Quick question about the API rate limits",
+            "The current limit is 1000 requests per minute. Let me know if you need it increased.",
+            "dev@startup.io",
+            "{}",
+        ),
     ]
     for src_id, inbound, reply, author, meta in pairs:
         conn.execute(
-            "INSERT INTO reply_pairs (source_type, source_id, inbound_text, reply_text, inbound_author, metadata_json) "
-            "VALUES ('gmail', ?, ?, ?, ?, ?)",
+            "INSERT INTO reply_pairs (source_type, source_id, inbound_text, reply_text, inbound_author, metadata_json) VALUES ('gmail', ?, ?, ?, ?, ?)",
             (src_id, inbound, reply, author, meta),
         )
     conn.commit()
@@ -159,6 +178,7 @@ def test_write_fixtures(tmp_path):
 
     # Monkeypatch the module constants
     import scripts.generate_benchmarks as gb
+
     orig_dir = gb.FIXTURES_DIR
     orig_file = gb.BENCHMARK_FILE
     gb.FIXTURES_DIR = fixtures_dir

@@ -10,9 +10,7 @@ def _migrate_auto_feedback_column(db_path: Path) -> bool:
     try:
         cols = [row[1] for row in conn.execute("PRAGMA table_info(reply_pairs)").fetchall()]
         if "auto_feedback_processed" not in cols:
-            conn.execute(
-                "ALTER TABLE reply_pairs ADD COLUMN auto_feedback_processed INTEGER DEFAULT 0"
-            )
+            conn.execute("ALTER TABLE reply_pairs ADD COLUMN auto_feedback_processed INTEGER DEFAULT 0")
             conn.commit()
             print("  Migrated: added auto_feedback_processed column to reply_pairs")
             return True
@@ -42,9 +40,7 @@ def _migrate_sender_profiles(db_path: Path) -> bool:
     """Create sender_profiles table if it doesn't exist."""
     conn = sqlite3.connect(db_path)
     try:
-        existing = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sender_profiles'"
-        ).fetchone()
+        existing = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sender_profiles'").fetchone()
         if existing:
             return False
         conn.executescript("""
@@ -78,9 +74,7 @@ def _migrate_draft_history(db_path: Path) -> bool:
     """Create draft_history table if it doesn't exist."""
     conn = sqlite3.connect(db_path)
     try:
-        existing = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='draft_history'"
-        ).fetchone()
+        existing = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='draft_history'").fetchone()
         if existing:
             return False
         conn.execute("""

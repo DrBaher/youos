@@ -3,6 +3,7 @@
 Reads youos_config.yaml and provides typed access to user settings.
 All persona-specific values (name, emails, internal domains) are derived from this config.
 """
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -53,9 +54,19 @@ def get_internal_domains(config: dict[str, Any] | None = None) -> frozenset[str]
     """Derive internal domains from user email addresses."""
     emails = get_user_emails(config)
     domains: set[str] = set()
-    personal = {"gmail.com", "yahoo.com", "hotmail.com", "icloud.com",
-                "me.com", "outlook.com", "live.com", "aol.com",
-                "protonmail.com", "proton.me", "fastmail.com"}
+    personal = {
+        "gmail.com",
+        "yahoo.com",
+        "hotmail.com",
+        "icloud.com",
+        "me.com",
+        "outlook.com",
+        "live.com",
+        "aol.com",
+        "protonmail.com",
+        "proton.me",
+        "fastmail.com",
+    }
     for email in emails:
         if "@" in email:
             domain = email.split("@", 1)[1].lower()

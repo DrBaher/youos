@@ -1,4 +1,5 @@
 """PIN-based authentication for YouOS web UI."""
+
 from __future__ import annotations
 
 import hashlib
@@ -113,9 +114,7 @@ class LoginRateLimiter:
         self._attempts[client_ip].append(time.time())
         # Keep only recent attempts
         cutoff = time.time() - self.lockout_seconds
-        self._attempts[client_ip] = [
-            t for t in self._attempts[client_ip] if t > cutoff
-        ]
+        self._attempts[client_ip] = [t for t in self._attempts[client_ip] if t > cutoff]
 
     def reset(self, client_ip: str) -> None:
         self._attempts.pop(client_ip, None)

@@ -1,9 +1,11 @@
 """Tests for core utilities."""
+
 from app.core.diff import is_meaningfully_different, similarity_ratio
 from app.core.sender import classify_sender, extract_domain
 from app.core.text_utils import decode_html_entities, strip_quoted_text
 
 # ── diff tests ──
+
 
 def test_similarity_identical():
     assert similarity_ratio("hello", "hello") == 1.0
@@ -28,6 +30,7 @@ def test_not_meaningfully_different():
 
 # ── text_utils tests ──
 
+
 def test_strip_quoted_text():
     text = "My reply here which is long enough to pass the minimum length check.\n\nOn Mon, Jan 1, 2025, Alice wrote:\nOriginal message"
     result = strip_quoted_text(text)
@@ -47,6 +50,7 @@ def test_decode_html_entities():
 
 
 # ── sender tests ──
+
 
 def test_classify_sender_personal():
     assert classify_sender("alice@gmail.com") == "personal"

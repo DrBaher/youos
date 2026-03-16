@@ -12,12 +12,7 @@ from app.ingestion.google_docs import (
 
 def main() -> None:
     default_accounts = get_ingestion_accounts()
-    parser = argparse.ArgumentParser(
-        description=(
-            "Import Google Docs into the YouOS SQLite database from live gog access "
-            "or YouOS cached JSON snapshots."
-        )
-    )
+    parser = argparse.ArgumentParser(description=("Import Google Docs into the YouOS SQLite database from live gog access or YouOS cached JSON snapshots."))
     parser.add_argument(
         "export_path",
         nargs="?",
@@ -45,27 +40,18 @@ def main() -> None:
         "--account",
         action="append",
         default=[],
-        help=(
-            "Google account to ingest via gog. Repeat for multiple accounts. "
-            f"Defaults to {', '.join(default_accounts)} when --live is used."
-        ),
+        help=(f"Google account to ingest via gog. Repeat for multiple accounts. Defaults to {', '.join(default_accounts)} when --live is used."),
     )
     parser.add_argument(
         "--doc-id",
         action="append",
         default=[],
-        help=(
-            "Explicit Google Doc id to ingest. Repeat for multiple docs. "
-            "When set, discovery via gog drive search is skipped."
-        ),
+        help=("Explicit Google Doc id to ingest. Repeat for multiple docs. When set, discovery via gog drive search is skipped."),
     )
     parser.add_argument(
         "--query",
         default=DEFAULT_DRIVE_QUERY,
-        help=(
-            "Drive search query for live gog ingestion. Defaults to a raw Drive query "
-            "for non-trashed Google Docs."
-        ),
+        help=("Drive search query for live gog ingestion. Defaults to a raw Drive query for non-trashed Google Docs."),
     )
     parser.add_argument(
         "--full-text-query",

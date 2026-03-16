@@ -1,4 +1,5 @@
 """Export feedback pairs to JSONL for MLX chat fine-tuning."""
+
 from __future__ import annotations
 
 import argparse
@@ -56,12 +57,14 @@ def export(args: argparse.Namespace) -> None:
     # Build JSONL records
     records = []
     for row in rows:
-        records.append({
-            "messages": [
-                {"role": "user", "content": row["inbound_text"]},
-                {"role": "assistant", "content": row["edited_reply"]},
-            ]
-        })
+        records.append(
+            {
+                "messages": [
+                    {"role": "user", "content": row["inbound_text"]},
+                    {"role": "assistant", "content": row["edited_reply"]},
+                ]
+            }
+        )
 
     # Shuffle and split 90/10
     random.shuffle(records)

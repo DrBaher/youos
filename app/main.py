@@ -103,9 +103,7 @@ def create_app() -> FastAPI:
             auth_middleware.sessions.add(token)
             persist_new_session(token)
             response = RedirectResponse(url="/feedback", status_code=303)
-            response.set_cookie(
-                SESSION_COOKIE, token, max_age=SESSION_MAX_AGE, httponly=True, samesite="lax"
-            )
+            response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_MAX_AGE, httponly=True, samesite="lax")
             return response
 
         auth_middleware.limiter.record_attempt(client_ip)

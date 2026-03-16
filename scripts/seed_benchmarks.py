@@ -1,4 +1,5 @@
 """Seed benchmark_cases table from fixtures/benchmark_cases.yaml."""
+
 from __future__ import annotations
 
 import argparse

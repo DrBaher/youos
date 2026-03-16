@@ -47,12 +47,8 @@ def get_corpus_stats(database_url: str) -> dict:
         reviewed_week = 0
         avg_edit_dist = None
         try:
-            reviewed_today = conn.execute(
-                "SELECT COUNT(*) FROM feedback_pairs WHERE DATE(created_at) = DATE('now')"
-            ).fetchone()[0]
-            reviewed_week = conn.execute(
-                "SELECT COUNT(*) FROM feedback_pairs WHERE created_at >= DATE('now', '-7 days')"
-            ).fetchone()[0]
+            reviewed_today = conn.execute("SELECT COUNT(*) FROM feedback_pairs WHERE DATE(created_at) = DATE('now')").fetchone()[0]
+            reviewed_week = conn.execute("SELECT COUNT(*) FROM feedback_pairs WHERE created_at >= DATE('now', '-7 days')").fetchone()[0]
             row = conn.execute(
                 "SELECT AVG(edit_distance_pct) FROM "
                 "(SELECT edit_distance_pct FROM feedback_pairs "
@@ -66,9 +62,7 @@ def get_corpus_stats(database_url: str) -> dict:
         embedding_pct = None
         try:
             if total_pairs > 0:
-                with_emb = conn.execute(
-                    "SELECT COUNT(*) FROM reply_pairs WHERE embedding IS NOT NULL"
-                ).fetchone()[0]
+                with_emb = conn.execute("SELECT COUNT(*) FROM reply_pairs WHERE embedding IS NOT NULL").fetchone()[0]
                 embedding_pct = round((with_emb / total_pairs) * 100, 1)
         except sqlite3.OperationalError:
             pass
@@ -122,9 +116,7 @@ def get_model_status(configs_dir: Path) -> dict:
             import re
 
             log_text = AUTORESEARCH_LOG.read_text(encoding="utf-8")
-            entries = re.findall(
-                r"## Run (\d{4}-\d{2}-\d{2}[^\n]*)\n(.*?)(?=\n## Run |\Z)", log_text, re.DOTALL
-            )
+            entries = re.findall(r"## Run (\d{4}-\d{2}-\d{2}[^\n]*)\n(.*?)(?=\n## Run |\Z)", log_text, re.DOTALL)
             for date_str, body in entries[-5:]:
                 score_match = re.search(r"composite[_\s]?score[:\s]*([\d.]+)", body, re.IGNORECASE)
                 kept_match = re.search(r"improvements?\s*kept[:\s]*(\d+)", body, re.IGNORECASE)

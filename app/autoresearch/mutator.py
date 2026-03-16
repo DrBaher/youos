@@ -1,4 +1,5 @@
 """Config mutation engine for YouOS Autoresearch."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,11 +11,11 @@ import yaml
 
 @dataclass
 class ConfigSurface:
-    name: str               # e.g. "top_k_reply_pairs" or "drafting_prompt"
-    config_file: str        # relative to configs_dir, e.g. "retrieval/defaults.yaml"
-    yaml_key: str           # top-level key in the yaml file
+    name: str  # e.g. "top_k_reply_pairs" or "drafting_prompt"
+    config_file: str  # relative to configs_dir, e.g. "retrieval/defaults.yaml"
+    yaml_key: str  # top-level key in the yaml file
     current_value: Any
-    mutation_type: str      # "numeric_step" | "template_variant"
+    mutation_type: str  # "numeric_step" | "template_variant"
     step_size: float | None = None
     min_val: float | None = None
     max_val: float | None = None
@@ -28,8 +29,22 @@ _NUMERIC_SURFACES: list[dict[str, Any]] = [
     {"name": "top_k_reply_pairs", "config_file": "retrieval/defaults.yaml", "yaml_key": "top_k_reply_pairs", "step_size": 1, "min_val": 3, "max_val": 10},
     {"name": "top_k_chunks", "config_file": "retrieval/defaults.yaml", "yaml_key": "top_k_chunks", "step_size": 1, "min_val": 1, "max_val": 6},
     {"name": "recency_boost_days", "config_file": "retrieval/defaults.yaml", "yaml_key": "recency_boost_days", "step_size": 30, "min_val": 30, "max_val": 365},
-    {"name": "recency_boost_weight", "config_file": "retrieval/defaults.yaml", "yaml_key": "recency_boost_weight", "step_size": 0.05, "min_val": 0.0, "max_val": 0.5},  # noqa: E501
-    {"name": "account_boost_weight", "config_file": "retrieval/defaults.yaml", "yaml_key": "account_boost_weight", "step_size": 0.05, "min_val": 0.0, "max_val": 0.4},  # noqa: E501
+    {
+        "name": "recency_boost_weight",
+        "config_file": "retrieval/defaults.yaml",
+        "yaml_key": "recency_boost_weight",
+        "step_size": 0.05,
+        "min_val": 0.0,
+        "max_val": 0.5,
+    },  # noqa: E501
+    {
+        "name": "account_boost_weight",
+        "config_file": "retrieval/defaults.yaml",
+        "yaml_key": "account_boost_weight",
+        "step_size": 0.05,
+        "min_val": 0.0,
+        "max_val": 0.4,
+    },  # noqa: E501
 ]
 
 # -- Prompt variant definitions ─────────────────────────────────────
@@ -95,16 +110,18 @@ def get_mutable_surfaces(configs_dir: Path, *, surface_filter: str | None = None
                 current = int(current)
             else:
                 current = float(current)
-            surfaces.append(ConfigSurface(
-                name=spec["name"],
-                config_file=spec["config_file"],
-                yaml_key=spec["yaml_key"],
-                current_value=current,
-                mutation_type="numeric_step",
-                step_size=spec["step_size"],
-                min_val=spec["min_val"],
-                max_val=spec["max_val"],
-            ))
+            surfaces.append(
+                ConfigSurface(
+                    name=spec["name"],
+                    config_file=spec["config_file"],
+                    yaml_key=spec["yaml_key"],
+                    current_value=current,
+                    mutation_type="numeric_step",
+                    step_size=spec["step_size"],
+                    min_val=spec["min_val"],
+                    max_val=spec["max_val"],
+                )
+            )
 
     if surface_filter is None or surface_filter == "prompt_drafting":
         prompts_path = configs_dir / "prompts.yaml"
@@ -118,15 +135,17 @@ def get_mutable_surfaces(configs_dir: Path, *, surface_filter: str | None = None
                 variant_index = i
                 break
 
-        surfaces.append(ConfigSurface(
-            name="drafting_prompt",
-            config_file="prompts.yaml",
-            yaml_key="drafting_prompt",
-            current_value=current_prompt,
-            mutation_type="template_variant",
-            variants=_DRAFTING_PROMPT_VARIANTS,
-            variant_index=variant_index,
-        ))
+        surfaces.append(
+            ConfigSurface(
+                name="drafting_prompt",
+                config_file="prompts.yaml",
+                yaml_key="drafting_prompt",
+                current_value=current_prompt,
+                mutation_type="template_variant",
+                variants=_DRAFTING_PROMPT_VARIANTS,
+                variant_index=variant_index,
+            )
+        )
 
     return surfaces
 

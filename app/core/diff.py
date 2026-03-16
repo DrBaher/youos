@@ -1,4 +1,5 @@
 """Simple text similarity utilities for auto-feedback capture."""
+
 from __future__ import annotations
 
 from difflib import SequenceMatcher
@@ -13,8 +14,6 @@ def similarity_ratio(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
-def is_meaningfully_different(
-    draft: str, actual: str, threshold: float = 0.80
-) -> bool:
+def is_meaningfully_different(draft: str, actual: str, threshold: float = 0.80) -> bool:
     """True if draft and actual differ enough to be a useful training pair."""
     return similarity_ratio(draft, actual) < threshold

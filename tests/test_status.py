@@ -1,4 +1,5 @@
 """Tests for the improved status command."""
+
 from typer.testing import CliRunner
 
 from scripts.youos_cli import app

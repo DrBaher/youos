@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """YouOS Setup Wizard — interactive first-time configuration."""
+
 from __future__ import annotations
 
 import json
@@ -56,6 +57,7 @@ def _check_dependencies() -> bool:
 
     # mlx (optional but recommended)
     import importlib.util as _ilu
+
     if _ilu.find_spec("mlx") is not None:
         print("  mlx (Apple Silicon ML) OK")
     else:
@@ -144,7 +146,9 @@ def _verify_accounts(emails: list[str]) -> list[str]:
         try:
             result = subprocess.run(
                 ["gog", "gmail", "search", "in:sent", "--account", email, "--limit", "1", "--json"],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             if result.returncode == 0:
                 print(f"  {email}  OK")
@@ -196,11 +200,16 @@ def _run_ingestion(config: dict) -> dict:
                     sys.executable,
                     str(ROOT_DIR / "scripts" / "ingest_gmail_threads.py"),
                     "--live",
-                    "--account", email,
-                    "--query", "in:sent",
-                    "--max-threads", "0",
+                    "--account",
+                    email,
+                    "--query",
+                    "in:sent",
+                    "--max-threads",
+                    "0",
                 ],
-                capture_output=True, text=True, timeout=1800,
+                capture_output=True,
+                text=True,
+                timeout=1800,
             )
             print(result.stdout)
             if result.returncode == 0:
@@ -208,6 +217,7 @@ def _run_ingestion(config: dict) -> dict:
                 for line in result.stdout.splitlines():
                     if "threads" in line.lower() and "reply" in line.lower():
                         import re
+
                         thread_match = re.search(r"(\d+)\s*threads?", line)
                         pair_match = re.search(r"(\d+)\s*reply.?pairs?", line)
                         if thread_match:
@@ -329,13 +339,14 @@ def _run_persona_analysis(config: dict) -> dict | None:
         chosen_informal = informal_input if informal_input else f"Cheers,\n{user_name}"
 
         print()
-        print('Any phrases you never want to use? (comma-separated, or press Enter to skip)')
+        print("Any phrases you never want to use? (comma-separated, or press Enter to skip)")
         print('e.g. "Hope this email finds you well, I wanted to reach out, Please don\'t hesitate"')
         banned_input = input("> ").strip()
         banned_phrases = [p.strip() for p in banned_input.split(",") if p.strip()] if banned_input else []
 
         # Save to configs/persona.yaml
         import yaml as _yaml
+
         persona_path = ROOT_DIR / "configs" / "persona.yaml"
         persona_config = _yaml.safe_load(persona_path.read_text(encoding="utf-8")) if persona_path.exists() else {}
         persona_config["name"] = user_name
@@ -364,6 +375,7 @@ def _run_persona_analysis(config: dict) -> dict | None:
         config["persona"]["custom_constraints"] = banned_phrases
 
         import yaml as _yaml2
+
         CONFIG_PATH.write_text(
             _yaml2.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False, width=120),
             encoding="utf-8",
@@ -478,6 +490,7 @@ def _setup_pin(config: dict) -> dict:
 
     if pin:
         from app.core.auth import get_pin_hash
+
         config.setdefault("server", {})["pin"] = get_pin_hash(pin)
         print("  PIN set. You'll need this to access the web UI.")
     else:
@@ -485,6 +498,7 @@ def _setup_pin(config: dict) -> dict:
         print("  No PIN set. Access is open on your network.")
 
     import yaml as _yaml
+
     CONFIG_PATH.write_text(
         _yaml.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False, width=120),
         encoding="utf-8",
@@ -530,9 +544,17 @@ def _offer_nightly_pipeline(config: dict) -> None:
     try:
         if shutil.which("openclaw"):
             subprocess.run(
-                ["openclaw", "cron", "add", "--name", "youos:nightly",
-                 "--schedule", schedule,
-                 "--command", f"{sys.executable} {ROOT_DIR / 'scripts' / 'nightly_pipeline.py'}"],
+                [
+                    "openclaw",
+                    "cron",
+                    "add",
+                    "--name",
+                    "youos:nightly",
+                    "--schedule",
+                    schedule,
+                    "--command",
+                    f"{sys.executable} {ROOT_DIR / 'scripts' / 'nightly_pipeline.py'}",
+                ],
                 timeout=10,
             )
             print("  Registered with OpenClaw scheduler.")
@@ -576,6 +598,7 @@ def main() -> None:
 
     # Step 4: Build config
     import yaml
+
     config = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
     config.setdefault("user", {})
     config["user"]["name"] = identity["name"]

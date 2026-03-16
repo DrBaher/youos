@@ -8,9 +8,7 @@ from app.generation.service import DraftRequest, generate_draft
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Draft a reply in your style using retrieved precedent from the YouOS corpus."
-    )
+    parser = argparse.ArgumentParser(description="Draft a reply in your style using retrieved precedent from the YouOS corpus.")
     parser.add_argument(
         "message",
         nargs="?",

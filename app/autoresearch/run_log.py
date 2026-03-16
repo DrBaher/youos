@@ -1,4 +1,5 @@
 """Autoresearch run log — persists iteration results to SQLite."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -55,8 +56,7 @@ def log_iteration(
                  baseline_composite, candidate_composite, outcome, kept)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (run_tag, iteration, surface_name, mutation_desc,
-             baseline_composite, candidate_composite, outcome, 1 if kept else 0),
+            (run_tag, iteration, surface_name, mutation_desc, baseline_composite, candidate_composite, outcome, 1 if kept else 0),
         )
         conn.commit()
     finally:
