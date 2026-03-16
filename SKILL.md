@@ -104,12 +104,13 @@ youos teardown
 ## How it works
 
 1. Ingests your sent Gmail history, Google Docs, and WhatsApp exports (all stays local, never uploaded)
-2. Builds a retrieval index of your real past replies — BM25 + semantic embeddings (LRU-cached) + subject-line signal + sender-type boosts + quality scores from your feedback
-3. When you ask for a draft: retrieves the most similar past replies, assembles up to 5 few-shot exemplars, generates a reply in your style — supports full email threads; shows a low-confidence warning when precedents are weak; subject line extracted using rule-based fallback (no Claude required)
-4. Every email you review trains the model further — quality-filtered, temporally split, auto-calibrating threshold; hyperparameters auto-scale with corpus size; persona config updated nightly from corpus patterns
-5. Nightly: ingests new emails, re-analyzes persona, fine-tunes the local Qwen model, runs autoresearch (80 iterations) to optimize retrieval weights, sender boosts, prompt variants, and composite score weights
-6. Your best-rated, least-edited replies automatically surface higher in future retrievals via quality scoring
-7. Sender profiles track avg reply-time patterns; `youos note` immediately rebuilds that contact's profile
+2. Builds a retrieval index — BM25 + semantic (LRU-cached) + intent classification + same-thread 2× boost + subject signal + sender-type boosts + quality scores
+3. When you ask for a draft: classifies intent, retrieves score-ranked thread-deduplicated exemplars, generates a reply using the matching per-mode persona (internal/external/personal) — supports full threads; shows confidence warning and "How was this generated?" explainer
+4. Every email you review trains the model further — curriculum-ordered, quality-filtered, temporally split; DPO preference pairs supported; hyperparameters auto-scale with corpus size
+5. Nightly: ingests new emails, re-analyzes 8 persona style signals, fine-tunes the local Qwen model, runs autoresearch (80 iterations) to optimize retrieval weights, intent boosts, prompt variants, and composite score weights
+6. Style drift detection: Stats dashboard flags when your writing patterns shift significantly
+7. Your best-rated, least-edited replies surface higher in future retrievals via quality scoring
+8. Sender profiles track avg reply-time patterns; `youos note` immediately rebuilds that contact's profile
 
 ## Privacy
 
