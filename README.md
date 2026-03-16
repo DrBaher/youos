@@ -32,14 +32,16 @@ Gmail (sent mail)          Your feedback
 ## What it does
 
 - Ingests your sent Gmail history, Google Docs, and WhatsApp exports
-- Learns your writing style through corpus analysis
-- Drafts email replies grounded in your real past replies — with few-shot exemplars from your corpus
+- Learns your writing style through corpus analysis — persona re-analyzed nightly and auto-merged into config
+- Drafts grounded in few-shot exemplars from your real past replies; subject line used as retrieval signal
 - Handles full email threads — paste the whole thread, YouOS focuses on the latest message
 - Warns you when confidence is low (no strong precedents found)
-- Improves from your feedback via LoRA fine-tuning — training data quality-filtered, temporally split
+- Improves from your feedback via LoRA fine-tuning — quality-filtered, temporally split, auto-threshold
 - Auto-scales training hyperparameters (iterations, layers, learning rate) as your corpus grows
-- Self-optimizes nightly via autoresearch (80 iterations) — retrieval weights, sender-type boosts, prompt variants
+- Self-optimizes nightly via autoresearch — configurable composite weights, sender-type boosts, prompt variants
 - Feedback loop closes: high-rating, low-edit pairs surface higher in future retrievals
+- Sender profiles track reply-time patterns; notes trigger immediate profile rebuild
+- Embedding cache for fast repeated retrieval; corpus health visible at a glance
 - Run a golden benchmark anytime: `youos eval --golden`
 - Runs entirely locally on Apple Silicon
 
@@ -91,7 +93,11 @@ youos status
 # View corpus stats
 youos stats
 
-# Add a sender note
+# Full corpus health report (pair count, quality scores, top senders)
+youos corpus
+youos corpus --json   # raw JSON output
+
+# Add a sender note (immediately rebuilds their profile)
 youos note john@company.com "prefers bullet points, decision-maker"
 
 # Run nightly pipeline manually (with step-by-step output)

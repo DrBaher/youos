@@ -81,13 +81,17 @@ youos status
 youos improve
 youos improve --verbose
 
-# Run golden benchmark evaluation (5 curated test cases)
+# Run golden benchmark evaluation (8 curated test cases)
 youos eval --golden
+
+# Full corpus health report (pairs, quality scores, top senders)
+youos corpus
+youos corpus --json
 
 # Ingest a WhatsApp chat export (optional — augments your corpus)
 youos ingest --whatsapp ~/Downloads/WhatsApp-Chat.txt
 
-# Add sender note
+# Add sender note (immediately rebuilds their profile)
 youos note john@company.com "integration partner, prefers bullet points"
 
 # View stats
@@ -100,11 +104,12 @@ youos teardown
 ## How it works
 
 1. Ingests your sent Gmail history, Google Docs, and WhatsApp exports (all stays local, never uploaded)
-2. Builds a retrieval index of your real past replies, scored by BM25 + semantic embeddings + sender-type boosts + quality scores from your feedback
-3. When you ask for a draft: retrieves the most similar past replies, assembles up to 5 few-shot exemplars, and generates a reply in your style — supports full email threads; shows a low-confidence warning when precedents are weak
-4. Every email you review trains the model further — quality-filtered, temporally split training data; hyperparameters auto-scale with corpus size
-5. Nightly: ingests new emails, fine-tunes the local Qwen model, runs autoresearch (80 iterations) to optimize retrieval weights, sender boosts, and prompt variants
+2. Builds a retrieval index of your real past replies — BM25 + semantic embeddings (LRU-cached) + subject-line signal + sender-type boosts + quality scores from your feedback
+3. When you ask for a draft: retrieves the most similar past replies, assembles up to 5 few-shot exemplars, generates a reply in your style — supports full email threads; shows a low-confidence warning when precedents are weak; subject line extracted using rule-based fallback (no Claude required)
+4. Every email you review trains the model further — quality-filtered, temporally split, auto-calibrating threshold; hyperparameters auto-scale with corpus size; persona config updated nightly from corpus patterns
+5. Nightly: ingests new emails, re-analyzes persona, fine-tunes the local Qwen model, runs autoresearch (80 iterations) to optimize retrieval weights, sender boosts, prompt variants, and composite score weights
 6. Your best-rated, least-edited replies automatically surface higher in future retrievals via quality scoring
+7. Sender profiles track avg reply-time patterns; `youos note` immediately rebuilds that contact's profile
 
 ## Privacy
 

@@ -161,11 +161,18 @@ body {
       <li>Ingests Gmail, Google Docs, and WhatsApp exports as corpus sources</li>
       <li>Handles full email threads — paste the whole thread, YouOS focuses on the latest message</li>
       <li>Drafts grounded in few-shot exemplars from your real past replies (up to 5 per draft)</li>
+      <li>Subject line used as a retrieval signal — matching threads surface more relevant precedents</li>
       <li>Confidence-gated warnings — low-precedent drafts show a clear banner in the UI</li>
       <li>Training data quality filters — only high-signal feedback pairs used for fine-tuning</li>
+      <li>Auto-calibrating similarity threshold — drops to 0.65 for small corpora to capture more signal</li>
       <li>Auto-scales LoRA training hyperparameters as your corpus grows</li>
+      <li>Persona re-analyzed nightly — greeting/closing patterns auto-merge into persona config</li>
+      <li>Sender profiles track reply-time patterns — typical response time shown in draft context</li>
+      <li>Sender notes immediately rebuild that sender's profile: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos note</code></li>
       <li>Sender-type boost: external clients, internal, personal, automated — all weighted differently in retrieval</li>
+      <li>Review queue prioritises recent emails — more current writing patterns train the model</li>
       <li>Optional cross-encoder reranking for higher retrieval precision</li>
+      <li>Corpus health at a glance: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos corpus</code></li>
       <li>Golden benchmark suite: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos eval --golden</code></li>
       <li>Rate-limited draft generation — your data is never over-shared</li>
       <li>Mobile-friendly UI — use the Review Queue anywhere</li>
@@ -237,10 +244,12 @@ body {
       <li>Ingests your new sent emails, Docs, and WhatsApp messages from the last 48 hours</li>
       <li>Captures feedback pairs (comparing what YouOS would have drafted vs what you actually sent)</li>
       <li>Fine-tunes the local Qwen model if enough new pairs exist</li>
-      <li>Runs 80 optimisation experiments &mdash; testing retrieval weights, sender-type boosts, prompt variants</li>
+      <li>Runs 80 optimisation experiments &mdash; testing retrieval weights, sender-type boosts, prompt variants, and composite score weights</li>
       <li>Keeps changes that improve your benchmark score, reverts changes that don't</li>
+      <li>Composite score weights are configurable in <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">configs/autoresearch.yaml</code> — tune pass_rate vs keyword vs confidence emphasis</li>
       <li>Writes a structured JSONL run log — benchmark trends visible in the Stats dashboard</li>
       <li>High-quality feedback pairs (high rating, low edit distance) surface higher in future retrievals automatically</li>
+      <li>Auto-feedback lookback window adapts to actual elapsed time — no missed pairs after a gap</li>
     </ol>
     <div class="prose" style="margin-top:1rem;">
       <p>The result: YouOS gets a little better every night, automatically.</p>
@@ -300,15 +309,16 @@ body {
     <h2 class="section-title">Tech stack</h2>
     <div class="tech-grid">
       <div class="tech-card"><strong>Model</strong><br><span>Qwen2.5-1.5B-Instruct (Apple Silicon, MLX)</span></div>
-      <div class="tech-card"><strong>Fine-tuning</strong><br><span>LoRA via mlx-lm — auto-scaled iters/layers/LR, quality-filtered training data, temporal val split</span></div>
+      <div class="tech-card"><strong>Fine-tuning</strong><br><span>LoRA via mlx-lm — auto-scaled iters/layers/LR, quality-filtered &amp; temporally-split training data, auto-calibrating similarity threshold</span></div>
       <div class="tech-card"><strong>Database</strong><br><span>SQLite + FTS5 (local, no server)</span></div>
-      <div class="tech-card"><strong>Retrieval</strong><br><span>BM25 + semantic embeddings + sender-type boosts + quality-score multiplier + optional cross-encoder reranking</span></div>
+      <div class="tech-card"><strong>Retrieval</strong><br><span>BM25 + semantic embeddings (LRU-cached) + subject-line signal + sender-type boosts + quality-score multiplier + optional cross-encoder reranking</span></div>
       <div class="tech-card"><strong>Backend</strong><br><span>Python + FastAPI</span></div>
       <div class="tech-card"><strong>Email access</strong><br><span>gog CLI (Google Workspace)</span></div>
       <div class="tech-card"><strong>Networking</strong><br><span>Tailscale (private HTTPS)</span></div>
       <div class="tech-card"><strong>WhatsApp</strong><br><span>Export file parser (no app access needed)</span></div>
       <div class="tech-card"><strong>Rate limiting</strong><br><span>Per-IP sliding window (stdlib, no extra deps)</span></div>
-      <div class="tech-card"><strong>Benchmarking</strong><br><span>Golden suite (5 curated cases) + autoresearch composite score + structured JSONL run log</span></div>
+      <div class="tech-card"><strong>Benchmarking</strong><br><span>Golden suite (8 curated cases: work, personal, multilang, brevity) + configurable composite weights + structured JSONL run log</span></div>
+      <div class="tech-card"><strong>Sender intelligence</strong><br><span>Profiles track reply-time patterns (avg_response_hours) + notes trigger immediate rebuild</span></div>
     </div>
   </div>
 
@@ -353,7 +363,15 @@ body {
     </div>
     <div class="faq-item">
       <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">How can I test if YouOS is improving?</div>
-      <div class="faq-a">Run <code>youos eval --golden</code> against the built-in golden benchmark suite — 5 curated test cases with expected keywords, mode, and brevity. Scores are saved to <code>var/golden_results.json</code> so you can track improvement over time.</div>
+      <div class="faq-a">Run <code>youos eval --golden</code> against the built-in golden benchmark suite — 8 curated test cases covering work, personal, multilang, and brevity scenarios. Scores are saved to <code>var/golden_results.json</code> so you can track improvement over time.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">How do I see corpus health at a glance?</div>
+      <div class="faq-a">Run <code>youos corpus</code>. It shows reply pair count, document count, feedback pairs, embedding coverage %, quality score distribution (min/median/max), and your top senders by pair count. Use <code>--json</code> for machine-readable output.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">How does YouOS tune its own autoresearch weights?</div>
+      <div class="faq-a">The composite benchmark score weights (pass rate, keyword hit rate, confidence) are stored in <code>configs/autoresearch.yaml</code> and are themselves mutable surfaces in autoresearch. You can also edit them directly to emphasise what matters most for your use case.</div>
     </div>
   </div>
 
