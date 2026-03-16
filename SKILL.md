@@ -1,8 +1,9 @@
 ---
 name: youos
 description: >
-  YouOS — your personal AI email copilot. Learns your writing style from your Gmail history
-  and drafts replies that sound like you. Improves automatically from your feedback.
+  YouOS — your personal AI email copilot. Learns your writing style from your Gmail history,
+  Google Docs, and WhatsApp exports, then drafts replies that sound like you. Improves
+  automatically from your feedback via nightly LoRA fine-tuning and autoresearch.
   Runs entirely locally on Apple Silicon. Use when: drafting email replies, reviewing
   how you've handled similar situations before, or setting up a self-improving personal
   communication assistant.
@@ -60,6 +61,9 @@ YouOS drafts email replies in your style, grounded in your real past replies.
 cd ~/Projects/youos
 pip install -e .
 
+# Check system requirements (Python, gog CLI, disk space, etc.)
+youos doctor
+
 # Run setup wizard (15 min, mostly ingestion)
 youos setup
 
@@ -73,8 +77,12 @@ youos ui
 # Check status
 youos status
 
-# Run nightly pipeline manually
+# Run nightly pipeline manually (add --verbose for step-by-step output)
 youos improve
+youos improve --verbose
+
+# Ingest a WhatsApp chat export (optional — augments your corpus)
+youos ingest --whatsapp ~/Downloads/WhatsApp-Chat.txt
 
 # Add sender note
 youos note john@company.com "integration partner, prefers bullet points"
@@ -88,11 +96,11 @@ youos teardown
 
 ## How it works
 
-1. Ingests your sent Gmail history (stays local, never uploaded)
+1. Ingests your sent Gmail history, Google Docs, and WhatsApp exports (all stays local, never uploaded)
 2. Builds a retrieval index of your real past replies
-3. When you ask for a draft: retrieves the most similar past replies and generates a new one in your style
+3. When you ask for a draft: retrieves the most similar past replies and generates a new one in your style — supports full email threads
 4. Every email you review trains the model further
-5. Nightly: ingests new emails, fine-tunes the local Qwen model, runs autoresearch to optimize retrieval
+5. Nightly: ingests new emails, fine-tunes the local Qwen model, runs autoresearch (80 iterations) to optimize retrieval
 
 ## Privacy
 
