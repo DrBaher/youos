@@ -103,14 +103,15 @@ youos teardown
 
 ## How it works
 
-1. Ingests your sent Gmail history, Google Docs, and WhatsApp exports (all stays local, never uploaded)
-2. Builds a retrieval index — BM25 + semantic (LRU-cached) + intent classification + same-thread 2× boost + subject signal + sender-type boosts + quality scores
-3. When you ask for a draft: classifies intent, retrieves score-ranked thread-deduplicated exemplars, generates a reply using the matching per-mode persona (internal/external/personal) — supports full threads; shows confidence warning and "How was this generated?" explainer
-4. Every email you review trains the model further — curriculum-ordered, quality-filtered, temporally split; DPO preference pairs supported; hyperparameters auto-scale with corpus size
-5. Nightly: ingests new emails, re-analyzes 8 persona style signals, fine-tunes the local Qwen model, runs autoresearch (80 iterations) to optimize retrieval weights, intent boosts, prompt variants, and composite score weights
+1. Ingests Gmail, Google Docs, WhatsApp exports — plus organic pairs from emails you sent without YouOS
+2. Builds a retrieval index — BM25 + query expansion + semantic (LRU-cached) + multi-intent + same-thread 2× + subject + topic signals + sender-type boosts + quality scores
+3. When you ask for a draft: detects multi-intent, retrieves score-ranked thread-deduplicated exemplars, generates a reply using the matching per-mode persona with first-name greeting and correct closing — per-intent reply length calibrated from corpus
+4. Every email you review trains the model further — curriculum-ordered, quality-filtered, DPO pairs supported; nightly pipeline uses smart skip gates (no compute wasted on quiet days)
+5. Nightly: ingests new emails + organic pairs, re-analyzes 8 persona style signals, fine-tunes (when enough data), runs autoresearch (80 iterations) to optimize retrieval, intent boosts, prompt variants, and composite score weights
 6. Style drift detection: Stats dashboard flags when your writing patterns shift significantly
 7. Your best-rated, least-edited replies surface higher in future retrievals via quality scoring
-8. Sender profiles track avg reply-time patterns; `youos note` immediately rebuilds that contact's profile
+8. Sender profiles track reply-time patterns and topics; `youos note` immediately rebuilds that contact's profile
+9. Setup wizard asks for internal domains — accurate sender classification from day one
 
 ## Privacy
 

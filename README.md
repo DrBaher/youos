@@ -31,22 +31,23 @@ Gmail (sent mail)          Your feedback
 
 ## What it does
 
-- Ingests your sent Gmail history, Google Docs, and WhatsApp exports
+- Ingests your sent Gmail history, Google Docs, WhatsApp exports — including organic pairs you sent without YouOS
 - Learns your writing style — richer persona: bullet point rate, directness score, sentence length, paragraph style, all merged nightly
 - Per-sender-type personas: different voice, length, greeting, and closing for internal, external client, and personal contacts
-- Classifies inbound intent (meeting request, approval, status update, complaint, etc.) and boosts matching exemplars
-- Drafts grounded in score-ranked few-shot exemplars (confidence-annotated, thread-deduplicated); subject line used as retrieval signal
-- Same-thread history gets a 2x retrieval boost — strongest possible context signal
+- Greets people by first name, closes in your style — greeting and closing injected from persona config per contact type
+- Classifies multi-intent (meeting + urgent, etc.), boosts matching exemplars; per-intent reply length calibrated from corpus
+- Drafts grounded in score-ranked few-shot exemplars (confidence-annotated, thread-deduplicated); subject line + topic-aware retrieval signal
+- Same-thread history gets a 2x retrieval boost; FTS queries expanded with email vocabulary synonyms
 - Handles full email threads — paste the whole thread, YouOS focuses on the latest message
-- Warns you when confidence is low (no strong precedents found); explain any draft: `How was this generated?`
+- Warns you when confidence is low; explain any draft inline: `How was this generated?`
 - Improves from your feedback via LoRA fine-tuning — quality-filtered, curriculum-ordered, DPO preference pairs supported
-- Auto-scales training hyperparameters as your corpus grows; hybrid token+character similarity for auto-feedback capture
+- Auto-scales training hyperparameters; nightly pipeline skips steps when data is insufficient (no wasted compute)
 - Self-optimizes nightly via autoresearch — configurable composite weights, sender-type boosts, intent signals
-- Style drift detection: notified in the Stats dashboard when your writing patterns shift significantly
+- Style drift detection: Stats dashboard flags when your writing patterns shift significantly
 - Feedback loop closes: high-rating, low-edit pairs surface higher in future retrievals
-- Sender profiles track reply-time patterns; notes trigger immediate profile rebuild
+- Sender profiles track reply-time patterns and topics; notes trigger immediate profile rebuild
 - Embedding cache for fast repeated retrieval; corpus health at a glance: `youos corpus`
-- Run a golden benchmark anytime: `youos eval --golden`
+- Run a golden benchmark anytime (10 curated cases): `youos eval --golden`
 - Runs entirely locally on Apple Silicon
 
 ## Requirements
@@ -123,9 +124,10 @@ youos ingest --whatsapp ~/Downloads/WhatsApp-Chat.txt
 ## Web UI
 
 The web UI provides:
-- **Draft Reply**: Paste an inbound email (or full thread), generate a draft, edit and submit feedback. See confidence level, detected intent, and exemplar trace via "How was this generated?"
+- **Draft Reply**: Paste an inbound email (or full thread), generate a draft grounded in your style. See confidence, detected intent, and exemplar trace via "How was this generated?"
 - **Review Queue**: Review auto-generated drafts — configurable batch size (5/10/20), keyboard shortcuts (`j`/`k`)
-- **Stats Dashboard**: Corpus health, model status, pipeline status, style drift indicator, benchmark trends
+- **History**: Past drafts with intent badges, confidence badges, and edit-distance indicators
+- **Stats Dashboard**: Corpus health, model status, pipeline status (with skipped steps), style drift indicator, benchmark trends
 - **Gmail Bookmarklet**: One-click drafting from Gmail
 
 ## Architecture

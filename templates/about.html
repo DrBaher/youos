@@ -158,13 +158,15 @@ body {
       <p>It runs entirely on your Mac. No cloud. No subscriptions. Your data never leaves your machine.</p>
     </div>
     <ul style="margin-top:1rem;color:#bbb;font-size:0.9rem;line-height:2;padding-left:1.2rem;">
-      <li>Ingests Gmail, Google Docs, and WhatsApp exports as corpus sources</li>
+      <li>Ingests Gmail, Google Docs, WhatsApp exports — plus organic pairs from sent mail without YouOS involvement</li>
       <li>Handles full email threads — paste the whole thread; same-thread history gets a 2&times; retrieval boost</li>
       <li>Drafts grounded in score-ranked, confidence-annotated, thread-deduplicated exemplars (up to 5)</li>
-      <li>Classifies inbound email intent (meeting, approval, status update, complaint, etc.) and boosts matching exemplars 1.2&times;</li>
+      <li>Detects multi-intent (e.g. urgent + approval) and boosts matching exemplars 1.2&times;; per-intent reply length calibrated from your corpus</li>
       <li>Per-sender-type persona variants — different voice, length, greeting, and closing for internal, external, and personal contacts</li>
+      <li>Greets people by first name, closes in your style — greeting and closing injected from persona per contact type</li>
       <li>Richer persona: bullet point rate, directness score, sentence length, avg paragraphs — all extracted nightly and used in prompts</li>
-      <li>Subject line used as a retrieval signal — matching threads surface more relevant precedents</li>
+      <li>Subject line + topic-aware retrieval signals — known topics from sender profiles boost matching pairs</li>
+      <li>FTS queries expanded with email vocabulary synonyms (reschedule → postpone, meeting, call…)</li>
       <li>Confidence-gated warnings — low-precedent drafts show a clear banner; explain any draft inline</li>
       <li>Training data quality filters — only high-signal feedback pairs used for fine-tuning</li>
       <li>Curriculum learning for LoRA fine-tuning — quality-ordered warmup before temporal training</li>
@@ -172,15 +174,18 @@ body {
       <li>Hybrid token + character similarity for smarter auto-feedback capture</li>
       <li>Auto-calibrating similarity threshold — drops to 0.65 for small corpora to capture more signal</li>
       <li>Auto-scales LoRA training hyperparameters as your corpus grows</li>
+      <li>Smart nightly pipeline — skips finetune/autoresearch/embeddings when data is insufficient (no wasted compute)</li>
       <li>Persona re-analyzed nightly — all style signals auto-merge into persona config</li>
       <li>Style drift detection — Stats dashboard flags when your writing patterns shift significantly</li>
-      <li>Sender profiles track reply-time patterns — typical response time shown in draft context</li>
+      <li>Sender profiles track reply-time patterns and topics — both used in retrieval boosting</li>
       <li>Sender notes immediately rebuild that sender's profile: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos note</code></li>
       <li>Sender-type boost: external clients, internal, personal, automated — all weighted differently in retrieval</li>
       <li>Review queue: configurable batch size (5/10/20), prioritises recent emails</li>
+      <li>History tab: intent and confidence badges on every past draft</li>
       <li>Optional cross-encoder reranking for higher retrieval precision</li>
       <li>Corpus health at a glance: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos corpus</code></li>
-      <li>Golden benchmark suite: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos eval --golden</code></li>
+      <li>Golden benchmark suite (10 curated cases): <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos eval --golden</code></li>
+      <li>Setup wizard asks for internal domains — accurate internal vs external classification from day one</li>
       <li>Rate-limited draft generation — your data is never over-shared</li>
       <li>Mobile-friendly UI — use the Review Queue anywhere</li>
       <li>Pre-flight health check: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos doctor</code></li>
@@ -316,17 +321,17 @@ body {
     <h2 class="section-title">Tech stack</h2>
     <div class="tech-grid">
       <div class="tech-card"><strong>Model</strong><br><span>Qwen2.5-1.5B-Instruct (Apple Silicon, MLX)</span></div>
-      <div class="tech-card"><strong>Fine-tuning</strong><br><span>LoRA via mlx-lm — curriculum-ordered training, DPO preference pairs, auto-scaled hyperparams, quality-filtered &amp; temporal split</span></div>
+      <div class="tech-card"><strong>Fine-tuning</strong><br><span>LoRA via mlx-lm — curriculum-ordered, DPO preference pairs, organic pair capture, auto-scaled hyperparams, smart skip gates</span></div>
       <div class="tech-card"><strong>Database</strong><br><span>SQLite + FTS5 (local, no server)</span></div>
-      <div class="tech-card"><strong>Retrieval</strong><br><span>BM25 + semantic (LRU-cached) + intent boosting + same-thread 2× boost + subject signal + sender-type boosts + quality-score multiplier + optional cross-encoder</span></div>
+      <div class="tech-card"><strong>Retrieval</strong><br><span>BM25 + query expansion + semantic (LRU-cached) + intent + same-thread 2× + subject + topic + sender-type boosts + quality-score + optional cross-encoder</span></div>
       <div class="tech-card"><strong>Backend</strong><br><span>Python + FastAPI</span></div>
       <div class="tech-card"><strong>Email access</strong><br><span>gog CLI (Google Workspace)</span></div>
       <div class="tech-card"><strong>Networking</strong><br><span>Tailscale (private HTTPS)</span></div>
       <div class="tech-card"><strong>WhatsApp</strong><br><span>Export file parser (no app access needed)</span></div>
       <div class="tech-card"><strong>Rate limiting</strong><br><span>Per-IP sliding window (stdlib, no extra deps)</span></div>
-      <div class="tech-card"><strong>Benchmarking</strong><br><span>Golden suite (8 cases) + configurable composite weights + structured JSONL run log + style drift tracking</span></div>
-      <div class="tech-card"><strong>Sender intelligence</strong><br><span>Per-mode persona variants + reply-time patterns + intent classification + notes trigger immediate rebuild</span></div>
-      <div class="tech-card"><strong>Draft transparency</strong><br><span>"How was this generated?" — inline explainer with confidence, intent, top 3 exemplars and their scores</span></div>
+      <div class="tech-card"><strong>Benchmarking</strong><br><span>Golden suite (10 cases incl. mode-verification) + configurable composite weights + JSONL run log + style drift tracking</span></div>
+      <div class="tech-card"><strong>Sender intelligence</strong><br><span>Per-mode persona + first-name greeting injection + reply-time patterns + topics + multi-intent + notes rebuild immediately</span></div>
+      <div class="tech-card"><strong>Draft transparency</strong><br><span>"How was this generated?" — inline explainer with confidence, intent, top 3 exemplars; History tab with intent + confidence badges</span></div>
     </div>
   </div>
 
@@ -396,6 +401,18 @@ body {
     <div class="faq-item">
       <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">What is style drift and how does it affect me?</div>
       <div class="faq-a">Style drift means your recent writing patterns have shifted noticeably from your historical baseline — e.g. your replies are getting significantly shorter, or your directness score has dropped. YouOS tracks this in the Stats dashboard and flags it so you can decide whether to let the persona config adapt or keep the original settings.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Does YouOS know what kind of email I'm replying to?</div>
+      <div class="faq-a">Yes. YouOS detects up to 3 simultaneous intents per email (e.g. meeting request + urgent) and uses them to boost the most relevant exemplars. It also calibrates reply length per intent — your typical "thank you" reply is shorter than your "status update" reply, and the model learns this from your corpus automatically.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Does YouOS learn from emails I send without using it?</div>
+      <div class="faq-a">Yes — organic pair capture. Each night, YouOS also collects emails you sent without asking for a draft. These become training pairs automatically, expanding your corpus even on days you don't use the Review Queue.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">What happens on quiet days when there's nothing new to learn?</div>
+      <div class="faq-a">The nightly pipeline has smart skip gates. If fewer than 3 new feedback pairs exist, fine-tuning is skipped. If fewer than 5, autoresearch is skipped. If all documents already have embeddings, the indexer is skipped. This prevents wasted compute and avoids degrading the model on insufficient data.</div>
     </div>
   </div>
 
