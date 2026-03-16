@@ -607,6 +607,7 @@ def main() -> None:
     config["user"]["names"] = identity["names"]
     config.setdefault("ingestion", {})
     config["ingestion"]["accounts"] = identity["emails"]
+    config.setdefault("review", {})["batch_size"] = 10
 
     # Save config
     CONFIG_PATH.write_text(

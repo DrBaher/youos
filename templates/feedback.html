@@ -323,6 +323,12 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
   <!-- Tab 2: Review Queue -->
   <div class="tab-content" id="tab-review-queue">
+    <div style="display:flex;gap:0.6rem;align-items:center;margin-bottom:0.8rem;">
+      <span style="font-size:0.82rem;color:#888;">Batch size:</span>
+      <button class="btn-tone batch-size-btn" data-bs="5" style="padding:0.3rem 0.7rem;">5</button>
+      <button class="btn-tone batch-size-btn active" data-bs="10" style="padding:0.3rem 0.7rem;background:#00c4a7;color:#1a1a2e;">10</button>
+      <button class="btn-tone batch-size-btn" data-bs="20" style="padding:0.3rem 0.7rem;">20</button>
+    </div>
     <div id="rqLoading" style="display:none;">
       <div class="loading-card">
         <div class="loading-spinner"></div>
@@ -843,6 +849,27 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     }
   });
 
+  // Batch size selector
+  let rqBatchSize = parseInt(localStorage.getItem('youos_batch_size') || '10');
+  document.querySelectorAll('.batch-size-btn').forEach(btn => {
+    const bs = parseInt(btn.dataset.bs);
+    if (bs === rqBatchSize) {
+      btn.style.background = '#00c4a7';
+      btn.style.color = '#1a1a2e';
+    } else {
+      btn.style.background = '#444';
+      btn.style.color = '#e0e0e0';
+    }
+    btn.addEventListener('click', () => {
+      rqBatchSize = bs;
+      localStorage.setItem('youos_batch_size', String(bs));
+      document.querySelectorAll('.batch-size-btn').forEach(b => {
+        if (parseInt(b.dataset.bs) === bs) { b.style.background = '#00c4a7'; b.style.color = '#1a1a2e'; }
+        else { b.style.background = '#444'; b.style.color = '#e0e0e0'; }
+      });
+    });
+  });
+
   // Review Queue tab
   let rqLoaded = false;
   let rqItems = [];
@@ -989,7 +1016,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     document.getElementById('rqBatchComplete').style.display = 'none';
 
     try {
-      let url = '/review-queue/next?batch_size=10';
+      let url = '/review-queue/next?batch_size=' + rqBatchSize;
       if (rqSkippedIds.length > 0) {
         url += '&exclude_ids=' + rqSkippedIds.join(',');
       }

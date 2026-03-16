@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 
+from app.core.config import get_review_batch_size, load_config
 from app.core.diff import similarity_ratio
 from app.core.sender import classify_sender
 from app.core.text_utils import decode_html_entities, strip_quoted_text
@@ -246,11 +247,15 @@ def _count_reviewed_today(db_path: Path) -> int:
 @router.get("/next")
 def review_queue_next(
     request: Request,
-    batch_size: int = Query(default=10, ge=1, le=50),
+    batch_size: int = Query(default=None, ge=1, le=50),
     exclude_ids: str = Query(default=""),
 ) -> dict:
     db_path = _get_db_path(request)
     settings = _get_settings(request)
+
+    # Use config batch_size if not explicitly provided
+    if batch_size is None:
+        batch_size = get_review_batch_size()
 
     # Parse exclude_ids
     excluded: list[int] = []

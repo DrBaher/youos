@@ -122,6 +122,13 @@ def is_ollama_enabled(config: dict[str, Any] | None = None) -> bool:
     return bool(get_ollama_config(config).get("enabled", False))
 
 
+def get_review_batch_size(config: dict[str, Any] | None = None) -> int:
+    """Read review.batch_size from config, default 10, clamped to 5-50."""
+    cfg = config or load_config()
+    raw = cfg.get("review", {}).get("batch_size", 10)
+    return max(5, min(50, int(raw)))
+
+
 def get_last_ingest_at(account: str, config: dict[str, Any] | None = None) -> str | None:
     cfg = config or load_config()
     return cfg.get("ingestion", {}).get("last_ingest_at", {}).get(account)
