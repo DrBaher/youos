@@ -320,6 +320,98 @@ def teardown(
     do_teardown(delete_all=all_data)
 
 
+@app.command()
+def doctor():
+    """Check system requirements and project health."""
+    import shutil
+    import socket
+
+    from rich.console import Console
+
+    from app.core.config import get_user_emails, load_config
+
+    console = Console()
+    all_required_pass = True
+
+    def check(name: str, passed: bool, required: bool = True) -> None:
+        nonlocal all_required_pass
+        icon = "\u2713" if passed else "\u2717"
+        style = "green" if passed else ("red" if required else "yellow")
+        level = "required" if required else "warning"
+        console.print(f"  [{style}]{icon}[/{style}] {name} ({level})")
+        if required and not passed:
+            all_required_pass = False
+
+    console.print("[bold]YouOS Doctor[/bold]\n")
+
+    # Python >= 3.11
+    check("Python >= 3.11", sys.version_info >= (3, 11))
+
+    # gog CLI installed
+    check("gog CLI installed", shutil.which("gog") is not None)
+
+    # mlx_lm importable
+    try:
+        import importlib
+        importlib.import_module("mlx_lm")
+        mlx_ok = True
+    except ImportError:
+        mlx_ok = False
+    check("mlx_lm importable", mlx_ok)
+
+    # youos_config.yaml exists
+    config_path = ROOT_DIR / "youos_config.yaml"
+    check("youos_config.yaml exists", config_path.exists())
+
+    # user.emails set
+    try:
+        emails = get_user_emails()
+        emails_set = len(emails) > 0
+    except Exception:
+        emails_set = False
+    check("user.emails set in config", emails_set)
+
+    # var/youos.db exists (warning)
+    db_path = ROOT_DIR / "var" / "youos.db"
+    check("var/youos.db exists", db_path.exists(), required=False)
+
+    # >= 3GB disk free (warning)
+    try:
+        stat = os.statvfs(ROOT_DIR)
+        free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
+        check(f">= 3GB disk free ({free_gb:.1f}GB available)", free_gb >= 3.0, required=False)
+    except Exception:
+        check(">= 3GB disk free", False, required=False)
+
+    # models/ dir has content (warning)
+    models_dir = ROOT_DIR / "models"
+    has_models = models_dir.exists() and any(models_dir.iterdir())
+    check("models/ dir has content", has_models, required=False)
+
+    # Port 8901 free (warning)
+    try:
+        from app.core.config import get_server_port
+        port = get_server_port()
+    except Exception:
+        port = 8901
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind(("127.0.0.1", port))
+        s.close()
+        port_free = True
+    except OSError:
+        port_free = False
+    check(f"Port {port} free", port_free, required=False)
+
+    console.print()
+    if all_required_pass:
+        console.print("[bold green]All required checks passed.[/bold green]")
+        raise SystemExit(0)
+    else:
+        console.print("[bold red]Some required checks failed.[/bold red]")
+        raise SystemExit(1)
+
+
 model_app = typer.Typer(help="Manage the local model.")
 app.add_typer(model_app, name="model")
 
