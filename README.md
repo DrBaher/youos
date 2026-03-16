@@ -32,16 +32,25 @@ Gmail (sent mail)          Your feedback
 ## What it does
 
 - Ingests your sent Gmail history, Google Docs, WhatsApp exports — including organic pairs you sent without YouOS
-- Learns your writing style — richer persona: bullet point rate, directness score, sentence length, paragraph style, all merged nightly
+- Learns your writing style — richer persona: bullet point rate, directness score, sentence length, paragraph style; EWMA-weighted toward recent emails
+- Persona re-analysis is incremental (recent 90 days × 3 weight), with full weekly refresh; confidence intervals (p25/p75) shown in prompts
 - Per-sender-type personas: different voice, length, greeting, and closing for internal, external client, and personal contacts
+- Per-account corpus isolation — drafts for work emails draw from work history; personal from personal
 - Greets people by first name, closes in your style — greeting and closing injected from persona config per contact type
 - Classifies multi-intent (meeting + urgent, etc.), boosts matching exemplars; per-intent reply length calibrated from corpus
-- Drafts grounded in score-ranked few-shot exemplars (confidence-annotated, thread-deduplicated); subject line + topic-aware retrieval signal
-- Same-thread history gets a 2x retrieval boost; FTS queries expanded with email vocabulary synonyms
+- Drafts grounded in score-ranked few-shot exemplars (confidence-annotated, thread-deduplicated); exemplar reply text preserved (600 chars), inbound trimmed (400)
+- Prompt token budget enforced — exemplars auto-trimmed if prompt exceeds 2000 tokens
+- Confidence thresholds are relative (mean±σ of retrieval scores), not hardcoded
+- Subject line + topic-aware retrieval; FTS queries expanded with email vocabulary synonyms
+- Same-thread history gets a 2x retrieval boost
 - Handles full email threads — paste the whole thread, YouOS focuses on the latest message
-- Warns you when confidence is low; explain any draft inline: `How was this generated?`
-- Improves from your feedback via LoRA fine-tuning — quality-filtered, curriculum-ordered, DPO preference pairs supported
-- Auto-scales training hyperparameters; nightly pipeline skips steps when data is insufficient (no wasted compute)
+- Warns you when confidence is low; explain any draft inline via "How was this generated?"
+- Local model empty output → automatic Claude fallback
+- Improves from your feedback via LoRA fine-tuning — quality-filtered, deduplicated, curriculum-ordered, DPO preference pairs supported
+- Training export deduplicated by inbound similarity (≥0.95 → keep higher-rated pair)
+- Auto-scales training hyperparameters; nightly pipeline skips steps when data is insufficient
+- Golden eval runs nightly after fine-tuning — composite score tracked in pipeline log
+- Autoresearch benchmarks rotate weekly (seeded re-sample) to prevent overfitting to fixed test cases
 - Self-optimizes nightly via autoresearch — configurable composite weights, sender-type boosts, intent signals
 - Style drift detection: Stats dashboard flags when your writing patterns shift significantly
 - Feedback loop closes: high-rating, low-edit pairs surface higher in future retrievals
@@ -105,13 +114,17 @@ youos corpus --json   # raw JSON output
 # Add a sender note (immediately rebuilds their profile)
 youos note john@company.com "prefers bullet points, decision-maker"
 
+# Submit a feedback pair directly from the terminal
+youos feedback --inbound "email text" --reply "your reply" --rating 4
+youos feedback --inbound "..." --reply "..." --sender "sarah@co.com" --note "too formal"
+
 # Run nightly pipeline manually (with step-by-step output)
 youos improve --verbose
 
 # Check system requirements
 youos doctor
 
-# Run golden benchmark evaluation
+# Run golden benchmark evaluation (10 curated cases)
 youos eval --golden
 
 # Start the web server
