@@ -8,9 +8,12 @@ import random
 import sqlite3
 from pathlib import Path
 
+import yaml
+
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT_DIR / "var" / "youos.db"
 DEFAULT_OUTPUT_DIR = ROOT_DIR / "data" / "feedback"
+CONFIGS_DIR = ROOT_DIR / "configs"
 
 
 def parse_args() -> argparse.Namespace:
@@ -20,7 +23,67 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output", type=str, default=None, help="Output file path (default: data/feedback/train.jsonl)")
     p.add_argument("--min-rating", type=int, default=None, help="Minimum rating to include")
     p.add_argument("--db", type=str, default=str(DEFAULT_DB), help="Database path")
+    p.add_argument("--no-persona", action="store_true", help="Use bare format without persona/system prompt")
+    p.add_argument("--configs-dir", type=str, default=str(CONFIGS_DIR), help="Configs directory")
     return p.parse_args()
+
+
+def _load_persona(configs_dir: Path) -> dict:
+    path = configs_dir / "persona.yaml"
+    if not path.exists():
+        return {}
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def _load_prompts(configs_dir: Path) -> dict:
+    path = configs_dir / "prompts.yaml"
+    if not path.exists():
+        return {}
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def _build_system_message(persona: dict, prompts: dict) -> str:
+    """Build a system message combining system_prompt and persona preamble."""
+    system_prompt = prompts.get("system_prompt", "You are YouOS, a local-first personal email copilot.").strip()
+
+    style = persona.get("style", {})
+    voice = style.get("voice")
+    avg_words = style.get("avg_reply_words")
+    greeting_patterns = persona.get("greeting_patterns", {})
+    closing_patterns = persona.get("closing_patterns", {})
+
+    preamble_parts: list[str] = []
+    if voice:
+        preamble_parts.append(f"Voice style: {voice}.")
+    if avg_words:
+        preamble_parts.append(f"Target reply length: ~{avg_words} words.")
+    if greeting_patterns:
+        greetings = ", ".join(f"{k}: {v}" for k, v in greeting_patterns.items() if k != "default")
+        if greetings:
+            preamble_parts.append(f"Greeting patterns: {greetings}.")
+    if closing_patterns:
+        closings = ", ".join(f"{k}: {v}" for k, v in closing_patterns.items() if k != "default")
+        if closings:
+            preamble_parts.append(f"Closing patterns: {closings}.")
+
+    if preamble_parts:
+        return system_prompt + "\n\n" + "\n".join(preamble_parts)
+    return system_prompt
+
+
+def build_record(
+    inbound: str,
+    edited_reply: str,
+    *,
+    system_message: str | None = None,
+) -> dict:
+    """Build a JSONL record with optional system message."""
+    messages = []
+    if system_message:
+        messages.append({"role": "system", "content": system_message})
+    messages.append({"role": "user", "content": inbound})
+    messages.append({"role": "assistant", "content": edited_reply})
+    return {"messages": messages}
 
 
 def export(args: argparse.Namespace) -> None:
@@ -28,6 +91,15 @@ def export(args: argparse.Namespace) -> None:
     if not db_path.exists():
         print(f"Database not found at {db_path}")
         return
+
+    configs_dir = Path(args.configs_dir)
+
+    # Build system message from persona + prompts (unless --no-persona)
+    system_message = None
+    if not args.no_persona:
+        persona = _load_persona(configs_dir)
+        prompts = _load_prompts(configs_dir)
+        system_message = _build_system_message(persona, prompts)
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -58,12 +130,11 @@ def export(args: argparse.Namespace) -> None:
     records = []
     for row in rows:
         records.append(
-            {
-                "messages": [
-                    {"role": "user", "content": row["inbound_text"]},
-                    {"role": "assistant", "content": row["edited_reply"]},
-                ]
-            }
+            build_record(
+                row["inbound_text"],
+                row["edited_reply"],
+                system_message=system_message,
+            )
         )
 
     # Shuffle and split 90/10
