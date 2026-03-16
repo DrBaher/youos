@@ -93,6 +93,7 @@ def test_export_with_persona(tmp_path):
         db=str(db_path),
         no_persona=False,
         configs_dir=str(configs_dir),
+        curriculum=False,
     )
     export(args)
 
@@ -132,6 +133,7 @@ def test_export_no_persona_flag(tmp_path):
         db=str(db_path),
         no_persona=True,
         configs_dir=str(tmp_path / "configs"),
+        curriculum=False,
     )
     export(args)
 
@@ -184,6 +186,7 @@ def test_quality_filter_excludes_low_rating(tmp_path):
         db=str(db_path),
         no_persona=True,
         configs_dir=str(tmp_path),
+        curriculum=False,
     )
     export(args)
 
@@ -213,6 +216,7 @@ def test_quality_filter_excludes_short_replies(tmp_path):
         db=str(db_path),
         no_persona=True,
         configs_dir=str(tmp_path),
+        curriculum=False,
     )
     export(args)
 
@@ -243,6 +247,7 @@ def test_quality_filter_excludes_low_edit_not_five_star(tmp_path, capsys):
         db=str(db_path),
         no_persona=True,
         configs_dir=str(tmp_path),
+        curriculum=False,
     )
     export(args)
 
@@ -272,6 +277,7 @@ def test_quality_filter_null_rating_included_with_warning(tmp_path, capsys):
         db=str(db_path),
         no_persona=True,
         configs_dir=str(tmp_path),
+        curriculum=False,
     )
     export(args)
 
@@ -304,6 +310,7 @@ def test_quality_filter_summary_output(tmp_path, capsys):
         db=str(db_path),
         no_persona=True,
         configs_dir=str(tmp_path),
+        curriculum=False,
     )
     export(args)
 
@@ -352,6 +359,7 @@ def test_temporal_split_most_recent_in_validation(tmp_path, capsys):
         db=str(db_path),
         no_persona=True,
         configs_dir=str(tmp_path),
+        curriculum=False,
     )
     export(args)
 
@@ -392,6 +400,7 @@ def test_temporal_split_single_pair(tmp_path, capsys):
         db=str(db_path),
         no_persona=True,
         configs_dir=str(tmp_path),
+        curriculum=False,
     )
     export(args)
 
@@ -420,6 +429,7 @@ def test_temporal_split_val_capped_at_20(tmp_path, capsys):
         db=str(db_path),
         no_persona=True,
         configs_dir=str(tmp_path),
+        curriculum=False,
     )
     export(args)
 

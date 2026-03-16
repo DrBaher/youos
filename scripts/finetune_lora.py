@@ -57,6 +57,18 @@ def run_training(args: argparse.Namespace) -> None:
     train_count = count_jsonl_lines(train_path)
     valid_count = count_jsonl_lines(valid_path)
 
+    # Detect and report curriculum metadata
+    if train_path.exists():
+        with open(train_path, encoding="utf-8") as f:
+            first_line = f.readline().strip()
+        if first_line and '"_curriculum"' in first_line:
+            try:
+                meta = json.loads(first_line)
+                print(f"Curriculum learning detected: warmup={meta.get('warmup_count')}, total={meta.get('total')}")
+                train_count -= 1  # don't count metadata line
+            except json.JSONDecodeError:
+                pass
+
     # Determine hyperparameters
     if args.auto:
         auto = compute_auto_config(train_count)

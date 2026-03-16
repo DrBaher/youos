@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-persona", action="store_true", help="Use bare format without persona/system prompt")
     p.add_argument("--configs-dir", type=str, default=str(CONFIGS_DIR), help="Configs directory")
     p.add_argument("--dpo", action="store_true", help="Export DPO preference pairs (chosen/rejected)")
+    p.add_argument("--curriculum", action=argparse.BooleanOptionalAction, default=True, help="Sort first 20%% by quality (curriculum learning)")
     return p.parse_args()
 
 
@@ -167,7 +168,7 @@ def export(args: argparse.Namespace) -> None:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        query = "SELECT inbound_text, edited_reply, rating, edit_distance_pct, created_at FROM feedback_pairs WHERE 1=1"
+        query = "SELECT inbound_text, edited_reply, rating, edit_distance_pct, created_at, COALESCE(rating, 3) as quality_score FROM feedback_pairs WHERE 1=1"
         params: list = []
 
         if not args.all:
@@ -214,7 +215,8 @@ def export(args: argparse.Namespace) -> None:
             filtered_count += 1
             continue
 
-        qualified.append((row["created_at"] or "", row["inbound_text"], edited_reply))
+        quality = row["quality_score"] if "quality_score" in row.keys() else (rating or 3)
+        qualified.append((row["created_at"] or "", row["inbound_text"], edited_reply, quality))
 
     if null_rating_count > 0:
         print(f"Warning: {null_rating_count} pairs have null rating (included)")
@@ -227,7 +229,24 @@ def export(args: argparse.Namespace) -> None:
 
     # Temporal split: sort by created_at ASC, most recent 15% as validation
     qualified.sort(key=lambda x: x[0])
-    records = [build_record(inbound, reply, system_message=system_message) for _, inbound, reply in qualified]
+
+    # Curriculum learning: sort first 20% by quality_score ASC (warmup on easier examples)
+    curriculum_applied = False
+    warmup_count = 0
+    if getattr(args, "curriculum", True):
+        warmup_count = max(1, int(len(qualified) * 0.2))
+        warmup = sorted(qualified[:warmup_count], key=lambda x: x[3])  # sort by quality ASC
+        remainder = qualified[warmup_count:]
+        qualified = warmup + remainder
+        curriculum_applied = True
+        print(f"Curriculum learning: warmup on first {warmup_count} easiest examples")
+
+    records = [build_record(inbound, reply, system_message=system_message) for _, inbound, reply, _q in qualified]
+
+    # Prepend curriculum metadata line if applicable
+    if curriculum_applied:
+        meta_line = {"_curriculum": True, "warmup_count": warmup_count, "total": len(records)}
+        records.insert(0, meta_line)
 
     val_count = max(1, min(20, int(len(records) * 0.15)))
     if len(records) <= 1:
