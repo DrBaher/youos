@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from argparse import Namespace
-from pathlib import Path
-from unittest.mock import patch
 
 from scripts.finetune_lora import compute_auto_config, count_jsonl_lines
 
@@ -70,9 +68,14 @@ def test_dry_run_shows_auto_config(tmp_path, capsys):
     train.write_text('{"m":1}\n' * 30)
 
     args = Namespace(
-        iters=None, num_layers=None, learning_rate=None, auto=True,
-        data_dir=str(data_dir), adapter_dir=str(tmp_path / "adapter"),
-        db=str(tmp_path / "test.db"), dry_run=True,
+        iters=None,
+        num_layers=None,
+        learning_rate=None,
+        auto=True,
+        data_dir=str(data_dir),
+        adapter_dir=str(tmp_path / "adapter"),
+        db=str(tmp_path / "test.db"),
+        dry_run=True,
     )
     run_training(args)
 
@@ -92,9 +95,14 @@ def test_cli_override_with_auto(tmp_path, capsys):
     train.write_text('{"m":1}\n' * 30)
 
     args = Namespace(
-        iters=200, num_layers=4, learning_rate=3e-4, auto=True,
-        data_dir=str(data_dir), adapter_dir=str(tmp_path / "adapter"),
-        db=str(tmp_path / "test.db"), dry_run=True,
+        iters=200,
+        num_layers=4,
+        learning_rate=3e-4,
+        auto=True,
+        data_dir=str(data_dir),
+        adapter_dir=str(tmp_path / "adapter"),
+        db=str(tmp_path / "test.db"),
+        dry_run=True,
     )
     run_training(args)
 
@@ -114,9 +122,14 @@ def test_no_auto_uses_defaults(tmp_path, capsys):
     train.write_text('{"m":1}\n' * 30)
 
     args = Namespace(
-        iters=None, num_layers=None, learning_rate=None, auto=False,
-        data_dir=str(data_dir), adapter_dir=str(tmp_path / "adapter"),
-        db=str(tmp_path / "test.db"), dry_run=True,
+        iters=None,
+        num_layers=None,
+        learning_rate=None,
+        auto=False,
+        data_dir=str(data_dir),
+        adapter_dir=str(tmp_path / "adapter"),
+        db=str(tmp_path / "test.db"),
+        dry_run=True,
     )
     run_training(args)
 

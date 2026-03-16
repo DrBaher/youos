@@ -104,10 +104,7 @@ def export(args: argparse.Namespace) -> None:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        query = (
-            "SELECT inbound_text, edited_reply, rating, edit_distance_pct, created_at "
-            "FROM feedback_pairs WHERE 1=1"
-        )
+        query = "SELECT inbound_text, edited_reply, rating, edit_distance_pct, created_at FROM feedback_pairs WHERE 1=1"
         params: list = []
 
         if not args.all:
@@ -154,9 +151,7 @@ def export(args: argparse.Namespace) -> None:
             filtered_count += 1
             continue
 
-        qualified.append(
-            (row["created_at"] or "", row["inbound_text"], edited_reply)
-        )
+        qualified.append((row["created_at"] or "", row["inbound_text"], edited_reply))
 
     if null_rating_count > 0:
         print(f"Warning: {null_rating_count} pairs have null rating (included)")
@@ -169,10 +164,7 @@ def export(args: argparse.Namespace) -> None:
 
     # Temporal split: sort by created_at ASC, most recent 15% as validation
     qualified.sort(key=lambda x: x[0])
-    records = [
-        build_record(inbound, reply, system_message=system_message)
-        for _, inbound, reply in qualified
-    ]
+    records = [build_record(inbound, reply, system_message=system_message) for _, inbound, reply in qualified]
 
     val_count = max(1, min(20, int(len(records) * 0.15)))
     if len(records) <= 1:

@@ -9,11 +9,22 @@ from app.retrieval.service import RetrievalMatch
 
 def _make_reply_match(inbound: str, reply: str, score: float = 5.0) -> RetrievalMatch:
     return RetrievalMatch(
-        result_type="reply_pair", score=score, lexical_score=score,
-        metadata_score=0.0, source_type="gmail", source_id="1",
-        account_email=None, title=None, author=None, external_uri=None,
-        thread_id=None, created_at=None, updated_at=None,
-        inbound_text=inbound, reply_text=reply, snippet=inbound[:50],
+        result_type="reply_pair",
+        score=score,
+        lexical_score=score,
+        metadata_score=0.0,
+        source_type="gmail",
+        source_id="1",
+        account_email=None,
+        title=None,
+        author=None,
+        external_uri=None,
+        thread_id=None,
+        created_at=None,
+        updated_at=None,
+        inbound_text=inbound,
+        reply_text=reply,
+        snippet=inbound[:50],
     )
 
 

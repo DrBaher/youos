@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import yaml
 
 from scripts.run_golden_eval import (
@@ -90,16 +88,22 @@ def test_run_golden_eval_without_generate():
 def test_run_golden_eval_with_mock_generate(tmp_path):
     """Golden eval with mock generate function."""
     golden_path = tmp_path / "golden.yaml"
-    golden_path.write_text(yaml.dump({
-        "cases": [{
-            "id": "test-1",
-            "description": "Test case",
-            "inbound": "Can we meet?",
-            "expected_keywords": ["available", "time"],
-            "expected_mode": "work",
-            "max_words": 50,
-        }]
-    }))
+    golden_path.write_text(
+        yaml.dump(
+            {
+                "cases": [
+                    {
+                        "id": "test-1",
+                        "description": "Test case",
+                        "inbound": "Can we meet?",
+                        "expected_keywords": ["available", "time"],
+                        "expected_mode": "work",
+                        "max_words": 50,
+                    }
+                ]
+            }
+        )
+    )
 
     def mock_generate(prompt, *, database_url, configs_dir):
         return {"draft": "I'm available. What time works?", "detected_mode": "work"}

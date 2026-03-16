@@ -5,10 +5,8 @@ from __future__ import annotations
 import json
 import sqlite3
 from argparse import Namespace
-from pathlib import Path
 
 import yaml
-
 
 # --- Item 1: Rich training data format ---
 
@@ -80,19 +78,20 @@ def test_export_with_persona(tmp_path):
 
     configs_dir = tmp_path / "configs"
     configs_dir.mkdir()
-    (configs_dir / "persona.yaml").write_text(
-        yaml.dump({"style": {"voice": "test-voice", "avg_reply_words": 50}})
-    )
-    (configs_dir / "prompts.yaml").write_text(
-        yaml.dump({"system_prompt": "Test system prompt."})
-    )
+    (configs_dir / "persona.yaml").write_text(yaml.dump({"style": {"voice": "test-voice", "avg_reply_words": 50}}))
+    (configs_dir / "prompts.yaml").write_text(yaml.dump({"system_prompt": "Test system prompt."}))
 
     output = tmp_path / "train.jsonl"
     from scripts.export_feedback_jsonl import export
 
     args = Namespace(
-        all=True, since=None, output=str(output), min_rating=3,
-        min_edit_pct=0.05, db=str(db_path), no_persona=False,
+        all=True,
+        since=None,
+        output=str(output),
+        min_rating=3,
+        min_edit_pct=0.05,
+        db=str(db_path),
+        no_persona=False,
         configs_dir=str(configs_dir),
     )
     export(args)
@@ -125,8 +124,13 @@ def test_export_no_persona_flag(tmp_path):
     from scripts.export_feedback_jsonl import export
 
     args = Namespace(
-        all=True, since=None, output=str(output), min_rating=3,
-        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        all=True,
+        since=None,
+        output=str(output),
+        min_rating=3,
+        min_edit_pct=0.05,
+        db=str(db_path),
+        no_persona=True,
         configs_dir=str(tmp_path / "configs"),
     )
     export(args)
@@ -151,8 +155,7 @@ def _create_feedback_db(db_path, rows):
     )
     for r in rows:
         conn.execute(
-            "INSERT INTO feedback_pairs (inbound_text, generated_draft, edited_reply, rating, edit_distance_pct) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO feedback_pairs (inbound_text, generated_draft, edited_reply, rating, edit_distance_pct) VALUES (?, ?, ?, ?, ?)",
             r,
         )
     conn.commit()
@@ -162,16 +165,24 @@ def _create_feedback_db(db_path, rows):
 def test_quality_filter_excludes_low_rating(tmp_path):
     """Pairs with rating < 3 are excluded."""
     db_path = tmp_path / "test.db"
-    _create_feedback_db(db_path, [
-        ("inbound", "draft", "a long enough edited reply text", 2, 0.3),
-        ("inbound", "draft", "a long enough edited reply text", 4, 0.3),
-    ])
+    _create_feedback_db(
+        db_path,
+        [
+            ("inbound", "draft", "a long enough edited reply text", 2, 0.3),
+            ("inbound", "draft", "a long enough edited reply text", 4, 0.3),
+        ],
+    )
     output = tmp_path / "train.jsonl"
     from scripts.export_feedback_jsonl import export
 
     args = Namespace(
-        all=True, since=None, output=str(output), min_rating=3,
-        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        all=True,
+        since=None,
+        output=str(output),
+        min_rating=3,
+        min_edit_pct=0.05,
+        db=str(db_path),
+        no_persona=True,
         configs_dir=str(tmp_path),
     )
     export(args)
@@ -183,16 +194,24 @@ def test_quality_filter_excludes_low_rating(tmp_path):
 def test_quality_filter_excludes_short_replies(tmp_path):
     """Pairs with edited_reply < 15 chars are excluded."""
     db_path = tmp_path / "test.db"
-    _create_feedback_db(db_path, [
-        ("inbound", "draft", "short", 5, 0.3),
-        ("inbound", "draft", "a sufficiently long reply text here", 5, 0.3),
-    ])
+    _create_feedback_db(
+        db_path,
+        [
+            ("inbound", "draft", "short", 5, 0.3),
+            ("inbound", "draft", "a sufficiently long reply text here", 5, 0.3),
+        ],
+    )
     output = tmp_path / "train.jsonl"
     from scripts.export_feedback_jsonl import export
 
     args = Namespace(
-        all=True, since=None, output=str(output), min_rating=3,
-        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        all=True,
+        since=None,
+        output=str(output),
+        min_rating=3,
+        min_edit_pct=0.05,
+        db=str(db_path),
+        no_persona=True,
         configs_dir=str(tmp_path),
     )
     export(args)
@@ -204,17 +223,25 @@ def test_quality_filter_excludes_short_replies(tmp_path):
 def test_quality_filter_excludes_low_edit_not_five_star(tmp_path, capsys):
     """Pairs with edit_distance_pct < 0.05 and rating < 5 are excluded."""
     db_path = tmp_path / "test.db"
-    _create_feedback_db(db_path, [
-        ("inbound", "draft", "a long enough edited reply text", 4, 0.02),  # low edit + not 5-star
-        ("inbound", "draft", "a long enough edited reply text", 5, 0.02),  # low edit + 5-star = keep
-        ("inbound", "draft", "a long enough edited reply text", 4, 0.10),  # high edit + 4-star = keep
-    ])
+    _create_feedback_db(
+        db_path,
+        [
+            ("inbound", "draft", "a long enough edited reply text", 4, 0.02),  # low edit + not 5-star
+            ("inbound", "draft", "a long enough edited reply text", 5, 0.02),  # low edit + 5-star = keep
+            ("inbound", "draft", "a long enough edited reply text", 4, 0.10),  # high edit + 4-star = keep
+        ],
+    )
     output = tmp_path / "train.jsonl"
     from scripts.export_feedback_jsonl import export
 
     args = Namespace(
-        all=True, since=None, output=str(output), min_rating=3,
-        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        all=True,
+        since=None,
+        output=str(output),
+        min_rating=3,
+        min_edit_pct=0.05,
+        db=str(db_path),
+        no_persona=True,
         configs_dir=str(tmp_path),
     )
     export(args)
@@ -227,15 +254,23 @@ def test_quality_filter_excludes_low_edit_not_five_star(tmp_path, capsys):
 def test_quality_filter_null_rating_included_with_warning(tmp_path, capsys):
     """Null-rated pairs are included with a warning."""
     db_path = tmp_path / "test.db"
-    _create_feedback_db(db_path, [
-        ("inbound", "draft", "a long enough edited reply text", None, 0.3),
-    ])
+    _create_feedback_db(
+        db_path,
+        [
+            ("inbound", "draft", "a long enough edited reply text", None, 0.3),
+        ],
+    )
     output = tmp_path / "train.jsonl"
     from scripts.export_feedback_jsonl import export
 
     args = Namespace(
-        all=True, since=None, output=str(output), min_rating=3,
-        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        all=True,
+        since=None,
+        output=str(output),
+        min_rating=3,
+        min_edit_pct=0.05,
+        db=str(db_path),
+        no_persona=True,
         configs_dir=str(tmp_path),
     )
     export(args)
@@ -249,17 +284,25 @@ def test_quality_filter_null_rating_included_with_warning(tmp_path, capsys):
 def test_quality_filter_summary_output(tmp_path, capsys):
     """Export prints summary with filtered count."""
     db_path = tmp_path / "test.db"
-    _create_feedback_db(db_path, [
-        ("inbound", "draft", "a long enough edited reply text", 5, 0.3),
-        ("inbound", "draft", "short", 5, 0.3),  # filtered: too short
-        ("inbound", "draft", "a long enough edited reply text", 1, 0.3),  # filtered: low rating
-    ])
+    _create_feedback_db(
+        db_path,
+        [
+            ("inbound", "draft", "a long enough edited reply text", 5, 0.3),
+            ("inbound", "draft", "short", 5, 0.3),  # filtered: too short
+            ("inbound", "draft", "a long enough edited reply text", 1, 0.3),  # filtered: low rating
+        ],
+    )
     output = tmp_path / "train.jsonl"
     from scripts.export_feedback_jsonl import export
 
     args = Namespace(
-        all=True, since=None, output=str(output), min_rating=3,
-        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        all=True,
+        since=None,
+        output=str(output),
+        min_rating=3,
+        min_edit_pct=0.05,
+        db=str(db_path),
+        no_persona=True,
         configs_dir=str(tmp_path),
     )
     export(args)
@@ -282,8 +325,7 @@ def _create_feedback_db_with_dates(db_path, rows):
     )
     for inbound, draft, reply, rating, edit_pct, created_at in rows:
         conn.execute(
-            "INSERT INTO feedback_pairs (inbound_text, generated_draft, edited_reply, rating, edit_distance_pct, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO feedback_pairs (inbound_text, generated_draft, edited_reply, rating, edit_distance_pct, created_at) VALUES (?, ?, ?, ?, ?, ?)",
             (inbound, draft, reply, rating, edit_pct, created_at),
         )
     conn.commit()
@@ -294,10 +336,7 @@ def test_temporal_split_most_recent_in_validation(tmp_path, capsys):
     """Most recent pairs end up in the validation set."""
     db_path = tmp_path / "test.db"
     # 10 pairs with increasing dates — val should be last 15% = 1-2 pairs
-    rows = [
-        (f"inbound {i}", "draft", f"a long enough reply text {i}", 5, 0.3, f"2026-03-{i+1:02d}T00:00:00")
-        for i in range(10)
-    ]
+    rows = [(f"inbound {i}", "draft", f"a long enough reply text {i}", 5, 0.3, f"2026-03-{i + 1:02d}T00:00:00") for i in range(10)]
     _create_feedback_db_with_dates(db_path, rows)
 
     train_path = tmp_path / "train.jsonl"
@@ -305,8 +344,13 @@ def test_temporal_split_most_recent_in_validation(tmp_path, capsys):
     from scripts.export_feedback_jsonl import export
 
     args = Namespace(
-        all=True, since=None, output=str(train_path), min_rating=3,
-        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        all=True,
+        since=None,
+        output=str(train_path),
+        min_rating=3,
+        min_edit_pct=0.05,
+        db=str(db_path),
+        no_persona=True,
         configs_dir=str(tmp_path),
     )
     export(args)
@@ -329,16 +373,24 @@ def test_temporal_split_most_recent_in_validation(tmp_path, capsys):
 def test_temporal_split_single_pair(tmp_path, capsys):
     """Single pair goes to train, nothing to valid."""
     db_path = tmp_path / "test.db"
-    _create_feedback_db_with_dates(db_path, [
-        ("inbound", "draft", "a long enough reply text here", 5, 0.3, "2026-03-01T00:00:00"),
-    ])
+    _create_feedback_db_with_dates(
+        db_path,
+        [
+            ("inbound", "draft", "a long enough reply text here", 5, 0.3, "2026-03-01T00:00:00"),
+        ],
+    )
     train_path = tmp_path / "train.jsonl"
     valid_path = tmp_path / "valid.jsonl"
     from scripts.export_feedback_jsonl import export
 
     args = Namespace(
-        all=True, since=None, output=str(train_path), min_rating=3,
-        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        all=True,
+        since=None,
+        output=str(train_path),
+        min_rating=3,
+        min_edit_pct=0.05,
+        db=str(db_path),
+        no_persona=True,
         configs_dir=str(tmp_path),
     )
     export(args)
@@ -352,10 +404,7 @@ def test_temporal_split_single_pair(tmp_path, capsys):
 def test_temporal_split_val_capped_at_20(tmp_path, capsys):
     """Validation set is capped at 20 even for large datasets."""
     db_path = tmp_path / "test.db"
-    rows = [
-        (f"inbound {i}", "draft", f"a long enough reply text {i}", 5, 0.3, f"2026-01-{(i % 28) + 1:02d}T00:00:00")
-        for i in range(200)
-    ]
+    rows = [(f"inbound {i}", "draft", f"a long enough reply text {i}", 5, 0.3, f"2026-01-{(i % 28) + 1:02d}T00:00:00") for i in range(200)]
     _create_feedback_db_with_dates(db_path, rows)
 
     train_path = tmp_path / "train.jsonl"
@@ -363,8 +412,13 @@ def test_temporal_split_val_capped_at_20(tmp_path, capsys):
     from scripts.export_feedback_jsonl import export
 
     args = Namespace(
-        all=True, since=None, output=str(train_path), min_rating=3,
-        min_edit_pct=0.05, db=str(db_path), no_persona=True,
+        all=True,
+        since=None,
+        output=str(train_path),
+        min_rating=3,
+        min_edit_pct=0.05,
+        db=str(db_path),
+        no_persona=True,
         configs_dir=str(tmp_path),
     )
     export(args)

@@ -132,19 +132,10 @@ def format_scorecard(summary: dict[str, Any]) -> str:
     for r in summary["results"]:
         icon = {"pass": "PASS", "warn": "WARN", "fail": "FAIL"}.get(r["status"], "?")
         kw_pct = int(r["keyword_hit_rate"] * 100)
-        lines.append(
-            f"  {r['case_id']:<30} {icon:<5} | "
-            f"kw={kw_pct}% mode={'Y' if r['mode_match'] else 'N'} "
-            f"words={r['word_count']}/{r['max_words']}"
-        )
+        lines.append(f"  {r['case_id']:<30} {icon:<5} | kw={kw_pct}% mode={'Y' if r['mode_match'] else 'N'} words={r['word_count']}/{r['max_words']}")
 
     lines.append("=" * 60)
-    lines.append(
-        f"  Total: {summary['total']} | "
-        f"Pass: {summary['passed']} | "
-        f"Warn: {summary['warned']} | "
-        f"Fail: {summary['failed']}"
-    )
+    lines.append(f"  Total: {summary['total']} | Pass: {summary['passed']} | Warn: {summary['warned']} | Fail: {summary['failed']}")
     return "\n".join(lines)
 
 

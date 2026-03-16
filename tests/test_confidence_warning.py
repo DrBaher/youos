@@ -19,11 +19,10 @@ def test_feedback_generate_includes_confidence_warning():
         model_used="claude",
     )
     with patch("app.api.feedback_routes.generate_draft", return_value=mock_response):
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
         from app.api.feedback_routes import router
-
-        from fastapi import FastAPI
 
         app = FastAPI()
         app.include_router(router)
@@ -38,9 +37,12 @@ def test_feedback_generate_includes_confidence_warning():
                 # Skip the DB save by patching sqlite3
                 with patch("app.api.feedback_routes.sqlite3"):
                     client = TestClient(app)
-                    resp = client.post("/feedback/generate", json={
-                        "inbound_text": "Hello, can we meet?",
-                    })
+                    resp = client.post(
+                        "/feedback/generate",
+                        json={
+                            "inbound_text": "Hello, can we meet?",
+                        },
+                    )
                     assert resp.status_code == 200
                     data = resp.json()
                     assert data["confidence"] == "low"
@@ -59,11 +61,10 @@ def test_feedback_generate_no_warning_for_high_confidence():
         model_used="claude",
     )
     with patch("app.api.feedback_routes.generate_draft", return_value=mock_response):
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
         from app.api.feedback_routes import router
-
-        from fastapi import FastAPI
 
         app = FastAPI()
         app.include_router(router)
@@ -75,9 +76,12 @@ def test_feedback_generate_no_warning_for_high_confidence():
             mock_limiter.is_allowed.return_value = True
             with patch("app.api.feedback_routes.sqlite3"):
                 client = TestClient(app)
-                resp = client.post("/feedback/generate", json={
-                    "inbound_text": "Hello, can we meet?",
-                })
+                resp = client.post(
+                    "/feedback/generate",
+                    json={
+                        "inbound_text": "Hello, can we meet?",
+                    },
+                )
                 data = resp.json()
                 assert data["confidence_warning"] is False
 

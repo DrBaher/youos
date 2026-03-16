@@ -9,7 +9,6 @@ import yaml
 
 from app.retrieval.service import RetrievalConfig, RetrievalMatch
 
-
 # --- Item 5: Sender-type retrieval boosting ---
 
 
@@ -60,19 +59,21 @@ def test_sender_type_boost_mutation(tmp_path):
     retrieval_dir = configs_dir / "retrieval"
     retrieval_dir.mkdir(parents=True)
     (retrieval_dir / "defaults.yaml").write_text(
-        yaml.dump({
-            "top_k_reply_pairs": 8,
-            "top_k_chunks": 3,
-            "recency_boost_days": 60,
-            "recency_boost_weight": 0.2,
-            "account_boost_weight": 0.15,
-            "sender_type_boost_map": {
-                "external_client": 1.3,
-                "personal": 0.8,
-                "automated": 0.3,
-                "internal": 1.5,
-            },
-        })
+        yaml.dump(
+            {
+                "top_k_reply_pairs": 8,
+                "top_k_chunks": 3,
+                "recency_boost_days": 60,
+                "recency_boost_weight": 0.2,
+                "account_boost_weight": 0.15,
+                "sender_type_boost_map": {
+                    "external_client": 1.3,
+                    "personal": 0.8,
+                    "automated": 0.3,
+                    "internal": 1.5,
+                },
+            }
+        )
     )
     prompts_path = configs_dir / "prompts.yaml"
     prompts_path.write_text(yaml.dump({"drafting_prompt": "test", "system_prompt": "test"}))
@@ -96,9 +97,13 @@ def test_sender_type_boost_mutation(tmp_path):
 def test_semantic_min_coverage_default():
     """Default semantic_min_coverage is 0.01."""
     config = RetrievalConfig(
-        top_k_documents=3, top_k_chunks=3, top_k_reply_pairs=5,
-        recency_boost_days=60, recency_boost_weight=0.2,
-        account_boost_weight=0.15, source_weights={},
+        top_k_documents=3,
+        top_k_chunks=3,
+        top_k_reply_pairs=5,
+        recency_boost_days=60,
+        recency_boost_weight=0.2,
+        account_boost_weight=0.15,
+        source_weights={},
     )
     assert config.semantic_min_coverage == 0.01
 
@@ -117,9 +122,14 @@ def test_partial_semantic_coverage_flag():
     from app.retrieval.service import RetrievalResponse
 
     resp = RetrievalResponse(
-        query="test", retrieval_method="fts5_bm25+semantic",
-        semantic_search_enabled=True, applied_filters={},
-        detected_mode="work", documents=[], chunks=[], reply_pairs=[],
+        query="test",
+        retrieval_method="fts5_bm25+semantic",
+        semantic_search_enabled=True,
+        applied_filters={},
+        detected_mode="work",
+        documents=[],
+        chunks=[],
+        reply_pairs=[],
         partial_semantic_coverage=True,
     )
     assert resp.partial_semantic_coverage is True
@@ -132,10 +142,19 @@ def test_partial_semantic_coverage_flag():
 
 def _make_match(score: float, snippet: str = "test") -> RetrievalMatch:
     return RetrievalMatch(
-        result_type="reply_pair", score=score, lexical_score=score,
-        metadata_score=0.0, source_type="gmail", source_id="1",
-        account_email=None, title=None, author=None, external_uri=None,
-        thread_id=None, created_at=None, updated_at=None,
+        result_type="reply_pair",
+        score=score,
+        lexical_score=score,
+        metadata_score=0.0,
+        source_type="gmail",
+        source_id="1",
+        account_email=None,
+        title=None,
+        author=None,
+        external_uri=None,
+        thread_id=None,
+        created_at=None,
+        updated_at=None,
         snippet=snippet,
     )
 
@@ -182,9 +201,13 @@ def test_reranker_with_mock_encoder():
 def test_reranker_config_defaults():
     """RetrievalConfig has reranker_enabled=False by default."""
     config = RetrievalConfig(
-        top_k_documents=3, top_k_chunks=3, top_k_reply_pairs=5,
-        recency_boost_days=60, recency_boost_weight=0.2,
-        account_boost_weight=0.15, source_weights={},
+        top_k_documents=3,
+        top_k_chunks=3,
+        top_k_reply_pairs=5,
+        recency_boost_days=60,
+        recency_boost_weight=0.2,
+        account_boost_weight=0.15,
+        source_weights={},
     )
     assert config.reranker_enabled is False
 
@@ -210,13 +233,11 @@ def test_quality_score_computation():
 def test_quality_score_migration():
     """Bootstrap migration adds quality_score column."""
     import sqlite3
+
     from app.db.bootstrap import _migrate_reply_pairs
 
     conn = sqlite3.connect(":memory:")
-    conn.execute(
-        "CREATE TABLE reply_pairs (id INTEGER PRIMARY KEY, source_type TEXT, source_id TEXT, "
-        "inbound_text TEXT, reply_text TEXT)"
-    )
+    conn.execute("CREATE TABLE reply_pairs (id INTEGER PRIMARY KEY, source_type TEXT, source_id TEXT, inbound_text TEXT, reply_text TEXT)")
     _migrate_reply_pairs(conn)
 
     cols = {row[1] for row in conn.execute("PRAGMA table_info(reply_pairs)").fetchall()}
@@ -227,6 +248,7 @@ def test_quality_score_migration():
 def test_quality_score_default_is_one():
     """New reply pairs have quality_score = 1.0 by default."""
     import sqlite3
+
     from app.db.bootstrap import _migrate_reply_pairs
 
     conn = sqlite3.connect(":memory:")
@@ -236,9 +258,7 @@ def test_quality_score_default_is_one():
     )
     _migrate_reply_pairs(conn)
 
-    conn.execute(
-        "INSERT INTO reply_pairs (source_type, source_id, inbound_text, reply_text) VALUES ('test', '1', 'hi', 'hello')"
-    )
+    conn.execute("INSERT INTO reply_pairs (source_type, source_id, inbound_text, reply_text) VALUES ('test', '1', 'hi', 'hello')")
     row = conn.execute("SELECT quality_score FROM reply_pairs WHERE id = 1").fetchone()
     assert row[0] == 1.0
     conn.close()
@@ -254,10 +274,7 @@ def test_feedback_updates_quality_score(tmp_path):
         "CREATE TABLE reply_pairs (id INTEGER PRIMARY KEY, source_type TEXT, source_id TEXT, "
         "inbound_text TEXT, reply_text TEXT, quality_score REAL DEFAULT 1.0)"
     )
-    conn.execute(
-        "INSERT INTO reply_pairs (source_type, source_id, inbound_text, reply_text) "
-        "VALUES ('test', '1', 'question', 'answer')"
-    )
+    conn.execute("INSERT INTO reply_pairs (source_type, source_id, inbound_text, reply_text) VALUES ('test', '1', 'question', 'answer')")
     conn.execute(
         "CREATE TABLE feedback_pairs (id INTEGER PRIMARY KEY, inbound_text TEXT, "
         "generated_draft TEXT, edited_reply TEXT, feedback_note TEXT, rating INTEGER, "

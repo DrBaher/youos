@@ -195,12 +195,7 @@ def _format_exemplars(reply_pairs: list[RetrievalMatch], *, max_exemplars: int =
     for i, rp in enumerate(reply_pairs[:max_exemplars], 1):
         inbound = (rp.inbound_text or "")[:800]
         reply = strip_signature(rp.reply_text or "")[:400]
-        parts.append(
-            f"[EXAMPLE {i}]\n"
-            f"Inbound: {inbound}\n"
-            f"Your reply: {reply}\n"
-            f"---"
-        )
+        parts.append(f"[EXAMPLE {i}]\nInbound: {inbound}\nYour reply: {reply}\n---")
     return "\n\n".join(parts)
 
 
@@ -419,9 +414,7 @@ def _call_local_model(prompt: str, *, max_tokens: int = 300) -> str:
     return result.stdout.strip()
 
 
-def _generate_via_ollama(
-    prompt: str, model: str = "mistral", base_url: str = "http://localhost:11434", *, num_predict: int = 400
-) -> str:
+def _generate_via_ollama(prompt: str, model: str = "mistral", base_url: str = "http://localhost:11434", *, num_predict: int = 400) -> str:
     """Generate via Ollama HTTP API."""
     import urllib.request
 

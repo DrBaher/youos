@@ -837,9 +837,7 @@ def _load_retrieval_config(configs_dir: Path) -> RetrievalConfig:
             semantic_min_coverage=float(payload.get("semantic_min_coverage", 0.1)),
             sender_type_boost=float(payload.get("sender_type_boost", 0.15)),
             sender_domain_boost=float(payload.get("sender_domain_boost", 0.10)),
-            sender_type_boost_map={
-                str(k): float(v) for k, v in (payload.get("sender_type_boost_map") or {}).items()
-            },
+            sender_type_boost_map={str(k): float(v) for k, v in (payload.get("sender_type_boost_map") or {}).items()},
             reranker_enabled=bool(payload.get("reranker_enabled", False)),
         )
 

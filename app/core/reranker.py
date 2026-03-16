@@ -54,12 +54,12 @@ def rerank(query: str, matches: list[RetrievalMatch], top_n: int) -> list[Retrie
         return matches
 
     # Attach cross-encoder scores and re-sort
-    scored = list(zip(matches, scores))
+    scored = list(zip(matches, scores, strict=False))
     scored.sort(key=lambda x: -x[1])
 
     reranked = [m for m, _ in scored[:top_n]]
     # Update scores to blend with original
-    for i, (match, ce_score) in enumerate(scored[:top_n]):
+    for _i, (match, ce_score) in enumerate(scored[:top_n]):
         match.score = round(match.score * 0.4 + float(ce_score) * 10.0 * 0.6, 4)
 
     return reranked
