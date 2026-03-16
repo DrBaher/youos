@@ -253,8 +253,43 @@ def step_deduplicate(verbose: bool = False) -> bool:
     )
 
 
+def _check_benchmark_rotation() -> bool:
+    """Check if benchmarks need rotation (> 7 days old). Returns True if rotated."""
+    import json
+
+    refresh_path = ROOT_DIR / "var" / "benchmark_last_refresh.txt"
+    needs_refresh = False
+    if refresh_path.exists():
+        try:
+            data = json.loads(refresh_path.read_text(encoding="utf-8"))
+            last_dt = datetime.fromisoformat(data["timestamp"].replace("Z", "+00:00"))
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=timezone.utc)
+            if (datetime.now(timezone.utc) - last_dt).days > 7:
+                needs_refresh = True
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+            needs_refresh = True
+    else:
+        needs_refresh = True
+
+    if needs_refresh:
+        now = datetime.now(timezone.utc)
+        seed = hash(now.isocalendar()[:2])
+        ok = _run_step(
+            "Benchmark rotation",
+            [sys.executable, str(ROOT_DIR / "scripts" / "generate_benchmarks.py"), "--sample-size", "30"],
+        )
+        if ok:
+            refresh_path.parent.mkdir(parents=True, exist_ok=True)
+            refresh_path.write_text(json.dumps({"timestamp": now.isoformat(), "seed": seed}))
+        return ok
+    return True
+
+
 def step_autoresearch(verbose: bool = False) -> bool:
     """Run autoresearch optimization loop."""
+    # Rotate benchmarks if stale
+    _check_benchmark_rotation()
     return _run_step(
         "Autoresearch",
         [sys.executable, str(ROOT_DIR / "scripts" / "run_autoresearch.py"), "--max-iter", "80"],
@@ -564,12 +599,28 @@ def main() -> None:
         status = "failed"
 
     # Write pipeline log
+    # Check if benchmarks were rotated this run
+    import json as _json
+
+    benchmark_rotated = False
+    refresh_path = ROOT_DIR / "var" / "benchmark_last_refresh.txt"
+    if refresh_path.exists():
+        try:
+            rd = _json.loads(refresh_path.read_text(encoding="utf-8"))
+            ref_dt = datetime.fromisoformat(rd["timestamp"].replace("Z", "+00:00"))
+            if ref_dt.tzinfo is None:
+                ref_dt = ref_dt.replace(tzinfo=timezone.utc)
+            benchmark_rotated = (start - ref_dt).total_seconds() < 3600
+        except Exception:
+            pass
+
     run_log = {
         "run_at": start.isoformat(),
         "status": status,
         "steps": steps,
         "errors": errors,
         "skipped_steps": skipped_steps,
+        "benchmark_rotated": benchmark_rotated,
     }
     _write_pipeline_log(run_log)
 
