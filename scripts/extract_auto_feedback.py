@@ -25,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dry-run", action="store_true", help="Show pairs without saving")
     p.add_argument("--db", type=str, default=None, help="Database path override")
     p.add_argument("--threshold", type=float, default=0.80, help="Similarity threshold (default: 0.80)")
+    p.add_argument("--auto-threshold", action=argparse.BooleanOptionalAction, default=True, help="Auto-calibrate threshold based on corpus size (default: True)")
     return p.parse_args()
 
 
@@ -48,12 +49,26 @@ def _get_unprocessed_pairs(conn: sqlite3.Connection, since: str) -> list[sqlite3
     ).fetchall()
 
 
+def auto_calibrate_threshold(conn: sqlite3.Connection) -> tuple[float, int]:
+    """Determine similarity threshold based on corpus size.
+
+    Returns (threshold, pair_count).
+    """
+    count = conn.execute("SELECT COUNT(*) FROM reply_pairs").fetchone()[0]
+    if count < 100:
+        return 0.65, count
+    if count < 500:
+        return 0.72, count
+    return 0.80, count
+
+
 def extract_auto_feedback(
     *,
     days: int = 1,
     dry_run: bool = False,
     db_path: Path | None = None,
     threshold: float = 0.80,
+    auto_threshold: bool = True,
     database_url: str | None = None,
     configs_dir: Path | None = None,
 ) -> dict:
@@ -71,6 +86,10 @@ def extract_auto_feedback(
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
+        # Auto-calibrate threshold based on corpus size
+        if auto_threshold:
+            threshold, corpus_count = auto_calibrate_threshold(conn)
+            print(f"Auto-threshold: {threshold} (corpus: {corpus_count} pairs)")
         # Check if auto_feedback_processed column exists
         cols = [row[1] for row in conn.execute("PRAGMA table_info(reply_pairs)").fetchall()]
         if "auto_feedback_processed" not in cols:
@@ -161,6 +180,7 @@ def main() -> None:
         dry_run=args.dry_run,
         db_path=db_path,
         threshold=args.threshold,
+        auto_threshold=args.auto_threshold,
     )
 
 
