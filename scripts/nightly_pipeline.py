@@ -251,6 +251,92 @@ def _count_unused_feedback(db_path: Path) -> int:
         conn.close()
 
 
+def _count_new_feedback_since_last_run(db_path: Path) -> int:
+    """Count feedback_pairs created since last pipeline run."""
+    import json
+
+    if not db_path.exists():
+        return 0
+    log_path = ROOT_DIR / "var" / "pipeline_last_run.json"
+    last_at = None
+    if log_path.exists():
+        try:
+            data = json.loads(log_path.read_text(encoding="utf-8"))
+            last_at = data.get("run_at")
+        except Exception:
+            pass
+
+    conn = sqlite3.connect(db_path)
+    try:
+        if last_at:
+            return conn.execute(
+                "SELECT COUNT(*) FROM feedback_pairs WHERE created_at >= ?",
+                (last_at,),
+            ).fetchone()[0]
+        return conn.execute("SELECT COUNT(*) FROM feedback_pairs").fetchone()[0]
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+
+def _count_null_embeddings(db_path: Path) -> int:
+    """Count documents with NULL embedding."""
+    if not db_path.exists():
+        return 0
+    conn = sqlite3.connect(db_path)
+    try:
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(chunks)").fetchall()]
+        if "embedding" not in cols:
+            return -1  # no embedding column
+        return conn.execute("SELECT COUNT(*) FROM chunks WHERE embedding IS NULL").fetchone()[0]
+    except Exception:
+        return -1
+    finally:
+        conn.close()
+
+
+def _count_total_pairs(db_path: Path) -> int:
+    """Count total reply_pairs."""
+    if not db_path.exists():
+        return 0
+    conn = sqlite3.connect(db_path)
+    try:
+        return conn.execute("SELECT COUNT(*) FROM reply_pairs").fetchone()[0]
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+
+def should_skip_finetune(db_path: Path) -> tuple[bool, str]:
+    n = _count_new_feedback_since_last_run(db_path)
+    if n < 3:
+        return True, f"[finetune] Skipping — only {n} new pairs (need >= 3)"
+    return False, ""
+
+
+def should_skip_autoresearch(db_path: Path) -> tuple[bool, str]:
+    n = _count_new_feedback_since_last_run(db_path)
+    if n < 5:
+        return True, f"[autoresearch] Skipping — only {n} new pairs (need >= 5)"
+    return False, ""
+
+
+def should_skip_embeddings(db_path: Path) -> tuple[bool, str]:
+    n = _count_null_embeddings(db_path)
+    if n == 0:
+        return True, "[embeddings] Skipping — all documents already indexed"
+    return False, ""
+
+
+def should_skip_dedup(db_path: Path) -> tuple[bool, str]:
+    n = _count_total_pairs(db_path)
+    if n < 10:
+        return True, f"[dedup] Skipping — corpus too small ({n} pairs)"
+    return False, ""
+
+
 def _write_pipeline_log(run_log: dict) -> None:
     """Write pipeline run log to var/pipeline_last_run.json."""
     import json
@@ -281,18 +367,26 @@ def main() -> None:
     results: dict[str, str] = {}
     steps: dict[str, bool] = {}
     errors: list[str] = []
+    skipped_steps: list[str] = []
 
-    # 0. Corpus deduplication (best-effort, before ingestion)
-    try:
-        ok = step_deduplicate(verbose=verbose)
-        results["dedup"] = "OK" if ok else "WARN"
-        steps["dedup"] = ok
-        if not ok:
-            errors.append("Corpus deduplication failed")
-    except Exception as exc:
-        results["dedup"] = f"error: {exc}"
-        steps["dedup"] = False
-        errors.append(f"Corpus deduplication error: {exc}")
+    # 0. Corpus deduplication (best-effort, before ingestion) — with skip gate
+    skip, skip_msg = should_skip_dedup(DEFAULT_DB)
+    if skip:
+        print(skip_msg)
+        results["dedup"] = f"skipped: {skip_msg}"
+        steps["dedup"] = True
+        skipped_steps.append("dedup")
+    else:
+        try:
+            ok = step_deduplicate(verbose=verbose)
+            results["dedup"] = "OK" if ok else "WARN"
+            steps["dedup"] = ok
+            if not ok:
+                errors.append("Corpus deduplication failed")
+        except Exception as exc:
+            results["dedup"] = f"error: {exc}"
+            steps["dedup"] = False
+            errors.append(f"Corpus deduplication error: {exc}")
 
     # 1. Gmail ingestion
     try:
@@ -362,7 +456,13 @@ def main() -> None:
         results["export"] = f"skipped (only {feedback['captured']} new pairs, need 5)"
         steps["export"] = True
 
-    if unused >= 10:
+    skip_ft, skip_ft_msg = should_skip_finetune(DEFAULT_DB)
+    if skip_ft:
+        print(skip_ft_msg)
+        results["finetune"] = f"skipped: {skip_ft_msg}"
+        steps["finetune"] = True
+        skipped_steps.append("finetune")
+    elif unused >= 10:
         try:
             ok = step_finetune_lora(verbose=verbose)
             results["finetune"] = "OK" if ok else "WARN"
@@ -377,30 +477,44 @@ def main() -> None:
         results["finetune"] = f"skipped (only {unused} unused pairs, need 10)"
         steps["finetune"] = True
 
-    # 4. Embedding indexer (after fine-tuning)
-    try:
-        embed_result = step_index_embeddings(verbose=verbose)
-        ok = embed_result["ok"]
-        results["embeddings"] = "OK" if ok else "WARN"
-        steps["embeddings"] = ok
-        if not ok:
-            errors.append("Embedding indexer failed")
-    except Exception as exc:
-        results["embeddings"] = f"error: {exc}"
-        steps["embeddings"] = False
-        errors.append(f"Embedding indexer error: {exc}")
+    # 4. Embedding indexer (after fine-tuning) — with skip gate
+    skip_emb, skip_emb_msg = should_skip_embeddings(DEFAULT_DB)
+    if skip_emb:
+        print(skip_emb_msg)
+        results["embeddings"] = f"skipped: {skip_emb_msg}"
+        steps["embeddings"] = True
+        skipped_steps.append("embeddings")
+    else:
+        try:
+            embed_result = step_index_embeddings(verbose=verbose)
+            ok = embed_result["ok"]
+            results["embeddings"] = "OK" if ok else "WARN"
+            steps["embeddings"] = ok
+            if not ok:
+                errors.append("Embedding indexer failed")
+        except Exception as exc:
+            results["embeddings"] = f"error: {exc}"
+            steps["embeddings"] = False
+            errors.append(f"Embedding indexer error: {exc}")
 
-    # 5. Autoresearch
-    try:
-        ok = step_autoresearch(verbose=verbose)
-        results["autoresearch"] = "OK" if ok else "WARN"
-        steps["autoresearch"] = ok
-        if not ok:
-            errors.append("Autoresearch failed")
-    except Exception as exc:
-        results["autoresearch"] = f"error: {exc}"
-        steps["autoresearch"] = False
-        errors.append(f"Autoresearch error: {exc}")
+    # 5. Autoresearch — with skip gate
+    skip_ar, skip_ar_msg = should_skip_autoresearch(DEFAULT_DB)
+    if skip_ar:
+        print(skip_ar_msg)
+        results["autoresearch"] = f"skipped: {skip_ar_msg}"
+        steps["autoresearch"] = True
+        skipped_steps.append("autoresearch")
+    else:
+        try:
+            ok = step_autoresearch(verbose=verbose)
+            results["autoresearch"] = "OK" if ok else "WARN"
+            steps["autoresearch"] = ok
+            if not ok:
+                errors.append("Autoresearch failed")
+        except Exception as exc:
+            results["autoresearch"] = f"error: {exc}"
+            steps["autoresearch"] = False
+            errors.append(f"Autoresearch error: {exc}")
 
     # Include recent git log after autoresearch
     try:
@@ -432,6 +546,7 @@ def main() -> None:
         "status": status,
         "steps": steps,
         "errors": errors,
+        "skipped_steps": skipped_steps,
     }
     _write_pipeline_log(run_log)
 
