@@ -1,4 +1,4 @@
-"""Tests for rule-based subject line fallback (Item 3)."""
+"""Tests for rule-based subject line fallback."""
 
 from __future__ import annotations
 
@@ -23,26 +23,40 @@ def test_subject_header_single_re():
 
 
 def test_first_words_fallback():
-    """When no Subject: header, use first 8 words minus greetings."""
-    text = "Hi John, can we push the meeting to next week please?"
+    """When no Subject: header, extract topic from substantive lines."""
+    text = "Hi John,\n\nCan we push the meeting to next week please?"
     result = _subject_fallback(text)
     assert result is not None
-    assert "hi" not in result.lower().split()[0:1]  # greeting stripped
+    assert "hi" not in result.lower().split()[0:1]
     assert len(result) >= 3
 
 
 def test_greeting_stripping():
-    """Greeting words are stripped from fallback."""
-    text = "Hello, Dear friend, this is about the project"
+    """Greeting/filler lines are skipped, topic line extracted."""
+    text = "Hello,\nI hope you are well.\nThis is about the project deadline next Friday."
     result = _subject_fallback(text)
     assert result is not None
-    # Should not start with Hello or Dear
     first_word = result.split()[0].lower().rstrip(",")
-    assert first_word not in {"hello", "dear"}
+    assert first_word not in {"hello", "dear", "i", "hope"}
+
+
+def test_payment_followup():
+    """Payment follow-up email produces meaningful subject, not greeting words."""
+    text = """Hello Baher,
+I hope you are well.
+I am following up as we are still waiting for both your response and your outstanding payment.
+We kindly ask that this is settled as soon as possible.
+Thank you in advance.
+Warm regards, Eva"""
+    result = _subject_fallback(text)
+    assert result is not None
+    assert "hope" not in result.lower()
+    assert "hello" not in result.lower()
+    assert len(result) >= 10
 
 
 def test_short_result_returns_none():
-    """If fallback produces < 3 chars, return None."""
+    """Very short input with no substance returns None."""
     text = "Hi"
     result = _subject_fallback(text)
     assert result is None
@@ -55,17 +69,15 @@ def test_empty_input_returns_none():
 
 
 def test_no_header_long_message():
-    """Long message without header uses first words."""
-    text = "We need to finalize the contract terms before the end of the quarter so that legal can review everything in time."
+    """Long substantive message extracts topic sentence."""
+    text = "We need to finalize the contract terms before the end of the quarter."
     result = _subject_fallback(text)
     assert result is not None
-    assert len(result.split()) <= 8
+    assert len(result) >= 8
 
 
 def test_subject_header_too_short():
-    """Subject header with < 3 chars after stripping returns None and falls through."""
+    """Subject header with empty content after stripping falls through gracefully."""
     text = "Subject: Re:\n\nOk"
     result = _subject_fallback(text)
-    # Falls through to word-based fallback since subject is empty after stripping Re:
-    # "Ok" is >= 3 chars when capitalized
-    assert result is not None or result is None  # either way is fine, just shouldn't crash
+    assert result is not None or result is None  # shouldn't crash

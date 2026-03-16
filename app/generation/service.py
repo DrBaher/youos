@@ -316,35 +316,81 @@ def lookup_sender_profile(email: str, database_url: str) -> dict[str, Any] | Non
         conn.close()
 
 
-_GREETING_WORDS = frozenset({"hi", "hello", "hey", "dear"})
+_GREETING_WORDS = frozenset({
+    "hi", "hello", "hey", "dear", "good", "morning", "afternoon", "evening",
+    "hope", "greetings", "howdy", "salutations",
+})
+
+# Lines that are pure social filler — skip entirely for subject extraction
+_FILLER_PATTERNS = re.compile(
+    r"^(hi|hello|hey|dear|good morning|good afternoon|good evening|"
+    r"i hope (you are|you're|this finds you|all is)|"
+    r"hope you (are|'re)|"
+    r"thank you (for|in advance)|"
+    r"thanks for|"
+    r"warm regards|"
+    r"kind regards|"
+    r"best regards|"
+    r"i am writing|"
+    r"i'm writing)",
+    re.IGNORECASE,
+)
+
+# Action/topic keywords that signal a meaningful sentence
+_TOPIC_KEYWORDS = re.compile(
+    r"\b(payment|invoice|outstanding|follow.?up|meeting|schedule|proposal|"
+    r"update|confirm|approve|review|request|issue|problem|question|"
+    r"deadline|project|contract|agreement|feedback|report|delivery|"
+    r"order|account|subscription|renewal|support|urgent|asap|required|"
+    r"please|kindly|need|want|would like)\b",
+    re.IGNORECASE,
+)
 
 
 def _subject_fallback(inbound_text: str) -> str | None:
     """Rule-based subject line fallback.
 
     1. If inbound has 'Subject:' header: strip 'Re:' prefixes, return 'Re: <subject>'
-    2. Else: first 8 non-greeting words, capitalized
-    3. If result < 3 chars: return None
+    2. Find first substantive sentence (contains a topic keyword, not a filler line)
+    3. Truncate to ~60 chars, capitalize cleanly
+    4. If nothing found: return None (let caller decide)
     """
-    # Check for Subject: header
+    # 1. Check for Subject: header in first 5 lines
     for line in inbound_text.split("\n")[:5]:
         stripped = line.strip()
         if stripped.lower().startswith("subject:"):
-            subj = stripped[len("subject:") :].strip()
-            # Strip any existing Re: prefixes
+            subj = stripped[len("subject:"):].strip()
             while subj.lower().startswith("re:"):
                 subj = subj[3:].strip()
             if subj and len(subj) >= 3:
                 return f"Re: {subj}"
 
-    # Take first 8 words, strip greeting words
-    words = inbound_text.split()[:12]
-    filtered = [w for w in words if w.lower().rstrip(",.!") not in _GREETING_WORDS][:8]
-    if filtered:
-        result = " ".join(filtered).capitalize()
-        # Clean trailing punctuation for subject line
-        result = result.rstrip(",.")
-        if len(result) >= 3:
+    # 2. Find first substantive sentence — prefer topic keywords, strip "I am/I'm" openers
+    lines = [l.strip() for l in inbound_text.split("\n") if l.strip()]
+
+    def _clean_subject(text: str) -> str | None:
+        # Strip leading "I am/I'm/We are/We're" to get to the point
+        text = re.sub(r"^(I am|I'm|We are|We're|I would like to|I'd like to)\s+", "", text, flags=re.IGNORECASE)
+        sentence = re.split(r"[.!?]", text)[0].strip()[:65].rstrip(" ,;:")
+        if len(sentence) >= 8:
+            return sentence[0].upper() + sentence[1:]
+        return None
+
+    # First pass: lines with topic keywords
+    for line in lines:
+        if _FILLER_PATTERNS.match(line) or len(line) < 15:
+            continue
+        if _TOPIC_KEYWORDS.search(line):
+            result = _clean_subject(line)
+            if result:
+                return result
+
+    # Second pass: any non-filler line
+    for line in lines:
+        if _FILLER_PATTERNS.match(line) or len(line) < 15:
+            continue
+        result = _clean_subject(line)
+        if result:
             return result
 
     return None
