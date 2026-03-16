@@ -31,6 +31,12 @@ def parse_args() -> argparse.Namespace:
         default=True,
         help="Auto-calibrate threshold based on corpus size (default: True)",
     )
+    p.add_argument(
+        "--organic",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Capture organic pairs (sent emails with no YouOS draft, default: True)",
+    )
     return p.parse_args()
 
 
@@ -67,6 +73,46 @@ def auto_calibrate_threshold(conn: sqlite3.Connection) -> tuple[float, int]:
     return 0.80, count
 
 
+def _capture_organic_pairs(conn: sqlite3.Connection, *, dry_run: bool = False) -> int:
+    """Capture organic pairs: sent replies with no corresponding YouOS draft.
+
+    These are emails you sent that have inbound context (replies, not fresh sends)
+    but no YouOS-generated draft.
+    """
+    # Ensure row_factory is set for dict-style access
+    conn.row_factory = sqlite3.Row
+
+    # Ensure organic column exists
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(feedback_pairs)").fetchall()}
+    if "organic" not in cols:
+        conn.execute("ALTER TABLE feedback_pairs ADD COLUMN organic BOOLEAN DEFAULT 0")
+
+    rows = conn.execute(
+        """
+        SELECT rp.id, rp.inbound_text, rp.reply_text FROM reply_pairs rp
+        WHERE rp.auto_feedback_processed = 0
+          AND rp.id NOT IN (SELECT DISTINCT reply_pair_id FROM feedback_pairs WHERE reply_pair_id IS NOT NULL)
+          AND LENGTH(rp.reply_text) >= 15
+        """
+    ).fetchall()
+
+    count = 0
+    for row in rows:
+        if dry_run:
+            print(f"  [organic] pair {row['id']}: {(row['inbound_text'] or '')[:60]}...")
+        else:
+            conn.execute(
+                """
+                INSERT INTO feedback_pairs
+                    (inbound_text, generated_draft, edited_reply, feedback_note, edit_distance_pct, rating, used_in_finetune, organic)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (row["inbound_text"], row["reply_text"], row["reply_text"], "organic pair — no YouOS draft", 0.0, None, 0, 1),
+            )
+        count += 1
+    return count
+
+
 def extract_auto_feedback(
     *,
     days: int = 1,
@@ -76,6 +122,7 @@ def extract_auto_feedback(
     auto_threshold: bool = True,
     database_url: str | None = None,
     configs_dir: Path | None = None,
+    organic: bool = True,
 ) -> dict:
     """Main extraction logic. Returns summary dict."""
     if db_path is None:
@@ -161,6 +208,14 @@ def extract_auto_feedback(
 
             captured += 1
 
+        # Organic pair capture
+        organic_count = 0
+        if organic:
+            organic_count = _capture_organic_pairs(conn, dry_run=dry_run)
+            if organic_count:
+                action_label = "Would capture" if dry_run else "Captured"
+                print(f"{action_label} {organic_count} organic pairs (no YouOS draft)")
+
         if not dry_run:
             conn.commit()
 
@@ -174,7 +229,7 @@ def extract_auto_feedback(
     if errors:
         print(f"  Errors: {errors} pairs failed draft generation")
 
-    return {"captured": captured, "total": total, "skipped": skipped, "errors": errors}
+    return {"captured": captured, "total": total, "skipped": skipped, "errors": errors, "organic": organic_count}
 
 
 def main() -> None:
@@ -186,6 +241,7 @@ def main() -> None:
         db_path=db_path,
         threshold=args.threshold,
         auto_threshold=args.auto_threshold,
+        organic=args.organic,
     )
 
 
