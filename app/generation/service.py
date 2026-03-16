@@ -116,7 +116,26 @@ def strip_signature(text: str) -> str:
     return text
 
 
-def _score_confidence(reply_pairs: list[RetrievalMatch]) -> tuple[str, str]:
+def _score_confidence(
+    reply_pairs: list[RetrievalMatch],
+    score_stats: dict[str, float] | None = None,
+) -> tuple[str, str]:
+    if not reply_pairs:
+        return "low", "no strong matches in retrieved precedent"
+
+    top_score = max(rp.score for rp in reply_pairs)
+
+    # Use relative thresholds when score stats are available
+    if score_stats and score_stats.get("mean") is not None and score_stats.get("stddev") is not None:
+        mean = score_stats["mean"]
+        stddev = score_stats["stddev"]
+        if top_score > mean + stddev:
+            return "high", f"top score {top_score:.1f} exceeds mean+1σ ({mean:.1f}+{stddev:.1f})"
+        if top_score > mean:
+            return "medium", f"top score {top_score:.1f} above mean ({mean:.1f})"
+        return "low", f"top score {top_score:.1f} below mean ({mean:.1f})"
+
+    # Fallback to absolute thresholds (empty corpus or no stats)
     high_count = sum(1 for rp in reply_pairs if rp.score > 8.0)
     medium_count = sum(1 for rp in reply_pairs if rp.score > 6.0)
     if high_count >= 3:
@@ -685,7 +704,15 @@ def generate_draft(
 
     detected_mode = request.mode or retrieval_response.detected_mode
     reply_pairs = retrieval_response.reply_pairs
-    confidence, confidence_reason = _score_confidence(reply_pairs)
+    # Build score stats dict from retrieval response
+    score_stats = None
+    if retrieval_response.mean_score is not None:
+        score_stats = {
+            "max": retrieval_response.max_score,
+            "mean": retrieval_response.mean_score,
+            "stddev": retrieval_response.score_stddev,
+        }
+    confidence, confidence_reason = _score_confidence(reply_pairs, score_stats=score_stats)
 
     prompts = _load_prompts(configs_dir)
     persona = _load_persona(configs_dir)

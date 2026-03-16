@@ -100,6 +100,9 @@ class RetrievalResponse:
     chunks: list[RetrievalMatch]
     reply_pairs: list[RetrievalMatch]
     partial_semantic_coverage: bool = False
+    max_score: float | None = None
+    mean_score: float | None = None
+    score_stddev: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -253,6 +256,20 @@ class RetrievalService:
         if semantic_enabled:
             method = f"{method}+semantic"
 
+        # Compute score stats for reply_pairs
+        max_score = None
+        mean_score = None
+        score_stddev = None
+        if reply_pairs:
+            scores = [rp.score for rp in reply_pairs]
+            max_score = max(scores)
+            mean_score = sum(scores) / len(scores)
+            if len(scores) >= 2:
+                variance = sum((s - mean_score) ** 2 for s in scores) / len(scores)
+                score_stddev = variance**0.5
+            else:
+                score_stddev = 0.0
+
         return RetrievalResponse(
             query=query,
             retrieval_method=method,
@@ -263,6 +280,9 @@ class RetrievalService:
             chunks=chunks,
             reply_pairs=reply_pairs,
             partial_semantic_coverage=partial_coverage,
+            max_score=max_score,
+            mean_score=mean_score,
+            score_stddev=score_stddev,
         )
 
     # -- Semantic reranking ────────────────────────────────────────────────
