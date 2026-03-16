@@ -73,6 +73,18 @@ def score_pair_for_review(pair: dict[str, Any], reviewed_sender_types: Counter) 
         except (ValueError, TypeError):
             pass
 
+    # Continuous recency score — 1.0 for today, 0.0 for 1yr+
+    if paired_at:
+        try:
+            dt = datetime.fromisoformat(paired_at.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            days_old = (datetime.now(tz=timezone.utc) - dt).days
+            recency_score = max(0.0, 1.0 - (days_old / 365))
+            score += recency_score * 0.3
+        except (ValueError, TypeError):
+            pass
+
     # Sender type diversity bonus
     sender_type = classify_sender(pair.get("inbound_author"))
     if reviewed_sender_types[sender_type] < 2:
