@@ -136,6 +136,20 @@ def get_review_batch_size(config: dict[str, Any] | None = None) -> int:
     return max(5, min(50, int(raw)))
 
 
+def get_review_draft_model(config: dict[str, Any] | None = None) -> str:
+    """Read review.draft_model from config.
+
+    'claude'  — use Claude CLI (faster, default)
+    'local'   — use local Qwen adapter (private, slower)
+    'auto'    — use local if adapter is ready, else Claude
+    """
+    cfg = config or load_config()
+    val = cfg.get("review", {}).get("draft_model", "claude").lower().strip()
+    if val not in ("claude", "local", "auto"):
+        return "claude"
+    return val
+
+
 def get_last_ingest_at(account: str, config: dict[str, Any] | None = None) -> str | None:
     cfg = config or load_config()
     return cfg.get("ingestion", {}).get("last_ingest_at", {}).get(account)

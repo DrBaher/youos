@@ -615,6 +615,7 @@ def main() -> None:
     config.setdefault("ingestion", {})
     config["ingestion"]["accounts"] = identity["emails"]
     config.setdefault("review", {})["batch_size"] = 10
+    config["review"].setdefault("draft_model", "claude")  # 'claude', 'local', or 'auto'
 
     # Save config
     CONFIG_PATH.write_text(
