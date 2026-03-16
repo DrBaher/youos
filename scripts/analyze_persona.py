@@ -241,9 +241,14 @@ def print_report(findings: dict) -> None:
 
 
 def main() -> None:
+    import argparse
     import sys
 
     sys.path.insert(0, str(ROOT_DIR))
+
+    parser = argparse.ArgumentParser(description="Analyze persona patterns from corpus")
+    parser.add_argument("--dry-run", action="store_true", help="Print what would change without writing")
+    args = parser.parse_args()
 
     from app.core.settings import get_settings
     from app.db.bootstrap import resolve_sqlite_path
@@ -254,9 +259,22 @@ def main() -> None:
     findings = analyze(db_path)
     print_report(findings)
 
-    output_path = ROOT_DIR / "configs" / "persona_analysis.json"
-    output_path.write_text(json.dumps(findings, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"\nFindings written to {output_path}")
+    if args.dry_run:
+        print("\n[DRY RUN] Would write findings to configs/persona_analysis.json")
+        # Show what persona merge would do
+        from scripts.analyze_persona_merge import merge_persona_analysis
+
+        merge_persona_analysis(
+            analysis_path=None,
+            persona_path=ROOT_DIR / "configs" / "persona.yaml",
+            log_path=ROOT_DIR / "var" / "persona_merge.log",
+            dry_run=True,
+            findings_dict=findings,
+        )
+    else:
+        output_path = ROOT_DIR / "configs" / "persona_analysis.json"
+        output_path.write_text(json.dumps(findings, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"\nFindings written to {output_path}")
 
 
 if __name__ == "__main__":

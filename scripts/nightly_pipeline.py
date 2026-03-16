@@ -93,8 +93,30 @@ def step_ingest_gmail(verbose: bool = False) -> bool:
     return success
 
 
-def step_analyze_persona(verbose: bool = False) -> bool:
-    """Placeholder for persona analysis step."""
+def step_analyze_persona(verbose: bool = False, dry_run: bool = False) -> bool:
+    """Run persona analysis and merge results into persona.yaml."""
+    # Run analysis
+    ok = _run_step(
+        "Persona analysis",
+        [sys.executable, str(ROOT_DIR / "scripts" / "analyze_persona.py")],
+    )
+    if not ok:
+        return False
+
+    # Merge results into persona.yaml
+    try:
+        from scripts.analyze_persona_merge import merge_persona_analysis
+
+        merge_persona_analysis(
+            analysis_path=ROOT_DIR / "configs" / "persona_analysis.json",
+            persona_path=ROOT_DIR / "configs" / "persona.yaml",
+            log_path=ROOT_DIR / "var" / "persona_merge.log",
+            dry_run=dry_run,
+        )
+        print("  [OK] Persona merge completed")
+    except Exception as exc:
+        print(f"  [WARN] Persona merge failed: {exc}")
+        return False
     return True
 
 
