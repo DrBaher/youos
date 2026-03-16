@@ -351,6 +351,62 @@ def note(
 
 
 @app.command()
+def corpus(
+    output_json: bool = typer.Option(False, "--json", help="Output raw JSON"),
+):
+    """Print corpus health report (pair count, docs, quality scores, top senders)."""
+    from app.core.settings import get_settings
+    from app.db.bootstrap import resolve_sqlite_path
+
+    settings = get_settings()
+    db_path = resolve_sqlite_path(settings.database_url)
+
+    if not db_path.exists():
+        print(f"Database not found: {db_path}")
+        raise SystemExit(1)
+
+    from scripts.report_ingestion_health import corpus_report
+
+    report = corpus_report(db_path)
+
+    if output_json:
+        import json
+
+        print(json.dumps(report, indent=2))
+        return
+
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+    table = Table(title="YouOS Corpus Report", show_header=True, header_style="bold cyan")
+    table.add_column("Metric", style="dim")
+    table.add_column("Value")
+
+    table.add_row("Reply pairs", f"{report['pair_count']:,}")
+    table.add_row("Documents", f"{report['doc_count']:,}")
+    table.add_row("Feedback pairs", f"{report['feedback_pairs']:,}")
+    table.add_row("Embedding coverage", f"{report['embedding_pct']:.1f}%")
+
+    qs = report["quality_score"]
+    if qs["min"] is not None:
+        table.add_row("Quality score (min/median/max)", f"{qs['min']}/{qs['median']}/{qs['max']}")
+    else:
+        table.add_row("Quality score", "N/A")
+
+    console.print(table)
+
+    if report["top_senders"]:
+        sender_table = Table(title="Top Senders by Pair Count", show_header=True, header_style="bold cyan")
+        sender_table.add_column("Email")
+        sender_table.add_column("Name")
+        sender_table.add_column("Replies", justify="right")
+        for s in report["top_senders"][:5]:
+            sender_table.add_row(s["email"], s.get("display_name") or "", str(s["reply_count"]))
+        console.print(sender_table)
+
+
+@app.command()
 def stats():
     """Print stats summary."""
     from rich.console import Console

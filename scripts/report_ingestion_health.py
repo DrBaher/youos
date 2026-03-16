@@ -1,7 +1,9 @@
 import argparse
 import json
 import sqlite3
+import statistics
 from pathlib import Path
+from typing import Any
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -19,6 +21,69 @@ def build_parser() -> argparse.ArgumentParser:
         help="Number of recent sample rows to show per section.",
     )
     return parser
+
+
+def corpus_report(db_path: Path, sample_limit: int = 3) -> dict[str, Any]:
+    """Generate a corpus health report as a dict."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        pair_count = conn.execute("SELECT COUNT(*) FROM reply_pairs").fetchone()[0]
+        doc_count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+
+        feedback_count = 0
+        try:
+            feedback_count = conn.execute("SELECT COUNT(*) FROM feedback_pairs").fetchone()[0]
+        except Exception:
+            pass
+
+        # Embedding coverage
+        embedding_pct = 0.0
+        try:
+            total_docs = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+            embedded = conn.execute("SELECT COUNT(*) FROM documents WHERE embedding IS NOT NULL").fetchone()[0]
+            embedding_pct = round((embedded / total_docs * 100) if total_docs > 0 else 0.0, 1)
+        except Exception:
+            pass
+
+        # Quality score distribution
+        quality_scores: list[float] = []
+        try:
+            rows = conn.execute("SELECT quality_score FROM reply_pairs WHERE quality_score IS NOT NULL").fetchall()
+            quality_scores = [float(r[0]) for r in rows]
+        except Exception:
+            pass
+
+        quality_min = round(min(quality_scores), 2) if quality_scores else None
+        quality_max = round(max(quality_scores), 2) if quality_scores else None
+        quality_median = round(statistics.median(quality_scores), 2) if quality_scores else None
+
+        # Top 5 senders by pair count
+        top_senders: list[dict[str, Any]] = []
+        try:
+            rows = conn.execute(
+                "SELECT email, display_name, reply_count FROM sender_profiles ORDER BY reply_count DESC LIMIT ?",
+                (sample_limit if sample_limit >= 5 else 5,),
+            ).fetchall()
+            for r in rows:
+                top_senders.append({"email": r["email"], "display_name": r["display_name"], "reply_count": r["reply_count"]})
+        except Exception:
+            pass
+
+        return {
+            "pair_count": pair_count,
+            "doc_count": doc_count,
+            "feedback_pairs": feedback_count,
+            "embedding_pct": embedding_pct,
+            "quality_score": {
+                "min": quality_min,
+                "median": quality_median,
+                "max": quality_max,
+            },
+            "top_senders": top_senders,
+        }
+    finally:
+        conn.close()
 
 
 def main() -> None:
