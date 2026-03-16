@@ -1,0 +1,128 @@
+You are working on YouOS at /Users/bbot/Projects/youos. 423 tests currently pass. Implement the following 12 improvements, one at a time, committing each separately. Run tests after each.
+
+## Item 1 — Prompt token budget and exemplar truncation (app/generation/service.py)
+Before calling any model, estimate token count of the assembled prompt.
+- Add _estimate_tokens(text: str) -> int: simple word-count * 1.4 approximation (no new deps)
+- Add PROMPT_TOKEN_BUDGET: int = 2000 constant
+- In generate_draft(), after assembling prompt: if _estimate_tokens(prompt) > PROMPT_TOKEN_BUDGET:
+  - Trim exemplars one by one from the end (lowest-scoring first — already sorted) until under budget
+  - Reassemble prompt with trimmed exemplar list
+  - Log: 'Prompt truncated: removed N exemplars to fit token budget'
+- Add token_estimate to DraftResponse (optional field, int | None)
+Add tests in tests/test_prompt_truncation.py.
+
+## Item 2 — A/B model comparison in Review Queue (app/api/review_queue_routes.py, app/generation/service.py)
+The /review-queue/compare endpoint currently compares retrieval draft vs baseline (no exemplars).
+Change it to compare Qwen+LoRA adapter vs Qwen base (no adapter):
+- Add use_adapter: bool = True to DraftRequest
+- In _call_local_model(): if use_adapter=False, omit --adapter-path from the mlx_lm command
+- In /draft/compare: generate two drafts — one with adapter (use_adapter=True, with exemplars) and one without (use_adapter=False, no exemplars)
+- Return: {adapter_draft, base_draft, adapter_confidence, exemplar_count, improvement_hint: str}
+  improvement_hint = 'Adapter appears to be helping' if drafts differ significantly (hybrid_similarity < 0.7) else 'Drafts similar — adapter may need more training'
+Add tests in tests/test_model_compare.py.
+
+## Item 3 — Relative confidence thresholds (app/generation/service.py, app/retrieval/service.py)
+_score_confidence() uses hardcoded absolute thresholds (>8.0 = high, >6.0 = medium).
+Fix:
+- Track rolling score stats in the retrieval response: add max_score, mean_score, score_stddev to RetrievalResponse
+- In _score_confidence(): accept score_stats: dict | None = None parameter
+- If stats available: high = top score > mean + 1*stddev; medium = top score > mean; low = otherwise
+- If no stats (empty corpus): fall back to absolute thresholds
+- Pass score stats from retrieval response to _score_confidence() in generate_draft()
+Add tests in tests/test_confidence_relative.py.
+
+## Item 4 — Per-account corpus isolation (app/generation/service.py, app/retrieval/service.py)
+Currently account_emails is never populated in RetrievalRequest from generate_draft().
+Fix:
+- In generate_draft(): if request.sender is set, infer account_email:
+  - Extract sender domain
+  - Load user.emails from config
+  - Match: if sender domain matches any internal domain → use work account email
+  - If sender is personal domain (gmail/yahoo etc) → use personal account email
+  - If ambiguous → pass both (empty = no filter = use all)
+- Pass inferred account_email to RetrievalRequest as account_emails tuple
+- Add get_account_for_sender(sender: str, config: dict) -> str | None to app/core/config.py
+Add tests in tests/test_account_isolation.py.
+
+## Item 5 — Flip exemplar truncation: preserve reply, trim inbound (app/generation/service.py)
+In _format_exemplars(): currently inbound is capped at 800 chars, reply at 400.
+Flip the priority:
+- reply cap: 600 chars (increased — what the model should learn from)
+- inbound cap: 400 chars (decreased — just context)
+This ensures the model sees more of the actual reply style while keeping the inbound as a short trigger.
+Add tests in tests/test_exemplar_truncation.py.
+
+## Item 6 — Training export deduplication by inbound similarity (scripts/export_feedback_jsonl.py)
+After filtering and before temporal split, deduplicate pairs by inbound text similarity:
+- Use hybrid_similarity() from app/core/diff to compare inbound texts
+- If two pairs have hybrid_similarity >= 0.95: keep only the one with higher rating (or more recent if tied)
+- Print: 'Deduped N near-duplicate training pairs'
+- Add --no-dedup flag to disable
+Add tests in tests/test_export_dedup.py.
+
+## Item 7 — Incremental persona analysis (scripts/analyze_persona.py, scripts/nightly_pipeline.py)
+analyze_persona.py currently processes all reply_pairs every run.
+Fix:
+- Add --recent-days flag (default 90): weight pairs from last N days 3x in style metrics
+- Add --full flag: process all pairs with equal weight (run weekly)
+- Track last full analysis in var/persona_last_full_analysis.txt (ISO timestamp)
+- In step_analyze_persona(): if last full analysis was > 7 days ago, run with --full; else run with --recent-days 90
+- EWMA for avg_reply_words (Item 12 below is subsumed here): when computing avg_reply_words, use exponentially weighted moving average with 60-day half-life instead of simple mean. Sort pairs by paired_at, apply weight = exp(-0.693 * days_ago / 60), compute weighted mean.
+Add tests in tests/test_persona_incremental.py.
+
+## Item 8 — Rotating benchmark cases for autoresearch (scripts/generate_benchmarks.py, scripts/nightly_pipeline.py)
+Autoresearch optimizes against the same benchmark cases every night — risks overfitting.
+Fix:
+- In generate_benchmarks.py: add --sample-size flag (default 30). Sample randomly from reply_pairs for benchmark generation, using a different random seed each time (seed = hash of current date's ISO week).
+- Track rotation in var/benchmark_last_refresh.txt (ISO timestamp + seed used)
+- In nightly_pipeline.py step_autoresearch(): before running, check if benchmark_last_refresh.txt is > 7 days old; if so, regenerate benchmarks with fresh sample
+- Add benchmark_rotated: bool to pipeline log
+Add tests in tests/test_benchmark_rotation.py.
+
+## Item 9 — Retry on empty local model output (app/generation/service.py)
+If _call_local_model() returns fewer than 10 non-whitespace chars:
+- Log warning: 'Local model returned empty output, falling back to Claude'
+- Retry with _call_claude_cli(prompt, max_tokens=max_tokens)
+- If Claude also fails or fallback is 'none': raise ValueError('Draft generation returned empty output')
+- Add empty_output_retried: bool = False to DraftResponse
+- Increment a counter in var/pipeline_last_run.json: local_model_empty_retries
+Add tests in tests/test_empty_output_retry.py.
+
+## Item 10 — youos feedback CLI command (app/cli.py)
+Add 'youos feedback' command:
+  youos feedback --inbound "email text" --reply "your reply" [--rating 4] [--note "optional note"] [--sender "email@co.com"]
+- Inserts directly into feedback_pairs table (same schema as web UI submission)
+- Computes edit_distance_pct = 0.0 (no generated draft to compare against)
+- Sets used_in_finetune = 0, organic = 1 (since it bypasses generation)
+- Prints: 'Feedback pair saved. Total pairs: N'
+- Also accepts --stdin to read inbound from stdin, --reply-stdin to read reply from stdin
+Add tests in tests/test_feedback_cli.py.
+
+## Item 11 — Golden eval as nightly pipeline step (scripts/nightly_pipeline.py, scripts/run_golden_eval.py)
+Add step_golden_eval() to nightly_pipeline.py:
+- Runs run_golden_eval() (import from scripts.run_golden_eval)
+- Saves results to var/golden_results.json (already done by run_golden_eval)
+- Returns True/False based on composite score >= 0.5
+- Only runs if DB exists and has >= 5 feedback pairs
+- Add to pipeline run() after step_finetune_lora, before step_autoresearch
+- Include golden_composite score in var/pipeline_last_run.json
+- Add to step skip gates: skip if < 5 feedback pairs
+Add tests in tests/test_golden_pipeline.py.
+
+## Item 12 — EWMA avg_reply_words in persona analysis (scripts/analyze_persona.py)
+EWMA is now integrated into Item 7 (incremental persona analysis with --recent-days uses weighted mean).
+Instead, use this slot for: persona confidence intervals.
+In analyze_persona.py: alongside avg_reply_words, compute:
+- avg_reply_words_p25: 25th percentile of reply word counts
+- avg_reply_words_p75: 75th percentile
+- avg_reply_words_stddev: standard deviation
+Write all three to persona_analysis.json and merge p25/p75 into persona.yaml under style.
+In assemble_prompt(): add length guidance: 'Target length: ~{avg_words} words (typical range: {p25}–{p75})' when both percentiles are available.
+Add tests in tests/test_persona_confidence.py.
+
+## Finish up
+- source .venv/bin/activate && python -m pytest tests/ -q
+- ruff check . --fix && ruff format app/ scripts/ tests/
+- git add -A && git commit -m 'chore: final lint and format pass'
+- git push origin main
+- openclaw system event --text 'Done: YouOS round 6 improvements complete (12 items)' --mode now
