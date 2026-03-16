@@ -128,7 +128,7 @@ def _fetch_candidates(
             AND LENGTH(rp.inbound_text) >= 50
             AND rp.inbound_text NOT LIKE '---------- Forwarded%%'
             {}
-            ORDER BY RANDOM()
+            ORDER BY rp.paired_at DESC
             LIMIT ?
         """.format(placeholders)
         params.append(batch_size * 5)  # fetch larger pool for scoring
