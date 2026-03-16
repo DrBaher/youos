@@ -355,7 +355,8 @@ class RetrievalService:
                 d.external_uri,
                 d.created_at,
                 d.updated_at,
-                rpfts.rank AS fts_rank
+                rpfts.rank AS fts_rank,
+                COALESCE(rp.quality_score, 1.0) AS quality_score
             FROM reply_pairs_fts AS rpfts
             INNER JOIN reply_pairs AS rp ON rp.id = rpfts.rowid
             LEFT JOIN documents AS d ON d.id = rp.document_id
@@ -446,9 +447,12 @@ class RetrievalService:
             sender_type_hint=request.sender_type_hint,
             sender_domain_hint=request.sender_domain_hint,
         )
+        # Apply quality_score multiplier from feedback
+        quality_score = float(row["quality_score"]) if "quality_score" in row.keys() else 1.0
+        combined = (lexical_score + metadata_score) * quality_score
         return RetrievalMatch(
             result_type="reply_pair",
-            score=round(lexical_score + metadata_score, 4),
+            score=round(combined, 4),
             lexical_score=round(lexical_score, 4),
             metadata_score=round(metadata_score, 4),
             source_type=row["source_type"],
@@ -572,6 +576,7 @@ class RetrievalService:
                 rp.reply_author,
                 rp.paired_at,
                 rp.metadata_json,
+                COALESCE(rp.quality_score, 1.0) AS quality_score,
                 d.id AS document_id,
                 d.title,
                 d.author,
@@ -706,9 +711,11 @@ class RetrievalService:
             sender_type_hint=request.sender_type_hint,
             sender_domain_hint=request.sender_domain_hint,
         )
+        quality_score = float(row["quality_score"]) if "quality_score" in row.keys() else 1.0
+        combined = (lexical_score + metadata_score) * quality_score
         return RetrievalMatch(
             result_type="reply_pair",
-            score=round(lexical_score + metadata_score, 4),
+            score=round(combined, 4),
             lexical_score=round(lexical_score, 4),
             metadata_score=round(metadata_score, 4),
             source_type=row["source_type"],

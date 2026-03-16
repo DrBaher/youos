@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS reply_pairs (
     metadata_json TEXT NOT NULL DEFAULT '{}',
     created_ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     auto_feedback_processed INTEGER DEFAULT 0,
+    quality_score REAL DEFAULT 1.0,
     FOREIGN KEY (document_id) REFERENCES documents(id),
     UNIQUE(source_type, source_id)
 );

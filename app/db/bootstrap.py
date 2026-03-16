@@ -23,6 +23,7 @@ def bootstrap_database() -> Path:
     try:
         connection.executescript(schema_sql)
         _migrate_feedback_pairs(connection)
+        _migrate_reply_pairs(connection)
         _populate_fts(connection)
         connection.commit()
     finally:
@@ -38,6 +39,13 @@ def _migrate_feedback_pairs(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE feedback_pairs ADD COLUMN edit_distance_pct REAL")
     if "reply_pair_id" not in cols:
         connection.execute("ALTER TABLE feedback_pairs ADD COLUMN reply_pair_id INTEGER")
+
+
+def _migrate_reply_pairs(connection: sqlite3.Connection) -> None:
+    """Add quality_score column to reply_pairs if missing."""
+    cols = {row[1] for row in connection.execute("PRAGMA table_info(reply_pairs)").fetchall()}
+    if "quality_score" not in cols:
+        connection.execute("ALTER TABLE reply_pairs ADD COLUMN quality_score REAL DEFAULT 1.0")
 
 
 def _populate_fts(connection: sqlite3.Connection) -> None:

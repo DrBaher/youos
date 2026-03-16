@@ -133,6 +133,22 @@ def feedback_submit(body: SubmitBody, request: Request) -> dict:
             ),
         )
         conn.commit()
+
+        # Update quality_score on linked reply_pair if reply_pair_id exists
+        try:
+            last_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            row = conn.execute("SELECT reply_pair_id, rating, edit_distance_pct FROM feedback_pairs WHERE id = ?", (last_id,)).fetchone()
+            if row and row[0] is not None and row[1] is not None:
+                rp_id = row[0]
+                rating = row[1]
+                edp = row[2] or 0.0
+                quality_score = (rating / 5.0) * (1.0 - edp) + 0.3
+                quality_score = max(0.3, min(1.3, quality_score))
+                conn.execute("UPDATE reply_pairs SET quality_score = ? WHERE id = ?", (round(quality_score, 4), rp_id))
+                conn.commit()
+        except Exception:
+            pass  # Don't fail if quality_score column doesn't exist yet
+
         total = conn.execute("SELECT COUNT(*) FROM feedback_pairs").fetchone()[0]
     finally:
         conn.close()
