@@ -529,7 +529,12 @@ def assemble_prompt(
 
     # Append length guidance if avg_reply_words is set
     if avg_words:
-        result += f"\nTarget length: ~{avg_words} words. Be concise.\n"
+        p25 = style.get("avg_reply_words_p25")
+        p75 = style.get("avg_reply_words_p75")
+        if p25 is not None and p75 is not None:
+            result += f"\nTarget length: ~{avg_words} words (typical range: {p25}\u2013{p75}). Be concise.\n"
+        else:
+            result += f"\nTarget length: ~{avg_words} words. Be concise.\n"
 
     # Greeting/closing injection
     greeting = _resolve_greeting(persona, sender_type, first_name)
