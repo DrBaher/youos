@@ -54,6 +54,8 @@ class RetrievalRequest:
     sender_type_hint: str | None = None
     sender_domain_hint: str | None = None
     language_hint: str | None = None
+    intent_hint: str | None = None
+    thread_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -192,6 +194,17 @@ class RetrievalService:
                 ch_semantic, ch_partial = self._apply_semantic_reranking(connection, query, chunks, "chunks")
                 semantic_enabled = semantic_enabled or ch_semantic
                 partial_coverage = partial_coverage or ch_partial
+
+            # Intent-based boosting
+            if request.intent_hint and request.intent_hint != "general" and reply_pairs:
+                from app.core.intent import classify_intent
+
+                for match in reply_pairs:
+                    if match.inbound_text:
+                        match_intent = classify_intent(match.inbound_text)
+                        if match_intent == request.intent_hint:
+                            match.score = round(match.score * 1.2, 4)
+                reply_pairs.sort(key=lambda m: (-m.score, m.result_type, m.source_id))
 
             # Optional cross-encoder reranking
             if self.config.reranker_enabled:

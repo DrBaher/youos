@@ -33,6 +33,8 @@ class DraftRequest:
     use_local_model: bool = True
     tone_hint: str | None = None
     sender: str | None = None
+    intent_hint: str | None = None
+    thread_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -344,6 +346,7 @@ def assemble_prompt(
     tone_hint: str | None = None,
     sender_context: str | None = None,
     language_hint: str | None = None,
+    intent_hint: str | None = None,
 ) -> str:
     style = persona.get("style", {})
     voice = style.get("voice", "direct, clear, pragmatic")
@@ -383,6 +386,8 @@ def assemble_prompt(
         context_lines.append(f"Detected mode: {detected_mode}")
     if audience_hint:
         context_lines.append(f"Audience: {audience_hint}")
+    if intent_hint and intent_hint != "general":
+        context_lines.append(f"Email intent: {intent_hint}")
     if _has_thread_context(inbound_message):
         context_lines.append("Note: This inbound message contains a multi-message thread. Consider the full conversation context when drafting your reply.")
     context_block = ""
@@ -533,6 +538,12 @@ def generate_draft(
     if request.sender:
         sender_type_hint = classify_sender(request.sender)
         sender_domain_hint = extract_domain(request.sender)
+
+    # Classify intent
+    from app.core.intent import classify_intent
+
+    detected_intent = request.intent_hint or classify_intent(clean_inbound)
+
     retrieval_response: RetrievalResponse = retrieve_context(
         RetrievalRequest(
             query=clean_inbound,
@@ -543,6 +554,7 @@ def generate_draft(
             sender_type_hint=sender_type_hint,
             sender_domain_hint=sender_domain_hint,
             language_hint=detected_lang,
+            intent_hint=detected_intent,
         ),
         database_url=database_url,
         configs_dir=configs_dir,
@@ -584,6 +596,7 @@ def generate_draft(
         tone_hint=request.tone_hint,
         sender_context=sender_context,
         language_hint=detected_lang,
+        intent_hint=detected_intent,
     )
 
     precedent_used = [_precedent_summary(rp) for rp in reply_pairs]
