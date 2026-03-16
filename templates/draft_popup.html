@@ -70,6 +70,30 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn-tone:hover:not(:disabled) { background: #3a4a5a; color: #e0e0e0; }
 .tone-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .warn { font-size: 0.75rem; color: #f0ad4e; padding: 0.3rem 0.5rem; background: #2a2a0a; border-radius: 4px; border-left: 3px solid #f0ad4e; }
+.feedback-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border-top: 1px solid #2a3a4a; background: #0d1b2a; flex-shrink: 0; }
+.stars { display: flex; gap: 0.2rem; }
+.star { font-size: 1.2rem; cursor: pointer; color: #444; transition: color 0.1s; line-height: 1; }
+.star.on { color: #ffc107; }
+.feedback-note {
+  flex: 1; background: #16213e; border: 1px solid #333; border-radius: 4px;
+  color: #e0e0e0; font-size: 0.78rem; padding: 0.3rem 0.5rem;
+}
+.feedback-note:focus { outline: none; border-color: #00c4a7; }
+.btn-feedback { background: #2ecc71; color: #fff; font-size: 0.75rem; padding: 0.35rem 0.7rem; white-space: nowrap; }
+.btn-feedback:hover:not(:disabled) { background: #27ae60; }
+.feedback-sent { font-size: 0.75rem; color: #2ecc71; display: none; }
+.feedback-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.stars { display: flex; gap: 0.2rem; }
+.star { font-size: 1.1rem; cursor: pointer; color: #444; transition: color 0.1s; }
+.star.on { color: #ffc107; }
+.note-input {
+  flex: 1; min-width: 0; background: #16213e; border: 1px solid #333; border-radius: 4px;
+  color: #e0e0e0; font-size: 0.78rem; padding: 0.3rem 0.5rem;
+}
+.note-input:focus { outline: none; border-color: #00c4a7; }
+.btn-submit-fb { background: #2a3a4a; color: #aaa; font-size: 0.78rem; padding: 0.35rem 0.7rem; white-space: nowrap; }
+.btn-submit-fb:hover:not(:disabled) { background: #2ecc71; color: #fff; }
+.fb-sent { font-size: 0.75rem; color: #2ecc71; text-align: center; display: none; padding: 0.2rem; }
 </style>
 </head>
 <body>
@@ -99,6 +123,17 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   </div>
 </div>
 
+<div id="feedbackRow" style="padding:0.5rem 0.75rem;border-top:1px solid #2a3a4a;display:none;background:#1a1a2e;">
+  <div class="feedback-row">
+    <div class="stars" id="stars">
+      <span class="star" data-v="1">★</span><span class="star" data-v="2">★</span>
+      <span class="star" data-v="3">★</span><span class="star" data-v="4">★</span><span class="star" data-v="5">★</span>
+    </div>
+    <input class="note-input" id="fbNote" type="text" placeholder="Optional note...">
+    <button class="btn-submit-fb" id="btnFeedback">Submit</button>
+  </div>
+  <div class="fb-sent" id="fbSent">✓ Feedback saved</div>
+</div>
 <div class="footer">
   <button class="btn-generate" id="btnGenerate">Generate Draft</button>
   <button class="btn-insert" id="btnInsert" disabled>Insert into Gmail</button>
@@ -221,8 +256,50 @@ document.querySelectorAll('.btn-tone').forEach(btn => {
 document.getElementById('btnInsert').addEventListener('click', () => {
   const draft = document.getElementById('draftArea').value.trim();
   if (!draft) return;
-  // Post draft to parent Gmail window for insertion
   window.parent.postMessage({ type: 'youos-insert', draft }, '*');
+});
+
+// Star rating
+let selectedRating = 4;
+document.querySelectorAll('.star').forEach(s => {
+  s.addEventListener('mouseover', () => {
+    document.querySelectorAll('.star').forEach(st => st.classList.toggle('on', parseInt(st.dataset.v) <= parseInt(s.dataset.v)));
+  });
+  s.addEventListener('mouseout', () => {
+    document.querySelectorAll('.star').forEach(st => st.classList.toggle('on', parseInt(st.dataset.v) <= selectedRating));
+  });
+  s.addEventListener('click', () => {
+    selectedRating = parseInt(s.dataset.v);
+    document.querySelectorAll('.star').forEach(st => st.classList.toggle('on', parseInt(st.dataset.v) <= selectedRating));
+  });
+});
+// Default 4 stars
+document.querySelectorAll('.star').forEach(st => st.classList.toggle('on', parseInt(st.dataset.v) <= 4));
+
+document.getElementById('btnFeedback').addEventListener('click', async () => {
+  const edited = document.getElementById('draftArea').value.trim();
+  if (!edited) return;
+  const btn = document.getElementById('btnFeedback');
+  btn.disabled = true;
+  btn.textContent = '...';
+  try {
+    await fetch('/feedback/submit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        inbound_text: inbound,
+        generated_draft: generatedDraft,
+        edited_reply: edited,
+        feedback_note: document.getElementById('fbNote').value.trim() || null,
+        rating: selectedRating,
+      }),
+    });
+    document.getElementById('fbSent').style.display = 'block';
+    btn.textContent = '✓';
+  } catch (e) {
+    btn.textContent = 'Error';
+    btn.disabled = false;
+  }
 });
 </script>
 </body>
