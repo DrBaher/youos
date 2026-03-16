@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import field
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import yaml
 
-from app.retrieval.service import RetrievalConfig
+from app.retrieval.service import RetrievalConfig, RetrievalMatch
 
 
 # --- Item 5: Sender-type retrieval boosting ---
@@ -125,3 +125,65 @@ def test_partial_semantic_coverage_flag():
     assert resp.partial_semantic_coverage is True
     d = resp.to_dict()
     assert d["partial_semantic_coverage"] is True
+
+
+# --- Item 7: Cross-encoder reranking ---
+
+
+def _make_match(score: float, snippet: str = "test") -> RetrievalMatch:
+    return RetrievalMatch(
+        result_type="reply_pair", score=score, lexical_score=score,
+        metadata_score=0.0, source_type="gmail", source_id="1",
+        account_email=None, title=None, author=None, external_uri=None,
+        thread_id=None, created_at=None, updated_at=None,
+        snippet=snippet,
+    )
+
+
+def test_reranker_graceful_fallback():
+    """Reranker returns matches unchanged when sentence_transformers not available."""
+    import app.core.reranker as reranker_mod
+
+    # Reset state
+    reranker_mod._cross_encoder = None
+    reranker_mod._load_attempted = False
+
+    with patch.dict("sys.modules", {"sentence_transformers": None}):
+        reranker_mod._load_attempted = False
+        reranker_mod._cross_encoder = None
+        # Force ImportError path
+        matches = [_make_match(5.0), _make_match(3.0)]
+        result = reranker_mod.rerank("test query", matches, 2)
+        assert result == matches
+
+
+def test_reranker_with_mock_encoder():
+    """Reranker reorders matches based on cross-encoder scores."""
+    import app.core.reranker as reranker_mod
+
+    mock_encoder = MagicMock()
+    # Second match should score higher
+    mock_encoder.predict.return_value = [0.2, 0.9]
+
+    reranker_mod._cross_encoder = mock_encoder
+    reranker_mod._load_attempted = True
+
+    matches = [_make_match(5.0, "low relevance"), _make_match(3.0, "high relevance")]
+    result = reranker_mod.rerank("test query", matches, 2)
+
+    # Second match should come first after reranking
+    assert result[0].snippet == "high relevance"
+
+    # Cleanup
+    reranker_mod._cross_encoder = None
+    reranker_mod._load_attempted = False
+
+
+def test_reranker_config_defaults():
+    """RetrievalConfig has reranker_enabled=False by default."""
+    config = RetrievalConfig(
+        top_k_documents=3, top_k_chunks=3, top_k_reply_pairs=5,
+        recency_boost_days=60, recency_boost_weight=0.2,
+        account_boost_weight=0.15, source_weights={},
+    )
+    assert config.reranker_enabled is False

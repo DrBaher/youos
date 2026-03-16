@@ -125,6 +125,7 @@ class RetrievalConfig:
     sender_type_boost: float = 0.15
     sender_domain_boost: float = 0.10
     sender_type_boost_map: dict[str, float] = field(default_factory=dict)
+    reranker_enabled: bool = False
 
 
 def _has_fts5_table(connection: sqlite3.Connection, table_name: str) -> bool:
@@ -189,6 +190,18 @@ class RetrievalService:
                 ch_semantic, ch_partial = self._apply_semantic_reranking(connection, query, chunks, "chunks")
                 semantic_enabled = semantic_enabled or ch_semantic
                 partial_coverage = partial_coverage or ch_partial
+
+            # Optional cross-encoder reranking
+            if self.config.reranker_enabled:
+                from app.core.reranker import is_reranker_available, rerank
+
+                if is_reranker_available():
+                    top_k_rp = request.top_k_reply_pairs or self.config.top_k_reply_pairs
+                    if len(reply_pairs) > top_k_rp:
+                        reply_pairs = rerank(query, reply_pairs, top_k_rp)
+                    top_k_ch = request.top_k_chunks or self.config.top_k_chunks
+                    if len(chunks) > top_k_ch:
+                        chunks = rerank(query, chunks, top_k_ch)
 
         method = "fts5_bm25" if use_fts else "lexical_v1"
         if semantic_enabled:
@@ -820,6 +833,7 @@ def _load_retrieval_config(configs_dir: Path) -> RetrievalConfig:
             sender_type_boost_map={
                 str(k): float(v) for k, v in (payload.get("sender_type_boost_map") or {}).items()
             },
+            reranker_enabled=bool(payload.get("reranker_enabled", False)),
         )
 
     # Legacy path
