@@ -40,6 +40,8 @@ def _migrate_feedback_pairs(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE feedback_pairs ADD COLUMN edit_distance_pct REAL")
     if "reply_pair_id" not in cols:
         connection.execute("ALTER TABLE feedback_pairs ADD COLUMN reply_pair_id INTEGER")
+    if "organic" not in cols:
+        connection.execute("ALTER TABLE feedback_pairs ADD COLUMN organic BOOLEAN DEFAULT 0")
 
 
 def _migrate_reply_pairs(connection: sqlite3.Connection) -> None:
