@@ -131,6 +131,7 @@ class RetrievalConfig:
     sender_type_boost_map: dict[str, float] = field(default_factory=dict)
     reranker_enabled: bool = False
     subject_match_boost: float = 0.2
+    topic_match_boost: float = 0.15
 
 
 def _has_fts5_table(connection: sqlite3.Connection, table_name: str) -> bool:
@@ -207,6 +208,17 @@ class RetrievalService:
                     if match.thread_id and match.thread_id == request.thread_id:
                         match.score = round(match.score * 2.0, 4)
                 reply_pairs.sort(key=lambda m: (-m.score, m.result_type, m.source_id))
+
+            # Topic-aware boosting
+            if request.sender_domain_hint and reply_pairs and self.config.topic_match_boost > 0:
+                sender_topics = _load_sender_topics(connection, request.sender_domain_hint)
+                if sender_topics:
+                    query_tokens = _tokenize(query)
+                    for match in reply_pairs:
+                        if match.metadata.get("inbound_author") or (match.author and request.sender_domain_hint in (match.author or "")):
+                            if _check_topic_overlap(query_tokens, sender_topics):
+                                match.score = round(match.score * (1.0 + self.config.topic_match_boost), 4)
+                    reply_pairs.sort(key=lambda m: (-m.score, m.result_type, m.source_id))
 
             # Intent-based boosting
             if request.intent_hint and request.intent_hint != "general" and reply_pairs:
@@ -840,6 +852,35 @@ class RetrievalService:
         return base * sender_multiplier
 
 
+def _check_topic_overlap(query_tokens: list[str], topics: list[str]) -> bool:
+    """Check if any query token (>4 chars) matches a sender's known topics."""
+    topic_lower = {t.lower() for t in topics}
+    for token in query_tokens:
+        if len(token) > 4 and token in topic_lower:
+            return True
+    return False
+
+
+def _load_sender_topics(connection: sqlite3.Connection, sender_domain: str) -> list[str]:
+    """Load topics_json for a sender matching the given domain."""
+    try:
+        exists = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sender_profiles'").fetchone()
+        if not exists:
+            return []
+        row = connection.execute(
+            "SELECT topics_json FROM sender_profiles WHERE domain = ? LIMIT 1",
+            (sender_domain,),
+        ).fetchone()
+        if row and row["topics_json"]:
+            import json
+
+            topics = json.loads(row["topics_json"])
+            return topics if isinstance(topics, list) else []
+    except Exception:
+        pass
+    return []
+
+
 def retrieve_context(
     request: RetrievalRequest,
     *,
@@ -902,6 +943,7 @@ def _load_retrieval_config(configs_dir: Path) -> RetrievalConfig:
             sender_domain_boost=float(payload.get("sender_domain_boost", 0.10)),
             sender_type_boost_map={str(k): float(v) for k, v in (payload.get("sender_type_boost_map") or {}).items()},
             reranker_enabled=bool(payload.get("reranker_enabled", False)),
+            topic_match_boost=float(payload.get("topic_match_boost", 0.15)),
         )
 
     # Legacy path
