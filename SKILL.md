@@ -81,6 +81,9 @@ youos status
 youos improve
 youos improve --verbose
 
+# Run golden benchmark evaluation (5 curated test cases)
+youos eval --golden
+
 # Ingest a WhatsApp chat export (optional — augments your corpus)
 youos ingest --whatsapp ~/Downloads/WhatsApp-Chat.txt
 
@@ -97,10 +100,11 @@ youos teardown
 ## How it works
 
 1. Ingests your sent Gmail history, Google Docs, and WhatsApp exports (all stays local, never uploaded)
-2. Builds a retrieval index of your real past replies
-3. When you ask for a draft: retrieves the most similar past replies and generates a new one in your style — supports full email threads
-4. Every email you review trains the model further
-5. Nightly: ingests new emails, fine-tunes the local Qwen model, runs autoresearch (80 iterations) to optimize retrieval
+2. Builds a retrieval index of your real past replies, scored by BM25 + semantic embeddings + sender-type boosts + quality scores from your feedback
+3. When you ask for a draft: retrieves the most similar past replies, assembles up to 5 few-shot exemplars, and generates a reply in your style — supports full email threads; shows a low-confidence warning when precedents are weak
+4. Every email you review trains the model further — quality-filtered, temporally split training data; hyperparameters auto-scale with corpus size
+5. Nightly: ingests new emails, fine-tunes the local Qwen model, runs autoresearch (80 iterations) to optimize retrieval weights, sender boosts, and prompt variants
+6. Your best-rated, least-edited replies automatically surface higher in future retrievals via quality scoring
 
 ## Privacy
 

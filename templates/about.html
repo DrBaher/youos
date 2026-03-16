@@ -160,6 +160,13 @@ body {
     <ul style="margin-top:1rem;color:#bbb;font-size:0.9rem;line-height:2;padding-left:1.2rem;">
       <li>Ingests Gmail, Google Docs, and WhatsApp exports as corpus sources</li>
       <li>Handles full email threads — paste the whole thread, YouOS focuses on the latest message</li>
+      <li>Drafts grounded in few-shot exemplars from your real past replies (up to 5 per draft)</li>
+      <li>Confidence-gated warnings — low-precedent drafts show a clear banner in the UI</li>
+      <li>Training data quality filters — only high-signal feedback pairs used for fine-tuning</li>
+      <li>Auto-scales LoRA training hyperparameters as your corpus grows</li>
+      <li>Sender-type boost: external clients, internal, personal, automated — all weighted differently in retrieval</li>
+      <li>Optional cross-encoder reranking for higher retrieval precision</li>
+      <li>Golden benchmark suite: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos eval --golden</code></li>
       <li>Rate-limited draft generation — your data is never over-shared</li>
       <li>Mobile-friendly UI — use the Review Queue anywhere</li>
       <li>Pre-flight health check: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos doctor</code></li>
@@ -178,7 +185,7 @@ body {
       <div class="flow-box">Reply Pairs DB<small>SQLite + FTS5</small></div>
       <div class="flow-arrow">&darr;</div>
       <div class="flow-row">
-        <div class="flow-box">Retrieval Engine<small>BM25 + semantic</small></div>
+        <div class="flow-box">Retrieval Engine<small>BM25 + semantic + quality-score boosting</small></div>
         <div class="flow-side-arrow">&larr;</div>
         <div class="flow-box">Your feedback<small>Review Queue</small></div>
       </div>
@@ -230,9 +237,10 @@ body {
       <li>Ingests your new sent emails, Docs, and WhatsApp messages from the last 48 hours</li>
       <li>Captures feedback pairs (comparing what YouOS would have drafted vs what you actually sent)</li>
       <li>Fine-tunes the local Qwen model if enough new pairs exist</li>
-      <li>Runs 80 optimisation experiments &mdash; testing different retrieval settings and prompt variants</li>
+      <li>Runs 80 optimisation experiments &mdash; testing retrieval weights, sender-type boosts, prompt variants</li>
       <li>Keeps changes that improve your benchmark score, reverts changes that don't</li>
-      <li>Writes a structured run log (JSONL) — benchmark trends visible in the Stats dashboard</li>
+      <li>Writes a structured JSONL run log — benchmark trends visible in the Stats dashboard</li>
+      <li>High-quality feedback pairs (high rating, low edit distance) surface higher in future retrievals automatically</li>
     </ol>
     <div class="prose" style="margin-top:1rem;">
       <p>The result: YouOS gets a little better every night, automatically.</p>
@@ -292,14 +300,15 @@ body {
     <h2 class="section-title">Tech stack</h2>
     <div class="tech-grid">
       <div class="tech-card"><strong>Model</strong><br><span>Qwen2.5-1.5B-Instruct (Apple Silicon, MLX)</span></div>
-      <div class="tech-card"><strong>Fine-tuning</strong><br><span>LoRA via mlx-lm (~3 min per run)</span></div>
+      <div class="tech-card"><strong>Fine-tuning</strong><br><span>LoRA via mlx-lm — auto-scaled iters/layers/LR, quality-filtered training data, temporal val split</span></div>
       <div class="tech-card"><strong>Database</strong><br><span>SQLite + FTS5 (local, no server)</span></div>
-      <div class="tech-card"><strong>Retrieval</strong><br><span>BM25 + sender-aware boosting + semantic embeddings</span></div>
+      <div class="tech-card"><strong>Retrieval</strong><br><span>BM25 + semantic embeddings + sender-type boosts + quality-score multiplier + optional cross-encoder reranking</span></div>
       <div class="tech-card"><strong>Backend</strong><br><span>Python + FastAPI</span></div>
       <div class="tech-card"><strong>Email access</strong><br><span>gog CLI (Google Workspace)</span></div>
       <div class="tech-card"><strong>Networking</strong><br><span>Tailscale (private HTTPS)</span></div>
       <div class="tech-card"><strong>WhatsApp</strong><br><span>Export file parser (no app access needed)</span></div>
       <div class="tech-card"><strong>Rate limiting</strong><br><span>Per-IP sliding window (stdlib, no extra deps)</span></div>
+      <div class="tech-card"><strong>Benchmarking</strong><br><span>Golden suite (5 curated cases) + autoresearch composite score + structured JSONL run log</span></div>
     </div>
   </div>
 
@@ -333,6 +342,18 @@ body {
     <div class="faq-item">
       <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">How do I check if everything is set up correctly?</div>
       <div class="faq-a">Run <code>youos doctor</code>. It checks Python version, gog CLI, mlx_lm, your config, disk space, and more — with green/red output.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">What does "low confidence" mean in a draft?</div>
+      <div class="faq-a">It means YouOS couldn't find strong precedents in your corpus — no similar past replies to ground the draft in. The draft was generated using the base model and your persona config, but may not reflect your style as accurately. Build up your Review Queue to improve coverage.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">How does YouOS decide which past replies to use?</div>
+      <div class="faq-a">It combines BM25 full-text search with semantic embedding similarity, then applies sender-type boosts (e.g. external clients rank higher for external client emails) and a quality score derived from your past feedback ratings and edit distance. Replies you approved with minimal edits surface higher over time.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">How can I test if YouOS is improving?</div>
+      <div class="faq-a">Run <code>youos eval --golden</code> against the built-in golden benchmark suite — 5 curated test cases with expected keywords, mode, and brevity. Scores are saved to <code>var/golden_results.json</code> so you can track improvement over time.</div>
     </div>
   </div>
 

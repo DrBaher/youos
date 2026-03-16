@@ -33,10 +33,14 @@ Gmail (sent mail)          Your feedback
 
 - Ingests your sent Gmail history, Google Docs, and WhatsApp exports
 - Learns your writing style through corpus analysis
-- Drafts email replies grounded in your real past replies
+- Drafts email replies grounded in your real past replies — with few-shot exemplars from your corpus
 - Handles full email threads — paste the whole thread, YouOS focuses on the latest message
-- Improves from your feedback via LoRA fine-tuning
-- Self-optimizes nightly via autoresearch (80 iterations)
+- Warns you when confidence is low (no strong precedents found)
+- Improves from your feedback via LoRA fine-tuning — training data quality-filtered, temporally split
+- Auto-scales training hyperparameters (iterations, layers, learning rate) as your corpus grows
+- Self-optimizes nightly via autoresearch (80 iterations) — retrieval weights, sender-type boosts, prompt variants
+- Feedback loop closes: high-rating, low-edit pairs surface higher in future retrievals
+- Run a golden benchmark anytime: `youos eval --golden`
 - Runs entirely locally on Apple Silicon
 
 ## Requirements
@@ -96,6 +100,9 @@ youos improve --verbose
 # Check system requirements
 youos doctor
 
+# Run golden benchmark evaluation
+youos eval --golden
+
 # Start the web server
 youos serve
 
@@ -106,9 +113,9 @@ youos ingest --whatsapp ~/Downloads/WhatsApp-Chat.txt
 ## Web UI
 
 The web UI provides:
-- **Draft Reply**: Paste an inbound email (or full thread), generate a draft, edit, and submit feedback
+- **Draft Reply**: Paste an inbound email (or full thread), generate a draft, edit, and submit feedback. Low-confidence drafts show a warning banner.
 - **Review Queue**: Review auto-generated drafts against your real sent emails — keyboard shortcuts (`j`/`k`) for fast flow
-- **Stats Dashboard**: Corpus health, model status, benchmark trends (backed by structured autoresearch logs)
+- **Stats Dashboard**: Corpus health, model status, pipeline status, benchmark trends (backed by structured autoresearch JSONL logs)
 - **Gmail Bookmarklet**: One-click drafting from Gmail
 
 ## Architecture
