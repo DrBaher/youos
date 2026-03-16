@@ -110,6 +110,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 .info.visible { display: block; }
 .info.success { border-left-color: #2ecc71; }
+.info.warning { border-left-color: #f0a500; background: #2a2210; }
 .info .precedent { color: #888; font-size: 0.8rem; margin-top: 0.4rem; }
 .sender-card {
   margin-top: 0.5rem; padding: 0.6rem 0.8rem;
@@ -795,7 +796,11 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
           data.precedent_used.map(p => p.title || p.source_id).join(', ') +
           ' | Confidence: ' + (data.confidence || 'unknown') + '</div>';
       }
-      showInfo('Draft generated. Edit as needed, then submit.' + extra);
+      if (data.confidence_warning) {
+        extra += '<div class="precedent" style="color:#f0a500;margin-top:0.4rem;">' +
+          '\u26A0\uFE0F Low confidence \u2014 no strong precedents found in your corpus. This draft may not reflect your style.</div>';
+      }
+      showInfo('Draft generated. Edit as needed, then submit.' + extra, data.confidence_warning ? 'warning' : '');
     } catch (e) {
       showInfo('Error: ' + e.message);
     } finally {

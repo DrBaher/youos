@@ -97,6 +97,7 @@ def feedback_generate(body: GenerateBody, request: Request) -> dict:
         "draft": response.draft,
         "precedent_used": response.precedent_used,
         "confidence": response.confidence,
+        "confidence_warning": response.confidence == "low",
         "suggested_subject": response.suggested_subject,
     }
 
