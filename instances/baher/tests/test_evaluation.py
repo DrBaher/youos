@@ -3,8 +3,6 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from app.evaluation.service import (
     CaseResult,
     EvalRequest,
@@ -12,7 +10,6 @@ from app.evaluation.service import (
     compute_pass_fail,
     confidence_to_score,
     evaluate_case,
-    load_benchmark_cases,
     persist_case_result,
     run_eval_suite,
     score_brevity,

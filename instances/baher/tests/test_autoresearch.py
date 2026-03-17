@@ -6,6 +6,7 @@ import shutil
 import sqlite3
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import yaml
 
@@ -28,6 +29,13 @@ from app.autoresearch.scorer import (
     scorecard_from_eval_result,
 )
 from app.evaluation.service import CaseResult, EvalSuiteResult
+from scripts.run_autoresearch import (
+    _git_available,
+    _git_commit_hash,
+    _git_commit_kept_change,
+    _git_tag_run,
+    _log_git_hash_to_autoresearch_log,
+)
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 
@@ -103,9 +111,7 @@ def test_numeric_mutation_and_revert(tmp_path: Path) -> None:
     surface = next(s for s in surfaces if s.name == "top_k_reply_pairs")
     original = surface.current_value
 
-    # Read original file bytes
     file_path = configs_dir / surface.config_file
-    original_bytes = file_path.read_bytes()
 
     # Mutate
     old_val = apply_mutation(surface, configs_dir)
@@ -138,7 +144,7 @@ def test_numeric_mutation_respects_bounds(tmp_path: Path) -> None:
         max_val=10,
     )
     # Should try decrement since at max
-    old_val = apply_mutation(surface, configs_dir)
+    apply_mutation(surface, configs_dir)
     assert surface.current_value == 9  # decremented
 
 
@@ -149,7 +155,6 @@ def test_template_variant_mutation_and_revert(tmp_path: Path) -> None:
     assert surface.name == "drafting_prompt"
 
     original = surface.current_value
-    file_path = configs_dir / surface.config_file
 
     old_val = apply_mutation(surface, configs_dir)
     assert surface.current_value != original
@@ -391,11 +396,6 @@ def test_optimizer_reverts_on_regression(tmp_path: Path) -> None:
     _seed_cases(db_path, count=2)
     database_url = f"sqlite:///{db_path}"
 
-    # Snapshot before
-    retrieval_before = yaml.safe_load(
-        (configs_dir / "retrieval" / "defaults.yaml").read_text(encoding="utf-8")
-    )
-
     report = run_autoresearch(
         configs_dir=configs_dir,
         database_url=database_url,
@@ -424,17 +424,7 @@ def test_format_report_output() -> None:
     assert "Baseline" in output
     assert "Final" in output
 
-
 # ── Git commit/tag tests for run_autoresearch.py ──────────────────
-
-from unittest.mock import patch, MagicMock, call
-from scripts.run_autoresearch import (
-    _git_available,
-    _git_commit_hash,
-    _git_commit_kept_change,
-    _git_tag_run,
-    _log_git_hash_to_autoresearch_log,
-)
 
 
 def test_git_commit_called_after_kept_improvement() -> None:

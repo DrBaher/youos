@@ -1,7 +1,6 @@
-import json
 import sqlite3
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -314,9 +313,10 @@ def test_sender_profile_rebuild_on_next_after_1_hour(
     _seed_db(db_path, num_reply_pairs=5)
     client = _make_client(monkeypatch, db_path)
 
-    import app.api.review_queue_routes as rqr
     # Set last rebuild to > 1 hour ago
     import time
+
+    import app.api.review_queue_routes as rqr
     rqr._last_sender_profile_rebuild = time.time() - 7200
 
     with patch("app.api.review_queue_routes.subprocess.Popen") as mock_popen:

@@ -511,7 +511,14 @@ def review_queue_next_stream(
 
     def _generate() -> Any:
         # 1. Send metadata
-        yield f"data: {json.dumps({'type': 'meta', 'total_unreviewed': total_unreviewed, 'reviewed_today': reviewed_today, 'batch_size': len(enriched), 'streak_days': streak})}\n\n"
+        meta = {
+            "type": "meta",
+            "total_unreviewed": total_unreviewed,
+            "reviewed_today": reviewed_today,
+            "batch_size": len(enriched),
+            "streak_days": streak,
+        }
+        yield f"data: {json.dumps(meta)}\n\n"
 
         if not enriched:
             yield 'data: {"type": "done"}\n\n'

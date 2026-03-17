@@ -3,8 +3,8 @@ import json
 import sqlite3
 from pathlib import Path
 
-from app.core.sender import SenderType, classify_sender, extract_domain
-from app.generation.service import strip_signature, assemble_prompt, _load_persona
+from app.core.sender import classify_sender, extract_domain
+from app.generation.service import _load_persona, assemble_prompt, strip_signature
 from app.retrieval.service import RetrievalRequest, RetrievalService
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
