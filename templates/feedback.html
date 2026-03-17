@@ -310,12 +310,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     <div class="draft-sender-row">
       <div class="sender-input-main">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;">
-          <label for="sender" style="font-size: 0.85rem; color: #aaa; font-weight: 600;">Sender email <span class="oc-tip" data-tip="Helps YouOS find replies you sent to this person before and tailor the draft.">?</span></label>
+          <label for="sender" id="senderLabel" style="font-size: 0.85rem; color: #aaa; font-weight: 600;">Recipient email (optional) <span class="oc-tip" data-tip="Used for contact context and personalization.">?</span></label>
           <div id="draftModeToggle" class="mode-tabs" role="tablist" aria-label="Draft mode">
             <button type="button" class="mode-btn active" data-mode="compose" role="tab" aria-selected="true">New email</button>
             <button type="button" class="mode-btn" data-mode="reply" role="tab" aria-selected="false">Reply</button>
           </div>
         </div>
+        <div id="modeHint" style="font-size:0.76rem;color:#7e8799;margin-top:0.25rem;">New email writes from your prompt. Switch to Reply for inbound threads.</div>
         <div style="display:flex;gap:0.75rem;align-items:center;">
           <input type="text" id="sender" placeholder="e.g. john@crelio.com" style="width:100%;padding:0.4rem 0.6rem;background:#16213e;border:1px solid #333;border-radius:6px;color:#e0e0e0;font-size:0.85rem;margin-top:0.2rem;">
           <span id="senderBadge" style="font-size:0.75rem;padding:0.2rem 0.6rem;border-radius:4px;background:#333;color:#aaa;white-space:nowrap;margin-top:0.2rem;display:none;"></span>
@@ -347,8 +348,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
     <div class="meta-row">
       <div class="field">
-        <label for="note">Feedback note (optional)</label>
-        <input type="text" id="note" placeholder="e.g. too formal, needs greeting...">
+        <label for="note">Edit note (optional)</label>
+        <input type="text" id="note" placeholder="e.g. tighten opening, more concise CTA...">
       </div>
       <div class="stars">
         <label class="star-label">Rating</label>
@@ -361,8 +362,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     </div>
 
     <div class="btn-row">
-      <button class="btn-generate" id="btnGenerate">Generate Draft <span class="oc-tip" data-tip="Retrieves similar past replies and generates a draft in your style." style="background:#005a4a;">?</span></button>
-      <button class="btn-submit" id="btnSubmit" disabled>Submit Feedback</button>
+      <button class="btn-generate" id="btnGenerate">Generate Email <span class="oc-tip" data-tip="Generate a new email from a prompt, or switch to Reply mode to respond to inbound threads." style="background:#005a4a;">?</span></button>
+      <button class="btn-submit" id="btnSubmit" disabled>Save to Learning</button>
     </div>
 
     <div class="info" id="info"></div>
@@ -415,7 +416,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
             <div class="rq-inbound-text" id="rqInboundText"></div>
           </div>
           <div class="rq-draft">
-            <div class="rq-section-title">Draft (edit me)</div>
+            <div class="rq-section-title">Draft reply</div>
             <textarea id="rqDraftTextarea"></textarea>
             <div class="rq-word-hint" id="rqWordHint"></div>
           </div>
@@ -470,6 +471,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       <button class="btn-generate facts-add-btn" id="factsAddBtn">+ Add Fact</button>
       <button class="btn-tone" id="factsScanCorpusBtn" title="Scan top 100 reply pairs for auto-extractable facts">&#x1F50D; Scan Corpus</button>
     </div>
+    <div id="factsActiveTypeHint" style="font-size:0.78rem;color:#7e8799;margin:-0.35rem 0 0.7rem 0;">Adding facts for: <strong id="factsActiveTypeText" style="color:#a8b3c5;">Contact</strong></div>
 
     <!-- Add fact form -->
     <div class="facts-add-form" id="factsAddForm" style="display:none;">
@@ -1067,7 +1069,7 @@ function showFactsToast(facts) {
       showInfo('Error: ' + e.message);
       btnSub.disabled = false;
     } finally {
-      btnSub.textContent = 'Submit Feedback';
+      btnSub.textContent = 'Save to Learning';
     }
   });
 
@@ -1808,6 +1810,7 @@ function showFactsToast(facts) {
   // Add fact form toggle
   const factsAddBtn = document.getElementById('factsAddBtn');
   const factsAddForm = document.getElementById('factsAddForm');
+  const factsActiveTypeText = document.getElementById('factsActiveTypeText');
   const factsKeyWrap = document.getElementById('factsKeyWrap');
   const factsKeyInput = document.getElementById('factsKey');
   let factsKeyTouched = false;
@@ -1845,6 +1848,7 @@ function showFactsToast(facts) {
   function applyFactsFormType() {
     const t = getFactsFormType();
     const cfg = FORM_CONFIG[t] || FORM_CONFIG.contact;
+    if (factsActiveTypeText) factsActiveTypeText.textContent = TYPE_LABELS[t] || t;
     factsKeyLabel.textContent = cfg.keyLabel;
     factsKeyInput.placeholder = cfg.keyPlaceholder;
     factsFactLabel.textContent = cfg.factLabel;
