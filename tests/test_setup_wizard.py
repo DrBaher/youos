@@ -51,3 +51,20 @@ def test_config_reads_explicit_internal_domains():
     domains = get_internal_domains(config)
     assert "acme.com" in domains
     assert "acme.co.uk" in domains
+
+
+def test_coldstart_check_passes(monkeypatch, tmp_path):
+    """Cold-start check should pass with writable config and passing doctor/deps."""
+    import scripts.setup_wizard as sw
+
+    monkeypatch.setattr(sw, "CONFIG_PATH", tmp_path / "youos_config.yaml")
+    monkeypatch.setattr(sw, "_check_dependencies", lambda: True)
+    monkeypatch.setattr(sw, "_detect_gog_accounts", lambda: ["test@example.com"])
+
+    class FakeDoctor:
+        @staticmethod
+        def run_doctor_checks():
+            return True, []
+
+    monkeypatch.setattr("app.core.doctor.run_doctor_checks", FakeDoctor.run_doctor_checks)
+    assert sw._run_coldstart_check() == 0

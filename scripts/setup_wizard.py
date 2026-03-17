@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shutil
@@ -650,7 +651,51 @@ def _offer_nightly_pipeline(config: dict) -> None:
         print(f"  Add to crontab: {schedule} cd {ROOT_DIR} && {sys.executable} scripts/nightly_pipeline.py")
 
 
+def _run_coldstart_check() -> int:
+    """Non-interactive setup reliability check for cold-start environments."""
+    print("Running setup cold-start check...")
+
+    from app.core.doctor import run_doctor_checks
+
+    passed, failures = run_doctor_checks()
+    if not passed:
+        print("System check failed:")
+        for msg in failures:
+            print(f"  ✗ {msg}")
+        return 1
+
+    deps_ok = _check_dependencies()
+    if not deps_ok:
+        print("Dependency check failed.")
+        return 1
+
+    # Ensure config path is writable.
+    try:
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if not CONFIG_PATH.exists():
+            CONFIG_PATH.touch()
+    except OSError as exc:
+        print(f"Config path not writable: {exc}")
+        return 1
+
+    detected_accounts = _detect_gog_accounts()
+    if detected_accounts:
+        print(f"Detected gog accounts: {', '.join(detected_accounts)}")
+    else:
+        print("No gog accounts auto-detected (this can be okay if not authenticated yet).")
+
+    print("Cold-start check passed.")
+    return 0
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--check-only", action="store_true", help="Run non-interactive cold-start reliability checks and exit")
+    args, _unknown = parser.parse_known_args()
+
+    if args.check_only:
+        raise SystemExit(_run_coldstart_check())
+
     _print_banner()
 
     # Pre-flight: run doctor checks
