@@ -185,6 +185,31 @@ def deduplicate_pairs(
     return keep, removed
 
 
+def _is_low_signal_pair(inbound: str, edited_reply: str) -> bool:
+    """Return True when pair carries little learning signal for fine-tuning."""
+    import re
+
+    low_signal_reply = re.compile(
+        r"^\s*(ok|okay|k|sure|thanks|thank you|thx|ty|noted|got it|sounds good|perfect|great)\s*[.!]?\s*$",
+        re.IGNORECASE,
+    )
+
+    inbound_text = (inbound or "").strip()
+    reply_text = (edited_reply or "").strip()
+
+    # Tiny replies are generally poor supervision targets.
+    if len(reply_text.split()) < 3:
+        return True
+    if low_signal_reply.match(reply_text):
+        return True
+
+    # Trivial acknowledgements on both sides add little style/training value.
+    if len(inbound_text.split()) < 5 and len(reply_text.split()) < 8:
+        return True
+
+    return False
+
+
 def export(args: argparse.Namespace) -> None:
     db_path = Path(args.db)
     if not db_path.exists():
@@ -235,6 +260,11 @@ def export(args: argparse.Namespace) -> None:
 
         # Exclude pairs with short edited replies
         if len(edited_reply) < 15:
+            filtered_count += 1
+            continue
+
+        # E20: quality gate — drop low-signal acknowledgement-only pairs
+        if _is_low_signal_pair(row["inbound_text"] or "", edited_reply):
             filtered_count += 1
             continue
 
