@@ -248,6 +248,14 @@ class RetrievalService:
                             match.score = round(match.score * boost, 4)
                 reply_pairs.sort(key=lambda m: (-m.score, m.result_type, m.source_id))
 
+            # E14: language-filtered boosting — boost same-language pairs
+            if request.language_hint and request.language_hint != "en" and reply_pairs:
+                for match in reply_pairs:
+                    match_lang = match.metadata.get("language")
+                    if match_lang and match_lang == request.language_hint:
+                        match.score = round(match.score * 1.3, 4)
+                reply_pairs.sort(key=lambda m: (-m.score, m.result_type, m.source_id))
+
             # Optional cross-encoder reranking
             if self.config.reranker_enabled:
                 from app.core.reranker import is_reranker_available, rerank
@@ -435,7 +443,8 @@ class RetrievalService:
                 d.created_at,
                 d.updated_at,
                 rpfts.rank AS fts_rank,
-                COALESCE(rp.quality_score, 1.0) AS quality_score
+                COALESCE(rp.quality_score, 1.0) AS quality_score,
+                rp.language
             FROM reply_pairs_fts AS rpfts
             INNER JOIN reply_pairs AS rp ON rp.id = rpfts.rowid
             LEFT JOIN documents AS d ON d.id = rp.document_id
@@ -513,6 +522,12 @@ class RetrievalService:
         request: RetrievalRequest,
     ) -> RetrievalMatch | None:
         metadata = _loads_json(row["metadata_json"])
+        # E14: include language in metadata for language-based boosting
+        try:
+            if row["language"]:
+                metadata["language"] = row["language"]
+        except (IndexError, KeyError):
+            pass
         inbound_text = row["inbound_text"] or ""
         reply_text = row["reply_text"] or ""
         raw_rank = abs(row["fts_rank"]) if row["fts_rank"] else 0.0
@@ -1092,19 +1107,15 @@ def _field_match_bonus(text: str, tokens: list[str]) -> float:
 
 
 def _recency_bonus(timestamp: str | None, recency_weight: float, boost_days: int = 90) -> float:
+    import math
+
     if not timestamp:
         return 0.0
     parsed = _parse_timestamp(timestamp)
     if parsed is None:
         return 0.0
     age_days = max((datetime.now(UTC) - parsed).days, 0)
-    if age_days <= boost_days:
-        return recency_weight
-    if age_days <= boost_days * 2:
-        return recency_weight * 0.6
-    if age_days <= boost_days * 4:
-        return recency_weight * 0.3
-    return 0.0
+    return round(recency_weight * math.exp(-age_days / boost_days), 4)
 
 
 def _parse_timestamp(value: str) -> datetime | None:

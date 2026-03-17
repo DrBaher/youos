@@ -138,6 +138,76 @@ def stats_data(request: Request) -> dict[str, Any]:
             except (json.JSONDecodeError, IndexError):
                 pass
 
+    # E17: draft quality trend — weekly avg edit_distance_pct for last 8 weeks
+    quality_trend: list[dict[str, Any]] = []
+    # E18: per-sender-type accuracy breakdown
+    sender_accuracy: list[dict[str, Any]] = []
+    # E19: system health card
+    system_health: dict[str, Any] = {}
+    conn2 = sqlite3.connect(db_path)
+    conn2.row_factory = sqlite3.Row
+    try:
+        # E17: weekly quality trend
+        try:
+            trend_rows = conn2.execute(
+                """
+                SELECT
+                    strftime('%Y-W%W', created_at) AS week,
+                    ROUND(AVG(edit_distance_pct), 4) AS avg_edit_pct,
+                    COUNT(*) AS pair_count
+                FROM feedback_pairs
+                WHERE edit_distance_pct IS NOT NULL
+                  AND created_at >= date('now', '-56 days')
+                GROUP BY week
+                ORDER BY week ASC
+                """
+            ).fetchall()
+            quality_trend = [{"week": r["week"], "avg_edit_pct": r["avg_edit_pct"], "count": r["pair_count"]} for r in trend_rows]
+        except sqlite3.OperationalError:
+            pass
+
+        # E18: per-sender-type accuracy
+        try:
+            acc_rows = conn2.execute(
+                """
+                SELECT
+                    sp.sender_type,
+                    COUNT(fp.id) AS reviews,
+                    ROUND(AVG(fp.edit_distance_pct), 4) AS avg_edit_pct,
+                    ROUND(AVG(CAST(fp.rating AS REAL)), 2) AS avg_rating
+                FROM feedback_pairs fp
+                JOIN reply_pairs rp ON fp.reply_pair_id = rp.id
+                JOIN sender_profiles sp ON lower(rp.inbound_author) LIKE '%' || lower(sp.email) || '%'
+                WHERE fp.edit_distance_pct IS NOT NULL
+                GROUP BY sp.sender_type
+                ORDER BY reviews DESC
+                """
+            ).fetchall()
+            sender_accuracy = [
+                {"sender_type": r["sender_type"], "reviews": r["reviews"], "avg_edit_pct": r["avg_edit_pct"], "avg_rating": r["avg_rating"]}
+                for r in acc_rows
+            ]
+        except sqlite3.OperationalError:
+            pass
+
+        # E19: system health
+        try:
+            corpus_size = conn2.execute("SELECT COUNT(*) FROM reply_pairs").fetchone()[0]
+            last_ingestion = conn2.execute("SELECT MAX(paired_at) FROM reply_pairs").fetchone()[0]
+            embedding_count = conn2.execute("SELECT COUNT(*) FROM chunks WHERE metadata_json LIKE '%embedding%'").fetchone()[0]
+            total_chunks = conn2.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+            embedding_coverage = round(embedding_count / total_chunks, 3) if total_chunks > 0 else 0.0
+            system_health = {
+                "corpus_size": corpus_size,
+                "last_ingestion": last_ingestion,
+                "embedding_coverage": embedding_coverage,
+                "adapter_ready": (_get_adapter_path() / "adapters.safetensors").exists(),
+            }
+        except sqlite3.OperationalError:
+            pass
+    finally:
+        conn2.close()
+
     return {
         "pipeline_last_run": pipeline_last_run,
         "corpus": corpus,
@@ -156,4 +226,7 @@ def stats_data(request: Request) -> dict[str, Any]:
             "claude_drafts": total_feedback,
         },
         "style_drift": drift_info,
+        "quality_trend": quality_trend,
+        "sender_accuracy": sender_accuracy,
+        "system_health": system_health,
     }

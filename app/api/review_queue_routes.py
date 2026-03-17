@@ -347,6 +347,69 @@ def _count_reviewed_today(db_path: Path) -> int:
         conn.close()
 
 
+def _get_review_streak(db_path: Path) -> int:
+    """Return the number of consecutive days with at least one review, ending today."""
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            """
+            SELECT DATE(created_at) as review_date, COUNT(*) as cnt
+            FROM feedback_pairs
+            WHERE created_at IS NOT NULL
+            GROUP BY DATE(created_at)
+            ORDER BY review_date DESC
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return 0
+
+    from datetime import date, timedelta
+
+    today = date.today()
+    streak = 0
+    expected = today
+    for row in rows:
+        try:
+            row_date = date.fromisoformat(row[0])
+        except (ValueError, TypeError):
+            continue
+        if row_date == expected:
+            streak += 1
+            expected = expected - timedelta(days=1)
+        elif row_date < expected:
+            # Gap — streak broken
+            break
+    return streak
+
+
+def _update_streak_table(db_path: Path, count: int) -> None:
+    """Upsert today's review count into review_streaks table."""
+    conn = sqlite3.connect(db_path)
+    try:
+        # Ensure table exists
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS review_streaks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL UNIQUE,
+                review_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute(
+            "INSERT INTO review_streaks (date, review_count) VALUES (DATE('now'), ?) "
+            "ON CONFLICT(date) DO UPDATE SET review_count = excluded.review_count",
+            (count,),
+        )
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
 @router.get("/next")
 def review_queue_next(
     request: Request,
@@ -399,11 +462,13 @@ def review_queue_next(
         _trigger_sender_profile_rebuild()
 
     reviewed_today = _count_reviewed_today(db_path)
+    streak = _get_review_streak(db_path)
 
     return {
         "items": items,
         "total_unreviewed": total_unreviewed,
         "reviewed_today": reviewed_today,
+        "streak_days": streak,
     }
 
 
@@ -435,6 +500,7 @@ def review_queue_next_stream(
 
     candidates, total_unreviewed = _fetch_candidates(db_path, batch_size, excluded)
     reviewed_today = _count_reviewed_today(db_path)
+    streak = _get_review_streak(db_path)
 
     # Pre-enrich candidates with sender profiles (fast DB lookup, no model needed)
     enriched: list[dict[str, Any]] = []
@@ -445,7 +511,7 @@ def review_queue_next_stream(
 
     def _generate() -> Any:
         # 1. Send metadata
-        yield f"data: {json.dumps({'type': 'meta', 'total_unreviewed': total_unreviewed, 'reviewed_today': reviewed_today, 'batch_size': len(enriched)})}\n\n"
+        yield f"data: {json.dumps({'type': 'meta', 'total_unreviewed': total_unreviewed, 'reviewed_today': reviewed_today, 'batch_size': len(enriched), 'streak_days': streak})}\n\n"
 
         if not enriched:
             yield 'data: {"type": "done"}\n\n'
@@ -557,11 +623,14 @@ def review_queue_submit(body: ReviewSubmitBody, request: Request) -> dict:
     finally:
         conn.close()
 
-    # Trigger sender profile rebuild every 10 submissions
+    # Update streak table and trigger sender profile rebuild every 10 submissions
+    reviewed_today = _count_reviewed_today(db_path)
+    _update_streak_table(db_path, reviewed_today)
     if total % 10 == 0:
         _trigger_sender_profile_rebuild()
 
-    return {"status": "saved", "total_pairs": total, "edit_distance_pct": edit_distance_pct}
+    streak = _get_review_streak(db_path)
+    return {"status": "saved", "total_pairs": total, "edit_distance_pct": edit_distance_pct, "streak_days": streak}
 
 
 @router.post("/trigger-autoresearch")

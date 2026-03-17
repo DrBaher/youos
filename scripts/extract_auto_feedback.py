@@ -87,17 +87,29 @@ def _capture_organic_pairs(conn: sqlite3.Connection, *, dry_run: bool = False) -
     if "organic" not in cols:
         conn.execute("ALTER TABLE feedback_pairs ADD COLUMN organic BOOLEAN DEFAULT 0")
 
+    import re as _re
+
+    _ACK_PATTERN = _re.compile(
+        r"^\s*(ok|okay|k|sure|thanks|thank you|ty|thx|noted|got it|will do|sounds good|great|perfect|"
+        r"received|ack|acknowledged|\+1|roger|copy that|understood)\s*[.!]?\s*$",
+        _re.IGNORECASE,
+    )
+
     rows = conn.execute(
         """
         SELECT rp.id, rp.inbound_text, rp.reply_text FROM reply_pairs rp
         WHERE rp.auto_feedback_processed = 0
           AND rp.id NOT IN (SELECT DISTINCT reply_pair_id FROM feedback_pairs WHERE reply_pair_id IS NOT NULL)
-          AND LENGTH(rp.reply_text) >= 15
+          AND LENGTH(rp.reply_text) >= 10
         """
     ).fetchall()
 
     count = 0
     for row in rows:
+        reply = (row["reply_text"] or "").strip()
+        # E11: skip pure acknowledgments
+        if _ACK_PATTERN.match(reply):
+            continue
         if dry_run:
             print(f"  [organic] pair {row['id']}: {(row['inbound_text'] or '')[:60]}...")
         else:
@@ -107,7 +119,7 @@ def _capture_organic_pairs(conn: sqlite3.Connection, *, dry_run: bool = False) -
                     (inbound_text, generated_draft, edited_reply, feedback_note, edit_distance_pct, rating, used_in_finetune, organic)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (row["inbound_text"], row["reply_text"], row["reply_text"], "organic pair — no YouOS draft", 0.0, None, 0, 1),
+                (row["inbound_text"], reply, reply, "organic pair — no YouOS draft", 0.0, 3, 0, 1),
             )
         count += 1
     return count

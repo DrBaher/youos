@@ -26,6 +26,7 @@ def bootstrap_database() -> Path:
         _migrate_reply_pairs(connection)
         _migrate_sender_profiles(connection)
         _migrate_memory(connection)
+        _migrate_review_streaks(connection)
         _populate_fts(connection)
         connection.commit()
     finally:
@@ -43,13 +44,19 @@ def _migrate_feedback_pairs(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE feedback_pairs ADD COLUMN reply_pair_id INTEGER")
     if "organic" not in cols:
         connection.execute("ALTER TABLE feedback_pairs ADD COLUMN organic BOOLEAN DEFAULT 0")
+    if "edit_categories" not in cols:
+        connection.execute("ALTER TABLE feedback_pairs ADD COLUMN edit_categories TEXT")
+    if "precedents_used" not in cols:
+        connection.execute("ALTER TABLE feedback_pairs ADD COLUMN precedents_used TEXT")
 
 
 def _migrate_reply_pairs(connection: sqlite3.Connection) -> None:
-    """Add quality_score column to reply_pairs if missing."""
+    """Add quality_score and language columns to reply_pairs if missing."""
     cols = {row[1] for row in connection.execute("PRAGMA table_info(reply_pairs)").fetchall()}
     if "quality_score" not in cols:
         connection.execute("ALTER TABLE reply_pairs ADD COLUMN quality_score REAL DEFAULT 1.0")
+    if "language" not in cols:
+        connection.execute("ALTER TABLE reply_pairs ADD COLUMN language TEXT")
 
 
 def _migrate_sender_profiles(connection: sqlite3.Connection) -> None:
@@ -83,6 +90,19 @@ def _migrate_memory(connection: sqlite3.Connection) -> None:
     cols = {row[1] for row in connection.execute("PRAGMA table_info(memory)").fetchall()}
     if "confidence" not in cols:
         connection.execute("ALTER TABLE memory ADD COLUMN confidence REAL NOT NULL DEFAULT 0.8")
+
+
+def _migrate_review_streaks(connection: sqlite3.Connection) -> None:
+    """Create review_streaks table if it doesn't exist."""
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS review_streaks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL UNIQUE,
+            review_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_review_streaks_date ON review_streaks(date)")
 
 
 def _populate_fts(connection: sqlite3.Connection) -> None:
