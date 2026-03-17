@@ -140,6 +140,8 @@ def stats_data(request: Request) -> dict[str, Any]:
 
     # E17: draft quality trend — weekly avg edit_distance_pct for last 8 weeks
     quality_trend: list[dict[str, Any]] = []
+    # Outcome deltas: last 7d vs previous 7d
+    outcome_deltas: dict[str, Any] = {}
     # E18: per-sender-type accuracy breakdown
     sender_accuracy: list[dict[str, Any]] = []
     # E19: system health card
@@ -163,6 +165,64 @@ def stats_data(request: Request) -> dict[str, Any]:
                 """
             ).fetchall()
             quality_trend = [{"week": r["week"], "avg_edit_pct": r["avg_edit_pct"], "count": r["pair_count"]} for r in trend_rows]
+        except sqlite3.OperationalError:
+            pass
+
+        # Outcome deltas: recent 7d vs prior 7d
+        try:
+            row = conn2.execute(
+                """
+                SELECT
+                    ROUND(
+                        AVG(CASE WHEN created_at >= date('now', '-7 days') THEN edit_distance_pct END),
+                        4
+                    ) AS recent_edit,
+                    ROUND(
+                        AVG(
+                            CASE
+                                WHEN created_at < date('now', '-7 days')
+                                 AND created_at >= date('now', '-14 days')
+                                THEN edit_distance_pct
+                            END
+                        ),
+                        4
+                    ) AS prev_edit,
+                    ROUND(
+                        AVG(
+                            CASE
+                                WHEN created_at >= date('now', '-7 days')
+                                THEN CASE WHEN rating >= 4 THEN 1.0 ELSE 0.0 END
+                            END
+                        ),
+                        4
+                    ) AS recent_high_rating,
+                    ROUND(
+                        AVG(
+                            CASE
+                                WHEN created_at < date('now', '-7 days')
+                                 AND created_at >= date('now', '-14 days')
+                                THEN CASE WHEN rating >= 4 THEN 1.0 ELSE 0.0 END
+                            END
+                        ),
+                        4
+                    ) AS prev_high_rating
+                FROM feedback_pairs
+                WHERE edit_distance_pct IS NOT NULL
+                """
+            ).fetchone()
+            if row:
+                recent_edit = row["recent_edit"]
+                prev_edit = row["prev_edit"]
+                recent_hr = row["recent_high_rating"]
+                prev_hr = row["prev_high_rating"]
+                outcome_deltas = {
+                    "edit_distance_delta": round(recent_edit - prev_edit, 4) if recent_edit is not None and prev_edit is not None else None,
+                    "high_rating_delta": round(recent_hr - prev_hr, 4) if recent_hr is not None and prev_hr is not None else None,
+                    "recent_window_count": conn2.execute("SELECT COUNT(*) FROM feedback_pairs WHERE created_at >= date('now', '-7 days')").fetchone()[0],
+                    "previous_window_count": conn2.execute(
+                        "SELECT COUNT(*) FROM feedback_pairs WHERE created_at < date('now', '-7 days') AND created_at >= date('now', '-14 days')"
+                    ).fetchone()[0],
+                }
         except sqlite3.OperationalError:
             pass
 
@@ -227,6 +287,7 @@ def stats_data(request: Request) -> dict[str, Any]:
         },
         "style_drift": drift_info,
         "quality_trend": quality_trend,
+        "outcome_deltas": outcome_deltas,
         "sender_accuracy": sender_accuracy,
         "system_health": system_health,
     }

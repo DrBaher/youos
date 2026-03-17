@@ -114,8 +114,14 @@ body {
         <div class="stat-row"><span class="stat-label">Reply pairs</span><span class="stat-value" id="totalPairs">-</span></div>
         <div class="stat-row"><span class="stat-label">Feedback pairs</span><span class="stat-value" id="totalFeedback">-</span></div>
         <div class="stat-row"><span class="stat-label">Reviewed today</span><span class="stat-value" id="reviewedToday">-</span></div>
-        <div class="stat-row"><span class="stat-label">Reviewed this week</span><span class="stat-value" id="reviewedWeek">-</span></div>
-        <div class="stat-row"><span class="stat-label">Avg edit distance (last 50)</span><span class="stat-value" id="avgEditDist">-</span></div>
+        <div class="stat-row"><span class="stat-label">Reviewed this week</span><span class="stat-value" id="reviewedWeek"></span></div>
+        <div id="outcomeDeltasSection" style="margin-top: 1rem; border-top: 1px solid #222; padding-top: 0.8rem; display: none;">
+          <div class="stat-row"><span class="stat-label">Edit distance change (7d)</span><span class="stat-value" id="editDistDelta">-</span></div>
+          <div class="stat-row"><span class="stat-label">High rating change (7d)</span><span class="stat-value" id="highRatingDelta">-</span></div>
+          <div class="stat-row" style="font-size: 0.75rem; color: #666;"><span class="stat-label">Last 7d pairs</span><span class="stat-value" id="recentPairsCount">-</span></div>
+          <div class="stat-row" style="font-size: 0.75rem; color: #666;"><span class="stat-label">Prev 7d pairs</span><span class="stat-value" id="prevPairsCount">-</span></div>
+        </div>
+        <div class="stat-row"><span class="stat-label">Avg edit distance (last 50)</span><span class="stat-value" id="avgEditDist"></span></div>
         <div class="stat-row"><span class="stat-label">Median edit distance (last 100)</span><span class="stat-value" id="medianEditDist">-</span></div>
         <div class="stat-row"><span class="stat-label">Accept unchanged (≤1% edits)</span><span class="stat-value" id="acceptUnchangedPct">-</span></div>
         <div class="stat-row"><span class="stat-label">Low edit rate (≤15% edits)</span><span class="stat-value" id="lowEditPct">-</span></div>
@@ -392,6 +398,23 @@ body {
         document.getElementById('systemHealthCard').style.display = 'block';
         document.getElementById('shCorpusSize').textContent = (d.system_health.corpus_size || 0).toLocaleString() + ' pairs';
         document.getElementById('shLastIngestion').textContent = d.system_health.last_ingestion ? d.system_health.last_ingestion.slice(0,10) : 'N/A';
+        document.getElementById('shEmbeddingCov').textContent = d.system_health.embedding_coverage != null ?
+          (d.system_health.embedding_coverage * 100).toFixed(1) + '%' : 'N/A';
+        document.getElementById('shAdapter').innerHTML = d.system_health.adapter_ready ?
+          '<span style="color:#00c4a7;">&#x2713; Ready</span>' : '<span style="color:#f0ad4e;">Not trained</span>';
+      }
+
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('content').style.display = 'block';
+    } catch (e) {
+      document.getElementById('loading').textContent = 'Error loading stats: ' + e.message;
+    }
+  })();
+})();
+</script>
+</body>
+</html>
+0) : 'N/A';
         document.getElementById('shEmbeddingCov').textContent = d.system_health.embedding_coverage != null ?
           (d.system_health.embedding_coverage * 100).toFixed(1) + '%' : 'N/A';
         document.getElementById('shAdapter').innerHTML = d.system_health.adapter_ready ?
