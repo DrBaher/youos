@@ -135,6 +135,46 @@ youos serve
 youos ingest --whatsapp ~/Downloads/WhatsApp-Chat.txt
 ```
 
+## Facts & Auto-Extraction
+
+YouOS stores contextual facts about your contacts, projects, and preferences to improve draft quality over time. Facts are injected into generation prompts automatically.
+
+**Auto-extraction from notes:** When you add a sender note (`youos note john@co.com "..."`) or submit feedback with a note, YouOS automatically extracts structured facts using a rule-based extractor with LLM fallback.
+
+**How it works:**
+- **Rule-based (primary):** `finditer` over 15+ pattern categories; all matches captured per note
+- **Negation awareness:** Detects preceding negation words (`not`, `don't`, `never`, etc.) and skips false positives
+- **Confidence scoring:** Each pattern carries a base confidence (0.6–0.9); long/noisy captures are downgraded to 0.4
+- **Fact merging:** Duplicate facts (same type + key + text) are deduplicated before upsert
+- **LLM fallback:** When rule-based extraction returns nothing, the Claude CLI is invoked to extract facts from unstructured text
+
+**Pattern categories supported:**
+- Communication preferences: `prefers short replies`, `prefers bullet points`, `prefers formal tone`
+- Dislikes / avoidances: `hates X`, `don't like X`, `never CC X`
+- Scheduling: `meetings on Mon/Wed`, `available on Fridays`, `responds within 2 hours`, `unavailable on X`
+- Timezone: `UTC+5`, `GMT-8`, `EST`, `America/New_York` (IANA-style)
+- Identity: `title/role: X`, `works at X`, `based in X`, `preferred name: X`, `reports to X`
+- Sign-offs: `signs off with "Best,"`, `use "Cheers" as sign-off`, `signature: X`
+- Language: `writes in Spanish`, `speaks French`
+- Contact metadata: `phone: X`, `billing email: X`, `always CC X`, `CC their assistant X`
+- Relationship tags: `decision maker`, `gatekeeper`, `VIP client`, `key account`, `referred by X`
+- Project facts: `deadline: X`, `budget: $X`, `renewal date: X`, `stakeholder: X`
+
+**API endpoints:**
+
+```
+GET    /api/facts          — list all facts (optional ?type= filter: contact | project | user_pref)
+POST   /api/facts          — create or upsert a fact
+DELETE /api/facts/{id}     — delete a fact by id
+```
+
+**Example fact types:**
+- `contact` — `key: john@acme.com`, `fact: Prefers Tuesday meetings`
+- `project` — `key: project_alpha`, `fact: Uses React 18 with TypeScript`
+- `user_pref` — `key: sign_off`, `fact: Always close with "Best,"`
+
+Facts are stored locally in the SQLite `memory` table and surfaced via the web UI.
+
 ## Web UI
 
 The web UI provides:
@@ -184,6 +224,33 @@ autoresearch:
   enabled: true
   schedule: "0 1 * * *"
 ```
+
+## Running a Personal Instance
+
+You can run multiple independent instances from the same codebase by pointing `YOUOS_DATA_DIR` at an instance directory. Each instance has its own database, config files, and user data.
+
+**Instance directory layout:**
+```
+instances/myname/
+├── youos_config.yaml     # user settings (name, emails, pin, etc.)
+├── var/
+│   └── youos.db          # SQLite database
+├── configs/
+│   ├── persona.yaml      # writing style
+│   ├── prompts.yaml      # prompt templates
+│   └── retrieval.yaml    # retrieval settings
+├── data/                 # ingested corpus (raw + feedback)
+└── models/adapters/      # fine-tuned LoRA adapter (optional)
+```
+
+**Start a named instance:**
+```bash
+YOUOS_DATA_DIR=instances/myname uvicorn app.main:app --host 0.0.0.0 --port 8765
+```
+
+When `YOUOS_DATA_DIR` is set, YouOS automatically derives the database URL and configs directory from it. Individual overrides are still possible via `YOUOS_DATABASE_URL` and `YOUOS_CONFIGS_DIR`.
+
+Instance data directories (`instances/*/var/`, `instances/*/data/`, `instances/*/models/`, `instances/*/youos_config.yaml`) are excluded from git.
 
 ## License
 

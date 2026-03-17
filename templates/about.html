@@ -193,11 +193,11 @@ body {
       <div class="tech-card">
         <strong>&#x1F9E0; Facts &amp; Context</strong>
         <ul class="card-bullets">
-          <li>Store facts about contacts, projects, and preferences</li>
-          <li>Auto-injected into draft prompts for richer context</li>
-          <li>Knows meeting preferences, project details, relationships</li>
-          <li>CRUD API at <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">/api/facts</code></li>
-          <li>Manage via the Facts tab in the web UI</li>
+          <li>Auto-extracted from sender notes and feedback notes — 15+ pattern categories (preferences, timezone, schedule, sign-offs, roles, and more)</li>
+          <li>Confidence scoring (0.4–0.9) with negation awareness; LLM fallback for unstructured notes</li>
+          <li>Deduplication and fact merging on save — no duplicate facts accumulate</li>
+          <li>Auto-injected into draft prompts for context-aware replies</li>
+          <li>CRUD API at <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">/api/facts</code> — also editable via the Facts tab in the web UI</li>
         </ul>
       </div>
       <div class="tech-card">
@@ -465,7 +465,7 @@ body {
   </div>
 
   <footer class="oc-footer">
-    <span>YouOS v0.1.1</span>
+    <span>YouOS v0.1.3</span>
     <span>&middot;</span>
     <a href="https://github.com/DrBaher/youos" target="_blank">GitHub</a>
     <span>&middot;</span>
