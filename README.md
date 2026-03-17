@@ -178,7 +178,7 @@ Facts are stored locally in the SQLite `memory` table and surfaced via the web U
 ## Web UI
 
 The web UI provides:
-- **Draft Reply**: Paste an inbound email (or full thread), generate a draft grounded in your style. See confidence, detected intent, and exemplar trace via "How was this generated?"
+- **Draft Reply**: Paste an inbound email (or full thread), generate a draft grounded in your style. A **confidence reason banner** explains *why* the draft received its confidence score (e.g. "3 strong exemplars found", "low retrieval — new topic"). See the full exemplar trace via "How was this generated?"
 - **Review Queue**: Emails appear instantly, drafts stream in one by one as they generate. Automated senders filtered by address and content. Configurable batch size (5/10/20) and draft model (`claude`/`local`/`auto`). Keyboard shortcuts (`j`/`k`)
 - **History**: Past drafts with intent badges, confidence badges, and edit-distance indicators
 - **Stats Dashboard**: Corpus health, model status, pipeline status (with skipped steps), style drift indicator, benchmark trends
