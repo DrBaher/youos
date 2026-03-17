@@ -8,9 +8,26 @@ import sqlite3
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-ADAPTER_PATH = ROOT_DIR / "models" / "adapters" / "latest"
-AUTORESEARCH_JSONL = ROOT_DIR / "var" / "autoresearch_runs.jsonl"
-AUTORESEARCH_LOG = ROOT_DIR / "var" / "autoresearch_log.md"
+
+
+def _get_adapter_path() -> Path:
+    from app.core.settings import get_settings
+
+    settings = get_settings()
+    if settings.data_dir is not None:
+        return Path(settings.data_dir).expanduser().resolve() / "models" / "adapters" / "latest"
+    return ROOT_DIR / "models" / "adapters" / "latest"
+
+
+def _get_var_path(filename: str) -> Path:
+    from app.core.settings import get_var_dir
+
+    return get_var_dir() / filename
+
+
+ADAPTER_PATH = _get_adapter_path()
+AUTORESEARCH_JSONL = _get_var_path("autoresearch_runs.jsonl")
+AUTORESEARCH_LOG = _get_var_path("autoresearch_log.md")
 
 
 def _safe_count(conn: sqlite3.Connection, table: str) -> int:

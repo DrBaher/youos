@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
+from app.core.facts_extractor import extract_and_save
 from app.db.bootstrap import resolve_sqlite_path
 
 router = APIRouter(prefix="/senders", tags=["senders"])
@@ -146,7 +147,14 @@ def update_note(email: str, body: NoteBody, request: Request) -> dict:
                 (email.lower(), body.relationship_note),
             )
             conn.commit()
-        return {"status": "updated", "email": email.lower()}
+        # Extract and auto-save facts from the relationship note
+        extracted_facts: list[dict] = []
+        try:
+            extracted_facts = extract_and_save(body.relationship_note, db_path, sender_email=email.lower())
+        except Exception:
+            pass
+
+        return {"status": "updated", "email": email.lower(), "extracted_facts": extracted_facts}
     finally:
         conn.close()
 

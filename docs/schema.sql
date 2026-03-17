@@ -191,3 +191,19 @@ CREATE TABLE IF NOT EXISTS draft_history (
     retrieval_method TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Facts store: context-aware facts surfaced via /api/facts (type: contact | project | user_pref)
+-- Exposed as "Facts" in the UI and API; stored in the `memory` table for backwards compatibility.
+CREATE TABLE IF NOT EXISTS memory (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL,       -- 'contact', 'project', or 'user_pref'
+    key TEXT NOT NULL,        -- e.g. 'john@acme.com', 'project_alpha', 'sign_off'
+    fact TEXT NOT NULL,       -- e.g. 'Prefers Tuesday meetings'
+    confidence REAL NOT NULL DEFAULT 0.8,  -- extraction confidence 0.0–1.0
+    tags TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(type, key, fact)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_type ON memory(type);
+CREATE INDEX IF NOT EXISTS idx_memory_key ON memory(key);

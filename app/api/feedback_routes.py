@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from app.core.diff import similarity_ratio
+from app.core.facts_extractor import extract_and_save
 from app.core.rate_limit import RATE_LIMIT_RESPONSE, draft_limiter
 from app.db.bootstrap import resolve_sqlite_path
 from app.generation.service import DraftRequest, generate_draft
@@ -116,6 +117,7 @@ class SubmitBody(BaseModel):
     edited_reply: str = Field(min_length=1)
     feedback_note: str | None = None
     rating: int | None = Field(default=None, ge=1, le=5)
+    sender: str | None = None
 
 
 @router.post("/submit")
@@ -160,4 +162,18 @@ def feedback_submit(body: SubmitBody, request: Request) -> dict:
         total = conn.execute("SELECT COUNT(*) FROM feedback_pairs").fetchone()[0]
     finally:
         conn.close()
-    return {"status": "saved", "total_pairs": total, "edit_distance_pct": edit_distance_pct}
+
+    # Extract and auto-save facts from the feedback note
+    extracted_facts: list[dict] = []
+    if body.feedback_note:
+        try:
+            extracted_facts = extract_and_save(body.feedback_note, db_path, sender_email=body.sender)
+        except Exception:
+            pass
+
+    return {
+        "status": "saved",
+        "total_pairs": total,
+        "edit_distance_pct": edit_distance_pct,
+        "extracted_facts": extracted_facts,
+    }

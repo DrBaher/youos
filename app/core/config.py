@@ -6,6 +6,7 @@ All persona-specific values (name, emails, internal domains) are derived from th
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,16 @@ from typing import Any
 import yaml
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-CONFIG_PATH = ROOT_DIR / "youos_config.yaml"
+
+
+def _default_config_path() -> Path:
+    data_dir = os.environ.get("YOUOS_DATA_DIR")
+    if data_dir:
+        return Path(data_dir).expanduser().resolve() / "youos_config.yaml"
+    return ROOT_DIR / "youos_config.yaml"
+
+
+CONFIG_PATH = _default_config_path()
 
 
 def _load_raw_config(config_path: Path | None = None) -> dict[str, Any]:
