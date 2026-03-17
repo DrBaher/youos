@@ -116,6 +116,10 @@ body {
         <div class="stat-row"><span class="stat-label">Reviewed today</span><span class="stat-value" id="reviewedToday">-</span></div>
         <div class="stat-row"><span class="stat-label">Reviewed this week</span><span class="stat-value" id="reviewedWeek">-</span></div>
         <div class="stat-row"><span class="stat-label">Avg edit distance (last 50)</span><span class="stat-value" id="avgEditDist">-</span></div>
+        <div class="stat-row"><span class="stat-label">Median edit distance (last 100)</span><span class="stat-value" id="medianEditDist">-</span></div>
+        <div class="stat-row"><span class="stat-label">Accept unchanged (≤1% edits)</span><span class="stat-value" id="acceptUnchangedPct">-</span></div>
+        <div class="stat-row"><span class="stat-label">Low edit rate (≤15% edits)</span><span class="stat-value" id="lowEditPct">-</span></div>
+        <div class="stat-row"><span class="stat-label">High rating share (≥4★)</span><span class="stat-value" id="highRatingPct">-</span></div>
         <div class="stat-row"><span class="stat-label">Pairs with embeddings</span><span class="stat-value" id="embeddingPct">-</span></div>
         <div id="reviewProgressSection" style="display:none;">
           <div class="review-progress-bar"><div class="review-progress-fill" id="reviewProgressFill" style="width:0%"></div></div>
@@ -246,6 +250,15 @@ body {
       document.getElementById('reviewedWeek').textContent = (d.corpus.reviewed_this_week || 0).toLocaleString();
       document.getElementById('avgEditDist').textContent = d.corpus.avg_edit_distance != null
         ? (d.corpus.avg_edit_distance * 100).toFixed(1) + '%' : 'N/A';
+      var outcome = d.corpus.outcome_metrics || {};
+      document.getElementById('medianEditDist').textContent = outcome.median_edit_distance != null
+        ? (outcome.median_edit_distance * 100).toFixed(1) + '%' : 'N/A';
+      document.getElementById('acceptUnchangedPct').textContent = outcome.accept_unchanged_pct != null
+        ? outcome.accept_unchanged_pct.toFixed(1) + '%' : 'N/A';
+      document.getElementById('lowEditPct').textContent = outcome.low_edit_pct != null
+        ? outcome.low_edit_pct.toFixed(1) + '%' : 'N/A';
+      document.getElementById('highRatingPct').textContent = outcome.high_rating_pct != null
+        ? outcome.high_rating_pct.toFixed(1) + '%' : 'N/A';
       document.getElementById('embeddingPct').textContent = d.corpus.embedding_pct != null
         ? d.corpus.embedding_pct.toFixed(1) + '%' : 'N/A';
 
