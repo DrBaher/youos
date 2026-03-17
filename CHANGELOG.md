@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.1.4 — 2026-03-17
+
+### Fixes
+- **Critical: semantic reranking return type** — reranking function returned wrong type, causing silent failures in semantic result ordering; now returns correctly typed scored pairs
+
+### Performance
+- Shared DB connection across retrieval calls — eliminates redundant open/close per query
+- Legacy query `LIMIT` applied earlier — reduces candidate set before scoring
+- Real embedding batching — embeddings now computed in true batches instead of one-at-a-time loops
+- Conditional FTS rebuild — FTS index only rebuilt when content has changed, not on every request
+- One-pass token trimming — prompt token budget enforced in a single pass instead of repeated truncation loops
+
+### UX
+- **Confidence reason banner** — draft UI now shows a human-readable explanation of *why* a draft received its confidence score (e.g. "3 strong exemplars found", "low retrieval — new topic")
+- Structured error responses — API errors now return consistent JSON `{error: ..., detail: ...}` instead of bare strings
+- Logged history failures — draft history fetch errors are logged with context instead of silently swallowed
+
+### Code quality
+- Fixed 45 bare `except` blocks — all now catch specific exception types with appropriate logging
+- Extracted shared scoring logic — duplicate scoring code unified into a single helper used across retrieval and generation
+- Named constants — magic numbers (score thresholds, limits, weights) replaced with named module-level constants
+- Type hints added throughout retrieval and generation service functions
+
+### Retrieval
+- Dynamic semantic scaling — semantic score weight scales with corpus size; small corpora rely more on BM25
+- Normalized intent scoring — intent match scores normalized to [0, 1] before blending with retrieval scores
+- Lower topic overlap threshold — topic overlap required to boost an exemplar reduced, surfacing more relevant pairs
+
+### Draft
+- Relative confidence thresholds for exemplars — exemplar selection now uses mean±σ of retrieval scores rather than hardcoded cutoffs
+
 ## v0.1.3 — 2026-03-17
 
 ### New features
