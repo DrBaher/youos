@@ -149,9 +149,14 @@ def import_data(
 
 
 @app.command()
-def setup():
-    """Run the interactive setup wizard."""
-    subprocess.run([sys.executable, str(ROOT_DIR / "scripts" / "setup_wizard.py")])
+def setup(
+    check_only: bool = typer.Option(False, "--check-only", help="Run non-interactive cold-start setup checks and exit"),
+):
+    """Run the setup wizard (or cold-start checks)."""
+    cmd = [sys.executable, str(ROOT_DIR / "scripts" / "setup_wizard.py")]
+    if check_only:
+        cmd.append("--check-only")
+    subprocess.run(cmd)
 
 
 @app.command()
@@ -482,6 +487,23 @@ def finetune():
     """Run LoRA fine-tuning manually."""
     subprocess.run([sys.executable, str(ROOT_DIR / "scripts" / "export_feedback_jsonl.py")])
     subprocess.run([sys.executable, str(ROOT_DIR / "scripts" / "finetune_lora.py")])
+
+
+@app.command(name="finetune-milestone")
+def finetune_milestone(
+    threshold: int = typer.Option(30, "--threshold", help="Minimum quality feedback pairs required"),
+    run: bool = typer.Option(False, "--run", help="Run pre-eval -> finetune -> post-eval once threshold is met"),
+):
+    """Check fine-tune milestone readiness (and optionally execute full milestone run)."""
+    cmd = [
+        sys.executable,
+        str(ROOT_DIR / "scripts" / "finetune_milestone.py"),
+        "--threshold",
+        str(threshold),
+    ]
+    if run:
+        cmd.append("--run")
+    subprocess.run(cmd)
 
 
 @app.command(name="eval")
