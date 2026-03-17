@@ -1,0 +1,10 @@
+top_k_reply_pairs: 9
+top_k_documents: 3
+top_k_chunks: 4
+recency_boost_days: 120
+recency_boost_weight: 0.2
+account_boost_weight: 0.15
+semantic_weight: 0.4
+semantic_min_coverage: 0.1
+sender_type_boost: 0.15
+sender_domain_boost: 0.1
