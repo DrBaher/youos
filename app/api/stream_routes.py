@@ -32,6 +32,7 @@ class StreamBody(BaseModel):
     tone_hint: Literal["shorter", "more_formal", "more_detail"] | None = None
     sender: str | None = None
     mode: Literal["reply", "compose"] | None = "reply"
+    user_prompt: str | None = None
 
 
 def _stream_generate(body: StreamBody, settings):
@@ -79,6 +80,7 @@ def _stream_generate(body: StreamBody, settings):
         detected_mode=detected_mode,
         tone_hint=body.tone_hint,
         sender_context=sender_context,
+        user_prompt=body.user_prompt,
     )
 
     # Try streaming via claude CLI subprocess

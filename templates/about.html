@@ -218,7 +218,7 @@ body {
         <strong>&#x1F6E0;&#xFE0F; Tools &amp; UI</strong>
         <ul class="card-bullets">
           <li>Gmail bookmarklet — draft, insert, and rate without leaving Gmail</li>
-          <li>Review Queue with A/B adapter vs base model comparison, plus bulk actions (submit ready / skip low-signal)</li>
+          <li>Review Queue optimized for fast sequential review (submit/skip, rating, keyboard shortcuts)</li>
           <li>History tab with intent and confidence badges</li>
           <li>CLI: <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">youos doctor</code>, <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">youos corpus</code>, <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">youos eval --golden</code></li>
           <li>Mobile-friendly and rate-limited</li>
@@ -365,7 +365,7 @@ body {
       <div class="tech-card"><strong>Rate limiting</strong><br><span>Per-IP sliding window (stdlib, no extra deps)</span></div>
       <div class="tech-card"><strong>Benchmarking</strong><br><span>Golden suite (10 cases) + weekly rotating sample + configurable composite weights + nightly pipeline integration + JSONL run log + style drift</span></div>
       <div class="tech-card"><strong>Sender intelligence</strong><br><span>Per-mode persona + first-name injection + reply-time + topics + multi-intent + confidence intervals (p25/p75) + notes rebuild immediately</span></div>
-      <div class="tech-card"><strong>Draft transparency</strong><br><span>"How was this generated?" + A/B adapter vs base model comparison + History tab with intent + confidence badges + `youos feedback` CLI</span></div>
+      <div class="tech-card"><strong>Draft transparency</strong><br><span>"How was this generated?" + History tab with intent/confidence badges + `youos feedback` CLI</span></div>
     </div>
   </div>
 
@@ -395,6 +395,10 @@ body {
     <div class="faq-item">
       <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Can I paste a whole email thread?</div>
       <div class="faq-a">Yes — the Draft tab supports full threads. YouOS extracts the most recent message and uses the thread history as context automatically.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Can I tell YouOS exactly how to reply?</div>
+      <div class="faq-a">Yes. Use the optional <strong>Reply instruction</strong> field in the Draft tab (and in the Gmail bookmarklet popup) to steer the reply, e.g. “decline politely and propose next Tuesday 14:00”.</div>
     </div>
     <div class="faq-item">
       <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">How do I check if everything is set up correctly?</div>
@@ -450,7 +454,7 @@ body {
     </div>
     <div class="faq-item">
       <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">How do I know if my LoRA adapter is actually helping?</div>
-      <div class="faq-a">Use the Compare button in the Review Queue. It now runs your Qwen+LoRA adapter against the base Qwen model (no adapter, no exemplars) and shows both drafts side by side — with an improvement hint: "Adapter appears to be helping" when the drafts differ significantly.</div>
+      <div class="faq-a">Use <code>youos eval --golden</code> and the Stats dashboard trends. Watch pass rate, confidence, and edit-distance trend over time after nightly runs.</div>
     </div>
     <div class="faq-item">
       <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Does YouOS keep separate drafting history for work vs personal emails?</div>
@@ -469,7 +473,7 @@ body {
   </div>
 
   <footer class="oc-footer">
-    <span>YouOS v0.1.3</span>
+    <span>YouOS v0.1.10</span>
     <span>&middot;</span>
     <a href="https://github.com/DrBaher/youos" target="_blank">GitHub</a>
     <span>&middot;</span>
@@ -482,7 +486,5 @@ fetch('/api/config').then(r => r.json()).then(d => {
   if (d.display_name) document.getElementById('appName').textContent = d.display_name;
 }).catch(() => {});
 </script>
-</body>
-</html>
 </body>
 </html>

@@ -179,6 +179,27 @@ def score_pair_for_review(pair: dict[str, Any], reviewed_sender_types: Counter) 
     return score
 
 
+def _recipient_list_contains_email(recipients: Any, email: str) -> bool:
+    """Return True if recipient list contains the given email."""
+    if not recipients or not email:
+        return False
+    target = email.strip().lower()
+    if not target:
+        return False
+
+    if not isinstance(recipients, list):
+        recipients = [recipients]
+
+    for item in recipients:
+        if isinstance(item, dict):
+            value = (item.get("email") or "").strip().lower()
+            if value == target:
+                return True
+        elif isinstance(item, str) and item.strip().lower() == target:
+            return True
+    return False
+
+
 def _fetch_candidates(
     db_path: Path,
     batch_size: int,
@@ -280,6 +301,16 @@ def _fetch_candidates(
                     doc_meta = json.loads(row["doc_metadata_json"])
                 except (json.JSONDecodeError, TypeError):
                     pass
+
+            # Exclude threads where account owner is CC'd but not a direct recipient.
+            # These are often informational copies and not emails requiring a reply.
+            account_email = (doc_meta.get("account_email") or "").strip().lower()
+            recipients = doc_meta.get("recipients") or {}
+            if account_email and isinstance(recipients, dict):
+                is_in_to = _recipient_list_contains_email(recipients.get("to"), account_email)
+                is_in_cc = _recipient_list_contains_email(recipients.get("cc"), account_email)
+                if is_in_cc and not is_in_to:
+                    continue
 
             pool.append(
                 {
