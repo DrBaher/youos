@@ -51,6 +51,12 @@ def get_corpus_stats(database_url: str) -> dict:
             "reviewed_this_week": 0,
             "avg_edit_distance": None,
             "embedding_pct": None,
+            "outcome_metrics": {
+                "accept_unchanged_pct": None,
+                "low_edit_pct": None,
+                "high_rating_pct": None,
+                "median_edit_distance": None,
+            },
         }
 
     conn = sqlite3.connect(db_path)
@@ -84,6 +90,50 @@ def get_corpus_stats(database_url: str) -> dict:
         except sqlite3.OperationalError:
             pass
 
+        # Outcome metrics (proxy for real-world draft quality)
+        outcome_metrics = {
+            "accept_unchanged_pct": None,
+            "low_edit_pct": None,
+            "high_rating_pct": None,
+            "median_edit_distance": None,
+        }
+        try:
+            row = conn.execute(
+                """
+                SELECT
+                    ROUND(100.0 * AVG(CASE WHEN edit_distance_pct <= 0.01 THEN 1.0 ELSE 0.0 END), 1) AS accept_unchanged_pct,
+                    ROUND(100.0 * AVG(CASE WHEN edit_distance_pct <= 0.15 THEN 1.0 ELSE 0.0 END), 1) AS low_edit_pct,
+                    ROUND(100.0 * AVG(CASE WHEN rating >= 4 THEN 1.0 ELSE 0.0 END), 1) AS high_rating_pct
+                FROM feedback_pairs
+                WHERE edit_distance_pct IS NOT NULL
+                """
+            ).fetchone()
+            if row:
+                outcome_metrics["accept_unchanged_pct"] = row[0]
+                outcome_metrics["low_edit_pct"] = row[1]
+                outcome_metrics["high_rating_pct"] = row[2]
+
+            # Median edit distance from last 100 feedback rows
+            med_row = conn.execute(
+                """
+                SELECT edit_distance_pct
+                FROM feedback_pairs
+                WHERE edit_distance_pct IS NOT NULL
+                ORDER BY id DESC
+                LIMIT 100
+                """
+            ).fetchall()
+            if med_row:
+                vals = sorted(float(r[0]) for r in med_row)
+                n = len(vals)
+                if n % 2 == 1:
+                    median_val = vals[n // 2]
+                else:
+                    median_val = (vals[(n // 2) - 1] + vals[n // 2]) / 2
+                outcome_metrics["median_edit_distance"] = round(median_val, 4)
+        except sqlite3.OperationalError:
+            pass
+
         return {
             "total_documents": total_docs,
             "total_reply_pairs": total_pairs,
@@ -92,6 +142,7 @@ def get_corpus_stats(database_url: str) -> dict:
             "reviewed_this_week": reviewed_week,
             "avg_edit_distance": avg_edit_dist,
             "embedding_pct": embedding_pct,
+            "outcome_metrics": outcome_metrics,
         }
     finally:
         conn.close()
