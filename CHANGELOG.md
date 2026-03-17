@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.1.3 — 2026-03-17
+
+### New features
+- **Auto fact extraction** — rule-based extractor (`facts_extractor.py`) parses sender notes and feedback notes on save, automatically creating structured facts in the DB. Uses `finditer` for multi-match per note, negation awareness (skips "not prefers", "never available", etc.), confidence scoring per pattern (0.4–0.9), fact deduplication/merging, and LLM (Claude CLI) fallback when rule extraction returns nothing.
+- **15+ fact pattern categories**: communication preferences, dislikes/avoidances, scheduling (meeting days, availability, response time), timezone (abbreviations + IANA), identity (title, company, location, preferred name, reports-to), sign-offs, languages, contact metadata (phone, billing email, CC rules), relationship tags (VIP, decision maker, referred by), and project facts (deadline, budget, renewal date, stakeholders).
+- **79 unit tests** for the fact extractor covering all pattern categories, negation, span claiming, LLM fallback, and edge cases.
+- **Memory routes** (`/api/memory`) — additional memory endpoints wired into main app.
+
+### Improvements
+- Facts auto-extracted whenever a sender note or feedback note is saved — no manual fact entry required for structured notes.
+- All BaherOS references in shared/UI code unified to YouOS branding.
+- Review Queue UX: emails appear instantly; drafts stream in one by one as they generate.
+- Draft popup title updated from BaherOS to YouOS.
+- Generation service, config, settings, auth: instance path and security improvements.
+
+## v0.1.2 — 2026-03-16
+
+### New features
+- **Facts** — context-aware drafting via `/api/facts` CRUD API. Store facts about contacts, projects, and personal preferences (`contact`, `project`, `user_pref` types); facts are injected into generation prompts automatically
+- **Unified codebase** — YouOS is now the canonical name for the product; all internal BaherOS references in shared code replaced with YouOS branding
+- **Instance-based data paths** — `YOUOS_DATA_DIR` environment variable controls all instance data (database, configs, adapters); each instance in `instances/` is fully isolated
+
+### Improvements
+- `templates/draft_popup.html` title updated from BaherOS to YouOS
+- `docs/schema.sql` facts table documented
+
 ## v0.1.1 — 2026-03-16
 
 ### New features

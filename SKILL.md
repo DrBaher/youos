@@ -129,6 +129,8 @@ Install from the Bookmarklet page in the web UI. Once installed:
 9. Sender profiles track reply-time patterns and topics; `youos note` immediately rebuilds that contact's profile
 10. Submit feedback from terminal: `youos feedback --inbound "..." --reply "..." --rating 4`
 11. Setup wizard asks for internal domains — accurate sender classification from day one
+12. Facts store (`/api/facts`) — save context about contacts, projects, and preferences; facts are injected into generation prompts automatically for context-aware drafts
+13. Auto fact extraction — sender notes and feedback notes are parsed automatically on save using 15+ rule patterns (preferences, timezone, schedule, sign-offs, roles, relationships, project metadata); negation-aware with confidence scoring; LLM (Claude CLI) fallback for unstructured notes; fact deduplication/merging on upsert
 
 ## Privacy
 
