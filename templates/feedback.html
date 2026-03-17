@@ -348,22 +348,26 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
     <div class="meta-row">
       <div class="field">
+        <label for="replyPrompt">Reply instruction (optional)</label>
+        <input type="text" id="replyPrompt" placeholder="e.g. decline politely and suggest next Tuesday 14:00">
+      </div>
+      <div class="field">
         <label for="note">Edit note (optional)</label>
         <input type="text" id="note" placeholder="e.g. tighten opening, more concise CTA...">
       </div>
-      <div class="stars">
-        <label class="star-label">Rating</label>
+    </div>
+
+    <div class="btn-row" style="align-items:center;">
+      <button class="btn-generate" id="btnGenerate">Generate Email <span class="oc-tip" data-tip="Generate a new email from a prompt, or switch to Reply mode to respond to inbound threads." style="background:#005a4a;">?</span></button>
+      <button class="btn-submit" id="btnSubmit" disabled>Save to Learning</button>
+      <div class="stars" style="margin-left:auto;opacity:0.9;">
+        <label class="star-label">Rate draft</label>
         <span class="star" data-val="1">&#9733;</span>
         <span class="star" data-val="2">&#9733;</span>
         <span class="star" data-val="3">&#9733;</span>
         <span class="star" data-val="4">&#9733;</span>
         <span class="star" data-val="5">&#9733;</span>
       </div>
-    </div>
-
-    <div class="btn-row">
-      <button class="btn-generate" id="btnGenerate">Generate Email <span class="oc-tip" data-tip="Generate a new email from a prompt, or switch to Reply mode to respond to inbound threads." style="background:#005a4a;">?</span></button>
-      <button class="btn-submit" id="btnSubmit" disabled>Save to Learning</button>
     </div>
 
     <div class="info" id="info"></div>
@@ -528,7 +532,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   </div>
 
   <footer class="oc-footer">
-    <span>YouOS v0.1.1</span>
+    <span>YouOS v0.1.10</span>
     <span>&middot;</span>
     <a href="https://github.com/DrBaher/youos" target="_blank">GitHub</a>
     <span>&middot;</span>
@@ -681,6 +685,7 @@ function showFactsToast(facts) {
   const inbound = document.getElementById('inbound');
   const draft = document.getElementById('draft');
   const note = document.getElementById('note');
+  const replyPrompt = document.getElementById('replyPrompt');
   const info = document.getElementById('info');
   const btnGen = document.getElementById('btnGenerate');
   const btnSub = document.getElementById('btnSubmit');
@@ -690,7 +695,7 @@ function showFactsToast(facts) {
   const inboundHint = document.getElementById('inboundHint');
   const modeButtons = document.querySelectorAll('#draftModeToggle .mode-btn');
   const stars = document.querySelectorAll('#tab-draft-reply .star');
-  let selectedRating = null;
+  let selectedRating = 4;
   let generatedDraft = '';
   let draftMode = 'compose';
 
@@ -823,14 +828,20 @@ function showFactsToast(facts) {
     }, 500);
   });
 
+  function renderDraftStars() {
+    stars.forEach(st => {
+      st.classList.toggle('active', parseInt(st.dataset.val) <= (selectedRating || 0));
+    });
+  }
+
   stars.forEach(s => {
     s.addEventListener('click', () => {
       selectedRating = parseInt(s.dataset.val);
-      stars.forEach(st => {
-        st.classList.toggle('active', parseInt(st.dataset.val) <= selectedRating);
-      });
+      renderDraftStars();
     });
   });
+
+  renderDraftStars();
 
   function showInfo(msg, cls) {
     info.className = 'info visible' + (cls ? ' ' + cls : '');
@@ -846,7 +857,9 @@ function showFactsToast(facts) {
     try {
       const payload = {inbound_text: text, tone_hint: toneHint, mode: draftMode};
       const sv = senderInput.value.trim();
+      const rp = replyPrompt.value.trim();
       if (sv) payload.sender = sv;
+      if (rp) payload.user_prompt = rp;
       const res = await fetch('/feedback/generate', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -893,9 +906,11 @@ function showFactsToast(facts) {
 
     // Try streaming first
     try {
-      const genPayload = {inbound_text: text};
+      const genPayload = {inbound_text: text, mode: draftMode};
       const senderVal = senderInput.value.trim();
+      const rp = replyPrompt.value.trim();
       if (senderVal) genPayload.sender = senderVal;
+      if (rp) genPayload.user_prompt = rp;
 
       const streamRes = await fetch('/draft/stream', {
         method: 'POST',
@@ -972,7 +987,9 @@ function showFactsToast(facts) {
     try {
       const genPayload = {inbound_text: text, mode: draftMode};
       const senderVal = senderInput.value.trim();
+      const rp = replyPrompt.value.trim();
       if (senderVal) genPayload.sender = senderVal;
+      if (rp) genPayload.user_prompt = rp;
       const res = await fetch('/feedback/generate', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},

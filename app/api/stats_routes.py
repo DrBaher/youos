@@ -45,7 +45,7 @@ def get_api_config(request: Request) -> dict[str, Any]:
     return {
         "display_name": display_name,
         "user_name": user_name,
-        "version": "0.1.0",
+        "version": "0.1.10",
         "corpus_ready": corpus_ready,
         "model_ready": model_ready,
         "feedback_pair_count": feedback_pair_count,

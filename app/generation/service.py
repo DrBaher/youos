@@ -40,6 +40,7 @@ class DraftRequest:
     thread_id: str | None = None
     use_adapter: bool = True
     subject: str | None = None
+    user_prompt: str | None = None
 
 
 @dataclass(slots=True)
@@ -617,6 +618,7 @@ def assemble_prompt(
     memory_facts: list[dict[str, Any]] | None = None,
     score_stats: dict[str, float] | None = None,
     subject: str | None = None,
+    user_prompt: str | None = None,
 ) -> str:
     style = persona.get("style", {})
     voice = style.get("voice", "direct, clear, pragmatic")
@@ -677,6 +679,10 @@ def assemble_prompt(
         else:
             tone_instruction = f"\nTone guidance: {tone_hint}\n"
 
+    custom_instruction = ""
+    if user_prompt and user_prompt.strip():
+        custom_instruction = f"\nAdditional user instruction: {user_prompt.strip()}\n"
+
     sender_block = ""
     if sender_context:
         sender_block = f"\n{sender_context}\n"
@@ -707,6 +713,7 @@ def assemble_prompt(
         f"Do not copy them verbatim — use them as reference only.\n"
         f"Output the draft reply text only. No preamble, no explanation.\n"
         f"{tone_instruction}"
+        f"{custom_instruction}"
     )
 
     # Append length guidance if avg_reply_words is set
@@ -1004,6 +1011,7 @@ def generate_draft(
         memory_facts=memory_facts,
         score_stats=score_stats,
         subject=request.subject,
+        user_prompt=request.user_prompt,
     )
 
     # Token budget check — greedy knapsack: calculate each exemplar cost once (P5)
@@ -1026,6 +1034,7 @@ def generate_draft(
             memory_facts=memory_facts,
             score_stats=score_stats,
             subject=request.subject,
+            user_prompt=request.user_prompt,
         )
         budget = PROMPT_TOKEN_BUDGET - _estimate_tokens(base_prompt)
         used = 0
@@ -1057,6 +1066,7 @@ def generate_draft(
                 memory_facts=memory_facts,
                 score_stats=score_stats,
                 subject=request.subject,
+                user_prompt=request.user_prompt,
             )
         token_estimate = _estimate_tokens(prompt)
 

@@ -44,6 +44,7 @@ Gmail (sent mail)          Your feedback
 - Subject line + topic-aware retrieval; FTS queries expanded with email vocabulary synonyms
 - Same-thread history gets a 2x retrieval boost
 - Handles full email threads — paste the whole thread, YouOS focuses on the latest message
+- Optional reply instructions — steer a specific draft with explicit guidance even when replying to inbound emails
 - Warns you when confidence is low; explain any draft inline via "How was this generated?"
 - Local model empty or signature-only output → automatic Claude fallback
 - Subject line generated via smart content analysis — skips greeting/filler lines, extracts the actual topic
@@ -182,10 +183,10 @@ Facts are stored locally in the SQLite `memory` table and surfaced via the web U
 
 The web UI provides:
 - **Draft Reply**: Paste an inbound email (or full thread), generate a draft grounded in your style. A **confidence reason banner** explains *why* the draft received its confidence score (e.g. "3 strong exemplars found", "low retrieval — new topic"). See the full exemplar trace via "How was this generated?"
-- **Review Queue**: Emails appear instantly, drafts stream in one by one as they generate. Automated senders filtered by address and content. Configurable batch size (5/10/20) and draft model (`claude`/`local`/`auto`). Bulk actions included (`Bulk submit ready`, `Skip low-signal`) with keyboard shortcuts (`j` submit, `k` skip, `b` bulk submit, `n` bulk skip, `?` help).
+- **Review Queue**: Emails appear instantly, drafts stream in one by one as they generate. Automated senders filtered by address and content. Configurable batch size (5/10/20) and draft model (`claude`/`local`/`auto`). Keyboard shortcuts: `j` submit, `k` skip, `e` edit, `1-5` rate, `?` help.
 - **History**: Past drafts with intent badges, confidence badges, and edit-distance indicators
 - **Stats Dashboard**: Corpus health, model status, pipeline status (with skipped steps), style drift indicator, benchmark trends, edit distance trend chart, per-sender-type accuracy breakdown, and **System Health card** (corpus size, last ingestion, embedding coverage, adapter status)
-- **Gmail Bookmarklet**: Injects a floating side panel directly into Gmail — auto-detects sender email from the DOM, generate a draft and click "Insert into Gmail" without leaving your inbox. Submit feedback with star rating from the panel
+- **Gmail Bookmarklet**: Injects a floating side panel directly into Gmail — auto-detects sender email from the DOM, add an optional instruction, generate a draft, and click "Insert into Gmail" without leaving your inbox. Submit feedback with star rating from the panel
 
 ## Architecture
 
@@ -248,7 +249,7 @@ instances/myname/
 
 **Start a named instance:**
 ```bash
-YOUOS_DATA_DIR=instances/myname uvicorn app.main:app --host 0.0.0.0 --port 8765
+YOUOS_DATA_DIR=instances/myname uvicorn app.main:app --host 127.0.0.1 --port 8765
 ```
 
 When `YOUOS_DATA_DIR` is set, YouOS automatically derives the database URL and configs directory from it. Individual overrides are still possible via `YOUOS_DATABASE_URL` and `YOUOS_CONFIGS_DIR`.
