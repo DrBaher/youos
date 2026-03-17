@@ -142,8 +142,20 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 <script>
 const params = new URLSearchParams(window.location.search);
 const inbound = params.get('inbound') || '';
-const sender = params.get('sender') || '';
+let sender = params.get('sender') || '';
 const subject = params.get('subject') || '';
+
+// E8: if sender wasn't in URL params, request it from parent (bookmarklet in Gmail)
+if (!sender) {
+  window.parent.postMessage({type: 'youos-request-sender'}, '*');
+}
+// E8: listen for sender context pushed from parent
+window.addEventListener('message', function(e) {
+  if (!e.data) return;
+  if (e.data.type === 'youos-sender-context' && e.data.email && !sender) {
+    sender = e.data.email;
+  }
+});
 
 // Show inbound preview
 document.getElementById('inboundPreview').textContent = inbound.slice(0, 400);

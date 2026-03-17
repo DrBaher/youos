@@ -260,6 +260,24 @@ def export(args: argparse.Namespace) -> None:
         print(f"No qualifying pairs after filtering. Filtered out {filtered_count} low-quality pairs.")
         return
 
+    # E15: oversample 5-star recent pairs (last 90 days) 2-3x for stronger training signal
+    from datetime import datetime, timedelta, timezone as _tz
+    cutoff_90d = (datetime.now(_tz.utc) - timedelta(days=90)).isoformat()[:10]
+    oversampled: list[tuple[str, str, str, float]] = []
+    for item in qualified:
+        created_at, inbound, reply, quality = item
+        is_recent = (created_at or "")[:10] >= cutoff_90d
+        rating_approx = int(round(quality))
+        if rating_approx >= 5 and is_recent:
+            oversampled.extend([item, item, item])  # 3x
+        elif rating_approx >= 4 and is_recent:
+            oversampled.extend([item, item])  # 2x
+        else:
+            oversampled.append(item)
+    if len(oversampled) > len(qualified):
+        print(f"E15 oversampling: {len(qualified)} -> {len(oversampled)} pairs (5-star/recent boosted)")
+    qualified = oversampled
+
     print(f"Exported {len(qualified)} pairs (filtered out {filtered_count} low-quality pairs)")
 
     # Deduplication by inbound similarity (before temporal split)

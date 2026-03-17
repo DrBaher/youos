@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import time
@@ -1058,6 +1059,44 @@ def _ingest_thread_documents(
     return inserted_count
 
 
+_ACKNOWLEDGMENT_ONLY = re.compile(
+    r"^\s*(ok|okay|k|sure|thanks|thank you|ty|thx|noted|got it|will do|sounds good|great|perfect|"
+    r"received|ack|acknowledged|+1|roger|copy that|understood)\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+_FORWARDED_PATTERN = re.compile(
+    r"(-{5,}\s*forwarded message|-{5,}\s*original message|begin forwarded message)",
+    re.IGNORECASE,
+)
+_OUT_OF_OFFICE = re.compile(
+    r"\b(out of (office|office message)|on (vacation|leave|holiday)|auto(-|\s*)reply|"
+    r"i am (away|unavailable|currently out)|be back on|return(ing)? (on|from))\b",
+    re.IGNORECASE,
+)
+
+
+def _is_low_quality_reply(text: str) -> bool:
+    """E9: Return True for replies that are too short or purely acknowledgments/OOO."""
+    stripped = text.strip()
+    if len(stripped.split()) < 3:
+        return True
+    if _ACKNOWLEDGMENT_ONLY.match(stripped):
+        return True
+    if _OUT_OF_OFFICE.search(stripped[:400]):
+        return True
+    return False
+
+
+def _is_forwarded_inbound(message: "NormalizedMessage") -> bool:
+    """E21: Return True if the inbound message is a forwarded email."""
+    if _FORWARDED_PATTERN.search(message.body_text[:500]):
+        return True
+    labels = [lbl.upper() for lbl in (message.label_ids or [])]
+    if "FORWARDED" in labels:
+        return True
+    return False
+
+
 def _ingest_thread_reply_pairs(connection: sqlite3.Connection, thread: list[NormalizedMessage]) -> int:
     document_ids_by_source = _load_document_ids(connection, thread_id=thread[0].thread_id)
     pair_count = 0
@@ -1066,20 +1105,24 @@ def _ingest_thread_reply_pairs(connection: sqlite3.Connection, thread: list[Norm
     for message in thread:
         if message.self_authored:
             if pending_inbound and message.body_text:
-                latest_inbound = pending_inbound[-1]
-                pair = _build_reply_pair(
-                    pending_inbound,
-                    reply_message=message,
-                    document_source_id=latest_inbound.message_id,
-                )
-                document_id = document_ids_by_source.get(pair.document_source_id)
-                if document_id is not None:
-                    _upsert_reply_pair(connection, pair=pair, document_id=document_id)
-                    pair_count += 1
+                # E9: skip low-quality replies
+                if not _is_low_quality_reply(message.body_text):
+                    latest_inbound = pending_inbound[-1]
+                    pair = _build_reply_pair(
+                        pending_inbound,
+                        reply_message=message,
+                        document_source_id=latest_inbound.message_id,
+                    )
+                    document_id = document_ids_by_source.get(pair.document_source_id)
+                    if document_id is not None:
+                        _upsert_reply_pair(connection, pair=pair, document_id=document_id)
+                        pair_count += 1
             pending_inbound = []
             continue
 
-        if message.body_text:
+        # E22: skip inbound messages with <10 chars (calendar invites, empty payloads)
+        # E21: skip forwarded emails
+        if message.body_text and len(message.body_text.strip()) >= 10 and not _is_forwarded_inbound(message):
             pending_inbound.append(message)
 
     return pair_count
@@ -1260,6 +1303,14 @@ def _upsert_reply_pair(
     pair: ExtractedReplyPair,
     document_id: int,
 ) -> None:
+    # E14: detect language from inbound text for language-filtered retrieval
+    language: str | None = None
+    try:
+        from app.core.text_utils import detect_language
+        language = detect_language(pair.inbound_text or "")
+    except Exception:
+        pass
+
     connection.execute(
         """
         INSERT INTO reply_pairs (
@@ -1272,9 +1323,10 @@ def _upsert_reply_pair(
             inbound_author,
             reply_author,
             paired_at,
-            metadata_json
+            metadata_json,
+            language
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(source_type, source_id) DO UPDATE SET
             document_id = excluded.document_id,
             thread_id = excluded.thread_id,
@@ -1283,7 +1335,8 @@ def _upsert_reply_pair(
             inbound_author = excluded.inbound_author,
             reply_author = excluded.reply_author,
             paired_at = excluded.paired_at,
-            metadata_json = excluded.metadata_json
+            metadata_json = excluded.metadata_json,
+            language = excluded.language
         """,
         (
             "gmail_thread",
@@ -1296,6 +1349,7 @@ def _upsert_reply_pair(
             pair.reply_author,
             pair.paired_at,
             json.dumps(pair.metadata, sort_keys=True),
+            language,
         ),
     )
 

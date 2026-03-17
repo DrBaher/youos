@@ -36,7 +36,7 @@ _NUMERIC_SURFACES: list[dict[str, Any]] = [
         "step_size": 0.05,
         "min_val": 0.0,
         "max_val": 0.5,
-    },  # noqa: E501
+    },
     {
         "name": "account_boost_weight",
         "config_file": "retrieval/defaults.yaml",
@@ -44,7 +44,39 @@ _NUMERIC_SURFACES: list[dict[str, Any]] = [
         "step_size": 0.05,
         "min_val": 0.0,
         "max_val": 0.4,
-    },  # noqa: E501
+    },
+    # E16: semantic vs keyword balance
+    {
+        "name": "semantic_weight",
+        "config_file": "retrieval/defaults.yaml",
+        "yaml_key": "semantic_weight",
+        "step_size": 0.05,
+        "min_val": 0.0,
+        "max_val": 1.0,
+    },
+    # E16: exemplar display length tuning
+    {
+        "name": "exemplar_reply_chars",
+        "config_file": "retrieval/defaults.yaml",
+        "yaml_key": "exemplar_reply_chars",
+        "step_size": 100,
+        "min_val": 200,
+        "max_val": 1000,
+    },
+    {
+        "name": "exemplar_inbound_chars",
+        "config_file": "retrieval/defaults.yaml",
+        "yaml_key": "exemplar_inbound_chars",
+        "step_size": 100,
+        "min_val": 100,
+        "max_val": 600,
+    },
+]
+
+# E16: Per-mode avg_reply_words surfaces (nested in persona.yaml modes)
+_MODE_AVG_WORDS_SURFACES: list[dict[str, Any]] = [
+    {"name": f"mode_avg_words_{mode}", "sender_type": mode, "step_size": 10, "min_val": 20, "max_val": 200}
+    for mode in ("external_client", "personal", "internal", "automated")
 ]
 
 # Per-sender-type boost surfaces (nested under sender_type_boost_map)
@@ -163,6 +195,31 @@ def get_mutable_surfaces(configs_dir: Path, *, surface_filter: str | None = None
                     max_val=spec["max_val"],
                 )
             )
+
+    # E16: per-mode avg_reply_words from persona.yaml
+    if surface_filter is None or surface_filter == "persona":
+        persona_path = configs_dir / "persona.yaml"
+        if persona_path.exists():
+            persona_data = yaml.safe_load(persona_path.read_text(encoding="utf-8")) or {}
+            modes = persona_data.get("modes", {})
+            for spec in _MODE_AVG_WORDS_SURFACES:
+                mode = spec["sender_type"]
+                mode_cfg = modes.get(mode, {})
+                current_words = mode_cfg.get("avg_reply_words")
+                if current_words is None:
+                    continue
+                surfaces.append(
+                    ConfigSurface(
+                        name=spec["name"],
+                        config_file="persona.yaml",
+                        yaml_key=f"modes.{mode}.avg_reply_words",
+                        current_value=int(current_words),
+                        mutation_type="numeric_step",
+                        step_size=spec["step_size"],
+                        min_val=spec["min_val"],
+                        max_val=spec["max_val"],
+                    )
+                )
 
     if surface_filter is None or surface_filter == "autoresearch":
         autoresearch_path = configs_dir / "autoresearch.yaml"

@@ -167,6 +167,31 @@ body {
           <tbody></tbody>
         </table>
       </div>
+
+      <!-- E17: Draft Quality Trend -->
+      <div class="card full-width" id="qualityTrendCard" style="display:none;">
+        <h2>Draft Quality Trend (weekly avg edit distance)</h2>
+        <div id="qualityTrendChart" style="display:flex;align-items:flex-end;gap:6px;height:60px;margin-top:0.5rem;"></div>
+        <div id="qualityTrendLabels" style="display:flex;gap:6px;margin-top:4px;font-size:0.7rem;color:#555;"></div>
+      </div>
+
+      <!-- E18: Per-sender-type accuracy -->
+      <div class="card" id="senderAccuracyCard" style="display:none;">
+        <h2>Accuracy by Sender Type</h2>
+        <table class="sender-table" id="senderAccuracyTable">
+          <thead><tr><th>Type</th><th>Reviews</th><th>Avg Edit</th><th>Avg Rating</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- E19: System Health -->
+      <div class="card" id="systemHealthCard" style="display:none;">
+        <h2>System Health</h2>
+        <div class="stat-row"><span class="stat-label">Corpus size</span><span class="stat-value" id="shCorpusSize">-</span></div>
+        <div class="stat-row"><span class="stat-label">Last ingestion</span><span class="stat-value" id="shLastIngestion">-</span></div>
+        <div class="stat-row"><span class="stat-label">Embedding coverage</span><span class="stat-value" id="shEmbeddingCov">-</span></div>
+        <div class="stat-row"><span class="stat-label">LoRA adapter</span><span class="stat-value" id="shAdapter">-</span></div>
+      </div>
     </div>
   </div>
 
@@ -308,6 +333,56 @@ body {
         }
       } else {
         tbody.innerHTML = '<tr><td colspan="4" style="color:#666;">No sender profiles yet</td></tr>';
+      }
+
+      // E17: quality trend sparkline
+      if (d.quality_trend && d.quality_trend.length > 0) {
+        var qtCard = document.getElementById('qualityTrendCard');
+        qtCard.style.display = 'block';
+        var chart = document.getElementById('qualityTrendChart');
+        var labels = document.getElementById('qualityTrendLabels');
+        var maxVal = Math.max.apply(null, d.quality_trend.map(function(r) { return r.avg_edit_pct || 0; }));
+        maxVal = maxVal > 0 ? maxVal : 1;
+        chart.innerHTML = '';
+        labels.innerHTML = '';
+        d.quality_trend.forEach(function(r) {
+          var pct = (r.avg_edit_pct || 0) / maxVal;
+          var barH = Math.max(4, Math.round(pct * 56));
+          var bar = document.createElement('div');
+          bar.style.cssText = 'flex:1;background:#00c4a7;border-radius:2px 2px 0 0;height:' + barH + 'px;min-width:12px;' +
+            'title="' + (r.week || '') + ': ' + ((r.avg_edit_pct || 0) * 100).toFixed(1) + '%"';
+          bar.title = (r.week || '') + ': ' + ((r.avg_edit_pct || 0) * 100).toFixed(1) + '% (' + r.count + ' pairs)';
+          chart.appendChild(bar);
+          var lbl = document.createElement('div');
+          lbl.style.flex = '1';
+          lbl.style.textAlign = 'center';
+          lbl.textContent = (r.week || '').slice(-2); // last 2 chars of week
+          labels.appendChild(lbl);
+        });
+      }
+
+      // E18: sender accuracy table
+      if (d.sender_accuracy && d.sender_accuracy.length > 0) {
+        document.getElementById('senderAccuracyCard').style.display = 'block';
+        var saBody = document.querySelector('#senderAccuracyTable tbody');
+        saBody.innerHTML = '';
+        d.sender_accuracy.forEach(function(r) {
+          var tr = document.createElement('tr');
+          tr.innerHTML = '<td>' + (r.sender_type || '-') + '</td><td>' + r.reviews + '</td><td>' +
+            ((r.avg_edit_pct || 0) * 100).toFixed(1) + '%</td><td>' + (r.avg_rating || '-') + '</td>';
+          saBody.appendChild(tr);
+        });
+      }
+
+      // E19: system health
+      if (d.system_health && Object.keys(d.system_health).length > 0) {
+        document.getElementById('systemHealthCard').style.display = 'block';
+        document.getElementById('shCorpusSize').textContent = (d.system_health.corpus_size || 0).toLocaleString() + ' pairs';
+        document.getElementById('shLastIngestion').textContent = d.system_health.last_ingestion ? d.system_health.last_ingestion.slice(0,10) : 'N/A';
+        document.getElementById('shEmbeddingCov').textContent = d.system_health.embedding_coverage != null ?
+          (d.system_health.embedding_coverage * 100).toFixed(1) + '%' : 'N/A';
+        document.getElementById('shAdapter').innerHTML = d.system_health.adapter_ready ?
+          '<span style="color:#00c4a7;">&#x2713; Ready</span>' : '<span style="color:#f0ad4e;">Not trained</span>';
       }
 
       document.getElementById('loading').style.display = 'none';

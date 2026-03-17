@@ -102,6 +102,31 @@ def _check_dependencies() -> bool:
     return all_ok
 
 
+def _detect_gog_accounts() -> list[str]:
+    """E23: Auto-detect connected gog accounts via `gog auth list --json`."""
+    if not shutil.which("gog"):
+        return []
+    try:
+        result = subprocess.run(
+            ["gog", "auth", "list", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout)
+            # gog auth list --json returns list of {email, ...} or {accounts: [...]}
+            if isinstance(data, list):
+                return [a.get("email") or a.get("account") for a in data if a.get("email") or a.get("account")]
+            if isinstance(data, dict):
+                accounts = data.get("accounts") or data.get("emails") or []
+                if isinstance(accounts, list):
+                    return [a if isinstance(a, str) else a.get("email", "") for a in accounts if a]
+    except Exception:
+        pass
+    return []
+
+
 def _get_user_identity() -> dict:
     """Prompt for user name, emails, and names."""
     print("--- User Identity ---")
@@ -113,9 +138,33 @@ def _get_user_identity() -> dict:
 
     print()
     print("What email accounts should YouOS learn from?")
-    print("Enter your Gmail addresses one per line. Empty line when done.")
+
+    # E23: auto-detect gog accounts
+    detected_accounts = _detect_gog_accounts()
     emails = []
-    while True:
+    if detected_accounts:
+        print("Detected connected gog accounts:")
+        for i, acct in enumerate(detected_accounts, 1):
+            print(f"  {i}. {acct}")
+        print()
+        confirm = input("Use all detected accounts? [Y/n] ").strip().lower()
+        if confirm != "n":
+            emails = list(detected_accounts)
+            print(f"Using: {', '.join(emails)}")
+        else:
+            print("Which accounts? Enter numbers separated by commas, or type emails manually:")
+            sel = input("> ").strip()
+            selected = []
+            for part in sel.split(","):
+                part = part.strip()
+                if part.isdigit() and 1 <= int(part) <= len(detected_accounts):
+                    selected.append(detected_accounts[int(part) - 1])
+                elif "@" in part:
+                    selected.append(part)
+            emails = selected
+    else:
+        print("Enter your Gmail addresses one per line. Empty line when done.")
+    while not emails:
         email = input("> ").strip()
         if not email:
             break
@@ -140,6 +189,37 @@ def _get_user_identity() -> dict:
     internal_domains = [d.strip().lower() for d in domains_input.split(",") if d.strip()] if domains_input else []
 
     return {"name": name, "emails": emails, "names": names, "internal_domains": internal_domains}
+
+
+def _detect_internal_domains(db_path: "Path", user_emails: list[str]) -> list[str]:
+    """E24: Scan reply_author domains from corpus, suggest most common non-user domains."""
+    import re as _re
+    from collections import Counter
+
+    user_domains = {e.split("@")[-1].lower() for e in user_emails if "@" in e}
+    # Common free/consumer email domains to exclude
+    skip_domains = {
+        "gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com",
+        "me.com", "mac.com", "live.com", "msn.com", "aol.com",
+    }
+
+    try:
+        import sqlite3 as _sqlite3
+        conn = _sqlite3.connect(db_path)
+        rows = conn.execute("SELECT reply_author FROM reply_pairs WHERE reply_author IS NOT NULL").fetchall()
+        conn.close()
+    except Exception:
+        return []
+
+    domain_counts: Counter = Counter()
+    for (author,) in rows:
+        m = _re.search(r"@([\w.-]+\.\w+)", author or "")
+        if m:
+            domain = m.group(1).lower()
+            if domain not in user_domains and domain not in skip_domains:
+                domain_counts[domain] += 1
+
+    return [domain for domain, _count in domain_counts.most_common(5) if _count >= 3]
 
 
 def _verify_accounts(emails: list[str]) -> list[str]:
@@ -637,6 +717,32 @@ def main() -> None:
 
     # Step 6: Ingestion
     _run_ingestion(config)
+
+    # E24: auto-detect internal domains from corpus
+    if not identity.get("internal_domains"):
+        try:
+            from app.core.settings import get_settings as _gs
+            from app.db.bootstrap import resolve_sqlite_path as _rsp
+            _db_path = _rsp(_gs().database_url)
+            if _db_path.exists():
+                suggested_domains = _detect_internal_domains(_db_path, identity["emails"])
+                if suggested_domains:
+                    print()
+                    print("Based on your corpus, these domains appear frequently in sent replies:")
+                    for d in suggested_domains:
+                        print(f"  - {d}")
+                    print()
+                    confirm = input("Mark these as internal domains? [Y/n] ").strip().lower()
+                    if confirm != "n":
+                        config.setdefault("user", {})["internal_domains"] = suggested_domains
+                        import yaml as _yaml_e24
+                        CONFIG_PATH.write_text(
+                            _yaml_e24.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False, width=120),
+                            encoding="utf-8",
+                        )
+                        print(f"  Saved internal domains: {', '.join(suggested_domains)}")
+        except Exception:
+            pass
 
     # Step 7: Persona analysis
     _run_persona_analysis(config)

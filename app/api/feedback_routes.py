@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import re
 import sqlite3
 from pathlib import Path
 from typing import Literal
@@ -18,6 +20,61 @@ from app.generation.service import DraftRequest, generate_draft
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
+
+
+def _analyze_edit_categories(generated: str, edited: str) -> list[str]:
+    """Categorize the types of edits made between generated_draft and edited_reply."""
+    categories: list[str] = []
+    gen_lines = generated.strip().splitlines()
+    edit_lines = edited.strip().splitlines()
+
+    # Greeting change: first non-empty line differs
+    gen_first = next((l for l in gen_lines if l.strip()), "")
+    edit_first = next((l for l in edit_lines if l.strip()), "")
+    if gen_first != edit_first and (
+        any(kw in gen_first.lower() for kw in ("hi", "hello", "dear", "hey", "good morning", "good afternoon"))
+        or any(kw in edit_first.lower() for kw in ("hi", "hello", "dear", "hey", "good morning", "good afternoon"))
+    ):
+        categories.append("greeting_change")
+
+    # Closing change: last non-empty line differs
+    gen_last = next((l for l in reversed(gen_lines) if l.strip()), "")
+    edit_last = next((l for l in reversed(edit_lines) if l.strip()), "")
+    if gen_last != edit_last and (
+        any(kw in gen_last.lower() for kw in ("regards", "thanks", "cheers", "sincerely", "best", "warm"))
+        or any(kw in edit_last.lower() for kw in ("regards", "thanks", "cheers", "sincerely", "best", "warm"))
+    ):
+        categories.append("closing_change")
+
+    # Length change
+    gen_words = len(generated.split())
+    edit_words = len(edited.split())
+    if gen_words > 0 and edit_words > 0:
+        ratio = edit_words / gen_words
+        if ratio < 0.7:
+            categories.append("length_change_shorter")
+        elif ratio > 1.4:
+            categories.append("length_change_longer")
+
+    # Tone change: detect formality shift
+    formal_words = re.compile(r"\b(please|kindly|hereby|accordingly|aforementioned|subsequently)\b", re.IGNORECASE)
+    casual_words = re.compile(r"\b(hey|yeah|nope|gonna|wanna|cool|awesome|sure thing)\b", re.IGNORECASE)
+    gen_formal = len(formal_words.findall(generated))
+    edit_formal = len(formal_words.findall(edited))
+    gen_casual = len(casual_words.findall(generated))
+    edit_casual = len(casual_words.findall(edited))
+    if abs(edit_formal - gen_formal) >= 2 or abs(edit_casual - gen_casual) >= 2:
+        categories.append("tone_change")
+
+    # Content addition/removal
+    gen_sentences = len(re.split(r"[.!?]+", generated))
+    edit_sentences = len(re.split(r"[.!?]+", edited))
+    if edit_sentences > gen_sentences + 2:
+        categories.append("content_addition")
+    elif edit_sentences < gen_sentences - 2:
+        categories.append("content_removal")
+
+    return categories
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "templates"
 TEMPLATE_PATH = TEMPLATE_DIR / "feedback.html"
@@ -62,6 +119,38 @@ def draft_popup_page() -> HTMLResponse:
     """Minimal popup-optimised draft UI, embedded as iframe in Gmail."""
     html = POPUP_TEMPLATE.read_text(encoding="utf-8")
     return HTMLResponse(content=html)
+
+
+@router.post("/scan-corpus-facts")
+def scan_corpus_facts(request: Request) -> dict:
+    """Scan the top 100 reply pairs (by quality_score) and extract facts from each."""
+    db_path = _get_db_path(request)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, inbound_text, reply_text, inbound_author
+            FROM reply_pairs
+            ORDER BY COALESCE(quality_score, 1.0) DESC
+            LIMIT 100
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+
+    total_extracted = 0
+    for row in rows:
+        combined = f"{row['inbound_text'] or ''}\n{row['reply_text'] or ''}".strip()
+        if not combined:
+            continue
+        try:
+            facts = extract_and_save(combined, db_path, sender_email=row["inbound_author"])
+            total_extracted += len(facts)
+        except Exception:
+            logger.warning("Facts extraction failed for reply pair %s", row["id"], exc_info=True)
+
+    return {"status": "ok", "facts_extracted": total_extracted, "pairs_scanned": len(rows)}
 
 
 class GenerateBody(BaseModel):
@@ -130,20 +219,30 @@ class SubmitBody(BaseModel):
     feedback_note: str | None = None
     rating: int | None = Field(default=None, ge=1, le=5)
     sender: str | None = None
+    precedents_used: list[dict] | None = None
 
 
 @router.post("/submit")
 def feedback_submit(body: SubmitBody, request: Request) -> dict:
     db_path = _get_db_path(request)
     edit_distance_pct = round(1.0 - similarity_ratio(body.generated_draft, body.edited_reply), 4)
+    edit_categories = _analyze_edit_categories(body.generated_draft, body.edited_reply)
+    edit_categories_json = json.dumps(edit_categories) if edit_categories else None
+    precedents_json = json.dumps(body.precedents_used) if body.precedents_used else None
     conn = sqlite3.connect(db_path)
     try:
+        # Ensure columns exist (in case bootstrap hasn't run yet)
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(feedback_pairs)").fetchall()}
+        if "edit_categories" not in cols:
+            conn.execute("ALTER TABLE feedback_pairs ADD COLUMN edit_categories TEXT")
+        if "precedents_used" not in cols:
+            conn.execute("ALTER TABLE feedback_pairs ADD COLUMN precedents_used TEXT")
         conn.execute(
             """
             INSERT INTO feedback_pairs
                 (inbound_text, generated_draft, edited_reply, feedback_note, rating,
-                 edit_distance_pct)
-            VALUES (?, ?, ?, ?, ?, ?)
+                 edit_distance_pct, edit_categories, precedents_used)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 body.inbound_text,
@@ -152,6 +251,8 @@ def feedback_submit(body: SubmitBody, request: Request) -> dict:
                 body.feedback_note,
                 body.rating,
                 edit_distance_pct,
+                edit_categories_json,
+                precedents_json,
             ),
         )
         conn.commit()
@@ -187,5 +288,6 @@ def feedback_submit(body: SubmitBody, request: Request) -> dict:
         "status": "saved",
         "total_pairs": total,
         "edit_distance_pct": edit_distance_pct,
+        "edit_categories": edit_categories,
         "extracted_facts": extracted_facts,
     }

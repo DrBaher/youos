@@ -39,6 +39,7 @@ class DraftRequest:
     intent_hint: str | None = None
     thread_id: str | None = None
     use_adapter: bool = True
+    subject: str | None = None
 
 
 @dataclass(slots=True)
@@ -302,6 +303,12 @@ _TONE_INSTRUCTIONS: dict[str, str] = {
     "shorter": "Be more concise. Aim for half the word count.",
     "more_formal": "Use a more formal, professional tone.",
     "more_detail": "Add more detail and context to your reply.",
+    "warmer": "Use a warmer, friendlier, more personal tone.",
+    "casual": "Use a casual, conversational tone — as you would with a close colleague.",
+    "urgent": "Convey urgency clearly. Lead with the action needed and timeline.",
+    "concise": "Be extremely concise. One to three sentences maximum.",
+    "detailed": "Provide thorough, detailed explanations. Break down complex points.",
+    "professional": "Maintain a polished, professional business tone throughout.",
 }
 
 
@@ -609,6 +616,7 @@ def assemble_prompt(
     first_name: str | None = None,
     memory_facts: list[dict[str, Any]] | None = None,
     score_stats: dict[str, float] | None = None,
+    subject: str | None = None,
 ) -> str:
     style = persona.get("style", {})
     voice = style.get("voice", "direct, clear, pragmatic")
@@ -661,10 +669,13 @@ def assemble_prompt(
     if context_lines:
         context_block = "\n" + "\n".join(context_lines) + "\n"
 
-    # Build tone instruction
+    # Build tone instruction — known keys map to instructions, free-text injected directly
     tone_instruction = ""
-    if tone_hint and tone_hint in _TONE_INSTRUCTIONS:
-        tone_instruction = f"\n{_TONE_INSTRUCTIONS[tone_hint]}\n"
+    if tone_hint:
+        if tone_hint in _TONE_INSTRUCTIONS:
+            tone_instruction = f"\n{_TONE_INSTRUCTIONS[tone_hint]}\n"
+        else:
+            tone_instruction = f"\nTone guidance: {tone_hint}\n"
 
     sender_block = ""
     if sender_context:
@@ -713,7 +724,10 @@ def assemble_prompt(
     if greeting and closing:
         result += f"\nBegin your reply with: {greeting}\nEnd your reply with: {closing}\n"
 
-    result += f"\n[INBOUND MESSAGE]\n{inbound_message}"
+    inbound_section = inbound_message
+    if subject:
+        inbound_section = f"Subject: {subject}\n\n{inbound_message}"
+    result += f"\n[INBOUND MESSAGE]\n{inbound_section}"
     return result
 
 
@@ -870,11 +884,11 @@ def generate_draft(
     shared_conn = sqlite3.connect(db_path)
     shared_conn.row_factory = sqlite3.Row
 
-    # Look up prior reply to this sender for additional context
+    # Look up prior reply to this sender for additional context (works for standalone emails too)
     user_name = get_user_name()
     if request.sender:
         prior_reply = _lookup_prior_reply_to_sender(request.sender, database_url, conn=shared_conn)
-        if prior_reply and _has_thread_context(clean_inbound):
+        if prior_reply:
             inbound_for_prompt += f"\n\n[PRIOR REPLY TO THIS SENDER]\n{user_name} previously wrote: {prior_reply}"
 
     # Infer account email from sender if not explicitly provided
@@ -902,9 +916,15 @@ def generate_draft(
         detected_intent = intents[0]
         intent_hint_2 = intents[1] if len(intents) > 1 else None
 
+    # E20: for very short inbound (<50 chars), fall back to sender-profile-based retrieval
+    retrieval_query = clean_inbound
+    if len(clean_inbound.strip()) < 50 and request.sender:
+        # Augment query with sender email so retrieval finds past replies to this person
+        retrieval_query = f"{clean_inbound} {request.sender}".strip()
+
     retrieval_response: RetrievalResponse = retrieve_context(
         RetrievalRequest(
-            query=clean_inbound,
+            query=retrieval_query,
             scope="all",
             account_emails=account_emails,
             top_k_reply_pairs=request.top_k_reply_pairs,
@@ -983,6 +1003,7 @@ def generate_draft(
         first_name=first_name,
         memory_facts=memory_facts,
         score_stats=score_stats,
+        subject=request.subject,
     )
 
     # Token budget check — greedy knapsack: calculate each exemplar cost once (P5)
@@ -1004,6 +1025,7 @@ def generate_draft(
             first_name=first_name,
             memory_facts=memory_facts,
             score_stats=score_stats,
+            subject=request.subject,
         )
         budget = PROMPT_TOKEN_BUDGET - _estimate_tokens(base_prompt)
         used = 0
@@ -1034,6 +1056,7 @@ def generate_draft(
                 first_name=first_name,
                 memory_facts=memory_facts,
                 score_stats=score_stats,
+                subject=request.subject,
             )
         token_estimate = _estimate_tokens(prompt)
 

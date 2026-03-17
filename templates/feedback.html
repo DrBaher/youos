@@ -370,6 +370,12 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
           <span id="rqPct">0%</span>
         </div>
         <div class="rq-remaining" id="rqRemaining"></div>
+        <div id="rqStreakBadge" style="display:none;font-size:0.82rem;background:#1a3a2a;border:1px solid #00c4a7;color:#00c4a7;border-radius:4px;padding:0.2rem 0.6rem;white-space:nowrap;">
+          🔥 <span id="rqStreakDays">0</span>-day streak
+        </div>
+        <div id="rqDailyProgress" style="display:none;font-size:0.78rem;color:#888;">
+          <span id="rqDailyCount">0</span> reviewed today
+        </div>
       </div>
 
       <div class="rq-card">
@@ -404,6 +410,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
             <span class="star active" data-val="4">&#9733;</span>
             <span class="star" data-val="5">&#9733;</span>
           </div>
+          <button class="btn-tone" id="rqPrev" disabled title="Go back to previous item">&#8592; Previous</button>
           <button class="btn-skip" id="rqSkip">Skip</button>
           <button class="btn-tone" id="rqCompare">Compare</button>
           <button class="btn-submit" id="rqSubmitNext">Submit & Next</button>
@@ -439,6 +446,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
         <button class="facts-filter-btn" data-mtype="user_pref">My Preferences</button>
       </div>
       <button class="btn-generate facts-add-btn" id="factsAddBtn">+ Add Fact</button>
+      <button class="btn-tone" id="factsScanCorpusBtn" title="Scan top 100 reply pairs for auto-extractable facts">&#x1F50D; Scan Corpus</button>
     </div>
 
     <!-- Add fact form -->
@@ -1036,6 +1044,7 @@ function showFactsToast(facts) {
   let rqReviewedToday = 0;
   let rqSkippedIds = [];
   let rqRating = 4;
+  let rqHistory = []; // E7: stack of {index, item, editedReply, note, rating}
 
   const rqStars = document.querySelectorAll('#rqStars .star');
   rqStars.forEach(s => {
@@ -1202,6 +1211,15 @@ function showFactsToast(facts) {
             if (msg.type === 'meta') {
               rqTotalUnreviewed = msg.total_unreviewed;
               rqReviewedToday = msg.reviewed_today;
+              // E5: update streak badge and daily count
+              if (msg.streak_days > 0) {
+                const badge = document.getElementById('rqStreakBadge');
+                const streakDays = document.getElementById('rqStreakDays');
+                if (badge && streakDays) { streakDays.textContent = msg.streak_days; badge.style.display = 'inline-flex'; }
+              }
+              const dailyEl = document.getElementById('rqDailyProgress');
+              const dailyCount = document.getElementById('rqDailyCount');
+              if (dailyEl && dailyCount) { dailyCount.textContent = msg.reviewed_today; dailyEl.style.display = 'inline-block'; }
               if (msg.batch_size === 0) {
                 document.getElementById('rqLoading').style.display = 'none';
                 document.getElementById('rqBatchComplete').style.display = 'block';
@@ -1274,6 +1292,31 @@ function showFactsToast(facts) {
     }
   });
 
+  // E7: Previous button — restore last reviewed item for undo
+  document.getElementById('rqPrev').addEventListener('click', () => {
+    if (!rqHistory.length) return;
+    const prev = rqHistory.pop();
+    rqIndex = prev.index;
+    rqReviewed = Math.max(0, rqReviewed - 1);
+    rqReviewedToday = Math.max(0, rqReviewedToday - 1);
+    const dailyCountEl = document.getElementById('rqDailyCount');
+    if (dailyCountEl) dailyCountEl.textContent = rqReviewedToday;
+    // Restore edits
+    document.getElementById('rqDraftTextarea').value = prev.editedReply;
+    document.getElementById('rqNote').value = prev.note;
+    rqRating = prev.rating;
+    rqStars.forEach(st => st.classList.toggle('active', parseInt(st.dataset.val) <= rqRating));
+    // Re-render item metadata (from/subject/date/wordcount)
+    rqShowItem();
+    // Restore the edited draft text (rqShowItem overwrites textarea)
+    document.getElementById('rqDraftTextarea').value = prev.editedReply;
+    document.getElementById('rqPrev').disabled = rqHistory.length === 0;
+    // Ensure main view is shown (not batch-complete)
+    document.getElementById('rqMain').style.display = 'block';
+    document.getElementById('rqBatchComplete').style.display = 'none';
+    rqUpdateProgress();
+  });
+
   // Submit & Next
   document.getElementById('rqSubmitNext').addEventListener('click', async () => {
     const item = rqItems[rqIndex];
@@ -1299,9 +1342,22 @@ function showFactsToast(facts) {
       });
       if (!res.ok) throw new Error('Server error: ' + res.status);
 
+      // E7: push to history before advancing
+      rqHistory.push({
+        index: rqIndex,
+        item: item,
+        editedReply: document.getElementById('rqDraftTextarea').value.trim() || item.generated_draft,
+        note: document.getElementById('rqNote').value.trim(),
+        rating: rqRating
+      });
+      document.getElementById('rqPrev').disabled = false;
+
       rqReviewed++;
       rqReviewedToday++;
       rqTotalUnreviewed = Math.max(0, rqTotalUnreviewed - 1);
+      // E5: update daily count display
+      const dailyCountEl = document.getElementById('rqDailyCount');
+      if (dailyCountEl) dailyCountEl.textContent = rqReviewedToday;
       rqIndex++;
       rqShowItem();
     } catch (e) {
@@ -1677,6 +1733,27 @@ function showFactsToast(facts) {
     factsAddForm.style.display = 'none';
     factsAddBtn.textContent = '+ Add Fact';
   });
+
+  // E6: Scan Corpus button
+  const factsScanCorpusBtn = document.getElementById('factsScanCorpusBtn');
+  if (factsScanCorpusBtn) {
+    factsScanCorpusBtn.addEventListener('click', async () => {
+      factsScanCorpusBtn.disabled = true;
+      factsScanCorpusBtn.innerHTML = '🔍 Scanning<span class="spinner"></span>';
+      try {
+        const res = await fetch('/feedback/scan-corpus-facts', {method: 'POST'});
+        if (!res.ok) throw new Error('Server error: ' + res.status);
+        const data = await res.json();
+        showFactsToast([{fact: `Scanned ${data.pairs_scanned} pairs, extracted ${data.facts_extracted} facts.`}]);
+        loadFacts();
+      } catch(e) {
+        showFactsToast([{fact: 'Scan failed: ' + e.message}]);
+      } finally {
+        factsScanCorpusBtn.disabled = false;
+        factsScanCorpusBtn.textContent = '🔍 Scan Corpus';
+      }
+    });
+  }
 
   factsTypeSelect.addEventListener('change', () => {
     const t = factsTypeSelect.value;
