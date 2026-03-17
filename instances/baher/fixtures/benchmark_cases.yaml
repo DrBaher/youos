@@ -1,0 +1,231 @@
+# BaherOS Benchmark Cases — Phase D seed set
+# 15 cases: 8 work/formal, 4 personal, 3 mixed/ambiguous
+
+# ── Work / Formal (8) ────────────────────────────────────────────────
+
+- case_key: "work_pricing_quote"
+  category: "work"
+  prompt_text: >
+    Hi Baher, we are interested in your solution for our 5-clinic network.
+    Can you send us pricing for the full platform including integration support?
+  expected_properties:
+    mode: "work"
+    should_contain_keywords: ["pricing", "details"]
+    max_words: 150
+    tone: "professional"
+    should_ask_clarifying_questions: true
+  reference_reply: null
+  notes: "Tests pricing inquiry handling — should offer to share details, may ask about scope"
+
+- case_key: "work_integration_api"
+  category: "work"
+  prompt_text: >
+    Hey Baher, we are building an integration with your API and need sandbox credentials
+    plus documentation for the HL7 FHIR endpoints. Who should we contact?
+  expected_properties:
+    mode: "work"
+    should_contain_keywords: ["team", "credentials"]
+    max_words: 150
+    tone: "professional"
+    should_ask_clarifying_questions: false
+  reference_reply: null
+  notes: "Tests technical partner inquiry — should route to the right team or offer next steps"
+
+- case_key: "work_bug_report"
+  category: "work"
+  prompt_text: >
+    Baher, we are seeing an issue where the risk score calculation returns null
+    for patients with incomplete lab panels. This started after last Tuesday's update.
+    Can you look into it urgently?
+  expected_properties:
+    mode: "work"
+    should_contain_keywords: ["issue", "team"]
+    max_words: 120
+    tone: "professional"
+    should_ask_clarifying_questions: true
+  reference_reply: null
+  notes: "Tests bug report handling — should acknowledge urgency and ask for specifics or route"
+
+- case_key: "work_demo_request"
+  category: "work"
+  prompt_text: >
+    Dr. Aslan, I lead digital health at a regional hospital group in Bavaria.
+    We would love to see a demo of your clinical decision support platform.
+    Are you available next week?
+  expected_properties:
+    mode: "work"
+    should_contain_keywords: ["demo", "week"]
+    max_words: 120
+    tone: "professional"
+    should_ask_clarifying_questions: false
+  reference_reply: null
+  notes: "Tests demo scheduling — should confirm willingness and propose logistics"
+
+- case_key: "work_invoice_vendor"
+  category: "work"
+  prompt_text: >
+    Hi Baher, please find attached invoice #2024-0891 for the cloud infrastructure
+    services for Q1. Payment is due within 30 days. Let me know if you have
+    any questions.
+  expected_properties:
+    mode: "work"
+    should_contain_keywords: ["invoice", "thank"]
+    max_words: 80
+    tone: "professional"
+    should_ask_clarifying_questions: false
+  reference_reply: null
+  notes: "Tests vendor invoice acknowledgement — should be brief and confirm receipt"
+
+- case_key: "work_status_update"
+  category: "work"
+  prompt_text: >
+    Hey Baher, quick check — where are we on the data pipeline migration?
+    The board review is in two weeks and I need to include it in the update deck.
+  expected_properties:
+    mode: "work"
+    should_contain_keywords: ["update", "migration"]
+    max_words: 150
+    tone: "professional"
+    should_ask_clarifying_questions: false
+  reference_reply: null
+  notes: "Tests internal status update — should be direct and informative"
+
+- case_key: "work_schedule_meeting"
+  category: "work"
+  prompt_text: >
+    Baher, can we set up a 30-minute call this week to discuss the partnership
+    terms? I have availability Wednesday afternoon or Thursday morning CET.
+  expected_properties:
+    mode: "work"
+    should_contain_keywords: ["Wednesday", "Thursday"]
+    max_words: 100
+    tone: "professional"
+    should_ask_clarifying_questions: false
+  reference_reply: null
+  notes: "Tests meeting scheduling — should confirm or propose alternative times"
+
+- case_key: "work_legal_document"
+  category: "work"
+  prompt_text: >
+    Dear Dr. Aslan, attached is the revised data processing agreement for your review
+    and signature. Please return the signed copy by end of week. Let me know if you
+    have questions about the updated liability clause in section 4.2.
+  expected_properties:
+    mode: "work"
+    should_contain_keywords: ["agreement", "review"]
+    max_words: 120
+    tone: "professional"
+    should_ask_clarifying_questions: true
+  reference_reply: null
+  notes: "Tests legal document handling — should acknowledge and confirm timeline"
+
+# ── Personal (4) ────────────────────────────────────────────────────
+
+- case_key: "personal_meetup"
+  category: "personal"
+  prompt_text: >
+    Hey Baher! It's been ages. Are you around this weekend for dinner or drinks?
+    A few of us from the old group are getting together Saturday evening.
+  expected_properties:
+    mode: "personal"
+    should_contain_keywords: ["Saturday", "dinner"]
+    max_words: 80
+    tone: "casual"
+    should_ask_clarifying_questions: false
+  reference_reply: null
+  notes: "Tests casual social meetup — should be warm and direct"
+
+- case_key: "personal_family_help"
+  category: "personal"
+  prompt_text: >
+    Baher, dad asked me to reach out. He's struggling with his new laptop and keeps
+    getting locked out of his email. Do you have 20 minutes this week to help him?
+  expected_properties:
+    mode: "personal"
+    should_contain_keywords: ["dad", "help"]
+    max_words: 80
+    tone: "casual"
+    should_ask_clarifying_questions: false
+  reference_reply: null
+  notes: "Tests family request — warm, practical response"
+
+- case_key: "personal_acquaintance_followup"
+  category: "personal"
+  prompt_text: >
+    Hey Baher, we met at the health-tech meetup last month. You mentioned you might
+    know someone hiring for a product role. Any leads? No rush at all.
+  expected_properties:
+    mode: "work"
+    should_contain_keywords: ["role", "check"]
+    max_words: 100
+    tone: "professional"
+    should_ask_clarifying_questions: false
+  reference_reply: null
+  notes: "Tests acquaintance networking followup — professional even if informal"
+
+- case_key: "personal_service_complaint"
+  category: "personal"
+  prompt_text: >
+    Hi, my order #DE-29481 was supposed to arrive on Monday and the tracking
+    has not updated since last Thursday. I have tried calling your support line
+    twice with no answer. Can someone actually help?
+  expected_properties:
+    mode: "work"
+    should_contain_keywords: ["order", "help"]
+    max_words: 100
+    tone: "professional"
+    should_ask_clarifying_questions: true
+  reference_reply: null
+  notes: "Tests service complaint response — professional, solution-oriented"
+
+# ── Mixed / Ambiguous (3) ────────────────────────────────────────────
+
+- case_key: "mixed_short_oneliner"
+  category: "mixed"
+  prompt_text: "Thoughts?"
+  expected_properties:
+    mode: "unknown"
+    should_contain_keywords: []
+    max_words: 60
+    tone: "professional"
+    should_ask_clarifying_questions: true
+  reference_reply: null
+  notes: "Tests ambiguous short message — should ask for clarification"
+
+- case_key: "mixed_german_email"
+  category: "mixed"
+  prompt_text: >
+    Sehr geehrter Herr Dr. Aslan, wir würden gerne einen Termin vereinbaren,
+    um über eine mögliche Zusammenarbeit im Bereich der klinischen Entscheidungsunterstützung
+    zu sprechen. Wären Sie nächste Woche verfügbar? Mit freundlichen Grüßen, Dr. Müller
+  expected_properties:
+    mode: "work"
+    should_contain_keywords: ["Termin", "Zusammenarbeit"]
+    max_words: 150
+    tone: "professional"
+    should_ask_clarifying_questions: false
+  reference_reply: null
+  notes: "Tests German formal inquiry — may reply in German or English"
+
+- case_key: "mixed_long_thread"
+  category: "mixed"
+  prompt_text: >
+    Baher, circling back on this thread. To summarize where we landed:
+    1) The pilot will cover three hospitals in the Munich region.
+    2) Integration scope is limited to the lab and radiology modules for now.
+    3) Timeline is 8 weeks from contract signature.
+    4) Your team will provide a dedicated integration engineer.
+    5) Pricing follows the per-bed model we discussed.
+    Can you confirm these points are aligned with your understanding?
+    Also, legal flagged that the liability cap in the MSA needs to match
+    the number we agreed on verbally (€500K). Can you send the updated
+    version? Finally, our CTO wants to know if the FHIR R4 adapter
+    supports bulk data export — he needs this for the data warehouse feed.
+  expected_properties:
+    mode: "work"
+    should_contain_keywords: ["confirm", "update"]
+    max_words: 250
+    tone: "professional"
+    should_ask_clarifying_questions: false
+  reference_reply: null
+  notes: "Tests long multi-topic thread — should address multiple points systematically"

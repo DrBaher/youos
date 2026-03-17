@@ -1,0 +1,53 @@
+{
+  "thread_id": "thread-demo-001",
+  "subject": "Draft review",
+  "messages": [
+    {
+      "id": "msg-001",
+      "timestamp": "2026-03-01T09:00:00Z",
+      "from_email": "alice@example.com",
+      "from_name": "Alice",
+      "to": [
+        {
+          "email": "baher@example.com",
+          "name": "Baher"
+        }
+      ],
+      "body_text": "Can you send the latest draft when you have a minute?"
+    },
+    {
+      "id": "msg-002",
+      "timestamp": "2026-03-01T09:15:00Z",
+      "from_email": "baher@example.com",
+      "from_name": "Baher",
+      "label_ids": [
+        "SENT"
+      ],
+      "body_text": "Attached. If you want, I can also trim the intro section."
+    },
+    {
+      "id": "msg-003",
+      "timestamp": "2026-03-01T09:22:00Z",
+      "from_email": "alice@example.com",
+      "from_name": "Alice",
+      "body_text": "Please trim the intro and make the close a bit sharper."
+    },
+    {
+      "id": "msg-004",
+      "timestamp": "2026-03-01T09:28:00Z",
+      "from_email": "sam@example.com",
+      "from_name": "Sam",
+      "body_text": "Adding one note from my side: keep the examples."
+    },
+    {
+      "id": "msg-005",
+      "timestamp": "2026-03-01T09:42:00Z",
+      "from_email": "baher@example.com",
+      "from_name": "Baher",
+      "label_ids": [
+        "SENT"
+      ],
+      "body_text": "Makes sense. I will tighten the intro and keep the examples in."
+    }
+  ]
+}

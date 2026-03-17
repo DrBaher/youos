@@ -1,0 +1,48 @@
+{
+  "total_pairs": 11770,
+  "reply_length": {
+    "avg_words": 33.3,
+    "p25": 34,
+    "p50": 36,
+    "p75": 37,
+    "p95": 40,
+    "min": 0,
+    "max": 50
+  },
+  "greeting_patterns": {
+    "Hi X": 4337,
+    "Direct start": 3240,
+    "Thanks opener": 1795,
+    "Dear X": 920,
+    "Direct answer": 523,
+    "Hey X": 139,
+    "Hello X": 30
+  },
+  "closing_patterns": {
+    "Statement": 7650,
+    "Thanks": 1784,
+    "Question": 1538,
+    "Let me know": 12
+  },
+  "signature_patterns": {
+    "(none)": 10984,
+    "Baher Al Hakim": 786
+  },
+  "tone_by_sender_type": {
+    "internal": {
+      "count": 1978,
+      "avg_words": 34.9,
+      "p50": 36
+    },
+    "external_client": {
+      "count": 9033,
+      "avg_words": 32.9,
+      "p50": 36
+    },
+    "personal": {
+      "count": 759,
+      "avg_words": 33.8,
+      "p50": 36
+    }
+  }
+}
