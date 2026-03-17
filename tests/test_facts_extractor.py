@@ -5,15 +5,12 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-import pytest
-
 from app.core.facts_extractor import (
-    extract_facts,
     extract_and_save,
+    extract_facts,
     filter_new_facts,
     save_facts,
 )
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

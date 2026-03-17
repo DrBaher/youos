@@ -9,9 +9,9 @@ from app.core.settings import get_settings
 from app.generation.service import (
     DraftRequest,
     DraftResponse,
+    _score_confidence,
     assemble_prompt,
     generate_draft,
-    _score_confidence,
 )
 from app.main import create_app
 from app.retrieval.service import RetrievalMatch

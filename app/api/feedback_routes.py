@@ -29,8 +29,8 @@ def _analyze_edit_categories(generated: str, edited: str) -> list[str]:
     edit_lines = edited.strip().splitlines()
 
     # Greeting change: first non-empty line differs
-    gen_first = next((l for l in gen_lines if l.strip()), "")
-    edit_first = next((l for l in edit_lines if l.strip()), "")
+    gen_first = next((line for line in gen_lines if line.strip()), "")
+    edit_first = next((line for line in edit_lines if line.strip()), "")
     if gen_first != edit_first and (
         any(kw in gen_first.lower() for kw in ("hi", "hello", "dear", "hey", "good morning", "good afternoon"))
         or any(kw in edit_first.lower() for kw in ("hi", "hello", "dear", "hey", "good morning", "good afternoon"))
@@ -38,8 +38,8 @@ def _analyze_edit_categories(generated: str, edited: str) -> list[str]:
         categories.append("greeting_change")
 
     # Closing change: last non-empty line differs
-    gen_last = next((l for l in reversed(gen_lines) if l.strip()), "")
-    edit_last = next((l for l in reversed(edit_lines) if l.strip()), "")
+    gen_last = next((line for line in reversed(gen_lines) if line.strip()), "")
+    edit_last = next((line for line in reversed(edit_lines) if line.strip()), "")
     if gen_last != edit_last and (
         any(kw in gen_last.lower() for kw in ("regards", "thanks", "cheers", "sincerely", "best", "warm"))
         or any(kw in edit_last.lower() for kw in ("regards", "thanks", "cheers", "sincerely", "best", "warm"))

@@ -1,10 +1,8 @@
 """Tests for sender profiles feature."""
 from __future__ import annotations
 
-import json
 import sqlite3
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -298,8 +296,8 @@ class TestGenerationWithSenderContext:
 @pytest.fixture()
 def test_app(db_path: Path):
     """Create a test FastAPI app with the sender routes."""
-    from app.main import create_app
     from app.core.settings import Settings
+    from app.main import create_app
 
     app = create_app()
     app.state.settings = Settings(

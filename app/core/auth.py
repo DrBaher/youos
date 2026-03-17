@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+
 def _get_sessions_path() -> Path:
     from app.core.settings import get_var_dir
 
