@@ -88,7 +88,6 @@ def get_embedding_batch(texts: list[str]) -> list[tuple[float, ...]]:
         return []
 
     # Check cache first — return immediately if all cached
-    cached = [get_embedding.cache_info().currsize]  # side-effect free size check
     results: list[tuple[float, ...] | None] = [None] * len(texts)
     uncached_indices: list[int] = []
     for i, t in enumerate(texts):

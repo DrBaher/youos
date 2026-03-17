@@ -65,7 +65,8 @@ def find_similar_reply_pairs(conn: sqlite3.Connection, threshold: float = 0.90) 
     """
     try:
         rows = conn.execute(
-            "SELECT id, thread_id, inbound_text, COALESCE(quality_score, 1.0) as quality FROM reply_pairs WHERE thread_id IS NOT NULL ORDER BY thread_id, quality DESC"
+            "SELECT id, thread_id, inbound_text, COALESCE(quality_score, 1.0) as quality "
+            "FROM reply_pairs WHERE thread_id IS NOT NULL ORDER BY thread_id, quality DESC"
         ).fetchall()
     except sqlite3.OperationalError:
         rows = conn.execute(
@@ -79,7 +80,7 @@ def find_similar_reply_pairs(conn: sqlite3.Connection, threshold: float = 0.90) 
         by_thread.setdefault(tid, []).append((row[0], row[2] or "", float(row[3])))
 
     to_remove: list[int] = []
-    for tid, pairs in by_thread.items():
+    for _tid, pairs in by_thread.items():
         if len(pairs) <= 1:
             continue
         # Pairs sorted quality DESC; mark lower-quality ones that are near-dups of a better one

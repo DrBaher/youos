@@ -16,7 +16,6 @@ from app.core.embeddings import (
     serialize_embedding,
 )
 from app.retrieval.service import (
-    RetrievalConfig,
     RetrievalRequest,
     RetrievalService,
 )
@@ -40,7 +39,7 @@ def test_serialize_deserialize_roundtrip() -> None:
     blob = serialize_embedding(original)
     restored = deserialize_embedding(blob)
     assert len(restored) == len(original)
-    for a, b in zip(original, restored):
+    for a, b in zip(original, restored, strict=True):
         assert abs(a - b) < 1e-6
 
 

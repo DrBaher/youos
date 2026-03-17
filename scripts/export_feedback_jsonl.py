@@ -261,7 +261,8 @@ def export(args: argparse.Namespace) -> None:
         return
 
     # E15: oversample 5-star recent pairs (last 90 days) 2-3x for stronger training signal
-    from datetime import datetime, timedelta, timezone as _tz
+    from datetime import datetime, timedelta
+    from datetime import timezone as _tz
     cutoff_90d = (datetime.now(_tz.utc) - timedelta(days=90)).isoformat()[:10]
     oversampled: list[tuple[str, str, str, float]] = []
     for item in qualified:
