@@ -8,7 +8,7 @@ def test_meeting_request():
 
 
 def test_approval_needed():
-    assert classify_intent("I need your approval on the budget proposal") == "approval_needed"
+    assert classify_intent("I need your sign-off and authorization on this") == "approval_needed"
 
 
 def test_information_request():

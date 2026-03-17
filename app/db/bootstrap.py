@@ -86,6 +86,44 @@ def _migrate_memory(connection: sqlite3.Connection) -> None:
 
 
 def _populate_fts(connection: sqlite3.Connection) -> None:
-    """Rebuild FTS5 indexes from the source tables."""
+    """Rebuild FTS5 indexes from the source tables only if data has changed."""
+    # Check if rebuild is needed by comparing rowcount in source vs FTS shadow tables
+    # Use a lightweight metadata table to track last rebuild counts
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS _fts_rebuild_meta (
+            table_name TEXT PRIMARY KEY,
+            last_rowcount INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+
+    needs_rebuild = False
+    for source_table, fts_table in [("chunks", "chunks_fts"), ("reply_pairs", "reply_pairs_fts")]:
+        try:
+            current_count = connection.execute(f"SELECT COUNT(*) FROM {source_table}").fetchone()[0]
+            meta_row = connection.execute(
+                "SELECT last_rowcount FROM _fts_rebuild_meta WHERE table_name = ?", (source_table,)
+            ).fetchone()
+            last_count = meta_row[0] if meta_row else -1
+            if current_count != last_count:
+                needs_rebuild = True
+                break
+        except Exception:
+            needs_rebuild = True
+            break
+
+    if not needs_rebuild:
+        return
+
     connection.execute("INSERT INTO chunks_fts(chunks_fts) VALUES ('rebuild')")
     connection.execute("INSERT INTO reply_pairs_fts(reply_pairs_fts) VALUES ('rebuild')")
+
+    # Update metadata
+    for source_table in ("chunks", "reply_pairs"):
+        try:
+            current_count = connection.execute(f"SELECT COUNT(*) FROM {source_table}").fetchone()[0]
+            connection.execute(
+                "INSERT OR REPLACE INTO _fts_rebuild_meta (table_name, last_rowcount) VALUES (?, ?)",
+                (source_table, current_count),
+            )
+        except Exception:
+            pass

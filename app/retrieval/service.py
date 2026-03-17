@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 from dataclasses import asdict, dataclass, field
@@ -40,6 +41,13 @@ _PERSONAL_SIGNALS = re.compile(
     r"sick|travel|flight|hotel|ages|old group|Saturday|Sunday)\b",
     re.IGNORECASE,
 )
+
+logger = logging.getLogger(__name__)
+
+# Config constants (C3)
+SEMANTIC_TOP_N: int = 20
+MIN_SCORE_FILTER: float = 0.2
+SEMANTIC_SCALE_FACTOR: float = 10.0
 
 
 @dataclass(slots=True)
@@ -312,12 +320,17 @@ class RetrievalService:
         try:
             query_emb = get_embedding(query)
         except Exception:
-            return False
+            logger.warning("Embedding generation failed for query, skipping semantic reranking", exc_info=True)
+            return False, False
 
         id_field = "chunk_id" if table == "chunks" else "reply_pair_id"
-        top_n = min(len(matches), 20)
+        top_n = min(len(matches), SEMANTIC_TOP_N)
         fts_weight = 1.0 - self.config.semantic_weight
         sem_weight = self.config.semantic_weight
+
+        # R2: Dynamic FTS score scale — use actual max FTS score to calibrate semantic scores
+        fts_max = max((m.score for m in matches[:top_n]), default=SEMANTIC_SCALE_FACTOR)
+        scale_factor = max(fts_max, 1.0)
 
         for match in matches[:top_n]:
             row_id = getattr(match, id_field)
@@ -330,7 +343,7 @@ class RetrievalService:
             sim = cosine_similarity(query_emb, emb)
             # Normalize sim from [-1,1] to [0,1] range, then scale to match FTS score range
             sim_normalized = (sim + 1.0) / 2.0
-            sim_score = sim_normalized * 10.0  # scale to comparable range with FTS scores
+            sim_score = sim_normalized * scale_factor
             match.score = round(fts_weight * match.score + sem_weight * sim_score, 4)
 
         # Re-sort after reranking
@@ -523,13 +536,7 @@ class RetrievalService:
         quality_score = float(row["quality_score"]) if "quality_score" in row.keys() else 1.0
         combined = (lexical_score + metadata_score) * quality_score
 
-        # Apply subject_match_boost for query word matches
-        if pair_subject and self.config.subject_match_boost > 0:
-            subject_lower = pair_subject.lower()
-            for token in tokens:
-                if len(token) > 4 and token in subject_lower:
-                    combined *= 1.0 + self.config.subject_match_boost
-                    break
+        combined = self._apply_subject_boost(combined, pair_subject, tokens, self.config.subject_match_boost)
 
         return RetrievalMatch(
             result_type="reply_pair",
@@ -580,6 +587,7 @@ class RetrievalService:
                 d.metadata_json
             FROM documents AS d
             ORDER BY COALESCE(d.updated_at, d.created_at, d.created_ts) DESC
+            LIMIT 500
             """
         ).fetchall()
         matches = [
@@ -623,6 +631,7 @@ class RetrievalService:
             INNER JOIN documents AS d
                 ON d.id = c.document_id
             ORDER BY COALESCE(d.updated_at, d.created_at, d.created_ts) DESC, c.chunk_index ASC
+            LIMIT 500
             """
         ).fetchall()
         matches = [
@@ -669,6 +678,7 @@ class RetrievalService:
             LEFT JOIN documents AS d
                 ON d.id = rp.document_id
             ORDER BY COALESCE(rp.paired_at, d.updated_at, d.created_at, rp.created_ts) DESC
+            LIMIT 500
             """
         ).fetchall()
         matches = [
@@ -799,13 +809,7 @@ class RetrievalService:
         quality_score = float(row["quality_score"]) if "quality_score" in row.keys() else 1.0
         combined = (lexical_score + metadata_score) * quality_score
 
-        # Apply subject_match_boost for query word matches
-        if pair_subject and self.config.subject_match_boost > 0:
-            subject_lower = pair_subject.lower()
-            for token in tokens:
-                if len(token) > 4 and token in subject_lower:
-                    combined *= 1.0 + self.config.subject_match_boost
-                    break
+        combined = self._apply_subject_boost(combined, pair_subject, tokens, self.config.subject_match_boost)
 
         return RetrievalMatch(
             result_type="reply_pair",
@@ -831,6 +835,17 @@ class RetrievalService:
         )
 
     # -- Shared scoring helpers ──────────────────────────────────────────
+
+    @staticmethod
+    def _apply_subject_boost(combined: float, pair_subject: str, tokens: list[str], boost: float) -> float:
+        """Apply subject token match multiplier if any long query token appears in the subject."""
+        if not pair_subject or boost <= 0:
+            return combined
+        subject_lower = pair_subject.lower()
+        for token in tokens:
+            if len(token) > 4 and token in subject_lower:
+                return combined * (1.0 + boost)
+        return combined
 
     def _metadata_score(
         self,
@@ -876,7 +891,7 @@ def _check_topic_overlap(query_tokens: list[str], topics: list[str]) -> bool:
     """Check if any query token (>4 chars) matches a sender's known topics."""
     topic_lower = {t.lower() for t in topics}
     for token in query_tokens:
-        if len(token) > 4 and token in topic_lower:
+        if len(token) > 2 and token in topic_lower:
             return True
     return False
 
@@ -892,12 +907,10 @@ def _load_sender_topics(connection: sqlite3.Connection, sender_domain: str) -> l
             (sender_domain,),
         ).fetchone()
         if row and row["topics_json"]:
-            import json
-
             topics = json.loads(row["topics_json"])
             return topics if isinstance(topics, list) else []
     except Exception:
-        pass
+        logger.warning("Failed to load sender topics for domain %s", sender_domain, exc_info=True)
     return []
 
 
