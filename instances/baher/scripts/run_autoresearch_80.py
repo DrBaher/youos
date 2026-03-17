@@ -4,8 +4,6 @@ Follows program.md exactly.
 """
 from __future__ import annotations
 
-import copy
-import random
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,17 +14,10 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.autoresearch.mutator import (
-    ConfigSurface,
-    _DRAFTING_PROMPT_VARIANTS,
-    _NUMERIC_SURFACES,
-    apply_mutation,
-    get_mutable_surfaces,
-    revert_mutation,
-)
-from app.autoresearch.scorer import Scorecard, compare_scorecards, scorecard_from_eval_result
-from app.evaluation.service import EvalRequest, run_eval_suite
-from app.generation.service import DraftRequest, generate_draft
+from app.autoresearch.mutator import _DRAFTING_PROMPT_VARIANTS  # noqa: E402
+from app.autoresearch.scorer import Scorecard, compare_scorecards, scorecard_from_eval_result  # noqa: E402
+from app.evaluation.service import EvalRequest, run_eval_suite  # noqa: E402
+from app.generation.service import DraftRequest, generate_draft  # noqa: E402
 
 DATABASE_URL = f"sqlite:///{ROOT / 'var' / 'baheros.db'}"
 CONFIGS_DIR = ROOT / "configs"
@@ -184,7 +175,7 @@ def main() -> None:
 
     # ── Step 0: Establish baseline ──────────────────────────────────
     print(f"[{now_utc()}] Running baseline eval...", flush=True)
-    baseline = run_eval(f"autoresearch_baseline")
+    baseline = run_eval("autoresearch_baseline")
     print(f"[{now_utc()}] Baseline composite: {baseline.composite:.4f} "
           f"(pass={baseline.pass_rate:.2f} kw={baseline.avg_keyword_hit:.2f} "
           f"conf={baseline.avg_confidence:.2f})", flush=True)

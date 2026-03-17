@@ -117,7 +117,7 @@ def _populate_fts(connection: sqlite3.Connection) -> None:
     """)
 
     needs_rebuild = False
-    for source_table, fts_table in [("chunks", "chunks_fts"), ("reply_pairs", "reply_pairs_fts")]:
+    for source_table, _fts_table in [("chunks", "chunks_fts"), ("reply_pairs", "reply_pairs_fts")]:
         try:
             current_count = connection.execute(f"SELECT COUNT(*) FROM {source_table}").fetchone()[0]
             meta_row = connection.execute(
