@@ -9,7 +9,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-SESSIONS_PATH = Path(__file__).resolve().parents[2] / "var" / "sessions.json"
+def _get_sessions_path() -> Path:
+    from app.core.settings import get_var_dir
+
+    return get_var_dir() / "sessions.json"
+
+
+SESSIONS_PATH = _get_sessions_path()
 SESSION_MAX_AGE = 86400  # 24 hours
 
 

@@ -280,6 +280,92 @@ _TONE_INSTRUCTIONS: dict[str, str] = {
 }
 
 
+_MEMORY_STOPWORDS = frozenset({
+    "this", "that", "with", "from", "have", "been", "will", "your", "some",
+    "they", "their", "what", "when", "where", "just", "like", "also", "into",
+    "more", "here", "there", "about", "which", "would", "could", "should",
+    "please", "thank", "regards", "hello", "dear", "hope", "doing", "well",
+    "email", "reply", "send", "sent", "write", "writing",
+})
+
+
+def _extract_content_words(text: str) -> list[str]:
+    """Extract significant words from text for project/topic matching."""
+    words = re.findall(r"\b[a-zA-Z]{4,}\b", text.lower())
+    return [w for w in words if w not in _MEMORY_STOPWORDS]
+
+
+def lookup_facts(
+    *,
+    sender: str | None,
+    inbound_text: str,
+    database_url: str,
+) -> list[dict[str, Any]]:
+    """Query memory table for facts relevant to this draft.
+
+    Returns facts in three categories:
+    - user_pref: always included (sign-off style, meeting times, etc.)
+    - contact: facts about the sender (matched by email)
+    - project: facts matched by key/tag appearing in the inbound text
+    """
+    db_path = resolve_sqlite_path(database_url)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    facts: list[dict[str, Any]] = []
+    try:
+        # 1. User preferences — always include
+        rows = conn.execute(
+            "SELECT type, key, fact FROM memory WHERE type = 'user_pref' ORDER BY updated_at DESC"
+        ).fetchall()
+        facts.extend({"type": r["type"], "key": r["key"], "fact": r["fact"]} for r in rows)
+
+        # 2. Contact facts for sender email
+        if sender:
+            m = re.search(r"[\w.+-]+@[\w.-]+\.\w+", sender.lower())
+            email = m.group(0) if m else sender.lower().strip()
+            rows = conn.execute(
+                "SELECT type, key, fact FROM memory WHERE type = 'contact' AND lower(key) = ?",
+                (email,),
+            ).fetchall()
+            facts.extend({"type": r["type"], "key": r["key"], "fact": r["fact"]} for r in rows)
+
+        # 3. Project facts matching keywords in inbound text
+        project_rows = conn.execute(
+            "SELECT type, key, fact, tags FROM memory WHERE type = 'project'"
+        ).fetchall()
+        if project_rows:
+            inbound_lower = inbound_text.lower()
+            for row in project_rows:
+                key_lower = row["key"].lower()
+                tags = json.loads(row["tags"]) if row["tags"] else []
+                if key_lower in inbound_lower or any(t.lower() in inbound_lower for t in tags):
+                    facts.append({"type": row["type"], "key": row["key"], "fact": row["fact"]})
+
+    except Exception:
+        pass
+    finally:
+        conn.close()
+    return facts
+
+
+def _format_facts_context(facts: list[dict[str, Any]]) -> str:
+    """Format facts into a prompt block."""
+    if not facts:
+        return ""
+    lines = ["[FACTS CONTEXT — facts about this sender and your preferences]"]
+    for f in facts:
+        t = f["type"]
+        k = f["key"]
+        v = f["fact"]
+        if t == "user_pref":
+            lines.append(f"- Your preference ({k}): {v}")
+        elif t == "contact":
+            lines.append(f"- About {k}: {v}")
+        elif t == "project":
+            lines.append(f"- Project ({k}): {v}")
+    return "\n".join(lines)
+
+
 def lookup_sender_profile(email: str, database_url: str) -> dict[str, Any] | None:
     """Look up a sender profile from the database."""
     db_path = resolve_sqlite_path(database_url)
@@ -488,6 +574,7 @@ def assemble_prompt(
     intent_hint: str | None = None,
     sender_type: str | None = None,
     first_name: str | None = None,
+    memory_facts: list[dict[str, Any]] | None = None,
 ) -> str:
     style = persona.get("style", {})
     voice = style.get("voice", "direct, clear, pragmatic")
@@ -549,6 +636,10 @@ def assemble_prompt(
     if sender_context:
         sender_block = f"\n{sender_context}\n"
 
+    facts_block = ""
+    if memory_facts:
+        facts_block = f"\n{_format_facts_context(memory_facts)}\n"
+
     language_block = ""
     if language_hint and language_hint != "en":
         language_block = f"\n[LANGUAGE: {language_hint}] Reply in the same language as the inbound message.\n"
@@ -559,6 +650,7 @@ def assemble_prompt(
         f"{persona_block}\n"
         f"{context_block}"
         f"{sender_block}"
+        f"{facts_block}"
         f"{language_block}"
         f"\n"
         f"[EXEMPLARS — {n} similar past replies]\n"
@@ -824,6 +916,13 @@ def generate_draft(
             sender_context = _format_sender_context(sender_profile)
             first_name = first_name_from_display_name(sender_profile.get("display_name"))
 
+    # Look up facts (user prefs, contact facts, project context)
+    memory_facts = lookup_facts(
+        sender=request.sender,
+        inbound_text=clean_inbound,
+        database_url=database_url,
+    )
+
     prompt = assemble_prompt(
         inbound_message=inbound_for_prompt,
         reply_pairs=reply_pairs,
@@ -837,6 +936,7 @@ def generate_draft(
         intent_hint=detected_intent,
         sender_type=sender_type_hint,
         first_name=first_name,
+        memory_facts=memory_facts,
     )
 
     # Token budget check — trim exemplars if prompt is too long
@@ -861,6 +961,7 @@ def generate_draft(
                 intent_hint=detected_intent,
                 sender_type=sender_type_hint,
                 first_name=first_name,
+                memory_facts=memory_facts,
             )
         if removed:
             logger.info("Prompt truncated: removed %d exemplars to fit token budget", removed)

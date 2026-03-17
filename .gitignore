@@ -17,3 +17,7 @@ models/adapters/latest/*.json
 models/adapters/latest/
 gif-frames/
 autoresearch_log.md
+instances/*/var/
+instances/*/data/
+instances/*/models/
+instances/*/youos_config.yaml

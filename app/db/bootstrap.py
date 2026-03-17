@@ -25,6 +25,7 @@ def bootstrap_database() -> Path:
         _migrate_feedback_pairs(connection)
         _migrate_reply_pairs(connection)
         _migrate_sender_profiles(connection)
+        _migrate_memory(connection)
         _populate_fts(connection)
         connection.commit()
     finally:
@@ -59,6 +60,29 @@ def _migrate_sender_profiles(connection: sqlite3.Connection) -> None:
         return
     if "avg_response_hours" not in cols:
         connection.execute("ALTER TABLE sender_profiles ADD COLUMN avg_response_hours REAL")
+
+
+def _migrate_memory(connection: sqlite3.Connection) -> None:
+    """Create memory table if it doesn't exist (migration for existing DBs)."""
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS memory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            key TEXT NOT NULL,
+            fact TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0.8,
+            tags TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(type, key, fact)
+        )
+    """)
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_memory_type ON memory(type)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_memory_key ON memory(key)")
+    # Add confidence column to existing memory tables that predate this migration
+    cols = {row[1] for row in connection.execute("PRAGMA table_info(memory)").fetchall()}
+    if "confidence" not in cols:
+        connection.execute("ALTER TABLE memory ADD COLUMN confidence REAL NOT NULL DEFAULT 0.8")
 
 
 def _populate_fts(connection: sqlite3.Connection) -> None:

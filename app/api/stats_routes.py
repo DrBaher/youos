@@ -9,14 +9,14 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from app.core.config import load_config
-from app.core.stats import get_corpus_stats, get_model_status, get_pipeline_status
+from app.core.settings import get_var_dir
+from app.core.stats import get_corpus_stats, get_model_status, get_pipeline_status, _get_adapter_path
 from app.db.bootstrap import resolve_sqlite_path
 
 router = APIRouter(tags=["stats"])
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 TEMPLATE_PATH = ROOT_DIR / "templates" / "stats.html"
-ADAPTER_PATH = ROOT_DIR / "models" / "adapters" / "latest"
 
 
 @router.get("/api/config")
@@ -29,7 +29,7 @@ def get_api_config(request: Request) -> dict[str, Any]:
     corpus_ready = False
     model_ready = False
     feedback_pair_count = 0
-    adapter_ready = (ADAPTER_PATH / "adapters.safetensors").exists()
+    adapter_ready = (_get_adapter_path() / "adapters.safetensors").exists()
     if db_path.exists():
         conn = sqlite3.connect(db_path)
         try:
@@ -72,7 +72,7 @@ def stats_data(request: Request) -> dict[str, Any]:
     settings = request.app.state.settings
     corpus = get_corpus_stats(settings.database_url)
     model = get_model_status(Path(settings.configs_dir))
-    pipeline_last_run = get_pipeline_status(ROOT_DIR)
+    pipeline_last_run = get_pipeline_status(get_var_dir().parent)
 
     # Extract benchmark_trend from model status (kept together for source consistency)
     benchmark_trend = model.pop("benchmark_trend", [])
@@ -115,7 +115,7 @@ def stats_data(request: Request) -> dict[str, Any]:
 
     # Style drift detection
     drift_info: dict[str, Any] = {"status": "stable", "message": "Stable"}
-    drift_path = ROOT_DIR / "var" / "persona_drift.jsonl"
+    drift_path = get_var_dir() / "persona_drift.jsonl"
     if drift_path.exists():
         lines = drift_path.read_text(encoding="utf-8").strip().split("\n")
         lines = [ln for ln in lines if ln.strip()]

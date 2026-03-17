@@ -100,6 +100,8 @@ body {
 }
 .tech-card strong { color: #00c4a7; }
 .tech-card span { color: #bbb; }
+.card-bullets { margin: 0.5rem 0 0; padding-left: 1.1rem; color: #bbb; font-size: 0.84rem; line-height: 1.7; }
+.card-bullets li { margin-bottom: 0.15rem; }
 /* FAQ */
 .faq-item { margin-bottom: 1rem; }
 .faq-q {
@@ -157,49 +159,68 @@ body {
       <p>YouOS is not a generic AI email writer. It learns from YOUR sent emails &mdash; how you phrase things, how long you write, how you sign off &mdash; and drafts replies that actually sound like you.</p>
       <p>It runs entirely on your Mac. No cloud. No subscriptions. Your data never leaves your machine.</p>
     </div>
-    <ul style="margin-top:1rem;color:#bbb;font-size:0.9rem;line-height:2;padding-left:1.2rem;">
-      <li>Ingests Gmail, Google Docs, WhatsApp exports — plus organic pairs from sent mail without YouOS involvement</li>
-      <li>Handles full email threads — paste the whole thread; same-thread history gets a 2&times; retrieval boost</li>
-      <li>Per-account corpus isolation — work emails draw from work history; personal from personal</li>
-      <li>Drafts grounded in score-ranked, confidence-annotated, thread-deduplicated exemplars; reply text preserved (600 chars), inbound trimmed (400)</li>
-      <li>Prompt token budget enforced — exemplars auto-trimmed if prompt exceeds 2000 tokens</li>
-      <li>Confidence thresholds are relative to retrieval score distribution (mean±σ), not hardcoded</li>
-      <li>Detects multi-intent (e.g. urgent + approval) and boosts matching exemplars 1.2&times;; per-intent reply length calibrated from your corpus</li>
-      <li>Per-sender-type persona variants — different voice, length, greeting, and closing for internal, external, and personal contacts</li>
-      <li>Greets people by first name, closes in your style — greeting and closing injected from persona per contact type</li>
-      <li>Richer persona: bullet point rate, directness score, sentence length, confidence intervals (p25/p75) — all used in prompts</li>
-      <li>Persona re-analysis is incremental (recent 90 days × 3 weight), EWMA for avg reply length, full weekly refresh</li>
-      <li>Subject line + topic-aware retrieval signals — known topics from sender profiles boost matching pairs</li>
-      <li>FTS queries expanded with email vocabulary synonyms (reschedule → postpone, meeting, call…)</li>
-      <li>Confidence-gated warnings — low-precedent drafts show a clear banner; explain any draft inline</li>
-      <li>Local model empty or signature-only output → automatic Claude fallback</li>
-      <li>Subject line generated via smart content analysis — skips greeting/filler lines, finds the topic sentence</li>
-      <li>Training data quality filters + deduplication by inbound similarity (≥0.95 → keep higher-rated pair)</li>
-      <li>Curriculum learning for LoRA fine-tuning — quality-ordered warmup before temporal training</li>
-      <li>DPO preference pairs supported — chosen vs rejected contrastive training data</li>
-      <li>Hybrid token + character similarity for smarter auto-feedback capture</li>
-      <li>Auto-calibrating similarity threshold — drops to 0.65 for small corpora</li>
-      <li>Auto-scales LoRA training hyperparameters as your corpus grows</li>
-      <li>Smart nightly pipeline — skips steps when data is insufficient (no wasted compute)</li>
-      <li>Golden eval runs nightly after fine-tuning — composite score tracked in pipeline log</li>
-      <li>Autoresearch benchmarks rotate weekly — prevents overfitting to fixed test cases</li>
-      <li>Persona re-analyzed nightly — all style signals auto-merge into persona config</li>
-      <li>Style drift detection — Stats dashboard flags when your writing patterns shift significantly</li>
-      <li>Sender profiles track reply-time patterns and topics — both used in retrieval boosting</li>
-      <li>Sender notes immediately rebuild that sender's profile: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos note</code></li>
-      <li>Submit feedback directly from terminal: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos feedback</code></li>
-      <li>Review queue: A/B comparison between adapter and base model; configurable batch size (5/10/20)</li>
-      <li>Gmail bookmarklet: floating side panel — generate draft, insert into compose, submit star-rated feedback without leaving Gmail</li>
-      <li>History tab: intent and confidence badges on every past draft</li>
-      <li>Optional cross-encoder reranking for higher retrieval precision</li>
-      <li>Corpus health at a glance: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos corpus</code></li>
-      <li>Golden benchmark suite (10 curated cases): <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos eval --golden</code></li>
-      <li>Setup wizard asks for internal domains — accurate internal vs external classification from day one</li>
-      <li>Rate-limited draft generation — your data is never over-shared</li>
-      <li>Mobile-friendly UI — use the Review Queue anywhere</li>
-      <li>Pre-flight health check: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos doctor</code></li>
-      <li>Verbose pipeline: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos improve --verbose</code></li>
-    </ul>
+    <div class="tech-grid" style="margin-top:1rem;">
+      <div class="tech-card">
+        <strong>&#x1F4E5; Ingestion</strong>
+        <ul class="card-bullets">
+          <li>Gmail, Google Docs, and WhatsApp exports</li>
+          <li>Organic pairs captured from sent mail automatically</li>
+          <li>Full thread support with same-thread 2&times; retrieval boost</li>
+          <li>Per-account corpus isolation (work vs personal)</li>
+          <li>Incremental nightly ingestion — only new messages</li>
+        </ul>
+      </div>
+      <div class="tech-card">
+        <strong>&#x1F50D; Smart Retrieval</strong>
+        <ul class="card-bullets">
+          <li>BM25 + semantic search with query expansion</li>
+          <li>Multi-intent detection (e.g. urgent + approval)</li>
+          <li>Sender-type, topic, and quality-score boosting</li>
+          <li>Confidence thresholds adapt to your corpus distribution</li>
+          <li>Optional cross-encoder reranking for precision</li>
+        </ul>
+      </div>
+      <div class="tech-card">
+        <strong>&#x1F464; Persona &amp; Style</strong>
+        <ul class="card-bullets">
+          <li>Per-sender-type voice — internal, external, personal</li>
+          <li>First-name greetings and your sign-off style</li>
+          <li>Directness score, sentence length, and confidence intervals</li>
+          <li>Persona re-analyzed nightly from your corpus</li>
+          <li>Style drift detection flags significant shifts</li>
+        </ul>
+      </div>
+      <div class="tech-card">
+        <strong>&#x1F9E0; Facts &amp; Context</strong>
+        <ul class="card-bullets">
+          <li>Store facts about contacts, projects, and preferences</li>
+          <li>Auto-injected into draft prompts for richer context</li>
+          <li>Knows meeting preferences, project details, relationships</li>
+          <li>CRUD API at <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">/api/facts</code></li>
+          <li>Manage via the Facts tab in the web UI</li>
+        </ul>
+      </div>
+      <div class="tech-card">
+        <strong>&#x1F504; Self-Improving</strong>
+        <ul class="card-bullets">
+          <li>Nightly: ingest &rarr; auto-feedback &rarr; LoRA fine-tune &rarr; autoresearch</li>
+          <li>Curriculum learning + DPO preference pairs</li>
+          <li>80-iteration autoresearch with weekly benchmark rotation</li>
+          <li>Golden eval tracks composite score over time</li>
+          <li>Smart skip gates — no wasted compute on quiet days</li>
+        </ul>
+      </div>
+      <div class="tech-card">
+        <strong>&#x1F6E0;&#xFE0F; Tools &amp; UI</strong>
+        <ul class="card-bullets">
+          <li>Gmail bookmarklet — draft, insert, and rate without leaving Gmail</li>
+          <li>Review Queue with A/B adapter vs base model comparison</li>
+          <li>History tab with intent and confidence badges</li>
+          <li>CLI: <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">youos doctor</code>, <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">youos corpus</code>, <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">youos eval --golden</code></li>
+          <li>Mobile-friendly and rate-limited</li>
+        </ul>
+      </div>
+    </div>
   </div>
 
   <!-- How it works -->

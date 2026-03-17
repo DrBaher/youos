@@ -227,9 +227,32 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .rq-batch-complete p { color: #aaa; margin-bottom: 1.5rem; }
 .btn-load-batch { background: #00c4a7; color: #1a1a2e; padding: 0.7rem 2rem; font-size: 1rem; }
 .btn-load-batch:hover { background: #00b398; }
+/* Facts toast */
+#factsToast {
+  position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999;
+  display: flex; flex-direction: column; gap: 0.5rem;
+  pointer-events: none;
+}
+.facts-toast-item {
+  background: #0d2a22; border: 1px solid #00c4a7; border-radius: 8px;
+  padding: 0.65rem 1rem; font-size: 0.82rem; color: #e0e0e0;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  animation: toastIn 0.3s ease; max-width: 360px;
+}
+.facts-toast-item strong { color: #00c4a7; }
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes toastOut {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(12px); }
+}
+.facts-toast-item.leaving { animation: toastOut 0.3s ease forwards; }
 </style>
 </head>
 <body>
+<div id="factsToast"></div>
 <div class="container">
   <header class="oc-header">
     <div class="oc-logo">
@@ -261,6 +284,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     <div class="tab active" data-tab="draft-reply">Draft Reply</div>
     <div class="tab" data-tab="review-queue">Review Queue <span class="oc-tip" data-tip="Pre-loaded emails from your corpus. Edit drafts and submit to train your model.">?</span></div>
     <div class="tab" data-tab="history">History</div>
+    <div class="tab" data-tab="facts">Facts <span class="oc-tip" data-tip="Store facts about contacts, projects, and your preferences to inject into drafts automatically.">?</span></div>
   </div>
 
   <!-- Progress nudge -->
@@ -405,6 +429,57 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     <div class="history-list" id="historyList"></div>
   </div>
 
+  <!-- Tab 4: Facts -->
+  <div class="tab-content" id="tab-facts">
+    <div class="facts-toolbar">
+      <div class="facts-filter-row">
+        <button class="facts-filter-btn active" data-mtype="all">All</button>
+        <button class="facts-filter-btn" data-mtype="contact">Contacts</button>
+        <button class="facts-filter-btn" data-mtype="project">Projects</button>
+        <button class="facts-filter-btn" data-mtype="user_pref">My Preferences</button>
+      </div>
+      <button class="btn-generate facts-add-btn" id="factsAddBtn">+ Add Fact</button>
+    </div>
+
+    <!-- Add fact form -->
+    <div class="facts-add-form" id="factsAddForm" style="display:none;">
+      <div class="facts-form-row">
+        <div class="facts-form-field">
+          <label>Type</label>
+          <select id="factsType">
+            <option value="contact">Contact</option>
+            <option value="project">Project</option>
+            <option value="user_pref">My Preference</option>
+          </select>
+        </div>
+        <div class="facts-form-field" style="flex:2;">
+          <label id="factsKeyLabel">Key (email address)</label>
+          <input type="text" id="factsKey" placeholder="e.g. john@acme.com">
+        </div>
+        <div class="facts-form-field" style="flex:3;">
+          <label>Fact</label>
+          <input type="text" id="factsFact" placeholder="e.g. Prefers Tuesday meetings">
+        </div>
+        <div class="facts-form-field">
+          <label>Tags (comma-separated)</label>
+          <input type="text" id="factsTags" placeholder="e.g. project, acme">
+        </div>
+      </div>
+      <div style="display:flex;gap:0.75rem;margin-top:0.5rem;">
+        <button class="btn-submit" id="factsSaveBtn">Save</button>
+        <button class="btn-tone" id="factsCancelBtn">Cancel</button>
+      </div>
+      <div class="info" id="factsFormMsg"></div>
+    </div>
+
+    <div id="factsLoading" style="text-align:center;padding:2rem;color:#888;">Loading facts...</div>
+    <div id="factsEmpty" style="display:none;text-align:center;padding:2rem;color:#666;">
+      No facts yet.<br>
+      <span style="font-size:0.85rem;color:#555;">Add facts about contacts, projects, and your preferences to automatically enrich every draft.</span>
+    </div>
+    <div id="factsList" class="facts-list"></div>
+  </div>
+
   <!-- Keyboard help overlay -->
   <div class="kb-overlay" id="kbOverlay">
     <div class="kb-dialog">
@@ -494,10 +569,56 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     .kb-dialog .kb-close { margin-top:1rem; background:#333; color:#ccc; border:none; padding:0.4rem 1.2rem; border-radius:6px; cursor:pointer; }
     /* Language badge */
     .lang-badge { display:inline-block; font-size:0.65rem; padding:0.1rem 0.4rem; border-radius:3px; background:#1e3a4a; color:#00c4a7; margin-left:0.3rem; text-transform:uppercase; vertical-align:middle; }
+    /* Facts tab */
+    .facts-toolbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.75rem; }
+    .facts-filter-row { display:flex; gap:0.4rem; flex-wrap:wrap; }
+    .facts-filter-btn { background:#222; border:1px solid #333; color:#888; padding:0.3rem 0.85rem; border-radius:4px; font-size:0.8rem; font-weight:600; cursor:pointer; transition:background 0.15s,color 0.15s; }
+    .facts-filter-btn:hover { color:#ccc; background:#2a2a2a; }
+    .facts-filter-btn.active { background:#00c4a7; color:#0d1b2a; border-color:#00c4a7; }
+    .facts-add-btn { padding:0.45rem 1.1rem; font-size:0.85rem; }
+    .facts-add-form { background:#0d1b2a; border:1px solid #2a3a4a; border-radius:8px; padding:1rem 1.25rem; margin-bottom:1rem; }
+    .facts-form-row { display:flex; gap:0.75rem; flex-wrap:wrap; align-items:end; }
+    .facts-form-field { display:flex; flex-direction:column; flex:1; min-width:140px; }
+    .facts-form-field label { font-size:0.78rem; color:#aaa; font-weight:600; margin-bottom:0.25rem; white-space:nowrap; }
+    .facts-form-field input, .facts-form-field select { padding:0.4rem 0.6rem; background:#16213e; border:1px solid #333; border-radius:5px; color:#e0e0e0; font-size:0.85rem; }
+    .facts-form-field input:focus, .facts-form-field select:focus { outline:none; border-color:#7b61ff; }
+    .facts-list { display:flex; flex-direction:column; gap:0.4rem; }
+    .facts-group-label { font-size:0.7rem; font-weight:700; color:#555; text-transform:uppercase; letter-spacing:0.08em; margin:0.9rem 0 0.35rem; }
+    .facts-item { background:#16213e; border:1px solid #2a3a4a; border-radius:6px; padding:0.6rem 0.9rem; display:flex; align-items:flex-start; gap:0.75rem; }
+    .facts-item:hover { border-color:#333; }
+    .facts-type-pill { font-size:0.65rem; font-weight:700; padding:0.15rem 0.5rem; border-radius:3px; white-space:nowrap; flex-shrink:0; margin-top:0.1rem; }
+    .facts-type-contact { background:#1e3a4a; color:#00c4a7; }
+    .facts-type-project { background:#2a1e3a; color:#a78bfa; }
+    .facts-type-user_pref { background:#1a2e1a; color:#2ecc71; }
+    .facts-body { flex:1; min-width:0; }
+    .facts-key { font-size:0.82rem; color:#aaa; font-weight:600; }
+    .facts-fact { font-size:0.88rem; color:#e0e0e0; margin-top:0.1rem; }
+    .facts-tags { display:flex; gap:0.3rem; flex-wrap:wrap; margin-top:0.3rem; }
+    .facts-tag { font-size:0.65rem; background:#1e2a3a; color:#666; padding:0.1rem 0.4rem; border-radius:3px; }
+    .facts-delete { background:none; border:none; color:#444; font-size:1rem; cursor:pointer; padding:0 0.2rem; line-height:1; flex-shrink:0; }
+    .facts-delete:hover { color:#e74c3c; }
   </style>
 </div>
 
 <script>
+// ── Facts toast ───────────────────────────────────────────────────────────
+function showFactsToast(facts) {
+  if (!facts || facts.length === 0) return;
+  const container = document.getElementById('factsToast');
+  facts.forEach(f => {
+    const el = document.createElement('div');
+    el.className = 'facts-toast-item';
+    el.innerHTML = '&#x2728; Fact saved: <strong>[' + f.type + ']</strong> ' +
+      (f.key && f.key !== 'default' && f.key !== 'unknown' ? '<em>' + f.key + '</em> &mdash; ' : '') +
+      f.fact;
+    container.appendChild(el);
+    setTimeout(() => {
+      el.classList.add('leaving');
+      el.addEventListener('animationend', () => el.remove(), { once: true });
+    }, 4000);
+  });
+}
+
 (function() {
   // Fetch config and update app name / empty state
   fetch('/api/config').then(r => r.json()).then(d => {
@@ -520,6 +641,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
       if (tab.dataset.tab === 'review-queue' && !rqLoaded) {
         loadBatch();
+      }
+      if (tab.dataset.tab === 'facts') {
+        loadFacts();
       }
     });
   });
@@ -870,6 +994,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       const data = await res.json();
       showInfo('Saved! Total feedback pairs: ' + data.total_pairs +
         '. <a href="#" onclick="location.reload();return false" style="color:#00c4a7">Generate another?</a>', 'success');
+      if (data.extracted_facts && data.extracted_facts.length > 0) showFactsToast(data.extracted_facts);
       btnSub.disabled = true;
       draft.readOnly = true;
     } catch (e) {
@@ -944,8 +1069,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     document.getElementById('rqCount').textContent = rqReviewed + '/' + total + ' reviewed';
     document.getElementById('rqPct').textContent = pct + '%';
     document.getElementById('rqProgressFill').style.width = pct + '%';
-    document.getElementById('rqRemaining').textContent =
-      rqTotalUnreviewed.toLocaleString() + ' pairs remaining';
+    document.getElementById('rqRemaining').textContent = '';
   }
 
   function rqShowItem() {
@@ -957,7 +1081,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       document.getElementById('rqMain').style.display = 'none';
       document.getElementById('rqBatchComplete').style.display = 'block';
       document.getElementById('rqBatchMsg').textContent =
-        rqReviewedToday + ' pairs reviewed today. ' + rqTotalUnreviewed.toLocaleString() + ' remaining.';
+        rqReviewedToday + ' pairs reviewed today. Nice work!';
       const arDiv = document.getElementById('rqAutoResearch');
       const arStatus = document.getElementById('rqArStatus');
       arDiv.style.display = 'block';
@@ -1437,6 +1561,165 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   // Trigger history load when History tab is clicked
   document.querySelector('[data-tab="history"]')?.addEventListener('click', () => {
     setTimeout(loadHistory, 50);
+  });
+
+  // ── Facts Tab ────────────────────────────────────────────────────────────
+  let factsData = [];
+  let factsFilter = 'all';
+  let factsLoaded = false;
+
+  const TYPE_LABELS = {contact: 'Contact', project: 'Project', user_pref: 'Preference'};
+  const KEY_PLACEHOLDERS = {contact: 'e.g. john@acme.com', project: 'e.g. project_alpha', user_pref: 'e.g. sign_off'};
+  const KEY_LABELS = {contact: 'Key (email address)', project: 'Key (project name)', user_pref: 'Key (preference name)'};
+
+  async function loadFacts() {
+    if (!document.getElementById('tab-facts').classList.contains('active')) return;
+    document.getElementById('factsLoading').style.display = 'block';
+    document.getElementById('factsEmpty').style.display = 'none';
+    document.getElementById('factsList').innerHTML = '';
+    try {
+      const url = factsFilter === 'all' ? '/api/facts' : '/api/facts?type=' + factsFilter;
+      const res = await fetch(url);
+      const data = await res.json();
+      factsData = data.facts || [];
+      renderFacts();
+    } catch(e) {
+      document.getElementById('factsLoading').style.display = 'none';
+    }
+  }
+
+  function renderFacts() {
+    document.getElementById('factsLoading').style.display = 'none';
+    const list = document.getElementById('factsList');
+    list.innerHTML = '';
+    if (!factsData.length) {
+      document.getElementById('factsEmpty').style.display = 'block';
+      return;
+    }
+    document.getElementById('factsEmpty').style.display = 'none';
+
+    // Group by type
+    const groups = {};
+    factsData.forEach(f => {
+      if (!groups[f.type]) groups[f.type] = [];
+      groups[f.type].push(f);
+    });
+
+    const order = ['user_pref', 'contact', 'project'];
+    order.forEach(type => {
+      if (!groups[type]) return;
+      const label = document.createElement('div');
+      label.className = 'facts-group-label';
+      label.textContent = TYPE_LABELS[type] || type;
+      list.appendChild(label);
+      groups[type].forEach(f => {
+        const item = document.createElement('div');
+        item.className = 'facts-item';
+        const tagsHtml = (f.tags || []).map(t => `<span class="facts-tag">${t}</span>`).join('');
+        item.innerHTML =
+          `<span class="facts-type-pill facts-type-${f.type}">${TYPE_LABELS[f.type] || f.type}</span>` +
+          `<div class="facts-body">` +
+          `<div class="facts-key">${escHtml(f.key)}</div>` +
+          `<div class="facts-fact">${escHtml(f.fact)}</div>` +
+          (tagsHtml ? `<div class="facts-tags">${tagsHtml}</div>` : '') +
+          `</div>` +
+          `<button class="facts-delete" data-id="${f.id}" title="Delete">&#215;</button>`;
+        item.querySelector('.facts-delete').addEventListener('click', () => deleteFact(f.id));
+        list.appendChild(item);
+      });
+    });
+  }
+
+  async function deleteFact(id) {
+    if (!confirm('Delete this fact?')) return;
+    try {
+      const res = await fetch('/api/facts/' + id, {method: 'DELETE'});
+      if (res.ok) {
+        factsData = factsData.filter(f => f.id !== id);
+        renderFacts();
+      }
+    } catch(e) {}
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // Filter buttons
+  document.querySelectorAll('.facts-filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.facts-filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      factsFilter = btn.dataset.mtype;
+      loadFacts();
+    });
+  });
+
+  // Add fact form toggle
+  const factsAddBtn = document.getElementById('factsAddBtn');
+  const factsAddForm = document.getElementById('factsAddForm');
+  const factsTypeSelect = document.getElementById('factsType');
+  const factsKeyInput = document.getElementById('factsKey');
+  const factsKeyLabel = document.getElementById('factsKeyLabel');
+
+  factsAddBtn.addEventListener('click', () => {
+    factsAddForm.style.display = factsAddForm.style.display === 'none' ? 'block' : 'none';
+    if (factsAddForm.style.display === 'block') {
+      factsAddBtn.textContent = '✕ Cancel';
+      factsKeyInput.focus();
+    } else {
+      factsAddBtn.textContent = '+ Add Fact';
+    }
+  });
+
+  document.getElementById('factsCancelBtn').addEventListener('click', () => {
+    factsAddForm.style.display = 'none';
+    factsAddBtn.textContent = '+ Add Fact';
+  });
+
+  factsTypeSelect.addEventListener('change', () => {
+    const t = factsTypeSelect.value;
+    factsKeyLabel.textContent = KEY_LABELS[t] || 'Key';
+    factsKeyInput.placeholder = KEY_PLACEHOLDERS[t] || '';
+  });
+
+  document.getElementById('factsSaveBtn').addEventListener('click', async () => {
+    const msgEl = document.getElementById('factsFormMsg');
+    const type = factsTypeSelect.value.trim();
+    const key = factsKeyInput.value.trim();
+    const fact = document.getElementById('factsFact').value.trim();
+    const tagsRaw = document.getElementById('factsTags').value.trim();
+    const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
+
+    if (!key || !fact) {
+      msgEl.textContent = 'Key and Fact are required.';
+      msgEl.className = 'info visible warning';
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/facts', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({type, key, fact, tags})
+      });
+      const data = await res.json();
+      if (res.ok) {
+        msgEl.textContent = 'Saved.';
+        msgEl.className = 'info visible success';
+        factsKeyInput.value = '';
+        document.getElementById('factsFact').value = '';
+        document.getElementById('factsTags').value = '';
+        setTimeout(() => { msgEl.className = 'info'; }, 2000);
+        loadFacts();
+      } else {
+        msgEl.textContent = data.detail || 'Error saving fact.';
+        msgEl.className = 'info visible warning';
+      }
+    } catch(e) {
+      msgEl.textContent = 'Network error.';
+      msgEl.className = 'info visible warning';
+    }
   });
 
 })();
