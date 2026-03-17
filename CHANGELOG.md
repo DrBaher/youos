@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.1.10 — 2026-03-17
+
+### Release metadata
+- Version bump to `0.1.10` for re-upload sequencing.
+
+## v0.1.9 — 2026-03-17
+
+### Release metadata
+- Version bump to `0.1.9` across app/package/UI metadata for clean resubmission.
+
+## v0.1.7 — 2026-03-17
+
+### Drafting UX
+- **Optional reply instruction field** in Draft tab now works in both modes (New email + Reply), so you can steer output with explicit guidance.
+- **Bookmarklet popup instruction box** added (`Your instruction (optional)`) and passed through to generation APIs.
+- **Compose/Reply parity** — stream and non-stream paths both accept `user_prompt` and `mode` consistently.
+
+### Docs + Website Sync
+- Updated README, About page, landing page, and Bookmarklet page to match current UI and workflow.
+- Removed stale references to removed Review Queue controls (`Bulk submit ready`, `Skip low-signal`, `Compare`) from public docs.
+
 ## v0.1.6 — 2026-03-17
 
 ### Review Queue Throughput

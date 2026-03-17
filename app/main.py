@@ -73,7 +73,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="YouOS",
-        version="0.1.0",
+        version="0.1.10",
         description="Your personal AI email copilot — learns your style from your Gmail history.",
         lifespan=_lifespan,
     )

@@ -107,7 +107,7 @@ def get_base_model(config: dict[str, Any] | None = None) -> str:
 
 def get_model_fallback(config: dict[str, Any] | None = None) -> str:
     cfg = config or load_config()
-    return cfg.get("model", {}).get("fallback", "claude")
+    return cfg.get("model", {}).get("fallback", "none")
 
 
 def get_server_port(config: dict[str, Any] | None = None) -> int:
@@ -117,7 +117,7 @@ def get_server_port(config: dict[str, Any] | None = None) -> int:
 
 def get_server_host(config: dict[str, Any] | None = None) -> str:
     cfg = config or load_config()
-    return cfg.get("server", {}).get("host", "0.0.0.0")
+    return cfg.get("server", {}).get("host", "127.0.0.1")
 
 
 def get_tailscale_hostname(config: dict[str, Any] | None = None) -> str:

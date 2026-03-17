@@ -108,6 +108,13 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
     <div class="inbound-box" id="inboundPreview"></div>
   </div>
 
+  <div style="flex:1;display:flex;flex-direction:column;gap:0.4rem;margin-bottom:0.6rem;">
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <span class="label">Your instruction (optional)</span>
+    </div>
+    <textarea id="userPromptArea" placeholder="e.g. decline politely, suggest next Tuesday 14:00" rows="3"></textarea>
+  </div>
+
   <div style="flex:1;display:flex;flex-direction:column;gap:0.4rem;">
     <div style="display:flex;align-items:center;justify-content:space-between;">
       <span class="label">Draft reply <span id="confBadge" class="confidence-badge" style="display:none"></span></span>
@@ -144,6 +151,7 @@ const params = new URLSearchParams(window.location.search);
 const inbound = params.get('inbound') || '';
 let sender = params.get('sender') || '';
 const subject = params.get('subject') || '';
+const userPrompt = params.get('user_prompt') || '';
 
 // E8: if sender wasn't in URL params, request it from parent (bookmarklet in Gmail)
 if (!sender) {
@@ -159,6 +167,12 @@ window.addEventListener('message', function(e) {
 
 // Show inbound preview
 document.getElementById('inboundPreview').textContent = inbound.slice(0, 400);
+
+// Pre-fill user prompt area
+const userPromptArea = document.getElementById('userPromptArea');
+if (userPrompt) {
+  userPromptArea.value = userPrompt;
+}
 
 // Fetch app name
 fetch('/api/config').then(r => r.json()).then(d => {
@@ -183,7 +197,8 @@ async function generateDraft(toneHint) {
     const payload = { inbound_text: inbound };
     if (sender) payload.sender = sender;
     if (toneHint) payload.tone_hint = toneHint;
-
+    const currentPrompt = userPromptArea.value.trim();
+    if (currentPrompt) payload.user_prompt = currentPrompt;
     const streamRes = await fetch('/draft/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

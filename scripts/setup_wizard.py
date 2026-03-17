@@ -572,16 +572,16 @@ def _setup_pin(config: dict) -> dict:
     print("--- Access PIN ---")
     print("Set an access PIN? (recommended if sharing Tailscale with others)")
     print("Leave blank to skip (your Tailscale network is the auth layer).")
-    pin = input("PIN: ").strip()
+    pin = input("PIN (4-digit numeric, leave blank for random default): ").strip()
 
-    if pin:
-        from app.core.auth import get_pin_hash
+    if not pin:
+        import secrets
+        pin = ''.join(secrets.choice('0123456789') for i in range(4))
+        print(f"  No PIN entered, generated: {pin}")
 
-        config.setdefault("server", {})["pin"] = get_pin_hash(pin)
-        print("  PIN set. You'll need this to access the web UI.")
-    else:
-        config.setdefault("server", {})["pin"] = ""
-        print("  No PIN set. Access is open on your network.")
+    from app.core.auth import get_pin_hash
+    config.setdefault("server", {})["pin"] = get_pin_hash(pin)
+    print("  PIN set. You'll need this to access the web UI.")
 
     import yaml as _yaml
 
@@ -595,7 +595,7 @@ def _setup_pin(config: dict) -> dict:
 def _start_server(config: dict) -> None:
     """Start the YouOS server."""
     port = config.get("server", {}).get("port", 8765)
-    host = config.get("server", {}).get("host", "0.0.0.0")
+    host = config.get("server", {}).get("host", "127.0.0.1")
 
     print()
     print("--- Server ---")

@@ -5,3 +5,11 @@ fixtures/
 var/
 .herenow/
 configs/persona_analysis.json
+data/
+instances/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.git/
+gif-frames/
+youos.egg-info/

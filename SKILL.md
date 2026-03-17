@@ -1,25 +1,35 @@
 ---
 name: youos
 description: >
-  YouOS — your personal AI email copilot. Learns your writing style from your Gmail history,
-  Google Docs, and WhatsApp exports, then drafts replies that sound like you. Improves
-  automatically from your feedback via nightly LoRA fine-tuning and autoresearch.
-  Runs entirely locally on Apple Silicon. Use when: drafting email replies, reviewing
-  how you've handled similar situations before, or setting up a self-improving personal
-  communication assistant.
-homepage: https://github.com/DrBaher/youos
-version: 0.1.0
+  YouOS — local-first personal email copilot that learns your writing style from Gmail,
+  Google Docs, and WhatsApp exports, then drafts replies in your voice. Use for drafting
+  replies, reviewing how you usually respond, and running a self-improving personal
+  communication workflow.
 metadata:
   openclaw:
-    emoji: "\u2709\uFE0F"
     requires:
-      anyBins: ["gog", "python3"]
-      env: []
+      bins: ["python3", "gog"]
+      platform: darwin
+      arch: arm64
 ---
 
 # YouOS — Personal Email Copilot
 
-YouOS drafts email replies in your style, grounded in your real past replies.
+YouOS is a full local Python app (not an instruction-only snippet). It drafts email replies in your style, grounded in your real past replies.
+
+## Install and runtime model
+
+- Install is **manual** via pip (`pip install -e .`) in a Python 3.11+ environment
+- Requires **both**:
+  - `python3` (3.11+)
+  - `gog` CLI authenticated to the Gmail account(s) you want to ingest
+- Optional runtime path override: `YOUOS_DATA_DIR`
+
+## Credentials and configuration
+
+- Required: `gog` authentication for Gmail/Docs ingestion
+- Optional: Claude CLI/API credentials only if using external fallback generation
+- Recommended for local-only privacy: set `model.fallback: none`
 
 ## Trigger phrases
 
@@ -53,6 +63,7 @@ YouOS drafts email replies in your style, grounded in your real past replies.
 - Python 3.11+
 - [gog CLI](https://github.com/openclaw/gog) configured with your Gmail account(s)
 - ~5GB free disk space
+- Run the UI locally by default (do not expose publicly unless intentionally secured)
 
 ## Quick start
 
@@ -113,9 +124,6 @@ Install from the Bookmarklet page in the web UI. Once installed:
 - Rate the draft with stars and submit feedback — all without leaving Gmail
 - Click the bookmarklet again to close the panel
 
-```
-```
-
 ## How it works
 
 1. Ingests Gmail, Google Docs, WhatsApp exports — plus organic pairs from emails you sent without YouOS
@@ -132,6 +140,10 @@ Install from the Bookmarklet page in the web UI. Once installed:
 12. Facts store (`/api/facts`) — save context about contacts, projects, and preferences; facts are injected into generation prompts automatically for context-aware drafts
 13. Auto fact extraction — sender notes and feedback notes are parsed automatically on save using 15+ rule patterns (preferences, timezone, schedule, sign-offs, roles, relationships, project metadata); negation-aware with confidence scoring; LLM (Claude CLI) fallback for unstructured notes; fact deduplication/merging on upsert
 
-## Privacy
+## Security & privacy notes
 
-All data stays on your machine. No email content is ever sent to a cloud service (except the LLM call for initial drafts before the local model is trained). See PRIVACY.md.
+- Gmail ingestion uses your local `gog` authentication; review connected accounts before ingestion
+- External LLM fallback is optional; if enabled (`model.fallback: claude`), inbound email/context can be sent to Claude for generation
+- For strict local-only operation, set `model.fallback: none` in `youos_config.yaml`
+- Data location defaults to local project paths (or `YOUOS_DATA_DIR` if set)
+- Review `PRIVACY.md` before first ingestion/deployment
