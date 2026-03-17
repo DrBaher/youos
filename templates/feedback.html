@@ -412,10 +412,12 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
           </div>
           <button class="btn-tone" id="rqPrev" disabled title="Go back to previous item">&#8592; Previous</button>
           <button class="btn-skip" id="rqSkip">Skip</button>
+          <button class="btn-tone" id="rqBulkSkip" title="Skip low-signal items in remaining batch">Skip low-signal</button>
+          <button class="btn-tone" id="rqBulkSubmit" title="Submit remaining ready drafts in bulk">Bulk submit ready</button>
           <button class="btn-tone" id="rqCompare">Compare</button>
           <button class="btn-submit" id="rqSubmitNext">Submit & Next</button>
         </div>
-        <div class="rq-keyhints" id="rqKeyHints"><kbd>j</kbd> submit &middot; <kbd>k</kbd> skip &middot; <kbd>e</kbd> edit &middot; <kbd>1</kbd>-<kbd>5</kbd> rate &middot; <kbd>?</kbd> help</div>
+        <div class="rq-keyhints" id="rqKeyHints"><kbd>j</kbd> submit &middot; <kbd>k</kbd> skip &middot; <kbd>b</kbd> bulk submit &middot; <kbd>n</kbd> skip low-signal &middot; <kbd>e</kbd> edit &middot; <kbd>1</kbd>-<kbd>5</kbd> rate &middot; <kbd>?</kbd> help</div>
       </div>
     </div>
 
@@ -1046,6 +1048,26 @@ function showFactsToast(facts) {
   let rqRating = 4;
   let rqHistory = []; // E7: stack of {index, item, editedReply, note, rating}
 
+  const rqLowSignalRe = /^\s*(ok|okay|k|sure|thanks|thank you|thx|ty|noted|got it|sounds good|perfect|great|received|ack)\s*[.!]?\s*$/i;
+
+  function rqIsLowSignalText(text) {
+    const t = (text || '').trim();
+    if (!t) return true;
+    if (t.split(/\s+/).length < 3) return true;
+    return rqLowSignalRe.test(t);
+  }
+
+  function rqIsLowSignalCandidate(item) {
+    if (!item) return true;
+    const inbound = (item.inbound_text || '').trim();
+    const draft = (item.generated_draft || '').trim();
+    if (!draft || draft === '⏳ Generating draft...') return true;
+    if (rqIsLowSignalText(draft)) return true;
+    // trivial exchange: tiny inbound + tiny draft
+    if (inbound.split(/\s+/).length < 5 && draft.split(/\s+/).length < 8) return true;
+    return false;
+  }
+
   const rqStars = document.querySelectorAll('#rqStars .star');
   rqStars.forEach(s => {
     s.addEventListener('click', () => {
@@ -1317,6 +1339,32 @@ function showFactsToast(facts) {
     rqUpdateProgress();
   });
 
+  async function rqSubmitItem(item, editedReply, note, rating) {
+    const body = {
+      reply_pair_id: item.reply_pair_id,
+      inbound_text: item.inbound_text,
+      generated_draft: item.generated_draft,
+      edited_reply: editedReply,
+      feedback_note: note || null,
+      rating: rating
+    };
+    const res = await fetch('/review-queue/submit', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) throw new Error('Server error: ' + res.status);
+    return res.json();
+  }
+
+  function rqApplySubmitAdvance() {
+    rqReviewed++;
+    rqReviewedToday++;
+    rqTotalUnreviewed = Math.max(0, rqTotalUnreviewed - 1);
+    const dailyCountEl = document.getElementById('rqDailyCount');
+    if (dailyCountEl) dailyCountEl.textContent = rqReviewedToday;
+  }
+
   // Submit & Next
   document.getElementById('rqSubmitNext').addEventListener('click', async () => {
     const item = rqItems[rqIndex];
@@ -1327,37 +1375,21 @@ function showFactsToast(facts) {
     btn.innerHTML = 'Saving<span class="spinner"></span>';
 
     try {
-      const body = {
-        reply_pair_id: item.reply_pair_id,
-        inbound_text: item.inbound_text,
-        generated_draft: item.generated_draft,
-        edited_reply: document.getElementById('rqDraftTextarea').value.trim() || item.generated_draft,
-        feedback_note: document.getElementById('rqNote').value.trim() || null,
-        rating: rqRating
-      };
-      const res = await fetch('/review-queue/submit', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(body)
-      });
-      if (!res.ok) throw new Error('Server error: ' + res.status);
+      const editedReply = document.getElementById('rqDraftTextarea').value.trim() || item.generated_draft;
+      const note = document.getElementById('rqNote').value.trim();
+      await rqSubmitItem(item, editedReply, note, rqRating);
 
       // E7: push to history before advancing
       rqHistory.push({
         index: rqIndex,
         item: item,
-        editedReply: document.getElementById('rqDraftTextarea').value.trim() || item.generated_draft,
-        note: document.getElementById('rqNote').value.trim(),
+        editedReply: editedReply,
+        note: note,
         rating: rqRating
       });
       document.getElementById('rqPrev').disabled = false;
 
-      rqReviewed++;
-      rqReviewedToday++;
-      rqTotalUnreviewed = Math.max(0, rqTotalUnreviewed - 1);
-      // E5: update daily count display
-      const dailyCountEl = document.getElementById('rqDailyCount');
-      if (dailyCountEl) dailyCountEl.textContent = rqReviewedToday;
+      rqApplySubmitAdvance();
       rqIndex++;
       rqShowItem();
     } catch (e) {
@@ -1366,6 +1398,68 @@ function showFactsToast(facts) {
       btn.disabled = false;
       btn.textContent = 'Submit & Next';
     }
+  });
+
+  // Bulk skip low-signal items
+  document.getElementById('rqBulkSkip').addEventListener('click', () => {
+    let skipped = 0;
+    for (let i = rqIndex; i < rqItems.length; i++) {
+      const item = rqItems[i];
+      if (!item) continue;
+      if (rqSkippedIds.includes(item.reply_pair_id)) continue;
+      if (rqIsLowSignalCandidate(item)) {
+        rqSkippedIds.push(item.reply_pair_id);
+        skipped++;
+      }
+    }
+    if (skipped > 0) {
+      rqShowItem();
+      alert('Skipped ' + skipped + ' low-signal item(s).');
+    } else {
+      alert('No low-signal items found in remaining batch.');
+    }
+  });
+
+  // Bulk submit remaining ready drafts (excluding low-signal)
+  document.getElementById('rqBulkSubmit').addEventListener('click', async () => {
+    const btn = document.getElementById('rqBulkSubmit');
+    btn.disabled = true;
+
+    const candidates = [];
+    for (let i = rqIndex; i < rqItems.length; i++) {
+      const item = rqItems[i];
+      if (!item) continue;
+      if (rqSkippedIds.includes(item.reply_pair_id)) continue;
+      if (!item.generated_draft || item.generated_draft === '⏳ Generating draft...') continue;
+      if (rqIsLowSignalCandidate(item)) continue;
+      candidates.push({ item, index: i });
+    }
+
+    if (candidates.length === 0) {
+      btn.disabled = false;
+      alert('No ready non-low-signal drafts to bulk submit.');
+      return;
+    }
+
+    if (!confirm('Bulk submit ' + candidates.length + ' draft(s) with default rating 4?')) {
+      btn.disabled = false;
+      return;
+    }
+
+    let ok = 0;
+    for (const c of candidates) {
+      try {
+        await rqSubmitItem(c.item, c.item.generated_draft, 'bulk_accept', 4);
+        rqApplySubmitAdvance();
+        ok++;
+      } catch (e) {
+        // continue
+      }
+    }
+
+    btn.disabled = false;
+    rqShowItem();
+    alert('Bulk submitted ' + ok + ' / ' + candidates.length + ' drafts.');
   });
 
   // Compare button
@@ -1585,6 +1679,14 @@ function showFactsToast(facts) {
       case 'e':
         e.preventDefault();
         document.getElementById('rqDraftTextarea').focus();
+        break;
+      case 'b':
+        e.preventDefault();
+        document.getElementById('rqBulkSubmit').click();
+        break;
+      case 'n':
+        e.preventDefault();
+        document.getElementById('rqBulkSkip').click();
         break;
       case 'r':
         e.preventDefault();
