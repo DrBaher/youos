@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 
 from app.core.config import load_config
 from app.core.settings import get_var_dir
-from app.core.stats import get_corpus_stats, get_model_status, get_pipeline_status, _get_adapter_path
+from app.core.stats import _get_adapter_path, get_corpus_stats, get_model_status, get_pipeline_status
 from app.db.bootstrap import resolve_sqlite_path
 
 router = APIRouter(tags=["stats"])
