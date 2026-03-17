@@ -55,6 +55,9 @@ Gmail (sent mail)          Your feedback
 - Self-optimizes nightly via autoresearch — configurable composite weights, sender-type boosts, intent signals
 - Style drift detection: Stats dashboard flags when your writing patterns shift significantly
 - Feedback loop closes: high-rating, low-edit pairs surface higher in future retrievals
+- Streak tracking — consecutive daily Review Queue sessions tracked; streak shown in queue UI
+- Corpus scan button in Stats — bulk-extracts structured facts from your top reply pairs in one click
+- Language-filtered retrieval — retrieval matches language of the inbound email; no cross-language bleed
 - Sender profiles track reply-time patterns and topics; notes trigger immediate profile rebuild
 - Embedding cache for fast repeated retrieval; corpus health at a glance: `youos corpus`
 - Run a golden benchmark anytime (10 curated cases): `youos eval --golden`
@@ -181,8 +184,8 @@ The web UI provides:
 - **Draft Reply**: Paste an inbound email (or full thread), generate a draft grounded in your style. A **confidence reason banner** explains *why* the draft received its confidence score (e.g. "3 strong exemplars found", "low retrieval — new topic"). See the full exemplar trace via "How was this generated?"
 - **Review Queue**: Emails appear instantly, drafts stream in one by one as they generate. Automated senders filtered by address and content. Configurable batch size (5/10/20) and draft model (`claude`/`local`/`auto`). Keyboard shortcuts (`j`/`k`)
 - **History**: Past drafts with intent badges, confidence badges, and edit-distance indicators
-- **Stats Dashboard**: Corpus health, model status, pipeline status (with skipped steps), style drift indicator, benchmark trends
-- **Gmail Bookmarklet**: Injects a floating side panel directly into Gmail — generate a draft and click "Insert into Gmail" without leaving your inbox. Submit feedback with star rating from the panel
+- **Stats Dashboard**: Corpus health, model status, pipeline status (with skipped steps), style drift indicator, benchmark trends, edit distance trend chart, per-sender-type accuracy breakdown, and **System Health card** (corpus size, last ingestion, embedding coverage, adapter status)
+- **Gmail Bookmarklet**: Injects a floating side panel directly into Gmail — auto-detects sender email from the DOM, generate a draft and click "Insert into Gmail" without leaving your inbox. Submit feedback with star rating from the panel
 
 ## Architecture
 
