@@ -23,7 +23,7 @@ TEMPLATE_PATH = ROOT_DIR / "templates" / "stats.html"
 def get_api_config(request: Request) -> dict[str, Any]:
     config = load_config()
     user_name = config.get("user", {}).get("name", "")
-    display_name = f"{user_name}OS" if user_name else "YouOS"
+    display_name = config.get("user", {}).get("display_name", "") or "YouOS"
 
     db_path = resolve_sqlite_path(request.app.state.settings.database_url)
     corpus_ready = False

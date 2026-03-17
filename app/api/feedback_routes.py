@@ -157,6 +157,7 @@ class GenerateBody(BaseModel):
     inbound_text: str = Field(min_length=1)
     tone_hint: Literal["shorter", "more_formal", "more_detail"] | None = None
     sender: str | None = None
+    mode: Literal["reply", "compose"] | None = "reply"
 
 
 @router.post("/generate")
@@ -173,6 +174,7 @@ def feedback_generate(body: GenerateBody, request: Request) -> dict:
                 inbound_message=body.inbound_text,
                 tone_hint=body.tone_hint,
                 sender=body.sender,
+                mode=body.mode,
             ),
             database_url=settings.database_url,
             configs_dir=settings.configs_dir,

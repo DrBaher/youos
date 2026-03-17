@@ -53,7 +53,8 @@ def _generate_draft_for_candidate(
     use_local_model: bool = False,
 ) -> dict[str, Any] | None:
     """Generate a draft for a single candidate. Returns item dict or None on failure."""
-    clean_inbound = strip_quoted_text(decode_html_entities(cand["inbound_text"]))
+    display_inbound = decode_html_entities(cand["inbound_text"])
+    clean_inbound = strip_quoted_text(display_inbound)
     try:
         draft_response = generate_draft(
             DraftRequest(
@@ -66,7 +67,7 @@ def _generate_draft_for_candidate(
         )
         return {
             "reply_pair_id": cand["reply_pair_id"],
-            "inbound_text": clean_inbound,
+            "inbound_text": display_inbound,
             "inbound_author": cand["inbound_author"],
             "subject": cand["subject"],
             "generated_draft": draft_response.draft,
@@ -96,7 +97,9 @@ _AUTOMATED_CONTENT_PATTERNS = re.compile(
     r"receipt for your|"
     r"security (alert|notification|code)|"
     r"verification code|one-time (password|code)|otp:|"
-    r"password (reset|change)|reset your password)",
+    r"password (reset|change)|reset your password|"
+    r"reacted to your message|liked your message|"
+    r"assets/reaction/|/reaction/(like|love|laugh|wow|sad|angry)\.png)",
     re.IGNORECASE,
 )
 
@@ -505,9 +508,10 @@ def review_queue_next_stream(
     # Pre-enrich candidates with sender profiles (fast DB lookup, no model needed)
     enriched: list[dict[str, Any]] = []
     for cand in candidates[:batch_size]:
-        clean_inbound = strip_quoted_text(decode_html_entities(cand["inbound_text"]))
+        display_inbound = decode_html_entities(cand["inbound_text"])
+        clean_inbound = strip_quoted_text(display_inbound)
         sender_profile = _lookup_sender_profile_safe(db_path, cand["inbound_author"]) if cand["inbound_author"] else None
-        enriched.append({**cand, "_clean_inbound": clean_inbound, "_sender_profile": sender_profile})
+        enriched.append({**cand, "_display_inbound": display_inbound, "_clean_inbound": clean_inbound, "_sender_profile": sender_profile})
 
     def _generate() -> Any:
         # 1. Send metadata
@@ -530,7 +534,7 @@ def review_queue_next_stream(
                 "type": "item_preview",
                 "index": i,
                 "reply_pair_id": cand["reply_pair_id"],
-                "inbound_text": cand["_clean_inbound"],
+                "inbound_text": cand["_display_inbound"],
                 "inbound_author": cand["inbound_author"],
                 "subject": cand["subject"],
                 "sender_profile": cand["_sender_profile"],

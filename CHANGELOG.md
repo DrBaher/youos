@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.6 — 2026-03-17
+
+### Review Queue Throughput
+- **Bulk submit ready** — one-click submit of all ready, non-low-signal drafts in the current batch (default rating 4)
+- **Skip low-signal** — one-click skip of low-signal queue items to keep review flow focused
+- **Expanded keyboard shortcuts** — added `b` (bulk submit), `n` (bulk skip), and `?` (shortcut help overlay), alongside existing `j/k/e/1-5`
+- **Docs/UI sync** — README, About page, and landing page copy updated to reflect new Review Queue workflow
+
 ## v0.1.5 — 2026-03-17
 
 ### Smarter Drafting

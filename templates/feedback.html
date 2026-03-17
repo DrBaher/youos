@@ -58,6 +58,18 @@ body {
 @media (max-width: 768px) { .panels { grid-template-columns: 1fr; } }
 .panel { display: flex; flex-direction: column; }
 .panel label { font-size: 0.85rem; color: #aaa; margin-bottom: 0.4rem; font-weight: 600; }
+.mode-tabs { display:flex; gap:0.4rem; background:#12172a; border:1px solid #2a3a4a; border-radius:8px; padding:0.2rem; }
+.mode-tabs .mode-btn { border:0; background:transparent; color:#9aa3b2; padding:0.35rem 0.8rem; border-radius:6px; font-size:0.8rem; font-weight:700; cursor:pointer; }
+.mode-tabs .mode-btn.active { background:#00c4a7; color:#0d1b2a; }
+.draft-sender-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;
+  align-items: start; margin-bottom: 0.7rem;
+}
+@media (max-width: 768px) { .draft-sender-row { grid-template-columns: 1fr; } }
+.sender-input-main { flex: 1; }
+.sender-card-wrap { min-height: 44px; }
+.sender-card-wrap .sender-card { margin-top: 0; }
+.sender-card-wrap .sender-card.visible { max-height: 240px; }
 textarea {
   width: 100%; min-height: 220px; padding: 0.75rem;
   background: #16213e; border: 1px solid #333; border-radius: 6px;
@@ -191,7 +203,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .rq-subject { font-size: 0.8rem; color: #999; margin-bottom: 0.5rem; }
 .rq-date { font-size: 0.75rem; color: #666; margin-bottom: 0.4rem; }
 .rq-inbound-text {
-  flex: 1; max-height: 350px; overflow-y: auto; font-size: 0.85rem; line-height: 1.5;
+  flex: 1; max-height: none; overflow-y: visible; font-size: 0.85rem; line-height: 1.5;
   color: #ccc; white-space: pre-wrap; word-break: break-word;
 }
 .rq-draft textarea {
@@ -260,7 +272,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       <span class="oc-wordmark" id="appName">YouOS</span>
     </div>
     <nav class="oc-nav">
-      <a href="/feedback" class="oc-nav-link active">Draft</a>
+      <a href="/feedback" class="oc-nav-link active">Draft Email</a>
       <a href="/stats" class="oc-nav-link">Stats</a>
       <a href="/bookmarklet" class="oc-nav-link">Bookmarklet</a>
       <a href="/about" class="oc-nav-link">About</a>
@@ -281,7 +293,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
   <div id="mainContent" style="display:none;">
   <div class="tabs">
-    <div class="tab active" data-tab="draft-reply">Draft Reply</div>
+    <div class="tab active" data-tab="draft-reply">Draft Email</div>
     <div class="tab" data-tab="review-queue">Review Queue <span class="oc-tip" data-tip="Pre-loaded emails from your corpus. Edit drafts and submit to train your model.">?</span></div>
     <div class="tab" data-tab="history">History</div>
     <div class="tab" data-tab="facts">Facts <span class="oc-tip" data-tip="Store facts about contacts, projects, and your preferences to inject into drafts automatically.">?</span></div>
@@ -295,22 +307,33 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
   <!-- Tab 1: Draft Reply -->
   <div class="tab-content active" id="tab-draft-reply">
-    <div class="panels">
-      <div class="panel">
-        <label for="inbound">Inbound email (or paste a full thread)</label>
-        <textarea id="inbound" placeholder="Paste the inbound email here..."></textarea>
-        <div style="font-size:0.78rem;color:#777;margin-top:0.3rem;">Tip: paste the full email thread &mdash; YouOS focuses on the latest message and uses prior context automatically.</div>
-        <div style="margin-top: 0.5rem; display: flex; gap: 0.75rem; align-items: center;">
-          <div style="flex: 1;">
-            <label for="sender" style="font-size: 0.85rem; color: #aaa; font-weight: 600;">Sender email <span class="oc-tip" data-tip="Helps YouOS find replies you sent to this person before and tailor the draft.">?</span></label>
-            <input type="text" id="sender" placeholder="e.g. john@crelio.com" style="width:100%;padding:0.4rem 0.6rem;background:#16213e;border:1px solid #333;border-radius:6px;color:#e0e0e0;font-size:0.85rem;margin-top:0.2rem;">
+    <div class="draft-sender-row">
+      <div class="sender-input-main">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;">
+          <label for="sender" style="font-size: 0.85rem; color: #aaa; font-weight: 600;">Sender email <span class="oc-tip" data-tip="Helps YouOS find replies you sent to this person before and tailor the draft.">?</span></label>
+          <div id="draftModeToggle" class="mode-tabs" role="tablist" aria-label="Draft mode">
+            <button type="button" class="mode-btn active" data-mode="compose" role="tab" aria-selected="true">New email</button>
+            <button type="button" class="mode-btn" data-mode="reply" role="tab" aria-selected="false">Reply</button>
           </div>
-          <span id="senderBadge" style="font-size:0.75rem;padding:0.2rem 0.6rem;border-radius:4px;background:#333;color:#aaa;white-space:nowrap;margin-top:1.2rem;display:none;"></span>
         </div>
+        <div style="display:flex;gap:0.75rem;align-items:center;">
+          <input type="text" id="sender" placeholder="e.g. john@crelio.com" style="width:100%;padding:0.4rem 0.6rem;background:#16213e;border:1px solid #333;border-radius:6px;color:#e0e0e0;font-size:0.85rem;margin-top:0.2rem;">
+          <span id="senderBadge" style="font-size:0.75rem;padding:0.2rem 0.6rem;border-radius:4px;background:#333;color:#aaa;white-space:nowrap;margin-top:0.2rem;display:none;"></span>
+        </div>
+      </div>
+      <div class="sender-card-wrap">
         <div class="sender-card" id="senderCard"></div>
       </div>
+    </div>
+
+    <div class="panels">
       <div class="panel">
-        <label for="draft">Generated draft (editable)</label>
+        <label for="inbound" id="inboundLabel">Inbound email (or paste a full thread)</label>
+        <textarea id="inbound" placeholder="Paste the inbound email here..."></textarea>
+        <div style="font-size:0.78rem;color:#777;margin-top:0.3rem;" id="inboundHint">Tip: paste the full email thread &mdash; YouOS focuses on the latest message and uses prior context automatically.</div>
+      </div>
+      <div class="panel">
+        <label for="draft">Draft Email</label>
         <textarea id="draft" placeholder="Click 'Generate Draft' to produce a draft..." readonly></textarea>
         <div id="suggestedSubject" class="suggested-subject" style="display:none;" title="Click to copy"></div>
         <div class="tone-row">
@@ -412,12 +435,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
           </div>
           <button class="btn-tone" id="rqPrev" disabled title="Go back to previous item">&#8592; Previous</button>
           <button class="btn-skip" id="rqSkip">Skip</button>
-          <button class="btn-tone" id="rqBulkSkip" title="Skip low-signal items in remaining batch">Skip low-signal</button>
-          <button class="btn-tone" id="rqBulkSubmit" title="Submit remaining ready drafts in bulk">Bulk submit ready</button>
-          <button class="btn-tone" id="rqCompare">Compare</button>
           <button class="btn-submit" id="rqSubmitNext">Submit & Next</button>
         </div>
-        <div class="rq-keyhints" id="rqKeyHints"><kbd>j</kbd> submit &middot; <kbd>k</kbd> skip &middot; <kbd>b</kbd> bulk submit &middot; <kbd>n</kbd> skip low-signal &middot; <kbd>e</kbd> edit &middot; <kbd>1</kbd>-<kbd>5</kbd> rate &middot; <kbd>?</kbd> help</div>
+        <div class="rq-keyhints" id="rqKeyHints"><kbd>j</kbd> submit &middot; <kbd>k</kbd> skip &middot; <kbd>e</kbd> edit &middot; <kbd>1</kbd>-<kbd>5</kbd> rate &middot; <kbd>?</kbd> help</div>
       </div>
     </div>
 
@@ -454,26 +474,23 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     <!-- Add fact form -->
     <div class="facts-add-form" id="factsAddForm" style="display:none;">
       <div class="facts-form-row">
-        <div class="facts-form-field">
-          <label>Type</label>
-          <select id="factsType">
-            <option value="contact">Contact</option>
-            <option value="project">Project</option>
-            <option value="user_pref">My Preference</option>
-          </select>
-        </div>
-        <div class="facts-form-field" style="flex:2;">
-          <label id="factsKeyLabel">Key (email address)</label>
+        <div class="facts-form-field" style="flex:2;" id="factsKeyWrap">
+          <label id="factsKeyLabel">Contact email</label>
           <input type="text" id="factsKey" placeholder="e.g. john@acme.com">
         </div>
+        <div class="facts-form-field" id="factsPrefSelectWrap" style="display:none;flex:2;">
+          <label>Preference template</label>
+          <select id="factsPrefSelect"></select>
+        </div>
         <div class="facts-form-field" style="flex:3;">
-          <label>Fact</label>
+          <label id="factsFactLabel">Value</label>
           <input type="text" id="factsFact" placeholder="e.g. Prefers Tuesday meetings">
         </div>
-        <div class="facts-form-field">
-          <label>Tags (comma-separated)</label>
-          <input type="text" id="factsTags" placeholder="e.g. project, acme">
+        <div class="facts-form-field" id="factsCustomPrefWrap" style="display:none;flex:2;">
+          <label>Custom preference name</label>
+          <input type="text" id="factsCustomPref" placeholder="e.g. opening_line_style">
         </div>
+
       </div>
       <div style="display:flex;gap:0.75rem;margin-top:0.5rem;">
         <button class="btn-submit" id="factsSaveBtn">Save</button>
@@ -667,11 +684,41 @@ function showFactsToast(facts) {
   const btnSub = document.getElementById('btnSubmit');
   const senderInput = document.getElementById('sender');
   const senderBadge = document.getElementById('senderBadge');
+  const inboundLabel = document.getElementById('inboundLabel');
+  const inboundHint = document.getElementById('inboundHint');
+  const modeButtons = document.querySelectorAll('#draftModeToggle .mode-btn');
   const stars = document.querySelectorAll('#tab-draft-reply .star');
   let selectedRating = null;
   let generatedDraft = '';
+  let draftMode = 'compose';
 
   const personalDomains = new Set(['gmail.com','yahoo.com','hotmail.com','icloud.com','me.com','outlook.com','live.com','aol.com','protonmail.com','proton.me']);
+
+  function applyDraftModeUI() {
+    const isCompose = draftMode === 'compose';
+    inboundLabel.textContent = isCompose ? 'Email prompt (what should this email achieve?)' : 'Inbound email (or paste a full thread)';
+    inbound.placeholder = isCompose
+      ? 'Example: Write a concise follow-up email to the investor after our Monday call. Thank them, share next steps, and propose 2 meeting slots next week.'
+      : 'Paste the inbound email here...';
+    inboundHint.textContent = isCompose
+      ? 'Tip: describe audience, goal, tone, and key points. YouOS will draft a brand-new outbound email.'
+      : 'Tip: paste the full email thread — YouOS focuses on the latest message and uses prior context automatically.';
+    btnGen.textContent = isCompose ? 'Generate Email' : 'Generate Reply';
+    modeButtons.forEach(btn => {
+      const active = btn.dataset.mode === draftMode;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+  }
+
+  modeButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      draftMode = btn.dataset.mode || 'reply';
+      applyDraftModeUI();
+    });
+  });
+
+  applyDraftModeUI();
   const automatedPrefixes = ['no-reply','noreply','donotreply','do-not-reply','invoice','billing','mailer','notifications'];
   const badgeColors = {internal:'#2ecc71',external_client:'#00c4a7',personal:'#ff8c42',automated:'#555',unknown:'#666'};
 
@@ -741,6 +788,14 @@ function showFactsToast(facts) {
 
   senderInput.addEventListener('input', () => {
     const val = senderInput.value.trim();
+
+    // Keep Facts(contact) key in sync when user hasn't manually edited it
+    if (val) {
+      maybePrefillFactsContactKey();
+    } else if (getFactsFormType() === 'contact' && !factsKeyTouched) {
+      factsKeyInput.value = '';
+    }
+
     if (!val) {
       senderBadge.style.display = 'none';
       senderCard.classList.remove('visible');
@@ -787,7 +842,7 @@ function showFactsToast(facts) {
     if (!text) return;
     toneButtons.forEach(b => b.disabled = true);
     try {
-      const payload = {inbound_text: text, tone_hint: toneHint};
+      const payload = {inbound_text: text, tone_hint: toneHint, mode: draftMode};
       const sv = senderInput.value.trim();
       if (sv) payload.sender = sv;
       const res = await fetch('/feedback/generate', {
@@ -904,7 +959,7 @@ function showFactsToast(facts) {
         } catch(e) { /* ignore */ }
 
         btnGen.disabled = false;
-        btnGen.textContent = 'Generate Draft';
+        btnGen.textContent = draftMode === 'compose' ? 'Generate Email' : 'Generate Reply';
         return;
       }
     } catch (e) {
@@ -913,7 +968,7 @@ function showFactsToast(facts) {
 
     // Fallback: non-streaming
     try {
-      const genPayload = {inbound_text: text};
+      const genPayload = {inbound_text: text, mode: draftMode};
       const senderVal = senderInput.value.trim();
       if (senderVal) genPayload.sender = senderVal;
       const res = await fetch('/feedback/generate', {
@@ -949,7 +1004,7 @@ function showFactsToast(facts) {
       showInfo('Error: ' + e.message);
     } finally {
       btnGen.disabled = false;
-      btnGen.textContent = 'Generate Draft';
+      btnGen.textContent = draftMode === 'compose' ? 'Generate Email' : 'Generate Reply';
     }
   });
 
@@ -1400,90 +1455,6 @@ function showFactsToast(facts) {
     }
   });
 
-  // Bulk skip low-signal items
-  document.getElementById('rqBulkSkip').addEventListener('click', () => {
-    let skipped = 0;
-    for (let i = rqIndex; i < rqItems.length; i++) {
-      const item = rqItems[i];
-      if (!item) continue;
-      if (rqSkippedIds.includes(item.reply_pair_id)) continue;
-      if (rqIsLowSignalCandidate(item)) {
-        rqSkippedIds.push(item.reply_pair_id);
-        skipped++;
-      }
-    }
-    if (skipped > 0) {
-      rqShowItem();
-      alert('Skipped ' + skipped + ' low-signal item(s).');
-    } else {
-      alert('No low-signal items found in remaining batch.');
-    }
-  });
-
-  // Bulk submit remaining ready drafts (excluding low-signal)
-  document.getElementById('rqBulkSubmit').addEventListener('click', async () => {
-    const btn = document.getElementById('rqBulkSubmit');
-    btn.disabled = true;
-
-    const candidates = [];
-    for (let i = rqIndex; i < rqItems.length; i++) {
-      const item = rqItems[i];
-      if (!item) continue;
-      if (rqSkippedIds.includes(item.reply_pair_id)) continue;
-      if (!item.generated_draft || item.generated_draft === '⏳ Generating draft...') continue;
-      if (rqIsLowSignalCandidate(item)) continue;
-      candidates.push({ item, index: i });
-    }
-
-    if (candidates.length === 0) {
-      btn.disabled = false;
-      alert('No ready non-low-signal drafts to bulk submit.');
-      return;
-    }
-
-    if (!confirm('Bulk submit ' + candidates.length + ' draft(s) with default rating 4?')) {
-      btn.disabled = false;
-      return;
-    }
-
-    let ok = 0;
-    for (const c of candidates) {
-      try {
-        await rqSubmitItem(c.item, c.item.generated_draft, 'bulk_accept', 4);
-        rqApplySubmitAdvance();
-        ok++;
-      } catch (e) {
-        // continue
-      }
-    }
-
-    btn.disabled = false;
-    rqShowItem();
-    alert('Bulk submitted ' + ok + ' / ' + candidates.length + ' drafts.');
-  });
-
-  // Compare button
-  document.getElementById('rqCompare').addEventListener('click', async () => {
-    const item = rqItems[rqIndex];
-    if (!item) return;
-    const btn = document.getElementById('rqCompare');
-    btn.disabled = true;
-    btn.innerHTML = 'Comparing<span class="spinner"></span>';
-    try {
-      const res = await fetch('/draft/compare', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({inbound_text: item.inbound_text, sender: item.inbound_author})
-      });
-      if (!res.ok) throw new Error('Server error: ' + res.status);
-      const data = await res.json();
-      const ta = document.getElementById('rqDraftTextarea');
-      ta.value = '=== RETRIEVAL DRAFT (confidence: ' + data.retrieval_confidence +
-        ', ' + data.exemplar_count + ' exemplars) ===\n' + data.retrieval_draft +
-        '\n\n=== BASELINE DRAFT (no exemplars) ===\n' + data.baseline_draft;
-    } catch (e) { alert('Compare error: ' + e.message); }
-    finally { btn.disabled = false; btn.textContent = 'Compare'; }
-  });
 
   // Load next batch button
   document.getElementById('rqLoadNext').addEventListener('click', () => {
@@ -1518,7 +1489,7 @@ function showFactsToast(facts) {
       { emoji: '🔒', title: 'Privacy by design', body: 'Your emails never leave your Mac. Everything runs locally: the database, the model, the training. No cloud subscriptions. No data sent to third parties.' },
       { emoji: '🧠', title: 'It learns from you', body: 'YouOS ingests your Gmail history and builds a retrieval index of your real past replies. Every draft is grounded in how you\'ve actually responded to similar emails before.' },
       { emoji: '🔄', title: 'Autoresearch: it improves overnight', body: 'Inspired by Andrej Karpathy\'s autoresearch, YouOS runs 80 optimisation experiments every night — testing retrieval weights, prompt variants, and model configs. It keeps what works, discards what doesn\'t. You wake up to a better system.' },
-      { emoji: '📝', title: 'Draft Reply tab', body: 'Paste an inbound email. Add the sender for contact context. Click Generate Draft — YouOS retrieves similar past replies and generates a draft grounded in your real writing.' },
+      { emoji: '📝', title: 'Draft Email tab', body: 'Default mode is New email: provide a prompt and generate a fresh outbound draft. Switch to Reply mode when you want YouOS to respond to an inbound thread using precedent retrieval.' },
       { emoji: '🚀', title: 'Start with the Review Queue', body: 'Review 10 pre-loaded emails from your corpus. Each submission trains your local model. After 10 pairs, the fine-tune runs tonight and your model starts drafting in your exact style.' },
     ];
     let step = 0;
@@ -1680,14 +1651,6 @@ function showFactsToast(facts) {
         e.preventDefault();
         document.getElementById('rqDraftTextarea').focus();
         break;
-      case 'b':
-        e.preventDefault();
-        document.getElementById('rqBulkSubmit').click();
-        break;
-      case 'n':
-        e.preventDefault();
-        document.getElementById('rqBulkSkip').click();
-        break;
       case 'r':
         e.preventDefault();
         // Re-generate: call generate for current item
@@ -1728,8 +1691,35 @@ function showFactsToast(facts) {
   let factsLoaded = false;
 
   const TYPE_LABELS = {contact: 'Contact', project: 'Project', user_pref: 'Preference'};
-  const KEY_PLACEHOLDERS = {contact: 'e.g. john@acme.com', project: 'e.g. project_alpha', user_pref: 'e.g. sign_off'};
-  const KEY_LABELS = {contact: 'Key (email address)', project: 'Key (project name)', user_pref: 'Key (preference name)'};
+  const FORM_CONFIG = {
+    contact: {
+      keyLabel: 'Contact email',
+      keyPlaceholder: 'e.g. john@acme.com',
+      factLabel: 'Contact fact',
+      factPlaceholder: 'e.g. Prefers Tuesday meetings'
+    },
+    project: {
+      keyLabel: 'Project name',
+      keyPlaceholder: 'e.g. project_alpha',
+      factLabel: 'Project fact',
+      factPlaceholder: 'e.g. Deadline moved to April 12'
+    },
+    user_pref: {
+      keyLabel: 'Preference key',
+      keyPlaceholder: 'e.g. sign_off',
+      factLabel: 'Preference value',
+      factPlaceholder: 'e.g. Use "Best," for formal emails'
+    }
+  };
+
+  const COMMON_PREFERENCES = [
+    'sign_off','greeting_style','tone_default','reply_length','bullet_point_style','subject_line_style',
+    'formality_level','emoji_usage','response_speed_style','meeting_scheduling_style','timezone_reference',
+    'follow_up_style','cta_style','opening_line_style','closing_line_style','language_preference',
+    'personal_vs_work_tone','cc_preference','attachment_mention_style','deadline_wording','negotiation_style',
+    'apology_style','gratitude_style','escalation_style','internal_vs_external_tone','question_density',
+    'directness_level','humor_level','signature_block','calendar_link_preference'
+  ];
 
   async function loadFacts() {
     if (!document.getElementById('tab-facts').classList.contains('active')) return;
@@ -1810,6 +1800,7 @@ function showFactsToast(facts) {
       document.querySelectorAll('.facts-filter-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       factsFilter = btn.dataset.mtype;
+      applyFactsFormType();
       loadFacts();
     });
   });
@@ -1817,14 +1808,86 @@ function showFactsToast(facts) {
   // Add fact form toggle
   const factsAddBtn = document.getElementById('factsAddBtn');
   const factsAddForm = document.getElementById('factsAddForm');
-  const factsTypeSelect = document.getElementById('factsType');
+  const factsKeyWrap = document.getElementById('factsKeyWrap');
   const factsKeyInput = document.getElementById('factsKey');
+  let factsKeyTouched = false;
   const factsKeyLabel = document.getElementById('factsKeyLabel');
+  const factsFactInput = document.getElementById('factsFact');
+  const factsFactLabel = document.getElementById('factsFactLabel');
+  const factsPrefSelectWrap = document.getElementById('factsPrefSelectWrap');
+  const factsPrefSelect = document.getElementById('factsPrefSelect');
+  const factsCustomPrefWrap = document.getElementById('factsCustomPrefWrap');
+  const factsCustomPrefInput = document.getElementById('factsCustomPref');
+
+  function initPreferenceSelect() {
+    factsPrefSelect.innerHTML = '<option value="">Select a common preference…</option>' +
+      COMMON_PREFERENCES.map(p => `<option value="${p}">${p}</option>`).join('') +
+      '<option value="__custom__">+ Custom preference…</option>';
+  }
+
+  function getFactsFormType() {
+    return factsFilter === 'all' ? 'contact' : factsFilter;
+  }
+
+  function extractSenderEmail() {
+    const v = (senderInput?.value || '').trim();
+    const m = v.match(/[\w.+-]+@[\w.-]+\.\w+/);
+    return m ? m[0].toLowerCase() : '';
+  }
+
+  function maybePrefillFactsContactKey(force = false) {
+    if (getFactsFormType() !== 'contact') return;
+    if (!force && (factsKeyTouched || factsKeyInput.value.trim())) return;
+    const senderEmail = extractSenderEmail();
+    if (senderEmail) factsKeyInput.value = senderEmail;
+  }
+
+  function applyFactsFormType() {
+    const t = getFactsFormType();
+    const cfg = FORM_CONFIG[t] || FORM_CONFIG.contact;
+    factsKeyLabel.textContent = cfg.keyLabel;
+    factsKeyInput.placeholder = cfg.keyPlaceholder;
+    factsFactLabel.textContent = cfg.factLabel;
+    factsFactInput.placeholder = cfg.factPlaceholder;
+    if (t !== 'contact') factsKeyTouched = false;
+
+    const prefMode = t === 'user_pref';
+    factsPrefSelectWrap.style.display = prefMode ? 'flex' : 'none';
+    factsCustomPrefWrap.style.display = 'none';
+    factsKeyWrap.style.display = prefMode ? 'none' : 'flex';
+
+    if (!prefMode) {
+      factsPrefSelect.value = '';
+      factsCustomPrefInput.value = '';
+      maybePrefillFactsContactKey();
+    }
+  }
+
+  factsPrefSelect.addEventListener('change', () => {
+    if (factsPrefSelect.value === '__custom__') {
+      factsCustomPrefWrap.style.display = 'flex';
+      factsKeyWrap.style.display = 'flex';
+      factsCustomPrefInput.focus();
+    } else {
+      factsCustomPrefWrap.style.display = 'none';
+      factsCustomPrefInput.value = '';
+      if (getFactsFormType() === 'user_pref') factsKeyWrap.style.display = 'none';
+    }
+  });
+
+  initPreferenceSelect();
+  applyFactsFormType();
+
+  factsKeyInput.addEventListener('input', () => {
+    factsKeyTouched = !!factsKeyInput.value.trim();
+  });
 
   factsAddBtn.addEventListener('click', () => {
     factsAddForm.style.display = factsAddForm.style.display === 'none' ? 'block' : 'none';
     if (factsAddForm.style.display === 'block') {
       factsAddBtn.textContent = '✕ Cancel';
+      applyFactsFormType();
+      maybePrefillFactsContactKey(true);
       factsKeyInput.focus();
     } else {
       factsAddBtn.textContent = '+ Add Fact';
@@ -1834,6 +1897,7 @@ function showFactsToast(facts) {
   document.getElementById('factsCancelBtn').addEventListener('click', () => {
     factsAddForm.style.display = 'none';
     factsAddBtn.textContent = '+ Add Fact';
+    factsKeyTouched = false;
   });
 
   // E6: Scan Corpus button
@@ -1857,22 +1921,24 @@ function showFactsToast(facts) {
     });
   }
 
-  factsTypeSelect.addEventListener('change', () => {
-    const t = factsTypeSelect.value;
-    factsKeyLabel.textContent = KEY_LABELS[t] || 'Key';
-    factsKeyInput.placeholder = KEY_PLACEHOLDERS[t] || '';
-  });
 
   document.getElementById('factsSaveBtn').addEventListener('click', async () => {
     const msgEl = document.getElementById('factsFormMsg');
-    const type = factsTypeSelect.value.trim();
-    const key = factsKeyInput.value.trim();
-    const fact = document.getElementById('factsFact').value.trim();
-    const tagsRaw = document.getElementById('factsTags').value.trim();
-    const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [];
+    const type = getFactsFormType();
+    let key = factsKeyInput.value.trim();
+    const fact = factsFactInput.value.trim();
+    const tags = [];
+
+    if (type === 'user_pref') {
+      if (factsPrefSelect.value === '__custom__') {
+        key = factsCustomPrefInput.value.trim();
+      } else {
+        key = factsPrefSelect.value.trim();
+      }
+    }
 
     if (!key || !fact) {
-      msgEl.textContent = 'Key and Fact are required.';
+      msgEl.textContent = `Key and Fact are required for ${TYPE_LABELS[type].toLowerCase()} facts.`;
       msgEl.className = 'info visible warning';
       return;
     }
@@ -1888,8 +1954,11 @@ function showFactsToast(facts) {
         msgEl.textContent = 'Saved.';
         msgEl.className = 'info visible success';
         factsKeyInput.value = '';
-        document.getElementById('factsFact').value = '';
-        document.getElementById('factsTags').value = '';
+        factsFactInput.value = '';
+        factsPrefSelect.value = '';
+        factsCustomPrefInput.value = '';
+        factsKeyTouched = false;
+        applyFactsFormType();
         setTimeout(() => { msgEl.className = 'info'; }, 2000);
         loadFacts();
       } else {

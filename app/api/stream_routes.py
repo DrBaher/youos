@@ -31,6 +31,7 @@ class StreamBody(BaseModel):
     inbound_text: str = Field(min_length=1)
     tone_hint: Literal["shorter", "more_formal", "more_detail"] | None = None
     sender: str | None = None
+    mode: Literal["reply", "compose"] | None = "reply"
 
 
 def _stream_generate(body: StreamBody, settings):
@@ -103,6 +104,7 @@ def _stream_generate(body: StreamBody, settings):
                     inbound_message=body.inbound_text,
                     tone_hint=body.tone_hint,
                     sender=body.sender,
+                    mode=body.mode,
                 ),
                 database_url=settings.database_url,
                 configs_dir=settings.configs_dir,
