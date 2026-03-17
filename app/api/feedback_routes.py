@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Literal
@@ -13,6 +14,8 @@ from app.core.facts_extractor import extract_and_save
 from app.core.rate_limit import RATE_LIMIT_RESPONSE, draft_limiter
 from app.db.bootstrap import resolve_sqlite_path
 from app.generation.service import DraftRequest, generate_draft
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
 
@@ -75,15 +78,23 @@ def feedback_generate(body: GenerateBody, request: Request) -> dict:
 
         return JSONResponse(status_code=429, content=RATE_LIMIT_RESPONSE)
     settings = request.app.state.settings
-    response = generate_draft(
-        DraftRequest(
-            inbound_message=body.inbound_text,
-            tone_hint=body.tone_hint,
-            sender=body.sender,
-        ),
-        database_url=settings.database_url,
-        configs_dir=settings.configs_dir,
-    )
+    try:
+        response = generate_draft(
+            DraftRequest(
+                inbound_message=body.inbound_text,
+                tone_hint=body.tone_hint,
+                sender=body.sender,
+            ),
+            database_url=settings.database_url,
+            configs_dir=settings.configs_dir,
+        )
+    except Exception:
+        logger.exception("Draft generation failed for sender=%r", body.sender)
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Draft generation failed", "detail": "An internal error occurred. Please try again."},
+        )
 
     # Save to draft_history
     try:
@@ -100,12 +111,13 @@ def feedback_generate(body: GenerateBody, request: Request) -> dict:
         finally:
             conn.close()
     except Exception:
-        pass  # Don't fail the request if history save fails
+        logger.warning("Failed to save draft history for sender=%r", body.sender, exc_info=True)
 
     return {
         "draft": response.draft,
         "precedent_used": response.precedent_used,
         "confidence": response.confidence,
+        "confidence_reason": response.confidence_reason,
         "confidence_warning": response.confidence == "low",
         "suggested_subject": response.suggested_subject,
     }
@@ -157,7 +169,7 @@ def feedback_submit(body: SubmitBody, request: Request) -> dict:
                 conn.execute("UPDATE reply_pairs SET quality_score = ? WHERE id = ?", (round(quality_score, 4), rp_id))
                 conn.commit()
         except Exception:
-            pass  # Don't fail if quality_score column doesn't exist yet
+            logger.warning("Failed to update quality_score for reply pair", exc_info=True)
 
         total = conn.execute("SELECT COUNT(*) FROM feedback_pairs").fetchone()[0]
     finally:
@@ -169,7 +181,7 @@ def feedback_submit(body: SubmitBody, request: Request) -> dict:
         try:
             extracted_facts = extract_and_save(body.feedback_note, db_path, sender_email=body.sender)
         except Exception:
-            pass
+            logger.warning("Facts extraction failed for feedback note", exc_info=True)
 
     return {
         "status": "saved",

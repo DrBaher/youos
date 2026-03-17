@@ -29,11 +29,13 @@ def classify_intent(text: str) -> str:
     if not text:
         return "general"
 
-    scores: dict[str, int] = {}
+    scores: dict[str, float] = {}
     for intent, pattern in _INTENT_PATTERNS.items():
         matches = pattern.findall(text)
         if matches:
-            scores[intent] = len(matches)
+            kw_count = len(INTENTS[intent])
+            # R3: Normalize by keyword count to avoid bias toward intents with many keywords
+            scores[intent] = len(matches) / max(kw_count, 1)
 
     if not scores:
         return "general"
@@ -42,18 +44,20 @@ def classify_intent(text: str) -> str:
 
 
 def classify_intents_multi(text: str, *, max_intents: int = 3) -> list[str]:
-    """Return ALL intents with >= 1 keyword match, sorted by score DESC, max 3.
+    """Return ALL intents with >= 1 keyword match, sorted by normalized score DESC, max 3.
 
+    Scores are normalized by keyword count per category (R3).
     Returns ['general'] if none match.
     """
     if not text:
         return ["general"]
 
-    scores: dict[str, int] = {}
+    scores: dict[str, float] = {}
     for intent, pattern in _INTENT_PATTERNS.items():
         matches = pattern.findall(text)
         if matches:
-            scores[intent] = len(matches)
+            kw_count = len(INTENTS[intent])
+            scores[intent] = len(matches) / max(kw_count, 1)
 
     if not scores:
         return ["general"]

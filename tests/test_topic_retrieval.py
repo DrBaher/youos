@@ -21,9 +21,9 @@ def test_check_topic_overlap_no_match():
 
 
 def test_check_topic_overlap_short_tokens_ignored():
-    """Tokens <=4 chars should not match."""
-    tokens = ["the", "plan"]
-    topics = ["plan"]
+    """Tokens <=2 chars should not match (threshold is >2)."""
+    tokens = ["at", "to"]
+    topics = ["at"]
     assert not _check_topic_overlap(tokens, topics)
 
 

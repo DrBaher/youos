@@ -193,10 +193,12 @@ def _format_thread_context(active_inbound: str, history: list[dict[str, str]]) -
     return "\n".join(parts)
 
 
-def _lookup_prior_reply_to_sender(sender: str, database_url: str) -> str | None:
+def _lookup_prior_reply_to_sender(sender: str, database_url: str, conn: sqlite3.Connection | None = None) -> str | None:
     """Find the most recent prior reply the user sent to this exact sender."""
-    db_path = resolve_sqlite_path(database_url)
-    conn = sqlite3.connect(db_path)
+    _own_conn = conn is None
+    if _own_conn:
+        db_path = resolve_sqlite_path(database_url)
+        conn = sqlite3.connect(db_path)
     try:
         row = conn.execute(
             """
@@ -207,12 +209,14 @@ def _lookup_prior_reply_to_sender(sender: str, database_url: str) -> str | None:
             (f"%{sender}%",),
         ).fetchone()
         if row and row[0]:
-            return row[0][:200]
+            return row[0][:PRIOR_REPLY_CHARS]
         return None
     except Exception:
+        logger.warning("Failed to look up prior reply for sender %s", sender, exc_info=True)
         return None
     finally:
-        conn.close()
+        if _own_conn:
+            conn.close()
 
 
 def _confidence_label(score: float) -> str:
@@ -241,25 +245,46 @@ def _deduplicate_by_thread(reply_pairs: list[RetrievalMatch]) -> list[RetrievalM
     return result
 
 
-def _format_exemplars(reply_pairs: list[RetrievalMatch], *, max_exemplars: int = 5) -> str:
+def _format_exemplars(
+    reply_pairs: list[RetrievalMatch],
+    *,
+    max_exemplars: int = 5,
+    score_stats: dict[str, float] | None = None,
+) -> str:
     if not reply_pairs:
         return "(no exemplars found)"
     # Deduplicate by thread_id
     reply_pairs = _deduplicate_by_thread(reply_pairs)
     # Sort by score descending
     sorted_pairs = sorted(reply_pairs, key=lambda rp: rp.score, reverse=True)
-    # Drop exemplars with score < 0.2
-    sorted_pairs = [rp for rp in sorted_pairs if rp.score >= 0.2]
+    # Drop exemplars with score below MIN_SCORE_FILTER
+    from app.retrieval.service import MIN_SCORE_FILTER
+    sorted_pairs = [rp for rp in sorted_pairs if rp.score >= MIN_SCORE_FILTER]
     if not sorted_pairs:
         return "(no exemplars found)"
 
+    # D1: Use relative thresholds (mean±σ) when stats available
+    if score_stats and score_stats.get("mean") is not None and score_stats.get("stddev") is not None:
+        mean = score_stats["mean"]
+        stddev = score_stats["stddev"]
+        def _relative_conf(score: float) -> str:
+            if score > mean + stddev:
+                return "high"
+            if score > mean:
+                return "medium"
+            return "low"
+        conf_fn = _relative_conf
+    else:
+        def _abs_conf(score: float) -> str:
+            norm = min(score / 10.0, 1.0) if score > 0 else 0.0
+            return _confidence_label(norm)
+        conf_fn = _abs_conf
+
     parts: list[str] = ["The following are examples of how you have replied to similar emails:"]
     for i, rp in enumerate(sorted_pairs[:max_exemplars], 1):
-        inbound = (rp.inbound_text or "")[:400]
-        reply = strip_signature(rp.reply_text or "")[:600]
-        # Normalize score to 0-1 range for confidence label (scores are typically 0-10+)
-        norm_score = min(rp.score / 10.0, 1.0) if rp.score > 0 else 0
-        conf = _confidence_label(norm_score)
+        inbound = (rp.inbound_text or "")[:EXEMPLAR_INBOUND_CHARS]
+        reply = strip_signature(rp.reply_text or "")[:EXEMPLAR_REPLY_CHARS]
+        conf = conf_fn(rp.score)
         parts.append(f"[EXAMPLE {i} — confidence: {conf}]\nInbound: {inbound}\nYour reply: {reply}\n---")
     return "\n\n".join(parts)
 
@@ -300,6 +325,7 @@ def lookup_facts(
     sender: str | None,
     inbound_text: str,
     database_url: str,
+    conn: sqlite3.Connection | None = None,
 ) -> list[dict[str, Any]]:
     """Query memory table for facts relevant to this draft.
 
@@ -308,9 +334,11 @@ def lookup_facts(
     - contact: facts about the sender (matched by email)
     - project: facts matched by key/tag appearing in the inbound text
     """
-    db_path = resolve_sqlite_path(database_url)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    _own_conn = conn is None
+    if _own_conn:
+        db_path = resolve_sqlite_path(database_url)
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
     facts: list[dict[str, Any]] = []
     try:
         # 1. User preferences — always include
@@ -342,9 +370,10 @@ def lookup_facts(
                     facts.append({"type": row["type"], "key": row["key"], "fact": row["fact"]})
 
     except Exception:
-        pass
+        logger.exception("lookup_facts failed for sender %r", sender)
     finally:
-        conn.close()
+        if _own_conn:
+            conn.close()
     return facts
 
 
@@ -366,11 +395,13 @@ def _format_facts_context(facts: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def lookup_sender_profile(email: str, database_url: str) -> dict[str, Any] | None:
+def lookup_sender_profile(email: str, database_url: str, conn: sqlite3.Connection | None = None) -> dict[str, Any] | None:
     """Look up a sender profile from the database."""
-    db_path = resolve_sqlite_path(database_url)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+    _own_conn = conn is None
+    if _own_conn:
+        db_path = resolve_sqlite_path(database_url)
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
     try:
         # Check if sender_profiles table exists
         exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sender_profiles'").fetchone()
@@ -399,7 +430,8 @@ def lookup_sender_profile(email: str, database_url: str) -> dict[str, Any] | Non
             pass
         return profile_dict
     finally:
-        conn.close()
+        if _own_conn:
+            conn.close()
 
 
 _GREETING_WORDS = frozenset({
@@ -507,6 +539,7 @@ def generate_subject(inbound_text: str, draft: str, database_url: str, configs_d
             result = result[len("subject:") :].strip()
         return result[:80] if result else None
     except Exception:
+        logger.warning("Subject generation via Claude CLI failed", exc_info=True)
         return None
 
 
@@ -575,6 +608,7 @@ def assemble_prompt(
     sender_type: str | None = None,
     first_name: str | None = None,
     memory_facts: list[dict[str, Any]] | None = None,
+    score_stats: dict[str, float] | None = None,
 ) -> str:
     style = persona.get("style", {})
     voice = style.get("voice", "direct, clear, pragmatic")
@@ -590,7 +624,7 @@ def assemble_prompt(
         "You are YouOS, a local-first email copilot.",
     )
 
-    exemplars_text = _format_exemplars(reply_pairs)
+    exemplars_text = _format_exemplars(reply_pairs, score_stats=score_stats)
     n = len(reply_pairs)
 
     # Build persona constraints block
@@ -684,6 +718,10 @@ def assemble_prompt(
 
 
 PROMPT_TOKEN_BUDGET: int = 2000
+EXEMPLAR_REPLY_CHARS: int = 600
+EXEMPLAR_INBOUND_CHARS: int = 400
+PRIOR_REPLY_CHARS: int = 200
+SUBPROCESS_TIMEOUT: int = 120
 
 
 def _estimate_tokens(text: str) -> int:
@@ -772,7 +810,7 @@ def _call_local_model(prompt: str, *, max_tokens: int = 300, use_adapter: bool =
         cmd,
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=SUBPROCESS_TIMEOUT,
     )
     if result.returncode != 0:
         raise RuntimeError(f"mlx_lm generate failed (exit {result.returncode}): {result.stderr.strip()}")
@@ -800,7 +838,7 @@ def _call_claude_cli(prompt: str, *, max_tokens: int = 300) -> str:  # noqa: ARG
         cmd,
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=SUBPROCESS_TIMEOUT,
     )
     if result.returncode != 0:
         stderr = result.stderr.strip()
@@ -827,10 +865,15 @@ def generate_draft(
         active_inbound, history = _extract_thread_parts(clean_inbound)
         inbound_for_prompt = _format_thread_context(active_inbound, history)
 
+    # Open one shared DB connection for all metadata lookups (P1)
+    db_path = resolve_sqlite_path(database_url)
+    shared_conn = sqlite3.connect(db_path)
+    shared_conn.row_factory = sqlite3.Row
+
     # Look up prior reply to this sender for additional context
     user_name = get_user_name()
     if request.sender:
-        prior_reply = _lookup_prior_reply_to_sender(request.sender, database_url)
+        prior_reply = _lookup_prior_reply_to_sender(request.sender, database_url, conn=shared_conn)
         if prior_reply and _has_thread_context(clean_inbound):
             inbound_for_prompt += f"\n\n[PRIOR REPLY TO THIS SENDER]\n{user_name} previously wrote: {prior_reply}"
 
@@ -911,7 +954,7 @@ def generate_draft(
     sender_context = None
     first_name = None
     if request.sender:
-        sender_profile = lookup_sender_profile(request.sender, database_url)
+        sender_profile = lookup_sender_profile(request.sender, database_url, conn=shared_conn)
         if sender_profile:
             sender_context = _format_sender_context(sender_profile)
             first_name = first_name_from_display_name(sender_profile.get("display_name"))
@@ -921,7 +964,9 @@ def generate_draft(
         sender=request.sender,
         inbound_text=clean_inbound,
         database_url=database_url,
+        conn=shared_conn,
     )
+    shared_conn.close()
 
     prompt = assemble_prompt(
         inbound_message=inbound_for_prompt,
@@ -937,17 +982,43 @@ def generate_draft(
         sender_type=sender_type_hint,
         first_name=first_name,
         memory_facts=memory_facts,
+        score_stats=score_stats,
     )
 
-    # Token budget check — trim exemplars if prompt is too long
+    # Token budget check — greedy knapsack: calculate each exemplar cost once (P5)
     token_estimate = _estimate_tokens(prompt)
     if token_estimate > PROMPT_TOKEN_BUDGET and reply_pairs:
-        # Remove lowest-scoring exemplars (already sorted desc) from the end
-        trimmed_pairs = list(reply_pairs)
-        removed = 0
-        while trimmed_pairs and _estimate_tokens(prompt) > PROMPT_TOKEN_BUDGET:
-            trimmed_pairs.pop()
-            removed += 1
+        # Build base prompt without any exemplars to get baseline cost
+        base_prompt = assemble_prompt(
+            inbound_message=inbound_for_prompt,
+            reply_pairs=[],
+            persona=persona,
+            prompts=prompts,
+            detected_mode=detected_mode,
+            audience_hint=request.audience_hint,
+            tone_hint=request.tone_hint,
+            sender_context=sender_context,
+            language_hint=detected_lang,
+            intent_hint=detected_intent,
+            sender_type=sender_type_hint,
+            first_name=first_name,
+            memory_facts=memory_facts,
+            score_stats=score_stats,
+        )
+        budget = PROMPT_TOKEN_BUDGET - _estimate_tokens(base_prompt)
+        used = 0
+        trimmed_pairs = []
+        for rp in reply_pairs:  # already sorted by score desc
+            inbound_ex = (rp.inbound_text or "")[:EXEMPLAR_INBOUND_CHARS]
+            reply_ex = strip_signature(rp.reply_text or "")[:EXEMPLAR_REPLY_CHARS]
+            cost = _estimate_tokens(f"[EXAMPLE]\nInbound: {inbound_ex}\nYour reply: {reply_ex}\n---")
+            if used + cost <= budget:
+                trimmed_pairs.append(rp)
+                used += cost
+        removed = len(reply_pairs) - len(trimmed_pairs)
+        if removed:
+            logger.info("Prompt truncated: removed %d exemplars to fit token budget", removed)
+            reply_pairs = trimmed_pairs
             prompt = assemble_prompt(
                 inbound_message=inbound_for_prompt,
                 reply_pairs=trimmed_pairs,
@@ -962,10 +1033,8 @@ def generate_draft(
                 sender_type=sender_type_hint,
                 first_name=first_name,
                 memory_facts=memory_facts,
+                score_stats=score_stats,
             )
-        if removed:
-            logger.info("Prompt truncated: removed %d exemplars to fit token budget", removed)
-            reply_pairs = trimmed_pairs
         token_estimate = _estimate_tokens(prompt)
 
     precedent_used = [_precedent_summary(rp) for rp in reply_pairs]
@@ -1026,7 +1095,7 @@ def generate_draft(
                 log_data["local_model_empty_retries"] = log_data.get("local_model_empty_retries", 0) + 1
                 log_path.write_text(json.dumps(log_data, indent=2))
         except Exception:
-            pass
+            logger.warning("Failed to update pipeline log", exc_info=True)
 
     # Generate subject line
     suggested_subject = generate_subject(request.inbound_message, draft, database_url, configs_dir)

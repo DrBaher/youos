@@ -927,8 +927,9 @@ function showFactsToast(facts) {
           ' | Confidence: ' + (data.confidence || 'unknown') + '</div>';
       }
       if (data.confidence_warning) {
-        extra += '<div class="precedent" style="color:#f0a500;margin-top:0.4rem;">' +
-          '\u26A0\uFE0F Low confidence \u2014 no strong precedents found in your corpus. This draft may not reflect your style.</div>';
+        const reason = data.confidence_reason || 'no strong precedents found in your corpus';
+        extra += '<div class="precedent" style="color:#f0a500;margin-top:0.4rem;border-left:3px solid #f0a500;padding-left:0.5rem;">' +
+          '\u26A0\uFE0F Low confidence \u2014 ' + reason + '</div>';
       }
       if (data.draft_id) {
         extra += '<div style="margin-top:0.4rem;"><a href="#" class="explain-link" data-draftid="' + data.draft_id + '" style="color:#00c4a7;font-size:0.82rem;">How was this generated?</a><div class="explain-panel" id="explain-' + data.draft_id + '" style="display:none;margin-top:0.4rem;padding:0.6rem;background:#0d1b2a;border-radius:6px;font-size:0.82rem;"></div></div>';

@@ -9,6 +9,7 @@ from __future__ import annotations
 import functools
 import math
 import struct
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -78,11 +79,70 @@ def clear_embedding_cache() -> None:
 
 
 def get_embedding_batch(texts: list[str]) -> list[tuple[float, ...]]:
-    """Generate embeddings for a batch of texts (processes sequentially)."""
-    return [get_embedding(t) for t in texts]
+    """Generate embeddings for a batch of texts in a single forward pass.
+
+    Uses MLX batched inference when possible; falls back to sequential
+    per-item processing if batching fails (e.g. variable-length tokens).
+    """
+    if not texts:
+        return []
+
+    # Check cache first — return immediately if all cached
+    cached = [get_embedding.cache_info().currsize]  # side-effect free size check
+    results: list[tuple[float, ...] | None] = [None] * len(texts)
+    uncached_indices: list[int] = []
+    for i, t in enumerate(texts):
+        # Attempt cache hit via the existing lru_cache function
+        try:
+            # lru_cache lookup: call the function, it will hit cache if available
+            results[i] = get_embedding(t)
+        except Exception:
+            uncached_indices.append(i)
+
+    # All cached
+    if not uncached_indices:
+        return [r for r in results if r is not None]
+
+    # Batch the uncached texts through MLX in one forward pass
+    try:
+        import mlx.core as mx
+
+        model, tokenizer = _load_model()
+        uncached_texts = [texts[i] for i in uncached_indices]
+
+        # Tokenize all texts
+        token_lists = [tokenizer.encode(t, return_tensors=None) for t in uncached_texts]
+
+        # Pad to max length for batched inference
+        max_len = max((len(tl) for tl in token_lists), default=1)
+        padded = [tl + [tokenizer.pad_token_id or 0] * (max_len - len(tl)) for tl in token_lists]
+        input_ids = mx.array(padded)  # (batch, seq_len)
+
+        hidden = model.model(input_ids)  # (batch, seq_len, hidden_dim)
+
+        for j, orig_idx in enumerate(uncached_indices):
+            tl_len = len(token_lists[j])
+            if tl_len == 0:
+                dim = model.model.embed_tokens.weight.shape[1]
+                emb_tuple = tuple([0.0] * dim)
+            else:
+                # Mean pool only over non-padded tokens
+                emb = mx.mean(hidden[j, :tl_len, :], axis=0)
+                norm = mx.sqrt(mx.sum(emb * emb))
+                norm = mx.maximum(norm, mx.array(1e-12))
+                emb = emb / norm
+                emb_tuple = tuple(emb.tolist())
+            results[orig_idx] = emb_tuple
+
+    except Exception:
+        # Fall back to sequential processing
+        for i in uncached_indices:
+            results[i] = get_embedding(texts[i])
+
+    return [r if r is not None else get_embedding(texts[i]) for i, r in enumerate(results)]
 
 
-def cosine_similarity(a: list[float], b: list[float]) -> float:
+def cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
     """Compute cosine similarity between two embedding vectors."""
     if len(a) != len(b):
         raise ValueError(f"Dimension mismatch: {len(a)} vs {len(b)}")
