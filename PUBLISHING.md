@@ -9,9 +9,10 @@
 1. Bump version in `clawhub.json`, `pyproject.toml`, and `CHANGELOG.md`
 2. Commit: `git commit -m "chore: bump version to X.Y.Z"`
 3. Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`
-4. Build a **physically clean** release folder:
+4. Build a **minimal allowlist release folder** (default):
    - `./scripts/prepare_clawhub_release.sh`
    - Optional custom output: `./scripts/prepare_clawhub_release.sh ~/Documents/youos-release-X.Y.Z`
+   - This script includes only: `app/`, `clawhub.json`, `configs/`, `PRIVACY.md`, `pyproject.toml`, `README.md`, `scripts/`, `SKILL.md`
 5. Publish from that folder (not repo root):
    - `cd ~/Documents/youos-release-X.Y.Z`
    - `clawhub publish ./`
