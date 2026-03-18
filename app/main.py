@@ -81,11 +81,12 @@ async def _lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()
     config = load_config()
-    if settings.instance_name == "YouOS":
-        settings.instance_name = str(config.get("user", {}).get("display_name") or settings.instance_name)
+    instance_name = getattr(settings, "instance_name", "YouOS")
+    if instance_name == "YouOS":
+        instance_name = str(config.get("user", {}).get("display_name") or instance_name)
 
     app = FastAPI(
-        title=f"{settings.app_name} ({settings.instance_name})",
+        title=f"{settings.app_name} ({instance_name})",
         version=settings.version,
         description="Your personal AI email copilot — learns your style from your Gmail history.",
         lifespan=_lifespan,
