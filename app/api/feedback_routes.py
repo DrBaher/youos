@@ -198,7 +198,18 @@ def feedback_generate(body: GenerateBody, request: Request) -> dict:
                 """INSERT INTO draft_history
                    (inbound_text, sender, generated_draft, confidence, model_used, retrieval_method)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (body.inbound_text, body.sender, response.draft, response.confidence, response.model_used, f"{response.retrieval_method}|cache_hit={int(response.exemplar_cache_hit)}|cache_key={response.exemplar_cache_key or ''}"),
+                (
+                    body.inbound_text,
+                    body.sender,
+                    response.draft,
+                    response.confidence,
+                    response.model_used,
+                    (
+                        f"{response.retrieval_method}"
+                        f"|cache_hit={int(response.exemplar_cache_hit)}"
+                        f"|cache_key={response.exemplar_cache_key or ''}"
+                    ),
+                ),
             )
             conn.commit()
         finally:
