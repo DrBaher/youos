@@ -11,6 +11,25 @@ metadata:
       bins: ["python3", "gog"]
       platform: darwin
       arch: arm64
+      minRam: "8GB"
+    install:
+      - kind: instructions
+        label: "Manual install required"
+        steps:
+          - "python3 -m venv .venv"
+          - "source .venv/bin/activate"
+          - "pip install -e ."
+    credentials:
+      required:
+        - "gog must be authenticated for Gmail/Docs access"
+      optional:
+        - "Claude CLI/API credentials only if model.fallback uses external provider"
+    privacy:
+      localStorage:
+        - "SQLite DB under YOUOS_DATA_DIR/var/youos.db (or local var/youos.db)"
+      networkEgress:
+        - "None by default for local mode"
+        - "Optional outbound requests when external fallback is enabled"
 ---
 
 # YouOS — Personal Email Copilot
@@ -20,6 +39,7 @@ YouOS is a full local Python app (not an instruction-only snippet). It drafts em
 ## Install and runtime model
 
 - Install is **manual** via pip (`pip install -e .`) in a Python 3.11+ environment
+- Note: `pip install -e .` executes local package install code from this repository; review source before installing
 - Requires **both**:
   - `python3` (3.11+)
   - `gog` CLI authenticated to the Gmail account(s) you want to ingest
@@ -147,3 +167,8 @@ Install from the Bookmarklet page in the web UI. Once installed:
 - For strict local-only operation, set `model.fallback: none` in `youos_config.yaml`
 - Data location defaults to local project paths (or `YOUOS_DATA_DIR` if set)
 - Review `PRIVACY.md` before first ingestion/deployment
+
+## Provenance
+
+- Source/homepage: https://github.com/DrBaher/youos
+- This skill bundles a full local Python app and is intended for explicit local install/review before use.

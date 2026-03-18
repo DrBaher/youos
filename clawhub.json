@@ -1,10 +1,11 @@
 {
   "name": "youos",
-  "version": "0.1.11",
+  "version": "0.1.14",
   "displayName": "YouOS \u2014 Personal Email Copilot",
   "description": "Learns your email writing style from your Gmail history and drafts replies that sound like you. Self-improving via LoRA fine-tuning and autoresearch. Runs locally on Apple Silicon with optional external fallback that can be disabled for strict local-only mode.",
   "author": "DrBaher",
   "homepage": "https://github.com/DrBaher/youos",
+  "repository": "https://github.com/DrBaher/youos",
   "category": "productivity",
   "tags": ["email", "drafting", "personal-ai", "local-model", "self-improving", "privacy", "apple-silicon"],
   "requires": {
@@ -12,6 +13,26 @@
     "platform": "darwin",
     "arch": "arm64",
     "minRam": "8GB"
+  },
+  "runtime": {
+    "packageType": "application",
+    "execution": "local-python",
+    "install": {
+      "kind": "manual",
+      "steps": [
+        "python3 -m venv .venv",
+        "source .venv/bin/activate",
+        "pip install -e ."
+      ]
+    }
+  },
+  "credentials": {
+    "required": [
+      "gog authentication for Gmail/Docs ingestion"
+    ],
+    "optional": [
+      "Claude/API credentials only if external fallback is enabled"
+    ]
   },
   "emoji": "\u2709\ufe0f",
   "license": "MIT",
