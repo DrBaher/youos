@@ -35,27 +35,43 @@ echo "  output : $OUT_DIR"
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-# Start from repo content, then apply strict excludes.
-rsync -a \
-  --exclude '.git/' \
-  --exclude '.venv/' \
-  --exclude '__pycache__/' \
-  --exclude '*.pyc' \
-  --exclude '.DS_Store' \
-  --exclude 'node_modules/' \
-  --exclude-from '.clawhubignore' \
-  "$ROOT_DIR/" "$OUT_DIR/"
+# Strict allowlist (minimal bundle that passed ClawHub checks)
+ALLOWED=(
+  "app"
+  "clawhub.json"
+  "configs"
+  "PRIVACY.md"
+  "pyproject.toml"
+  "README.md"
+  "scripts"
+  "SKILL.md"
+)
 
-# Extra hygiene: remove common local caches even if they slipped through.
+for item in "${ALLOWED[@]}"; do
+  if [[ -e "$ROOT_DIR/$item" ]]; then
+    rsync -a "$ROOT_DIR/$item" "$OUT_DIR/"
+  else
+    echo "WARN: missing allowlisted item: $item"
+  fi
+done
+
+# Extra hygiene inside copied tree.
 find "$OUT_DIR" -name '.DS_Store' -delete || true
 find "$OUT_DIR" -name '__pycache__' -type d -prune -exec rm -rf {} + || true
 find "$OUT_DIR" -name '*.pyc' -delete || true
 
-# Sanity report
-for p in .git .venv .github tests fixtures var instances data .pytest_cache .ruff_cache .herenow gif-frames youos.egg-info; do
-  if [[ -e "$OUT_DIR/$p" ]]; then
-    echo "WARN: unexpected path still present: $p"
+# Final strict check: only allowlisted top-level entries remain.
+for entry in $(cd "$OUT_DIR" && ls -1A); do
+  keep=false
+  for allowed in "${ALLOWED[@]}"; do
+    if [[ "$entry" == "$allowed" ]]; then
+      keep=true
+      break
+    fi
+  done
+  if [[ "$keep" == false ]]; then
+    echo "WARN: unexpected top-level entry: $entry"
   fi
 done
 
-echo "Done. Bundle ready at: $OUT_DIR"
+echo "Done. Minimal bundle ready at: $OUT_DIR"
