@@ -130,6 +130,17 @@ def get_autoresearch_iterations(config: dict[str, Any] | None = None) -> int:
     return int(cfg.get("autoresearch", {}).get("iterations", 80))
 
 
+def get_persona_mode_config(sender_type: str, config: dict[str, Any] | None = None) -> dict[str, Any]:
+    cfg = config or load_config()
+    return cfg.get("persona", {}).get("modes", {}).get(sender_type, {})
+
+
+def get_persona_style_anchor(sender_type: str, config: dict[str, Any] | None = None) -> str | None:
+    cfg = config or load_config()
+    mode_config = get_persona_mode_config(sender_type, config)
+    return mode_config.get("style_anchor")
+
+
 def get_ollama_config(config: dict[str, Any] | None = None) -> dict[str, Any]:
     cfg = config or load_config()
     return cfg.get("model", {}).get("ollama", {})

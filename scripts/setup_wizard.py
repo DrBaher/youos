@@ -10,6 +10,8 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import secrets # For random PIN generation
+from datetime import datetime
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -255,19 +257,71 @@ def _verify_accounts(emails: list[str]) -> list[str]:
 
 
 def _run_ingestion(config: dict) -> dict:
-    """Run ingestion for configured accounts. Returns stats."""
+    """Run ingestion for configured accounts. Returns stats.
+
+    Supports quick-start foreground ingest + background full ingest.
+    """
     emails = config.get("user", {}).get("emails", [])
     if not emails:
         print("No email accounts configured. Skipping ingestion.")
         return {"threads": 0, "reply_pairs": 0}
 
-    months = config.get("ingestion", {}).get("initial_months", 12)
+    ingestion_cfg = config.get("ingestion", {})
+    mode = ingestion_cfg.get("mode", "balanced")
+    months = int(ingestion_cfg.get("initial_months", 12))
+    max_threads = int(ingestion_cfg.get("max_threads", 0))
+    quick_start = bool(ingestion_cfg.get("quick_start_enabled", False))
+    quick_months = int(ingestion_cfg.get("quick_start_months", min(3, months)))
+    quick_max_threads = int(ingestion_cfg.get("quick_start_max_threads", 200))
+
+    def _query_for_months(m: int) -> str:
+        return f"in:sent newer_than:{m}m"
+
+    def _run_foreground(email: str, *, query: str, thread_cap: int, timeout_s: int = 1800) -> tuple[int, int]:
+        print(f"\nIngesting {email} ({query}, max_threads={thread_cap})...")
+        local_threads = 0
+        local_pairs = 0
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT_DIR / "scripts" / "ingest_gmail_threads.py"),
+                "--live",
+                "--account",
+                email,
+                "--query",
+                query,
+                "--max-threads",
+                str(thread_cap),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+        print(result.stdout)
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if "threads" in line.lower() and "reply" in line.lower():
+                    import re
+
+                    thread_match = re.search(r"(\d+)\s*threads?", line)
+                    pair_match = re.search(r"(\d+)\s*reply.?pairs?", line)
+                    if thread_match:
+                        local_threads += int(thread_match.group(1))
+                    if pair_match:
+                        local_pairs += int(pair_match.group(1))
+        else:
+            print(f"  WARN: Ingestion for {email} had issues")
+            if result.stderr:
+                print(f"  {result.stderr[:300]}")
+        return local_threads, local_pairs
 
     print()
     print("--- Corpus Ingestion ---")
     print(f"  Accounts: {', '.join(emails)}")
-    print(f"  Range: last {months} months of sent mail")
-    print("  Estimated time: 10-30 minutes depending on volume")
+    print(f"  Ingestion mode: {mode}")
+    print(f"  Full range: last {months} months | max_threads={max_threads}")
+    if quick_start:
+        print(f"  Quick start: last {quick_months} months | max_threads={quick_max_threads}")
     print()
 
     proceed = input("Start ingestion? [Y/n] ").strip().lower()
@@ -278,46 +332,52 @@ def _run_ingestion(config: dict) -> dict:
     total_threads = 0
     total_pairs = 0
 
-    for email in emails:
-        print(f"\nIngesting {email}...")
-        try:
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(ROOT_DIR / "scripts" / "ingest_gmail_threads.py"),
-                    "--live",
-                    "--account",
-                    email,
-                    "--query",
-                    "in:sent",
-                    "--max-threads",
-                    "0",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=1800,
-            )
-            print(result.stdout)
-            if result.returncode == 0:
-                # Parse counts from output
-                for line in result.stdout.splitlines():
-                    if "threads" in line.lower() and "reply" in line.lower():
-                        import re
+    try:
+        if quick_start:
+            print("\nQuick start enabled: running a smaller ingest so you can use YouOS faster...")
+            for email in emails:
+                t, p = _run_foreground(email, query=_query_for_months(quick_months), thread_cap=quick_max_threads, timeout_s=1200)
+                total_threads += t
+                total_pairs += p
 
-                        thread_match = re.search(r"(\d+)\s*threads?", line)
-                        pair_match = re.search(r"(\d+)\s*reply.?pairs?", line)
-                        if thread_match:
-                            total_threads += int(thread_match.group(1))
-                        if pair_match:
-                            total_pairs += int(pair_match.group(1))
-            else:
-                print(f"  WARN: Ingestion for {email} had issues")
-                if result.stderr:
-                    print(f"  {result.stderr[:200]}")
-        except subprocess.TimeoutExpired:
-            print(f"  TIMEOUT: Ingestion for {email} timed out after 30 minutes")
-        except Exception as exc:
-            print(f"  ERROR: {exc}")
+            print(f"\nQuick-start corpus: {total_threads} threads | {total_pairs} reply pairs")
+            print("You can start drafting now while full ingestion continues in the background.")
+
+            full_query = _query_for_months(months)
+            log_dir = ROOT_DIR / "var"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+
+            for email in emails:
+                safe_email = email.replace("@", "_at_").replace(".", "_")
+                log_path = log_dir / f"ingest-background-{safe_email}-{stamp}.log"
+                with open(log_path, "w", encoding="utf-8") as logf:
+                    proc = subprocess.Popen(
+                        [
+                            sys.executable,
+                            str(ROOT_DIR / "scripts" / "ingest_gmail_threads.py"),
+                            "--live",
+                            "--account",
+                            email,
+                            "--query",
+                            full_query,
+                            "--max-threads",
+                            str(max_threads),
+                        ],
+                        stdout=logf,
+                        stderr=subprocess.STDOUT,
+                    )
+                print(f"  Background ingest started for {email} (pid={proc.pid})")
+                print(f"    Log: {log_path}")
+        else:
+            for email in emails:
+                t, p = _run_foreground(email, query=_query_for_months(months), thread_cap=max_threads, timeout_s=1800)
+                total_threads += t
+                total_pairs += p
+    except subprocess.TimeoutExpired:
+        print("  TIMEOUT: Ingestion timed out")
+    except Exception as exc:
+        print(f"  ERROR: {exc}")
 
     print(f"\nCorpus built: {total_threads} threads | {total_pairs} reply pairs")
     return {"threads": total_threads, "reply_pairs": total_pairs}
