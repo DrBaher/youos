@@ -5,6 +5,7 @@ import logging
 import re
 import sqlite3
 import subprocess
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -35,37 +36,93 @@ _EXEMPLAR_CACHE_TTL_SECONDS = 30 * 60
 _exemplar_cache: dict[tuple[str, str], dict[str, Any]] = {}
 
 
-def clear_exemplar_cache() -> None:
+def clear_exemplar_cache(*, database_url: str | None = None) -> None:
     _exemplar_cache.clear()
+    if database_url:
+        try:
+            db_path = resolve_sqlite_path(database_url)
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute("DELETE FROM exemplar_cache")
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            logger.warning("Failed to clear persistent exemplar cache", exc_info=True)
 
 
 def _cache_key(intent_hint: str | None, sender_type: str | None) -> tuple[str, str]:
     return ((intent_hint or "general").strip().lower(), (sender_type or "unknown").strip().lower())
 
 
-def _get_cached_exemplar_ids(intent_hint: str | None, sender_type: str | None) -> tuple[list[str], bool, str]:
-    import time
-
+def _get_cached_exemplar_ids(intent_hint: str | None, sender_type: str | None, *, database_url: str | None = None) -> tuple[list[str], bool, str]:
     key = _cache_key(intent_hint, sender_type)
     key_str = f"{key[0]}::{key[1]}"
+
+    # 1) In-memory fast path
     entry = _exemplar_cache.get(key)
-    if not entry:
-        logger.info("Exemplar cache MISS key=%s", key_str)
-        return [], False, key_str
-    if time.time() - float(entry.get("ts", 0.0)) > _EXEMPLAR_CACHE_TTL_SECONDS:
+    if entry:
+        if time.time() - float(entry.get("ts", 0.0)) <= _EXEMPLAR_CACHE_TTL_SECONDS:
+            ids = [str(x) for x in entry.get("ids", []) if x]
+            logger.info("Exemplar cache HIT(mem) key=%s size=%d", key_str, len(ids))
+            return ids, True, key_str
         _exemplar_cache.pop(key, None)
-        logger.info("Exemplar cache EXPIRED key=%s", key_str)
-        return [], False, key_str
-    ids = [str(x) for x in entry.get("ids", []) if x]
-    logger.info("Exemplar cache HIT key=%s size=%d", key_str, len(ids))
-    return ids, True, key_str
+
+    # 2) Persistent fallback
+    if database_url:
+        try:
+            db_path = resolve_sqlite_path(database_url)
+            conn = sqlite3.connect(db_path)
+            try:
+                row = conn.execute(
+                    "SELECT source_ids_json, strftime('%s', updated_at) FROM exemplar_cache WHERE cache_key = ?",
+                    (key_str,),
+                ).fetchone()
+                if row:
+                    source_ids_json, updated_epoch = row
+                    updated_epoch = int(updated_epoch or 0)
+                    if updated_epoch and (time.time() - updated_epoch) <= _EXEMPLAR_CACHE_TTL_SECONDS:
+                        ids = [str(x) for x in json.loads(source_ids_json or "[]") if x]
+                        _exemplar_cache[key] = {"ts": time.time(), "ids": ids[:10]}
+                        logger.info("Exemplar cache HIT(db) key=%s size=%d", key_str, len(ids))
+                        return ids, True, key_str
+                    conn.execute("DELETE FROM exemplar_cache WHERE cache_key = ?", (key_str,))
+                    conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            logger.warning("Exemplar cache DB read failed for key=%s", key_str, exc_info=True)
+
+    logger.info("Exemplar cache MISS key=%s", key_str)
+    return [], False, key_str
 
 
-def _update_exemplar_cache(intent_hint: str | None, sender_type: str | None, source_ids: list[str]) -> None:
-    import time
-
+def _update_exemplar_cache(intent_hint: str | None, sender_type: str | None, source_ids: list[str], *, database_url: str | None = None) -> None:
     key = _cache_key(intent_hint, sender_type)
-    _exemplar_cache[key] = {"ts": time.time(), "ids": source_ids[:10]}
+    key_str = f"{key[0]}::{key[1]}"
+    ids = [sid for sid in source_ids[:10] if sid]
+    _exemplar_cache[key] = {"ts": time.time(), "ids": ids}
+
+    if database_url:
+        try:
+            db_path = resolve_sqlite_path(database_url)
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO exemplar_cache(cache_key, source_ids_json, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(cache_key) DO UPDATE SET
+                        source_ids_json=excluded.source_ids_json,
+                        updated_at=CURRENT_TIMESTAMP
+                    """,
+                    (key_str, json.dumps(ids)),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            logger.warning("Exemplar cache DB write failed for key=%s", key_str, exc_info=True)
 
 
 def _apply_cached_order(reply_pairs: list[RetrievalMatch], cached_ids: list[str]) -> list[RetrievalMatch]:
@@ -1022,11 +1079,11 @@ def generate_draft(
     detected_mode = request.mode or retrieval_response.detected_mode
     reply_pairs = retrieval_response.reply_pairs
 
-    cached_ids, exemplar_cache_hit, exemplar_cache_key = _get_cached_exemplar_ids(detected_intent, sender_type_hint)
+    cached_ids, exemplar_cache_hit, exemplar_cache_key = _get_cached_exemplar_ids(detected_intent, sender_type_hint, database_url=database_url)
     reply_pairs = _apply_cached_order(reply_pairs, cached_ids)
 
     selected_ids = _top_exemplar_source_ids(reply_pairs)
-    _update_exemplar_cache(detected_intent, sender_type_hint, selected_ids)
+    _update_exemplar_cache(detected_intent, sender_type_hint, selected_ids, database_url=database_url)
 
     # Build score stats dict from retrieval response
     score_stats = None
