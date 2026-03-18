@@ -5,13 +5,21 @@ import logging
 import re
 import sqlite3
 import subprocess
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from app.core.config import get_account_for_sender, get_base_model, get_model_fallback, get_user_name, get_user_names
+from app.core.config import (
+    get_account_for_sender,
+    get_base_model,
+    get_model_fallback,
+    get_persona_style_anchor,
+    get_user_name,
+    get_user_names,
+)
 from app.core.sender import classify_sender, extract_domain, first_name_from_display_name
 from app.core.text_utils import strip_quoted_text
 from app.db.bootstrap import resolve_sqlite_path
@@ -23,6 +31,117 @@ from app.retrieval.service import (
 )
 
 logger = logging.getLogger(__name__)
+
+_EXEMPLAR_CACHE_TTL_SECONDS = 30 * 60
+_exemplar_cache: dict[tuple[str, str], dict[str, Any]] = {}
+
+
+def clear_exemplar_cache(*, database_url: str | None = None) -> None:
+    _exemplar_cache.clear()
+    if database_url:
+        try:
+            db_path = resolve_sqlite_path(database_url)
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute("DELETE FROM exemplar_cache")
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            logger.warning("Failed to clear persistent exemplar cache", exc_info=True)
+
+
+def _cache_key(intent_hint: str | None, sender_type: str | None) -> tuple[str, str]:
+    return ((intent_hint or "general").strip().lower(), (sender_type or "unknown").strip().lower())
+
+
+def _get_cached_exemplar_ids(intent_hint: str | None, sender_type: str | None, *, database_url: str | None = None) -> tuple[list[str], bool, str]:
+    key = _cache_key(intent_hint, sender_type)
+    key_str = f"{key[0]}::{key[1]}"
+
+    # 1) In-memory fast path
+    entry = _exemplar_cache.get(key)
+    if entry:
+        if time.time() - float(entry.get("ts", 0.0)) <= _EXEMPLAR_CACHE_TTL_SECONDS:
+            ids = [str(x) for x in entry.get("ids", []) if x]
+            logger.info("Exemplar cache HIT(mem) key=%s size=%d", key_str, len(ids))
+            return ids, True, key_str
+        _exemplar_cache.pop(key, None)
+
+    # 2) Persistent fallback
+    if database_url:
+        try:
+            db_path = resolve_sqlite_path(database_url)
+            conn = sqlite3.connect(db_path)
+            try:
+                row = conn.execute(
+                    "SELECT source_ids_json, strftime('%s', updated_at) FROM exemplar_cache WHERE cache_key = ?",
+                    (key_str,),
+                ).fetchone()
+                if row:
+                    source_ids_json, updated_epoch = row
+                    updated_epoch = int(updated_epoch or 0)
+                    if updated_epoch and (time.time() - updated_epoch) <= _EXEMPLAR_CACHE_TTL_SECONDS:
+                        ids = [str(x) for x in json.loads(source_ids_json or "[]") if x]
+                        _exemplar_cache[key] = {"ts": time.time(), "ids": ids[:10]}
+                        logger.info("Exemplar cache HIT(db) key=%s size=%d", key_str, len(ids))
+                        return ids, True, key_str
+                    conn.execute("DELETE FROM exemplar_cache WHERE cache_key = ?", (key_str,))
+                    conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            logger.warning("Exemplar cache DB read failed for key=%s", key_str, exc_info=True)
+
+    logger.info("Exemplar cache MISS key=%s", key_str)
+    return [], False, key_str
+
+
+def _update_exemplar_cache(intent_hint: str | None, sender_type: str | None, source_ids: list[str], *, database_url: str | None = None) -> None:
+    key = _cache_key(intent_hint, sender_type)
+    key_str = f"{key[0]}::{key[1]}"
+    ids = [sid for sid in source_ids[:10] if sid]
+    _exemplar_cache[key] = {"ts": time.time(), "ids": ids}
+
+    if database_url:
+        try:
+            db_path = resolve_sqlite_path(database_url)
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO exemplar_cache(cache_key, source_ids_json, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(cache_key) DO UPDATE SET
+                        source_ids_json=excluded.source_ids_json,
+                        updated_at=CURRENT_TIMESTAMP
+                    """,
+                    (key_str, json.dumps(ids)),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception:
+            logger.warning("Exemplar cache DB write failed for key=%s", key_str, exc_info=True)
+
+
+def _apply_cached_order(reply_pairs: list[RetrievalMatch], cached_ids: list[str]) -> list[RetrievalMatch]:
+    if not cached_ids or not reply_pairs:
+        return reply_pairs
+    rank = {sid: i for i, sid in enumerate(cached_ids)}
+    cached = [rp for rp in reply_pairs if rp.source_id in rank]
+    uncached = [rp for rp in reply_pairs if rp.source_id not in rank]
+    cached.sort(key=lambda rp: rank.get(rp.source_id, 9999))
+    return cached + uncached
+
+
+def _top_exemplar_source_ids(reply_pairs: list[RetrievalMatch], limit: int = 5) -> list[str]:
+    ranked = sorted(
+        [rp for rp in reply_pairs if rp.source_id],
+        key=lambda rp: ((rp.metadata or {}).get("quality_score", 1.0), rp.score),
+        reverse=True,
+    )
+    return [rp.source_id for rp in ranked[:limit]]
 
 
 @dataclass(slots=True)
@@ -56,6 +175,8 @@ class DraftResponse:
     suggested_subject: str | None = None
     token_estimate: int | None = None
     empty_output_retried: bool = False
+    exemplar_cache_hit: bool = False
+    exemplar_cache_key: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -297,6 +418,7 @@ def _precedent_summary(match: RetrievalMatch) -> dict[str, Any]:
         "title": match.title,
         "snippet": match.snippet,
         "score": match.score,
+        "reply_pair_id": match.reply_pair_id,
     }
 
 
@@ -657,6 +779,12 @@ def assemble_prompt(
 
     persona_block = "\n".join(persona_lines)
 
+    style_anchor_block = ""
+    if sender_type:
+        style_anchor = get_persona_style_anchor(sender_type)
+        if style_anchor:
+            style_anchor_block = f"\n[STYLE ANCHOR — {sender_type}]\n{style_anchor.strip()}\n"
+
     # Build optional context lines
     context_lines: list[str] = []
     if detected_mode:
@@ -700,6 +828,7 @@ def assemble_prompt(
         f"{system.strip()}\n"
         f"{persona_block}\n"
         f"{context_block}"
+        f"{style_anchor_block}"
         f"{sender_block}"
         f"{facts_block}"
         f"{language_block}"
@@ -949,6 +1078,13 @@ def generate_draft(
 
     detected_mode = request.mode or retrieval_response.detected_mode
     reply_pairs = retrieval_response.reply_pairs
+
+    cached_ids, exemplar_cache_hit, exemplar_cache_key = _get_cached_exemplar_ids(detected_intent, sender_type_hint, database_url=database_url)
+    reply_pairs = _apply_cached_order(reply_pairs, cached_ids)
+
+    selected_ids = _top_exemplar_source_ids(reply_pairs)
+    _update_exemplar_cache(detected_intent, sender_type_hint, selected_ids, database_url=database_url)
+
     # Build score stats dict from retrieval response
     score_stats = None
     if retrieval_response.mean_score is not None:
@@ -1145,4 +1281,6 @@ def generate_draft(
         suggested_subject=suggested_subject,
         token_estimate=token_estimate,
         empty_output_retried=empty_output_retried,
+        exemplar_cache_hit=exemplar_cache_hit,
+        exemplar_cache_key=exemplar_cache_key,
     )

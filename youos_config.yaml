@@ -7,6 +7,10 @@ benchmarks:
 ingestion:
   accounts: []
   initial_months: 12
+  mode: quick_start # default onboarding path: quick first value, background full ingest
+  quick_start_enabled: true
+  quick_start_months: 3
+  quick_start_max_threads: 200
   last_ingest_at: {}
 model:
   adapter_path: models/adapters/latest
@@ -26,8 +30,15 @@ persona:
     {name}'
   custom_constraints: []
   greeting_style: Hi [name],
+  modes:
+    internal:
+      style_anchor: Prefer concise, execution-focused replies with minimal ceremony and direct next steps.
+    client:
+      style_anchor: Prefer polished, reassuring, professional replies that clarify ownership, timeline, and concrete deliverables.
+    personal:
+      style_anchor: Prefer warm, natural, low-formality replies that still stay crisp and thoughtful.
 server:
-  host: 0.0.0.0
+  host: 127.0.0.1
   pin: ''
   port: 8901
 tailscale:
