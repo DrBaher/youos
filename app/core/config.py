@@ -136,7 +136,6 @@ def get_persona_mode_config(sender_type: str, config: dict[str, Any] | None = No
 
 
 def get_persona_style_anchor(sender_type: str, config: dict[str, Any] | None = None) -> str | None:
-    cfg = config or load_config()
     mode_config = get_persona_mode_config(sender_type, config)
     return mode_config.get("style_anchor")
 
