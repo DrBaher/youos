@@ -10,7 +10,6 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-import secrets # For random PIN generation
 from datetime import datetime
 from pathlib import Path
 
