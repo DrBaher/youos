@@ -15,7 +15,7 @@ from app.core.diff import similarity_ratio
 from app.core.facts_extractor import extract_and_save
 from app.core.rate_limit import RATE_LIMIT_RESPONSE, draft_limiter
 from app.db.bootstrap import resolve_sqlite_path
-from app.generation.service import DraftRequest, generate_draft
+from app.generation.service import DraftRequest, clear_exemplar_cache, generate_draft
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +198,7 @@ def feedback_generate(body: GenerateBody, request: Request) -> dict:
                 """INSERT INTO draft_history
                    (inbound_text, sender, generated_draft, confidence, model_used, retrieval_method)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (body.inbound_text, body.sender, response.draft, response.confidence, response.model_used, response.retrieval_method),
+                (body.inbound_text, body.sender, response.draft, response.confidence, response.model_used, f"{response.retrieval_method}|cache_hit={int(response.exemplar_cache_hit)}|cache_key={response.exemplar_cache_key or ''}"),
             )
             conn.commit()
         finally:
@@ -213,6 +213,8 @@ def feedback_generate(body: GenerateBody, request: Request) -> dict:
         "confidence_reason": response.confidence_reason,
         "confidence_warning": response.confidence == "low",
         "suggested_subject": response.suggested_subject,
+        "exemplar_cache_hit": response.exemplar_cache_hit,
+        "exemplar_cache_key": response.exemplar_cache_key,
     }
 
 
@@ -273,9 +275,12 @@ def feedback_submit(body: SubmitBody, request: Request) -> dict:
                 quality_score = max(0.3, min(1.3, quality_score))
                 conn.execute("UPDATE reply_pairs SET quality_score = ? WHERE id = ?", (round(quality_score, 4), rp_id))
                 conn.commit()
+                # Invalidate exemplar cache on successful quality update
+                clear_exemplar_cache(database_url=request.app.state.settings.database_url)
         except Exception:
-            logger.warning("Failed to update quality_score for reply pair", exc_info=True)
+            logger.warning("Failed to update quality_score for reply pair or clear cache", exc_info=True)
 
+        clear_exemplar_cache(database_url=request.app.state.settings.database_url)
         total = conn.execute("SELECT COUNT(*) FROM feedback_pairs").fetchone()[0]
     finally:
         conn.close()
