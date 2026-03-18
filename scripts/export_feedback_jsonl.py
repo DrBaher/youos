@@ -186,25 +186,31 @@ def deduplicate_pairs(
 
 
 def _is_low_signal_pair(inbound: str, edited_reply: str) -> bool:
-    """Return True when pair carries little learning signal for fine-tuning."""
+    """Return True when pair carries little learning signal for fine-tuning.
+
+    Keep this conservative: only filter obvious acknowledgement / phatic exchanges.
+    """
     import re
 
     low_signal_reply = re.compile(
-        r"^\s*(ok|okay|k|sure|thanks|thank you|thx|ty|noted|got it|sounds good|perfect|great)\s*[.!]?\s*$",
+        r"^\s*(ok|okay|k|sure|thanks|thank you|thx|ty|noted|got it|sounds good|perfect|great|hello|hi)\s*[.!]?\s*$",
         re.IGNORECASE,
     )
 
     inbound_text = (inbound or "").strip()
     reply_text = (edited_reply or "").strip()
 
-    # Tiny replies are generally poor supervision targets.
-    if len(reply_text.split()) < 3:
+    inbound_words = inbound_text.split()
+    reply_words = reply_text.split()
+
+    # Empty/tiny responses are generally poor supervision targets.
+    if not reply_words:
         return True
     if low_signal_reply.match(reply_text):
         return True
 
-    # Trivial acknowledgements on both sides add little style/training value.
-    if len(inbound_text.split()) < 5 and len(reply_text.split()) < 8:
+    # Very short back-and-forths usually add little style signal.
+    if len(inbound_words) <= 2 and len(reply_words) <= 2:
         return True
 
     return False
