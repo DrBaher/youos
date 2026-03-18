@@ -23,6 +23,7 @@ from app.core.auth import (
     verify_pin,
 )
 from app.core.config import load_config
+from app.core.data_safety import run_startup_safety_checks, validate_instance_paths
 from app.core.settings import get_settings
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "templates"
@@ -60,6 +61,16 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    settings = get_settings()
+
+    # Run data safety checks at startup
+    validate_instance_paths(settings)
+    safety_report = run_startup_safety_checks(settings)
+    if safety_report.warnings:
+        for warning in safety_report.warnings:
+            print(f"[YOUOS WARNING]: {warning}")
+        # Optionally, block startup here if warnings are critical
+
     yield
     # Clear embedding cache on shutdown
     from app.core.embeddings import clear_embedding_cache
@@ -70,10 +81,12 @@ async def _lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()
     config = load_config()
+    if settings.instance_name == "YouOS":
+        settings.instance_name = str(config.get("user", {}).get("display_name") or settings.instance_name)
 
     app = FastAPI(
-        title="YouOS",
-        version="0.1.10",
+        title=f"{settings.app_name} ({settings.instance_name})",
+        version=settings.version,
         description="Your personal AI email copilot — learns your style from your Gmail history.",
         lifespan=_lifespan,
     )

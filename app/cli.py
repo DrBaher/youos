@@ -13,6 +13,16 @@ from pathlib import Path
 
 import typer
 
+from app.core.data_safety import (
+    create_snapshot,
+    list_snapshots,
+    prune_snapshots,
+    restore_snapshot,
+    run_startup_safety_checks,
+)
+from app.core.settings import get_settings
+from app.db.bootstrap import resolve_sqlite_path
+
 ROOT_DIR = Path(__file__).resolve().parents[1]
 
 app = typer.Typer(
@@ -173,9 +183,6 @@ def status():
         is_ollama_enabled,
         load_config,
     )
-    from app.core.settings import get_settings
-    from app.db.bootstrap import resolve_sqlite_path
-
     config = load_config()
     settings = get_settings()
     name = get_user_name(config)
@@ -721,6 +728,72 @@ def feedback(
         conn.close()
 
     print(f"Feedback pair saved. Total pairs: {total}")
+
+
+@app.command("health-check")
+def health_check(as_json: bool = typer.Option(False, "--json", help="Output JSON")):
+    """Run startup safety checks and print report."""
+    settings = get_settings()
+    report = run_startup_safety_checks(settings)
+    if as_json:
+        import json
+
+        print(json.dumps(report.to_dict(), indent=2))
+        return
+
+    print(f"DB: {report.db_path}")
+    print(f"Counts: {report.table_counts}")
+    if report.warnings:
+        print("Warnings:")
+        for w in report.warnings:
+            print(f"- {w}")
+    else:
+        print("Warnings: none")
+
+
+@app.command("snapshot-create")
+def snapshot_create(
+    tier: str = typer.Option("manual", "--tier", help="manual|hourly|daily"),
+):
+    """Create a sqlite snapshot for current instance."""
+    settings = get_settings()
+    db_path = resolve_sqlite_path(settings.database_url)
+    snap = create_snapshot(db_path, tier=tier)
+    prune_snapshots(db_path)
+    print(str(snap))
+
+
+@app.command("snapshot-list")
+def snapshot_list():
+    """List available snapshots."""
+    settings = get_settings()
+    db_path = resolve_sqlite_path(settings.database_url)
+    snaps = list_snapshots(db_path)
+    for snap in snaps:
+        print(str(snap))
+
+
+@app.command("snapshot-restore")
+def snapshot_restore(
+    snapshot_path: str = typer.Argument(..., help="Path to snapshot db file"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show action without restoring"),
+):
+    """Restore snapshot over current db (backs up current db first)."""
+    settings = get_settings()
+    db_path = resolve_sqlite_path(settings.database_url)
+
+    if not dry_run:
+        confirmed = typer.confirm(
+            f"Restore snapshot {snapshot_path} into {db_path}? This will replace current DB.",
+            default=False,
+        )
+        if not confirmed:
+            print("Cancelled.")
+            raise typer.Exit(0)
+
+    backup_path = restore_snapshot(db_path, Path(snapshot_path), dry_run=dry_run)
+    print(f"pre_restore_backup={backup_path}")
+    print(f"restored_to={db_path}")
 
 
 if __name__ == "__main__":
