@@ -10,7 +10,9 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 
 class Settings(BaseSettings):
     app_name: str = "YouOS"
+    version: str = "0.1.11"
     environment: str = "dev"
+    instance_name: str = "YouOS"
     data_dir: Path | None = Field(default=None)  # YOUOS_DATA_DIR — instance root
     database_url: str = Field(default="sqlite:///var/youos.db")
     configs_dir: Path = Field(default=ROOT_DIR / "configs")
@@ -19,6 +21,7 @@ class Settings(BaseSettings):
         env_prefix="YOUOS_",
         env_file=".env",
         env_file_encoding="utf-8",
+        case_sensitive=False,
     )
 
     @model_validator(mode="after")
