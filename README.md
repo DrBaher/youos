@@ -254,7 +254,27 @@ instances/myname/
 YOUOS_DATA_DIR=instances/myname uvicorn app.main:app --host 127.0.0.1 --port 8765
 ```
 
-When `YOUOS_DATA_DIR` is set, YouOS automatically derives the database URL and configs directory from it. Individual overrides are still possible via `YOUOS_DATABASE_URL` and `YOUOS_CONFIGS_DIR`.
+When `YOUOS_DATA_DIR` is set, YouOS derives the canonical DB path as `YOUOS_DATA_DIR/var/youos.db`.
+For safety, startup now rejects mismatched DB paths and unsafe paths (for example Trash locations).
+
+### Data Safety Commands
+
+```bash
+# Run integrity checks (required tables + regression warnings)
+youos health-check --json
+
+# Create snapshot
+youos snapshot-create --tier manual
+
+# List snapshots
+youos snapshot-list
+
+# Restore snapshot (with confirmation)
+youos snapshot-restore /full/path/to/snapshot.db
+
+# Dry-run restore
+youos snapshot-restore /full/path/to/snapshot.db --dry-run
+```
 
 Instance data directories (`instances/*/var/`, `instances/*/data/`, `instances/*/models/`, `instances/*/youos_config.yaml`) are excluded from git.
 

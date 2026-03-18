@@ -1,12 +1,20 @@
 import os
 from collections import deque
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from app.core.data_safety import (
+    create_snapshot,
+    list_snapshots,
+    restore_snapshot,
+    run_startup_safety_checks,
+)
 from app.core.text_utils import strip_quoted_text
+from app.db.bootstrap import resolve_sqlite_path
 from app.generation.service import DraftRequest, generate_draft
 from app.retrieval.service import RetrievalRequest, retrieve_context
 
@@ -66,6 +74,47 @@ def config_summary(request: Request) -> dict[str, object]:
         "environment": settings.environment,
         "database_url": settings.database_url,
         "configs_dir": str(settings.configs_dir),
+    }
+
+
+@router.get("/data-safety/report")
+def data_safety_report(request: Request) -> dict[str, object]:
+    settings = request.app.state.settings
+    return run_startup_safety_checks(settings).to_dict()
+
+
+@router.get("/data-safety/snapshots/list")
+def data_safety_snapshots_list(request: Request) -> dict[str, list[str]]:
+    settings = request.app.state.settings
+    db_path = resolve_sqlite_path(settings.database_url)
+    return {"snapshots": [str(p) for p in list_snapshots(db_path)]}
+
+
+@router.post("/data-safety/snapshots/create")
+def data_safety_snapshots_create(request: Request, tier: str = "manual") -> dict[str, str]:
+    settings = request.app.state.settings
+    db_path = resolve_sqlite_path(settings.database_url)
+    snapshot_path = create_snapshot(db_path, tier=tier)
+    return {"status": "ok", "snapshot_path": str(snapshot_path)}
+
+
+class SnapshotRestoreBody(BaseModel):
+    snapshot_path: str = Field(min_length=1)
+    dry_run: bool = False
+
+
+@router.post("/data-safety/snapshots/restore")
+def data_safety_snapshots_restore(body: SnapshotRestoreBody, request: Request) -> dict[str, str]:
+    settings = request.app.state.settings
+    db_path = resolve_sqlite_path(settings.database_url)
+    try:
+        backup_path = restore_snapshot(db_path, Path(body.snapshot_path), dry_run=body.dry_run)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "status": "ok",
+        "restored_to_db": str(db_path),
+        "original_db_backed_up_to": str(backup_path),
     }
 
 
@@ -144,7 +193,6 @@ def draft(body: DraftBody, request: Request) -> dict[str, object]:
 
 @router.get("/draft/explain")
 def draft_explain(draft_id: str = Query(..., min_length=1)) -> dict:
-    """Return the trace for a given draft_id."""
     for trace in _draft_traces:
         if trace["draft_id"] == draft_id:
             return trace
@@ -158,11 +206,9 @@ class DraftCompareBody(BaseModel):
 
 @router.post("/draft/compare")
 def draft_compare(body: DraftCompareBody, request: Request) -> dict:
-    """Generate two drafts: retrieval-grounded vs baseline (persona-only)."""
     settings = request.app.state.settings
     clean_inbound = strip_quoted_text(body.inbound_text)
 
-    # Full retrieval-grounded draft
     try:
         retrieval_resp = generate_draft(
             DraftRequest(inbound_message=clean_inbound, sender=body.sender),
@@ -177,7 +223,6 @@ def draft_compare(body: DraftCompareBody, request: Request) -> dict:
         retrieval_confidence = "error"
         exemplar_count = 0
 
-    # Baseline draft (no exemplars — just persona + inbound)
     try:
         baseline_resp = generate_draft(
             DraftRequest(
