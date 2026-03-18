@@ -31,7 +31,7 @@ def _print_banner():
     print("YouOS learns how YOU write email - from your own sent history.")
     print("It runs entirely on your Mac. Your data never leaves your machine.")
     print()
-    print("This setup takes about 15 minutes (mostly waiting for ingestion).")
+    print("This setup takes about 5 minutes to first draft (full ingestion continues in background).")
     print("Let's get started.")
     print()
 
@@ -799,6 +799,13 @@ def main() -> None:
         config["user"]["internal_domains"] = identity["internal_domains"]
     config.setdefault("ingestion", {})
     config["ingestion"]["accounts"] = identity["emails"]
+    # Quickstart-first onboarding defaults
+    config["ingestion"].setdefault("mode", "quick_start")
+    config["ingestion"].setdefault("initial_months", 12)
+    config["ingestion"].setdefault("max_threads", 0)
+    config["ingestion"].setdefault("quick_start_enabled", True)
+    config["ingestion"].setdefault("quick_start_months", 3)
+    config["ingestion"].setdefault("quick_start_max_threads", 200)
     config.setdefault("review", {})["batch_size"] = 10
     config["review"].setdefault("draft_model", "claude")  # 'claude', 'local', or 'auto'
 

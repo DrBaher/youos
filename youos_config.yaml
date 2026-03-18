@@ -7,7 +7,7 @@ benchmarks:
 ingestion:
   accounts: []
   initial_months: 12
-  mode: balanced # new: balanced, quick_start, deep_history
+  mode: quick_start # default onboarding path: quick first value, background full ingest
   quick_start_enabled: true
   quick_start_months: 3
   quick_start_max_threads: 200

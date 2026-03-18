@@ -69,11 +69,11 @@ def _stream_generate(body: StreamBody, settings):
     intents = classify_intents_multi(clean_inbound)
     detected_intent = intents[0]
 
-    cached_ids, exemplar_cache_hit, exemplar_cache_key = _get_cached_exemplar_ids(detected_intent, sender_type_hint)
+    cached_ids, exemplar_cache_hit, exemplar_cache_key = _get_cached_exemplar_ids(detected_intent, sender_type_hint, database_url=settings.database_url)
     reply_pairs = _apply_cached_order(reply_pairs, cached_ids)
 
     selected_ids = _top_exemplar_source_ids(reply_pairs)
-    _update_exemplar_cache(detected_intent, sender_type_hint, selected_ids)
+    _update_exemplar_cache(detected_intent, sender_type_hint, selected_ids, database_url=settings.database_url)
 
     confidence, _ = _score_confidence(reply_pairs)
     precedent_used = [_precedent_summary(rp) for rp in reply_pairs]

@@ -276,11 +276,11 @@ def feedback_submit(body: SubmitBody, request: Request) -> dict:
                 conn.execute("UPDATE reply_pairs SET quality_score = ? WHERE id = ?", (round(quality_score, 4), rp_id))
                 conn.commit()
                 # Invalidate exemplar cache on successful quality update
-                clear_exemplar_cache()
+                clear_exemplar_cache(database_url=request.app.state.settings.database_url)
         except Exception:
             logger.warning("Failed to update quality_score for reply pair or clear cache", exc_info=True)
 
-        clear_exemplar_cache()
+        clear_exemplar_cache(database_url=request.app.state.settings.database_url)
         total = conn.execute("SELECT COUNT(*) FROM feedback_pairs").fetchone()[0]
     finally:
         conn.close()
