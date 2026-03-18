@@ -265,6 +265,29 @@ body {
         ? outcome.low_edit_pct.toFixed(1) + '%' : 'N/A';
       document.getElementById('highRatingPct').textContent = outcome.high_rating_pct != null
         ? outcome.high_rating_pct.toFixed(1) + '%' : 'N/A';
+
+      // Outcome deltas (newly added)
+      var outcomeDeltas = d.outcome_deltas || {};
+      if (outcomeDeltas.edit_distance_delta != null || outcomeDeltas.high_rating_delta != null) {
+        document.getElementById('outcomeDeltasSection').style.display = 'block';
+        if (outcomeDeltas.edit_distance_delta != null) {
+          var deltaPct = (outcomeDeltas.edit_distance_delta * 100).toFixed(1);
+          var sign = deltaPct > 0 ? '+' : '';
+          document.getElementById('editDistDelta').textContent = sign + deltaPct + '%';
+        } else {
+          document.getElementById('editDistDelta').textContent = 'N/A';
+        }
+        if (outcomeDeltas.high_rating_delta != null) {
+          var deltaPctHr = (outcomeDeltas.high_rating_delta * 100).toFixed(1);
+          var signHr = deltaPctHr > 0 ? '+' : '';
+          document.getElementById('highRatingDelta').textContent = signHr + deltaPctHr + '%';
+        } else {
+          document.getElementById('highRatingDelta').textContent = 'N/A';
+        }
+        document.getElementById('recentPairsCount').textContent = (outcomeDeltas.recent_window_count || 0).toLocaleString();
+        document.getElementById('prevPairsCount').textContent = (outcomeDeltas.previous_window_count || 0).toLocaleString();
+      }
+
       document.getElementById('embeddingPct').textContent = d.corpus.embedding_pct != null
         ? d.corpus.embedding_pct.toFixed(1) + '%' : 'N/A';
 
