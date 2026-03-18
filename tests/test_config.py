@@ -103,3 +103,17 @@ def test_save_and_reload(tmp_path):
     save_config(config, path)
     reloaded = _load_raw_config(path)
     assert reloaded["user"]["name"] == "Test"
+
+
+def test_get_persona_style_anchor():
+    from app.core.config import get_persona_style_anchor
+
+    cfg = {
+        "persona": {
+            "modes": {
+                "client": {"style_anchor": "Polished and reassuring."},
+            }
+        }
+    }
+    assert get_persona_style_anchor("client", cfg) == "Polished and reassuring."
+    assert get_persona_style_anchor("internal", cfg) is None

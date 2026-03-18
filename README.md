@@ -35,10 +35,12 @@ Gmail (sent mail)          Your feedback
 - Learns your writing style — richer persona: bullet point rate, directness score, sentence length, paragraph style; EWMA-weighted toward recent emails
 - Persona re-analysis is incremental (recent 90 days × 3 weight), with full weekly refresh; confidence intervals (p25/p75) shown in prompts
 - Per-sender-type personas: different voice, length, greeting, and closing for internal, external client, and personal contacts
+- Sender-type style anchors: explicit prompt slot (`[STYLE ANCHOR — internal|client|personal]`) to stabilize first-draft tone by audience
 - Per-account corpus isolation — drafts for work emails draw from work history; personal from personal
 - Greets people by first name, closes in your style — greeting and closing injected from persona config per contact type
 - Classifies multi-intent (meeting + urgent, etc.), boosts matching exemplars; per-intent reply length calibrated from corpus
 - Drafts grounded in score-ranked few-shot exemplars (confidence-annotated, thread-deduplicated); exemplar reply text preserved (600 chars), inbound trimmed (400)
+- Exemplar cache by intent+sender-type (TTL + feedback-triggered invalidation) improves consistency and reduces repeated ranking churn
 - Prompt token budget enforced — exemplars auto-trimmed if prompt exceeds 2000 tokens
 - Confidence thresholds are relative (mean±σ of retrieval scores), not hardcoded
 - Subject line + topic-aware retrieval; FTS queries expanded with email vocabulary synonyms

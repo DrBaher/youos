@@ -46,7 +46,8 @@ Configuration is in `pyproject.toml` (line length 100, Python 3.11 target).
 3. Add tests for new functionality
 4. Ensure all tests pass: `python -m pytest tests/ -q`
 5. Ensure linting passes: `ruff check .`
-6. Submit a PR with a clear description of the change
+6. Run the release checklist in `docs/RELEASE_GUARDRAILS.md` for any user-facing/docs/submission change
+7. Submit a PR with a clear description of the change
 
 ## Architecture overview
 
