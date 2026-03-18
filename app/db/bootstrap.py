@@ -27,6 +27,7 @@ def bootstrap_database() -> Path:
         _migrate_sender_profiles(connection)
         _migrate_memory(connection)
         _migrate_review_streaks(connection)
+        _migrate_exemplar_cache(connection)
         _populate_fts(connection)
         connection.commit()
     finally:
@@ -147,3 +148,15 @@ def _populate_fts(connection: sqlite3.Connection) -> None:
             )
         except Exception:
             pass
+
+
+def _migrate_exemplar_cache(connection: sqlite3.Connection) -> None:
+    """Create persistent exemplar cache table if it doesn't exist."""
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS exemplar_cache (
+            cache_key TEXT PRIMARY KEY,
+            source_ids_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_exemplar_cache_updated ON exemplar_cache(updated_at)")
