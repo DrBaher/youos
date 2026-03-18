@@ -11,7 +11,14 @@ from typing import Any
 
 import yaml
 
-from app.core.config import get_account_for_sender, get_base_model, get_model_fallback, get_user_name, get_user_names
+from app.core.config import (
+    get_account_for_sender,
+    get_base_model,
+    get_model_fallback,
+    get_persona_style_anchor,
+    get_user_name,
+    get_user_names,
+)
 from app.core.sender import classify_sender, extract_domain, first_name_from_display_name
 from app.core.text_utils import strip_quoted_text
 from app.db.bootstrap import resolve_sqlite_path
@@ -23,6 +30,61 @@ from app.retrieval.service import (
 )
 
 logger = logging.getLogger(__name__)
+
+_EXEMPLAR_CACHE_TTL_SECONDS = 30 * 60
+_exemplar_cache: dict[tuple[str, str], dict[str, Any]] = {}
+
+
+def clear_exemplar_cache() -> None:
+    _exemplar_cache.clear()
+
+
+def _cache_key(intent_hint: str | None, sender_type: str | None) -> tuple[str, str]:
+    return ((intent_hint or "general").strip().lower(), (sender_type or "unknown").strip().lower())
+
+
+def _get_cached_exemplar_ids(intent_hint: str | None, sender_type: str | None) -> tuple[list[str], bool, str]:
+    import time
+
+    key = _cache_key(intent_hint, sender_type)
+    key_str = f"{key[0]}::{key[1]}"
+    entry = _exemplar_cache.get(key)
+    if not entry:
+        logger.info("Exemplar cache MISS key=%s", key_str)
+        return [], False, key_str
+    if time.time() - float(entry.get("ts", 0.0)) > _EXEMPLAR_CACHE_TTL_SECONDS:
+        _exemplar_cache.pop(key, None)
+        logger.info("Exemplar cache EXPIRED key=%s", key_str)
+        return [], False, key_str
+    ids = [str(x) for x in entry.get("ids", []) if x]
+    logger.info("Exemplar cache HIT key=%s size=%d", key_str, len(ids))
+    return ids, True, key_str
+
+
+def _update_exemplar_cache(intent_hint: str | None, sender_type: str | None, source_ids: list[str]) -> None:
+    import time
+
+    key = _cache_key(intent_hint, sender_type)
+    _exemplar_cache[key] = {"ts": time.time(), "ids": source_ids[:10]}
+
+
+def _apply_cached_order(reply_pairs: list[RetrievalMatch], cached_ids: list[str]) -> list[RetrievalMatch]:
+    if not cached_ids or not reply_pairs:
+        return reply_pairs
+    rank = {sid: i for i, sid in enumerate(cached_ids)}
+    cached = [rp for rp in reply_pairs if rp.source_id in rank]
+    uncached = [rp for rp in reply_pairs if rp.source_id not in rank]
+    cached.sort(key=lambda rp: rank.get(rp.source_id, 9999))
+    return cached + uncached
+
+
+def _top_exemplar_source_ids(reply_pairs: list[RetrievalMatch], limit: int = 5) -> list[str]:
+    ranked = sorted(
+        [rp for rp in reply_pairs if rp.source_id],
+        key=lambda rp: ((rp.metadata or {}).get("quality_score", 1.0), rp.score),
+        reverse=True,
+    )
+    return [rp.source_id for rp in ranked[:limit]]
 
 
 @dataclass(slots=True)
@@ -56,6 +118,8 @@ class DraftResponse:
     suggested_subject: str | None = None
     token_estimate: int | None = None
     empty_output_retried: bool = False
+    exemplar_cache_hit: bool = False
+    exemplar_cache_key: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -297,6 +361,7 @@ def _precedent_summary(match: RetrievalMatch) -> dict[str, Any]:
         "title": match.title,
         "snippet": match.snippet,
         "score": match.score,
+        "reply_pair_id": match.reply_pair_id,
     }
 
 
@@ -657,6 +722,12 @@ def assemble_prompt(
 
     persona_block = "\n".join(persona_lines)
 
+    style_anchor_block = ""
+    if sender_type:
+        style_anchor = get_persona_style_anchor(sender_type)
+        if style_anchor:
+            style_anchor_block = f"\n[STYLE ANCHOR — {sender_type}]\n{style_anchor.strip()}\n"
+
     # Build optional context lines
     context_lines: list[str] = []
     if detected_mode:
@@ -700,6 +771,7 @@ def assemble_prompt(
         f"{system.strip()}\n"
         f"{persona_block}\n"
         f"{context_block}"
+        f"{style_anchor_block}"
         f"{sender_block}"
         f"{facts_block}"
         f"{language_block}"
@@ -949,6 +1021,13 @@ def generate_draft(
 
     detected_mode = request.mode or retrieval_response.detected_mode
     reply_pairs = retrieval_response.reply_pairs
+
+    cached_ids, exemplar_cache_hit, exemplar_cache_key = _get_cached_exemplar_ids(detected_intent, sender_type_hint)
+    reply_pairs = _apply_cached_order(reply_pairs, cached_ids)
+
+    selected_ids = _top_exemplar_source_ids(reply_pairs)
+    _update_exemplar_cache(detected_intent, sender_type_hint, selected_ids)
+
     # Build score stats dict from retrieval response
     score_stats = None
     if retrieval_response.mean_score is not None:
@@ -1145,4 +1224,6 @@ def generate_draft(
         suggested_subject=suggested_subject,
         token_estimate=token_estimate,
         empty_output_retried=empty_output_retried,
+        exemplar_cache_hit=exemplar_cache_hit,
+        exemplar_cache_key=exemplar_cache_key,
     )

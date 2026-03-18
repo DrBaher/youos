@@ -1,0 +1,26 @@
+INFO:     Started server process [63604]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8765 (Press CTRL+C to quit)
+INFO:     100.96.144.103:53296 - "GET /feedback HTTP/1.1" 200 OK
+INFO:     100.96.144.103:53296 - "GET /api/config HTTP/1.1" 200 OK
+INFO:     100.96.144.103:53297 - "GET /api/config HTTP/1.1" 200 OK
+INFO:     100.96.144.103:53317 - "GET /review-queue/next-stream?batch_size=10 HTTP/1.1" 200 OK
+INFO:     100.96.144.103:54830 - "GET /feedback HTTP/1.1" 200 OK
+INFO:     100.96.144.103:54831 - "GET /api/config HTTP/1.1" 200 OK
+INFO:     100.96.144.103:54830 - "GET /api/config HTTP/1.1" 200 OK
+INFO:     100.96.144.103:54834 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     100.96.144.103:55078 - "GET /api/facts HTTP/1.1" 200 OK
+INFO:     100.96.144.103:55078 - "GET /api/facts?type=user_pref HTTP/1.1" 200 OK
+INFO:     100.96.144.103:55104 - "POST /api/facts HTTP/1.1" 200 OK
+INFO:     100.96.144.103:55104 - "GET /api/facts?type=user_pref HTTP/1.1" 200 OK
+INFO:     100.96.144.103:55147 - "POST /api/facts HTTP/1.1" 200 OK
+INFO:     100.96.144.103:55147 - "GET /api/facts?type=user_pref HTTP/1.1" 200 OK
+INFO:     100.96.144.103:55163 - "POST /api/facts HTTP/1.1" 200 OK
+INFO:     100.96.144.103:55163 - "GET /api/facts?type=user_pref HTTP/1.1" 200 OK
+INFO:     100.96.144.103:55193 - "POST /api/facts HTTP/1.1" 200 OK
+INFO:     100.96.144.103:55193 - "GET /api/facts?type=user_pref HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [63604]
