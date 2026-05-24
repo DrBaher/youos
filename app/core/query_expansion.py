@@ -27,7 +27,9 @@ def expand_query(text: str, max_expansions: int = 3) -> str:
     """Expand query with synonym groups.
 
     Finds words in text that have synonyms and appends up to max_expansions
-    synonym groups as: 'text (also: synonym1 synonym2)'.
+    synonym groups as: 'text synonym1 synonym2'. The synonyms are appended bare
+    (no 'also:' label) — the label tokenized into the FTS query and the word
+    'also' polluted BM25 ranking.
     Caps total expansion at 50 extra chars.
     """
     if not text:
@@ -56,4 +58,4 @@ def expand_query(text: str, max_expansions: int = 3) -> str:
     if len(expansion) > 50:
         expansion = expansion[:50].rsplit(" ", 1)[0]
 
-    return f"{text} (also: {expansion})"
+    return f"{text} {expansion}"
