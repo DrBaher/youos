@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import signal
 import subprocess
 from typing import Literal
 
@@ -110,12 +112,16 @@ def _stream_generate(body: StreamBody, settings):
     )
 
     # Try streaming via claude CLI subprocess
+    proc = None
     try:
+        # Pass the prompt via -p so a prompt beginning with '-' isn't parsed as a
+        # flag; new session so we can kill the whole process group on cleanup.
         proc = subprocess.Popen(
-            ["claude", "--print", prompt],
+            ["claude", "--print", "-p", prompt],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            start_new_session=True,
         )
         for line in proc.stdout:
             # Emit each line including its trailing newline, blank lines too, so
@@ -143,6 +149,14 @@ def _stream_generate(body: StreamBody, settings):
             precedent_used = response.precedent_used
         except Exception as exc:
             yield f"data: {json.dumps({'token': f'[generation failed: {exc}]'})}\n\n"
+    finally:
+        # Don't leave a hung claude (or its child processes) running if we
+        # errored out or the client disconnected mid-stream.
+        if proc and proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                proc.kill()
 
     done_payload = {
         "done": True,
