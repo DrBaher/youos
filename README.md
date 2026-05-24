@@ -188,7 +188,7 @@ The web UI provides:
 - **Review Queue**: Emails appear instantly, drafts stream in one by one as they generate. Automated senders filtered by address and content. Configurable batch size (5/10/20) and draft model (`claude`/`local`/`auto`). Keyboard shortcuts: `j` submit, `k` skip, `e` edit, `1-5` rate, `?` help.
 - **History**: Past drafts with intent badges, confidence badges, and edit-distance indicators
 - **Stats Dashboard**: Corpus health, model status, pipeline status (with skipped steps), style drift indicator, benchmark trends, edit distance trend chart, per-sender-type accuracy breakdown, and **System Health card** (corpus size, last ingestion, embedding coverage, adapter status)
-- **Gmail Bookmarklet**: Injects a floating side panel directly into Gmail — auto-detects sender email from the DOM, add an optional instruction, generate a draft, and click "Insert into Gmail" without leaving your inbox. Submit feedback with star rating from the panel
+- **Gmail browser extension** (recommended): A Chrome/Edge/Brave (Manifest V3) extension injects a side panel directly into Gmail — auto-detects sender/subject/body, add an optional instruction or tone, generate a draft, and click "Insert into Gmail" without leaving your inbox. Submit feedback with a star rating from the panel. Works with PIN-protected instances via `youos token-create`. See [extension/README.md](extension/README.md). (A legacy `/bookmarklet` page also exists, but the extension is more robust.)
 
 ## Architecture
 

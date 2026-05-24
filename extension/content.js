@@ -10,6 +10,9 @@
   if (window.__youosInjected) return;
   window.__youosInjected = true;
 
+  // Cross-browser: Firefox uses `browser`, Chrome uses `chrome` (both MV3).
+  const api = globalThis.browser ?? globalThis.chrome;
+
   const TONE_LABELS = { shorter: "Shorter", more_formal: "Formal", more_detail: "Detail" };
 
   let host = null; // shadow host element
@@ -279,7 +282,8 @@
   // ── API actions (via background worker) ───────────────────────────────
 
   function send(message) {
-    return new Promise((resolve) => chrome.runtime.sendMessage(message, resolve));
+    // Promise form works in both Firefox (browser.*) and Chrome MV3 (chrome.*).
+    return api.runtime.sendMessage(message);
   }
 
   function errorText(res) {
@@ -380,7 +384,7 @@
   }
 
   // ── Toolbar toggle from the background worker ─────────────────────────
-  chrome.runtime.onMessage.addListener((msg) => {
+  api.runtime.onMessage.addListener((msg) => {
     if (msg && msg.type === "youos-toggle") togglePanel();
   });
 
