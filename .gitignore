@@ -21,3 +21,6 @@ instances/*/var/
 instances/*/data/
 instances/*/models/
 instances/*/youos_config.yaml
+
+# Generated Firefox extension build
+extension/firefox-build/
