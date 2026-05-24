@@ -3,12 +3,29 @@ from pathlib import Path
 
 from app.core.settings import get_settings
 
+SQLITE_BUSY_TIMEOUT_MS = 30000  # wait up to 30s for a lock before erroring
+
 
 def resolve_sqlite_path(database_url: str) -> Path:
     prefix = "sqlite:///"
     if not database_url.startswith(prefix):
         raise ValueError("Only sqlite:/// URLs are supported by the bootstrap script.")
     return Path(database_url.removeprefix(prefix))
+
+
+def connect(db_path: Path | str) -> sqlite3.Connection:
+    """Open a SQLite connection tuned for concurrent access.
+
+    The generation path opens several connections per draft and the nightly
+    pipeline runs while the web server is live, so lock contention is normal.
+    WAL lets a writer proceed alongside readers, and a generous busy_timeout
+    makes a momentarily-locked write wait instead of immediately raising
+    'database is locked'.
+    """
+    conn = sqlite3.connect(db_path, timeout=SQLITE_BUSY_TIMEOUT_MS / 1000)
+    conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
 
 
 def bootstrap_database() -> Path:
