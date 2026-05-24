@@ -19,9 +19,12 @@ class _FakeURL:
 
 
 class _FakeRequest:
-    def __init__(self, path: str, cookies: dict[str, str]):
+    def __init__(self, path: str, cookies: dict[str, str], headers: dict[str, str] | None = None):
         self.url = _FakeURL(path)
         self.cookies = cookies
+        # Starlette headers are case-insensitive; the middleware looks up
+        # lowercase keys, so tests pass lowercase header names.
+        self.headers = headers or {}
 
 
 def _make_middleware() -> PinAuthMiddleware:
@@ -58,3 +61,33 @@ def test_unknown_token_is_rejected():
     mw.sessions = {}
     result = _dispatch(mw, _FakeRequest("/feedback", {SESSION_COOKIE: "nope"}))
     assert getattr(result, "status_code", None) == 303
+
+
+def test_valid_api_token_header_is_accepted(monkeypatch):
+    import app.main as main_mod
+
+    monkeypatch.setattr(main_mod, "verify_api_token", lambda t: t == "good-token")
+    mw = _make_middleware()
+    mw.sessions = {}
+    req = _FakeRequest("/feedback", {}, headers={"x-youos-token": "good-token"})
+    assert _dispatch(mw, req) == "PASS"
+
+
+def test_valid_bearer_token_is_accepted(monkeypatch):
+    import app.main as main_mod
+
+    monkeypatch.setattr(main_mod, "verify_api_token", lambda t: t == "good-token")
+    mw = _make_middleware()
+    mw.sessions = {}
+    req = _FakeRequest("/feedback", {}, headers={"authorization": "Bearer good-token"})
+    assert _dispatch(mw, req) == "PASS"
+
+
+def test_invalid_api_token_header_is_rejected(monkeypatch):
+    import app.main as main_mod
+
+    monkeypatch.setattr(main_mod, "verify_api_token", lambda t: False)
+    mw = _make_middleware()
+    mw.sessions = {}
+    req = _FakeRequest("/feedback", {}, headers={"x-youos-token": "bad"})
+    assert getattr(_dispatch(mw, req), "status_code", None) == 303

@@ -804,5 +804,36 @@ def snapshot_restore(
     print(f"restored_to={db_path}")
 
 
+@app.command("token-create")
+def token_create():
+    """Create an API token for the browser extension (works on PIN-protected instances)."""
+    from app.core.auth import add_api_token
+
+    token = add_api_token()
+    print("API token created. Paste it into the YouOS extension Options — it is not shown again:")
+    print()
+    print(f"  {token}")
+    print()
+    print("Stored hashed on disk. Revoke all tokens with `youos token-revoke`.")
+
+
+@app.command("token-list")
+def token_list():
+    """Show how many API tokens are configured for this instance."""
+    from app.core.auth import load_api_token_hashes
+
+    count = len(load_api_token_hashes())
+    print(f"{count} API token(s) configured.")
+
+
+@app.command("token-revoke")
+def token_revoke():
+    """Revoke all API tokens for this instance."""
+    from app.core.auth import revoke_api_tokens
+
+    count = revoke_api_tokens()
+    print(f"Revoked {count} API token(s).")
+
+
 if __name__ == "__main__":
     app()
