@@ -325,9 +325,13 @@ def run_eval_suite(
                     request.config_tag,
                     case.get("id"),
                 )
-
-        if persist:
-            conn.commit()
+                # Commit each case so we don't hold the WAL write lock across the
+                # whole suite. A single uncommitted transaction spanning every
+                # case kept the write lock the entire time, so each per-draft
+                # exemplar-cache write blocked for the busy_timeout and then
+                # failed with 'database is locked' — and no results were visible
+                # until the suite ended.
+                conn.commit()
     finally:
         conn.close()
 
