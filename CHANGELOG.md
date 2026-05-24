@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.16 — 2026-05-24
+
+### Autoresearch
+- **Autoresearch is now instance-aware.** `run_autoresearch.py` derived its DB and configs from hardcoded repo paths (`ROOT_DIR/var/youos.db`, `ROOT_DIR/configs`) and ignored `YOUOS_DATA_DIR` — so it always optimized the repo's default config against the repo DB and never the instance it was meant to tune. It now resolves both from settings (honoring `YOUOS_DATA_DIR`), with `--db-path` / `--configs-dir` overrides.
+- The nightly pipeline's `DEFAULT_DB` is likewise derived from settings, so the autoresearch skip-gate and other DB-dependent steps check the active instance's database.
+
 ## v0.1.15 — 2026-05-24
 
 ### Security

@@ -10,7 +10,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 
 class Settings(BaseSettings):
     app_name: str = "YouOS"
-    version: str = "0.1.15"
+    version: str = "0.1.16"
     environment: str = "dev"
     instance_name: str = "YouOS"
     data_dir: Path | None = Field(default=None)  # YOUOS_DATA_DIR — instance root
