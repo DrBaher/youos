@@ -1,3 +1,4 @@
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -39,9 +40,11 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, config: dict):
         super().__init__(app)
         self.config = config
-        # Load persisted sessions, prune expired
-        persisted = load_sessions()
-        self.sessions: set[str] = set(persisted.keys())
+        # Load persisted sessions (already pruned of expired tokens on load).
+        # Keep the creation timestamps in memory so expiry can be enforced
+        # server-side — storing only the keys let captured tokens replay
+        # indefinitely until process restart, ignoring SESSION_MAX_AGE.
+        self.sessions: dict[str, float] = dict(load_sessions())
         self.limiter = LoginRateLimiter()
 
     async def dispatch(self, request: Request, call_next):
@@ -53,8 +56,13 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         token = request.cookies.get(SESSION_COOKIE)
-        if token and token in self.sessions:
-            return await call_next(request)
+        if token:
+            created_at = self.sessions.get(token)
+            if created_at is not None:
+                if time.time() - created_at < SESSION_MAX_AGE:
+                    return await call_next(request)
+                # Expired — evict so it can't be reused.
+                self.sessions.pop(token, None)
 
         return RedirectResponse(url="/login", status_code=303)
 
@@ -70,6 +78,23 @@ async def _lifespan(app: FastAPI):
         for warning in safety_report.warnings:
             print(f"[YOUOS WARNING]: {warning}")
         # Optionally, block startup here if warnings are critical
+
+    # Warn loudly if the server is reachable beyond the local machine without a
+    # PIN. With no PIN, PinAuthMiddleware is a no-op and every endpoint is open.
+    config = load_config()
+    if not is_auth_enabled(config):
+        from app.core.config import get_server_host, get_tailscale_hostname
+
+        host = get_server_host(config)
+        loopback = host in ("127.0.0.1", "localhost", "::1", "")
+        if not loopback or get_tailscale_hostname(config):
+            print(
+                "[YOUOS SECURITY]: Server is reachable beyond localhost "
+                f"(host={host or '0.0.0.0'}"
+                + (", Tailscale enabled" if get_tailscale_hostname(config) else "")
+                + ") but no PIN is set — the web UI and API are UNAUTHENTICATED. "
+                "Set a PIN under `server.pin` in your config before exposing YouOS."
+            )
 
     yield
     # Clear embedding cache on shutdown
@@ -126,7 +151,7 @@ def create_app() -> FastAPI:
         if verify_pin(str(pin), stored_hash):
             auth_middleware.limiter.reset(client_ip)
             token = create_session_token()
-            auth_middleware.sessions.add(token)
+            auth_middleware.sessions[token] = time.time()
             persist_new_session(token)
             response = RedirectResponse(url="/feedback", status_code=303)
             response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_MAX_AGE, httponly=True, samesite="lax")

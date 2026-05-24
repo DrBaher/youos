@@ -1019,117 +1019,119 @@ def generate_draft(
     db_path = resolve_sqlite_path(database_url)
     shared_conn = sqlite3.connect(db_path)
     shared_conn.row_factory = sqlite3.Row
+    try:
 
-    # Look up prior reply to this sender for additional context (works for standalone emails too)
-    user_name = get_user_name()
-    if request.sender:
-        prior_reply = _lookup_prior_reply_to_sender(request.sender, database_url, conn=shared_conn)
-        if prior_reply:
-            inbound_for_prompt += f"\n\n[PRIOR REPLY TO THIS SENDER]\n{user_name} previously wrote: {prior_reply}"
+        # Look up prior reply to this sender for additional context (works for standalone emails too)
+        user_name = get_user_name()
+        if request.sender:
+            prior_reply = _lookup_prior_reply_to_sender(request.sender, database_url, conn=shared_conn)
+            if prior_reply:
+                inbound_for_prompt += f"\n\n[PRIOR REPLY TO THIS SENDER]\n{user_name} previously wrote: {prior_reply}"
 
-    # Infer account email from sender if not explicitly provided
-    if request.account_email:
-        account_emails = (request.account_email,)
-    elif request.sender:
-        inferred = get_account_for_sender(request.sender)
-        account_emails = (inferred,) if inferred else ()
-    else:
-        account_emails = ()
-    sender_type_hint = None
-    sender_domain_hint = None
-    if request.sender:
-        sender_type_hint = classify_sender(request.sender)
-        sender_domain_hint = extract_domain(request.sender)
+        # Infer account email from sender if not explicitly provided
+        if request.account_email:
+            account_emails = (request.account_email,)
+        elif request.sender:
+            inferred = get_account_for_sender(request.sender)
+            account_emails = (inferred,) if inferred else ()
+        else:
+            account_emails = ()
+        sender_type_hint = None
+        sender_domain_hint = None
+        if request.sender:
+            sender_type_hint = classify_sender(request.sender)
+            sender_domain_hint = extract_domain(request.sender)
 
-    # Classify intent (multi-intent support)
-    from app.core.intent import classify_intents_multi
+        # Classify intent (multi-intent support)
+        from app.core.intent import classify_intents_multi
 
-    if request.intent_hint:
-        detected_intent = request.intent_hint
-        intent_hint_2 = None
-    else:
-        intents = classify_intents_multi(clean_inbound)
-        detected_intent = intents[0]
-        intent_hint_2 = intents[1] if len(intents) > 1 else None
+        if request.intent_hint:
+            detected_intent = request.intent_hint
+            intent_hint_2 = None
+        else:
+            intents = classify_intents_multi(clean_inbound)
+            detected_intent = intents[0]
+            intent_hint_2 = intents[1] if len(intents) > 1 else None
 
-    # E20: for very short inbound (<50 chars), fall back to sender-profile-based retrieval
-    retrieval_query = clean_inbound
-    if len(clean_inbound.strip()) < 50 and request.sender:
-        # Augment query with sender email so retrieval finds past replies to this person
-        retrieval_query = f"{clean_inbound} {request.sender}".strip()
+        # E20: for very short inbound (<50 chars), fall back to sender-profile-based retrieval
+        retrieval_query = clean_inbound
+        if len(clean_inbound.strip()) < 50 and request.sender:
+            # Augment query with sender email so retrieval finds past replies to this person
+            retrieval_query = f"{clean_inbound} {request.sender}".strip()
 
-    retrieval_response: RetrievalResponse = retrieve_context(
-        RetrievalRequest(
-            query=retrieval_query,
-            scope="all",
-            account_emails=account_emails,
-            top_k_reply_pairs=request.top_k_reply_pairs,
-            top_k_chunks=request.top_k_chunks,
-            sender_type_hint=sender_type_hint,
-            sender_domain_hint=sender_domain_hint,
-            language_hint=detected_lang,
-            intent_hint=detected_intent,
-            intent_hint_2=intent_hint_2,
-            thread_id=request.thread_id,
-        ),
-        database_url=database_url,
-        configs_dir=configs_dir,
-    )
+        retrieval_response: RetrievalResponse = retrieve_context(
+            RetrievalRequest(
+                query=retrieval_query,
+                scope="all",
+                account_emails=account_emails,
+                top_k_reply_pairs=request.top_k_reply_pairs,
+                top_k_chunks=request.top_k_chunks,
+                sender_type_hint=sender_type_hint,
+                sender_domain_hint=sender_domain_hint,
+                language_hint=detected_lang,
+                intent_hint=detected_intent,
+                intent_hint_2=intent_hint_2,
+                thread_id=request.thread_id,
+            ),
+            database_url=database_url,
+            configs_dir=configs_dir,
+        )
 
-    detected_mode = request.mode or retrieval_response.detected_mode
-    reply_pairs = retrieval_response.reply_pairs
+        detected_mode = request.mode or retrieval_response.detected_mode
+        reply_pairs = retrieval_response.reply_pairs
 
-    cached_ids, exemplar_cache_hit, exemplar_cache_key = _get_cached_exemplar_ids(detected_intent, sender_type_hint, database_url=database_url)
-    reply_pairs = _apply_cached_order(reply_pairs, cached_ids)
+        cached_ids, exemplar_cache_hit, exemplar_cache_key = _get_cached_exemplar_ids(detected_intent, sender_type_hint, database_url=database_url)
+        reply_pairs = _apply_cached_order(reply_pairs, cached_ids)
 
-    selected_ids = _top_exemplar_source_ids(reply_pairs)
-    _update_exemplar_cache(detected_intent, sender_type_hint, selected_ids, database_url=database_url)
+        selected_ids = _top_exemplar_source_ids(reply_pairs)
+        _update_exemplar_cache(detected_intent, sender_type_hint, selected_ids, database_url=database_url)
 
-    # Build score stats dict from retrieval response
-    score_stats = None
-    if retrieval_response.mean_score is not None:
-        score_stats = {
-            "max": retrieval_response.max_score,
-            "mean": retrieval_response.mean_score,
-            "stddev": retrieval_response.score_stddev,
-        }
-    confidence, confidence_reason = _score_confidence(reply_pairs, score_stats=score_stats)
+        # Build score stats dict from retrieval response
+        score_stats = None
+        if retrieval_response.mean_score is not None:
+            score_stats = {
+                "max": retrieval_response.max_score,
+                "mean": retrieval_response.mean_score,
+                "stddev": retrieval_response.score_stddev,
+            }
+        confidence, confidence_reason = _score_confidence(reply_pairs, score_stats=score_stats)
 
-    prompts = _load_prompts(configs_dir)
-    persona = _load_persona(configs_dir)
+        prompts = _load_prompts(configs_dir)
+        persona = _load_persona(configs_dir)
 
-    # Per-sender-type persona mode override
-    _sender_type = sender_type_hint
-    modes = persona.get("modes", {})
-    if _sender_type and _sender_type in modes:
-        mode_config = modes[_sender_type]
-        persona["_active_mode_config"] = mode_config
-        # Merge mode values into persona style, but never override custom_constraints
-        style = persona.setdefault("style", {})
-        for key in ("voice", "avg_reply_words", "greeting", "closing"):
-            if key in mode_config:
-                style[key] = mode_config[key]
-    else:
-        persona["_active_mode_config"] = {}
+        # Per-sender-type persona mode override
+        _sender_type = sender_type_hint
+        modes = persona.get("modes", {})
+        if _sender_type and _sender_type in modes:
+            mode_config = modes[_sender_type]
+            persona["_active_mode_config"] = mode_config
+            # Merge mode values into persona style, but never override custom_constraints
+            style = persona.setdefault("style", {})
+            for key in ("voice", "avg_reply_words", "greeting", "closing"):
+                if key in mode_config:
+                    style[key] = mode_config[key]
+        else:
+            persona["_active_mode_config"] = {}
 
-    # Look up sender profile if sender provided
-    sender_profile = None
-    sender_context = None
-    first_name = None
-    if request.sender:
-        sender_profile = lookup_sender_profile(request.sender, database_url, conn=shared_conn)
-        if sender_profile:
-            sender_context = _format_sender_context(sender_profile)
-            first_name = first_name_from_display_name(sender_profile.get("display_name"))
+        # Look up sender profile if sender provided
+        sender_profile = None
+        sender_context = None
+        first_name = None
+        if request.sender:
+            sender_profile = lookup_sender_profile(request.sender, database_url, conn=shared_conn)
+            if sender_profile:
+                sender_context = _format_sender_context(sender_profile)
+                first_name = first_name_from_display_name(sender_profile.get("display_name"))
 
-    # Look up facts (user prefs, contact facts, project context)
-    memory_facts = lookup_facts(
-        sender=request.sender,
-        inbound_text=clean_inbound,
-        database_url=database_url,
-        conn=shared_conn,
-    )
-    shared_conn.close()
+        # Look up facts (user prefs, contact facts, project context)
+        memory_facts = lookup_facts(
+            sender=request.sender,
+            inbound_text=clean_inbound,
+            database_url=database_url,
+            conn=shared_conn,
+        )
+    finally:
+        shared_conn.close()
 
     prompt = assemble_prompt(
         inbound_message=inbound_for_prompt,
