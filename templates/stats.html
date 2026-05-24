@@ -104,8 +104,8 @@ body {
   <h1 class="page-title" id="pageTitle">YouOS Stats</h1>
   <p class="subtitle">Corpus health, model status, and benchmarks</p>
 
-  <div id="loading" class="loading">Loading stats...</div>
-  <div id="content" style="display:none;">
+  <div id="loading" class="loading" role="status" aria-live="polite">Loading stats...</div>
+  <div id="content" role="main" style="display:none;">
     <div class="grid">
       <!-- Corpus Health -->
       <div class="card">
@@ -244,6 +244,16 @@ body {
       const res = await fetch('/stats/data');
       if (!res.ok) throw new Error('Failed to load stats');
       const d = await res.json();
+
+      // Empty-corpus state: a fresh instance has no data, so show guidance
+      // instead of a dashboard full of zeros and "N/A".
+      const corpusEmpty = !d.corpus || ((d.corpus.total_reply_pairs || 0) === 0 && (d.corpus.total_documents || 0) === 0);
+      if (corpusEmpty) {
+        document.getElementById('loading').innerHTML =
+          'No corpus yet — nothing to chart. Run <code>youos setup</code> and ingest your sent mail, then reload to see your stats.';
+        return;
+      }
+
       const now = new Date().toLocaleTimeString();
 
       document.getElementById('corpusUpdated').textContent = 'Updated ' + now;
@@ -421,23 +431,6 @@ body {
         document.getElementById('systemHealthCard').style.display = 'block';
         document.getElementById('shCorpusSize').textContent = (d.system_health.corpus_size || 0).toLocaleString() + ' pairs';
         document.getElementById('shLastIngestion').textContent = d.system_health.last_ingestion ? d.system_health.last_ingestion.slice(0,10) : 'N/A';
-        document.getElementById('shEmbeddingCov').textContent = d.system_health.embedding_coverage != null ?
-          (d.system_health.embedding_coverage * 100).toFixed(1) + '%' : 'N/A';
-        document.getElementById('shAdapter').innerHTML = d.system_health.adapter_ready ?
-          '<span style="color:#00c4a7;">&#x2713; Ready</span>' : '<span style="color:#f0ad4e;">Not trained</span>';
-      }
-
-      document.getElementById('loading').style.display = 'none';
-      document.getElementById('content').style.display = 'block';
-    } catch (e) {
-      document.getElementById('loading').textContent = 'Error loading stats: ' + e.message;
-    }
-  })();
-})();
-</script>
-</body>
-</html>
-0) : 'N/A';
         document.getElementById('shEmbeddingCov').textContent = d.system_health.embedding_coverage != null ?
           (d.system_health.embedding_coverage * 100).toFixed(1) + '%' : 'N/A';
         document.getElementById('shAdapter').innerHTML = d.system_health.adapter_ready ?

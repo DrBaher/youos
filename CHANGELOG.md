@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.1.20 — 2026-05-24
+
+### Web UI review fixes
+- **Security:** History tab now HTML-escapes inbound/draft/snippet content before injecting it (raw corpus email bodies could otherwise execute embedded markup). Sender-note editing builds its textarea via `.value` instead of string-interpolated `innerHTML`.
+- **Streaming fidelity:** drafts streamed from the server kept their paragraph breaks — the SSE path was dropping blank lines and the client was adding a stray newline per token.
+- **"How was this generated?"** now works from the main Draft tab: `/feedback/generate` returns a `draft_id` (stores a trace) so the explain link renders and resolves.
+- **Progress nudge** ("X/10 pairs collected") refreshes after each Draft/Review-Queue submission instead of freezing at the page-load value.
+- **Accessibility:** the four main tabs are now keyboard-navigable (roving `tabindex`, `role=tab`/`tablist`/`tabpanel`, `aria-selected`, arrow/Enter/Space + focus ring); raised text contrast on the footer, inactive tabs, placeholders, and empty rating stars; stats dashboard gained `role`s and a no-corpus empty state.
+- **Robustness:** the `r` re-generate shortcut checks the response and restores (no longer blanks) the draft on error; the Review Queue won't start a second batch stream while one is in flight; sender-note save and fact-delete failures are now surfaced instead of silently swallowed.
+- **Cleanup:** removed orphaned/broken script after `</html>` in `stats.html`, a dead `if (false)` branch, and a duplicate history-load trigger.
+
 ## v0.1.19 — 2026-05-24
 
 ### Autoresearch reliability (the real `database is locked` fix)
