@@ -100,6 +100,63 @@ def persist_new_session(token: str, path: Path | None = None) -> None:
     save_sessions(sessions, path)
 
 
+# ── API tokens (for the browser extension / non-cookie clients) ──────────
+# The browser extension can't ride the SameSite=Lax session cookie cross-origin,
+# so PIN-protected instances accept a long-lived API token via the
+# `X-YouOS-Token` header instead. Tokens are stored hashed (same PBKDF2 as PINs)
+# and compared in constant time.
+
+
+def _get_api_tokens_path() -> Path:
+    from app.core.settings import get_var_dir
+
+    return get_var_dir() / "api_tokens.json"
+
+
+def load_api_token_hashes(path: Path | None = None) -> list[str]:
+    """Return stored API-token hashes; [] if none or the file is unreadable."""
+    if path is None:
+        path = _get_api_tokens_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return []
+    if isinstance(data, list):
+        return [str(h) for h in data]
+    if isinstance(data, dict):
+        return [str(h) for h in data.get("tokens", [])]
+    return []
+
+
+def add_api_token(path: Path | None = None) -> str:
+    """Generate a new API token, persist its hash, and return the plaintext once."""
+    if path is None:
+        path = _get_api_tokens_path()
+    token = secrets.token_urlsafe(32)
+    hashes = load_api_token_hashes(path)
+    hashes.append(get_pin_hash(token))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(hashes), encoding="utf-8")
+    return token
+
+
+def revoke_api_tokens(path: Path | None = None) -> int:
+    """Delete all stored API tokens. Returns how many were removed."""
+    if path is None:
+        path = _get_api_tokens_path()
+    count = len(load_api_token_hashes(path))
+    if path.exists():
+        path.write_text(json.dumps([]), encoding="utf-8")
+    return count
+
+
+def verify_api_token(token: str, path: Path | None = None) -> bool:
+    """True if `token` matches any stored API-token hash."""
+    if not token:
+        return False
+    return any(verify_pin(token, h) for h in load_api_token_hashes(path))
+
+
 class LoginRateLimiter:
     """Simple rate limiter: 3 attempts then 60s lockout per IP."""
 

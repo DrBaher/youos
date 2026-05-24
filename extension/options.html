@@ -25,8 +25,12 @@
     <p>Point this at your local YouOS server. The default matches <code>youos serve</code>.</p>
     <label for="base">YouOS server URL</label>
     <input id="base" type="text" placeholder="http://127.0.0.1:8765" />
-    <p>Use <code>http://127.0.0.1:&lt;port&gt;</code> or <code>http://localhost:&lt;port&gt;</code>.
-       PIN-protected instances are not supported yet.</p>
+    <p>Use <code>http://127.0.0.1:&lt;port&gt;</code> or <code>http://localhost:&lt;port&gt;</code>.</p>
+
+    <label for="token">API token (only if your instance has a PIN)</label>
+    <input id="token" type="password" placeholder="leave blank if no PIN is set" autocomplete="off" />
+    <p>Generate one with <code>youos token-create</code> and paste it here. Sent as the
+       <code>X-YouOS-Token</code> header; stored locally in the browser.</p>
     <div>
       <button id="save">Save</button>
       <span class="saved" id="saved"></span>

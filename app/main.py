@@ -21,6 +21,7 @@ from app.core.auth import (
     is_auth_enabled,
     load_sessions,
     persist_new_session,
+    verify_api_token,
     verify_pin,
 )
 from app.core.config import load_config
@@ -63,6 +64,16 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
                     return await call_next(request)
                 # Expired — evict so it can't be reused.
                 self.sessions.pop(token, None)
+
+        # Non-cookie clients (the browser extension) authenticate with an API
+        # token sent as `X-YouOS-Token` or `Authorization: Bearer <token>`.
+        api_token = request.headers.get("x-youos-token")
+        if not api_token:
+            auth_header = request.headers.get("authorization", "")
+            if auth_header[:7].lower() == "bearer ":
+                api_token = auth_header[7:].strip()
+        if api_token and verify_api_token(api_token):
+            return await call_next(request)
 
         return RedirectResponse(url="/login", status_code=303)
 
