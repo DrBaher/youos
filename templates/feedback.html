@@ -36,19 +36,20 @@ body {
   margin-top: 3rem; padding: 1rem 0;
   border-top: 1px solid #1e2a3a;
   display: flex; gap: 0.75rem; align-items: center;
-  font-size: 0.75rem; color: #444;
+  font-size: 0.75rem; color: #8a93a3;
 }
-.oc-footer a { color: #555; text-decoration: none; }
+.oc-footer a { color: #9aa3b2; text-decoration: none; }
 .oc-footer a:hover { color: #00c4a7; }
 /* Tabs */
 .tabs { display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 2px solid #333; }
 .tab {
   padding: 0.6rem 1.4rem; cursor: pointer; font-size: 0.9rem; font-weight: 600;
-  color: #888; border-bottom: 2px solid transparent; margin-bottom: -2px;
+  color: #a8b2c0; border-bottom: 2px solid transparent; margin-bottom: -2px;
   transition: color 0.2s, border-color 0.2s;
 }
-.tab:hover { color: #ccc; }
+.tab:hover { color: #e0e0e0; }
 .tab.active { color: #00c4a7; border-bottom-color: #00c4a7; }
+.tab:focus-visible { outline: 2px solid #00c4a7; outline-offset: 2px; }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
 .panels {
@@ -77,6 +78,7 @@ textarea {
   font-size: 0.9rem; resize: vertical; line-height: 1.5;
 }
 textarea:focus { outline: none; border-color: #7b61ff; }
+textarea::placeholder, input::placeholder { color: #8a93a3; opacity: 1; }
 .meta-row {
   display: flex; gap: 1.5rem; align-items: flex-end;
   flex-wrap: wrap; margin-bottom: 1.5rem;
@@ -94,7 +96,7 @@ textarea:focus { outline: none; border-color: #7b61ff; }
 .stars label.star-label { font-size: 0.85rem; color: #aaa; margin-right: 0.5rem; margin-bottom: 0; font-weight: 600; }
 .stars input[type="radio"] { display: none; }
 .stars .star {
-  font-size: 1.5rem; cursor: pointer; color: #444;
+  font-size: 1.5rem; cursor: pointer; color: #5a6472;
   transition: color 0.15s;
 }
 .stars .star:hover, .stars .star.active { color: #ffc107; }
@@ -666,17 +668,40 @@ function showFactsToast(facts) {
   // Tab switching
   const tabs = document.querySelectorAll('.tab');
   const tabContents = document.querySelectorAll('.tab-content');
-  tabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      tabs.forEach(t => t.classList.remove('active'));
-      tabContents.forEach(tc => tc.classList.remove('active'));
-      tab.classList.add('active');
-      document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
-      if (tab.dataset.tab === 'review-queue' && !rqLoaded) {
-        loadBatch();
-      }
-      if (tab.dataset.tab === 'facts') {
-        loadFacts();
+  if (tabs.length) tabs[0].parentElement.setAttribute('role', 'tablist');
+
+  // Single switching path used by both click and keyboard, so per-tab data
+  // loads (review queue / facts / history) live in exactly one place.
+  function activateTab(tab) {
+    tabs.forEach(t => {
+      const selected = t === tab;
+      t.classList.toggle('active', selected);
+      t.setAttribute('aria-selected', selected ? 'true' : 'false');
+      t.tabIndex = selected ? 0 : -1;  // roving tabindex
+    });
+    tabContents.forEach(tc => tc.classList.remove('active'));
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    if (tab.dataset.tab === 'review-queue' && !rqLoaded) loadBatch();
+    if (tab.dataset.tab === 'facts') loadFacts();
+    if (tab.dataset.tab === 'history') loadHistory();
+  }
+
+  tabs.forEach((tab, i) => {
+    tab.setAttribute('role', 'tab');
+    const active = tab.classList.contains('active');
+    tab.setAttribute('aria-selected', active ? 'true' : 'false');
+    tab.tabIndex = active ? 0 : -1;
+    const panel = document.getElementById('tab-' + tab.dataset.tab);
+    if (panel) panel.setAttribute('role', 'tabpanel');
+    tab.addEventListener('click', () => activateTab(tab));
+    tab.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateTab(tab); }
+      else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        const dir = e.key === 'ArrowRight' ? 1 : -1;
+        const next = tabs[(i + dir + tabs.length) % tabs.length];
+        next.focus();
+        activateTab(next);
       }
     });
   });
@@ -737,7 +762,6 @@ function showFactsToast(facts) {
     const [local, domain] = addr.split('@');
     const localBase = local.replace(/[._-]/g, '');
     for (const p of automatedPrefixes) { if (localBase === p.replace(/-/g,'') || localBase.startsWith(p.replace(/-/g,''))) return 'automated'; }
-    if (false) return 'internal';
     if (personalDomains.has(domain)) return 'personal';
     return 'external_client';
   }
@@ -772,23 +796,31 @@ function showFactsToast(facts) {
     const noteEl = document.getElementById('scNote');
     noteEl.addEventListener('click', function() {
       const current = p.relationship_note || '';
-      noteEl.innerHTML = '<textarea class="sc-note-edit" id="scNoteEdit">' + current + '</textarea>';
-      const ta = document.getElementById('scNoteEdit');
+      // Build the textarea via .value (never string-interpolate user content
+      // into innerHTML — a note like "</textarea><img onerror=...>" would break out).
+      noteEl.innerHTML = '';
+      const ta = document.createElement('textarea');
+      ta.className = 'sc-note-edit';
+      ta.id = 'scNoteEdit';
+      ta.value = current;
+      noteEl.appendChild(ta);
       ta.focus();
       ta.addEventListener('blur', async function() {
         const newNote = ta.value.trim();
+        let saveFailed = false;
         if (newNote !== current) {
           try {
-            await fetch('/senders/' + encodeURIComponent(p.email) + '/note', {
+            const res = await fetch('/senders/' + encodeURIComponent(p.email) + '/note', {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({relationship_note: newNote})
             });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
             p.relationship_note = newNote;
-          } catch(e) { /* silently fail */ }
+          } catch(e) { saveFailed = true; }
         }
-        noteEl.textContent = newNote || 'Click to add a note...';
-        noteEl.className = newNote ? 'sc-note' : 'sc-note sc-new';
+        noteEl.textContent = saveFailed ? 'Save failed — click to retry' : (newNote || 'Click to add a note...');
+        noteEl.className = (newNote && !saveFailed) ? 'sc-note' : 'sc-note sc-new';
       });
     });
   }
@@ -942,8 +974,10 @@ function showFactsToast(facts) {
                 streamDone = true;
                 streamConfidence = payload.confidence || '';
                 streamPrecedent = payload.precedent_used || [];
-              } else if (payload.token) {
-                draft.value += payload.token + '\n';
+              } else if (payload.token != null) {
+                // Token already includes its own newline(s); don't add one, or
+                // blank lines (paragraph breaks) get doubled/lost.
+                draft.value += payload.token;
               }
             } catch(e) { /* skip malformed */ }
           }
@@ -1080,6 +1114,7 @@ function showFactsToast(facts) {
       showInfo('Saved! Total feedback pairs: ' + data.total_pairs +
         '. <a href="#" onclick="location.reload();return false" style="color:#00c4a7">Generate another?</a>', 'success');
       if (data.extracted_facts && data.extracted_facts.length > 0) showFactsToast(data.extracted_facts);
+      refreshNudge();
       btnSub.disabled = true;
       draft.readOnly = true;
     } catch (e) {
@@ -1113,6 +1148,7 @@ function showFactsToast(facts) {
 
   // Review Queue tab
   let rqLoaded = false;
+  let rqBatchInFlight = false;
   let rqItems = [];
   let rqIndex = 0;
   let rqReviewed = 0;
@@ -1267,6 +1303,8 @@ function showFactsToast(facts) {
   }
 
   async function loadBatch() {
+    if (rqBatchInFlight) return;  // a batch stream is already loading — don't race a second reader
+    rqBatchInFlight = true;
     rqLoaded = true;
     rqItems = [];
     rqIndex = 0;
@@ -1376,6 +1414,8 @@ function showFactsToast(facts) {
       document.getElementById('rqLoading').style.display = 'none';
       document.getElementById('rqBatchComplete').style.display = 'block';
       document.getElementById('rqBatchMsg').textContent = 'Error loading batch: ' + e.message;
+    } finally {
+      rqBatchInFlight = false;  // stream fully read — safe to load another batch
     }
   }
 
@@ -1437,6 +1477,7 @@ function showFactsToast(facts) {
     rqTotalUnreviewed = Math.max(0, rqTotalUnreviewed - 1);
     const dailyCountEl = document.getElementById('rqDailyCount');
     if (dailyCountEl) dailyCountEl.textContent = rqReviewedToday;
+    refreshNudge();
   }
 
   // Submit & Next
@@ -1558,17 +1599,24 @@ function showFactsToast(facts) {
   })();
 
   // ── Progress Nudge ──────────────────────────────────────
-  (function() {
+  // Hoisted so submit handlers can call it after a pair is saved — otherwise the
+  // "X/10 collected" bar stays frozen at the page-load value.
+  function refreshNudge() {
     fetch('/api/config').then(r => r.json()).then(d => {
       const count = d.feedback_pair_count || 0;
+      const nudge = document.getElementById('progressNudge');
+      if (!nudge) return;
       if (!d.adapter_ready && count < 10) {
         document.getElementById('pnCount').textContent = count;
         document.getElementById('pnRemaining').textContent = 10 - count;
         document.getElementById('pnBarFill').style.width = (count / 10 * 100) + '%';
-        document.getElementById('progressNudge').style.display = 'block';
+        nudge.style.display = 'block';
+      } else {
+        nudge.style.display = 'none';
       }
     }).catch(() => {});
-  })();
+  }
+  refreshNudge();
 
   // ── History Tab ──────────────────────────────────────────
   let historyLoaded = false;
@@ -1593,13 +1641,13 @@ function showFactsToast(facts) {
           else { badgeText = Math.round(ed*100) + '%'; }
         } else { badgeText = '-'; badgeClass = ''; }
         const dateStr = item.created_at ? item.created_at.split('T')[0] : '';
-        const senderSnippet = (item.sender || '').substring(0, 20);
-        const draftSnippet = (item.generated_draft || '').substring(0, 80);
+        const senderSnippet = escHtml((item.sender || '').substring(0, 20));
+        const draftSnippet = escHtml((item.generated_draft || '').substring(0, 80));
         var intentBadge = '';
         if (item.intent && item.intent !== 'general') {
           var intentColors = {meeting_request:'teal',urgent:'red',thank_you:'green',complaint:'red',proposal:'#3366cc',approval_needed:'orange',status_update:'gray',information_request:'#3366cc',introduction:'purple'};
           var ic = intentColors[item.intent] || 'gray';
-          intentBadge = '<span class="history-badge" style="background:' + ic + ';color:#fff;margin-left:4px">' + item.intent.replace(/_/g,' ') + '</span>';
+          intentBadge = '<span class="history-badge" style="background:' + ic + ';color:#fff;margin-left:4px">' + escHtml(item.intent.replace(/_/g,' ')) + '</span>';
         }
         var confBadge = '';
         if (item.confidence) {
@@ -1616,9 +1664,9 @@ function showFactsToast(facts) {
           intentBadge + confBadge +
           '</div>' +
           '<div class="history-detail" id="hd-' + item.id + '">' +
-          '<label>Inbound:</label><pre>' + (item.inbound_text || '').substring(0, 500) + '</pre>' +
-          '<label>Draft:</label><pre>' + (item.generated_draft || '') + '</pre>' +
-          (item.final_reply ? '<label>Final reply:</label><pre>' + item.final_reply + '</pre>' : '') +
+          '<label>Inbound:</label><pre>' + escHtml((item.inbound_text || '').substring(0, 500)) + '</pre>' +
+          '<label>Draft:</label><pre>' + escHtml(item.generated_draft || '') + '</pre>' +
+          (item.final_reply ? '<label>Final reply:</label><pre>' + escHtml(item.final_reply) + '</pre>' : '') +
           '</div>';
         el.addEventListener('click', () => {
           const detail = document.getElementById('hd-' + item.id);
@@ -1648,10 +1696,6 @@ function showFactsToast(facts) {
     const tag = e.target.tagName.toLowerCase();
     if (tag === 'textarea' || tag === 'input') return;
     if (!isReviewQueueActive()) {
-      // Load history on tab switch
-      if (document.getElementById('tab-history')?.classList.contains('active') && !historyLoaded) {
-        loadHistory();
-      }
       return;
     }
 
@@ -1670,21 +1714,31 @@ function showFactsToast(facts) {
         e.preventDefault();
         document.getElementById('rqDraftTextarea').focus();
         break;
-      case 'r':
+      case 'r': {
         e.preventDefault();
         // Re-generate: call generate for current item
         const item = rqItems[rqIndex];
         if (item) {
+          const ta = document.getElementById('rqDraftTextarea');
+          const prev = ta.value;
+          ta.value = 'Regenerating…';
           fetch('/feedback/generate', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({inbound_text: item.inbound_text, sender: item.inbound_author})
-          }).then(r => r.json()).then(d => {
-            document.getElementById('rqDraftTextarea').value = d.draft;
+          }).then(async r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const d = await r.json();
+            if (!d.draft) throw new Error('empty draft');
+            ta.value = d.draft;
             item.generated_draft = d.draft;
-          }).catch(() => {});
+          }).catch(err => {
+            ta.value = prev;  // restore — don't silently blank the draft on error
+            if (typeof showInfo === 'function') showInfo('Re-generate failed: ' + err.message);
+          });
         }
         break;
+      }
       case '?':
         e.preventDefault();
         kbOverlay.classList.toggle('visible');
@@ -1699,10 +1753,7 @@ function showFactsToast(facts) {
     }
   });
 
-  // Trigger history load when History tab is clicked
-  document.querySelector('[data-tab="history"]')?.addEventListener('click', () => {
-    setTimeout(loadHistory, 50);
-  });
+  // (History load is handled by activateTab — single switching path.)
 
   // ── Facts Tab ────────────────────────────────────────────────────────────
   let factsData = [];
@@ -1802,11 +1853,14 @@ function showFactsToast(facts) {
     if (!confirm('Delete this fact?')) return;
     try {
       const res = await fetch('/api/facts/' + id, {method: 'DELETE'});
-      if (res.ok) {
-        factsData = factsData.filter(f => f.id !== id);
-        renderFacts();
-      }
-    } catch(e) {}
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      factsData = factsData.filter(f => f.id !== id);
+      renderFacts();
+    } catch(e) {
+      // Surface the failure — silently swallowing it made the user think the
+      // fact was deleted when it wasn't.
+      alert('Could not delete that fact: ' + e.message);
+    }
   }
 
   function escHtml(s) {

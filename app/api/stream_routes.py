@@ -118,9 +118,10 @@ def _stream_generate(body: StreamBody, settings):
             text=True,
         )
         for line in proc.stdout:
-            token = line.rstrip("\n")
-            if token:
-                yield f"data: {json.dumps({'token': token})}\n\n"
+            # Emit each line including its trailing newline, blank lines too, so
+            # paragraph breaks in the draft survive streaming. The token carries
+            # its own newline; the client must not add one.
+            yield f"data: {json.dumps({'token': line})}\n\n"
         proc.wait(timeout=120)
         if proc.returncode != 0:
             raise RuntimeError("claude CLI failed")
