@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.24 — 2026-05-24
+
+### Retrieval & generation fixes (code-review findings)
+- **Exemplar token-budget trimming no longer demotes the best precedent.** When a prompt exceeded the token budget, the trimmer kept whichever exemplars came first in the *cache* order (`_apply_cached_order` moves cached pairs to the front regardless of score), so a high-relevance pair could be dropped in favor of a lower-scoring cached one. Trimming now selects by score; the exemplar cache is for presentation consistency, not selection.
+- **Feedback `quality_score` now actually influences exemplar selection.** `_top_exemplar_source_ids` ranks by `metadata["quality_score"]` first, but retrieval never put `quality_score` into the match metadata — so the primary sort key was dead (always `1.0`) in production despite being unit-tested. Both the FTS and legacy reply-pair scorers now surface it; added a regression test guarding the wiring on both paths.
+- **`model_fallback: none` is now honored.** With no local model available and fallback explicitly disabled, generation still made a Claude CLI call (the catch-all `else` branch) — defeating strict local-only mode. It now returns an explicit "no model available" draft instead of reaching out to the cloud.
+- **Retrieval connection no longer leaks and gets the concurrency PRAGMAs.** The main `retrieve()` query opened a raw `sqlite3.connect(...)` (no `busy_timeout`/WAL, relying on GC to close); switched to the pooled `connect()` helper wrapped in `closing()`.
+
 ## v0.1.23 — 2026-05-24
 
 ### Ingestion & CLI fixes (code-review findings)
