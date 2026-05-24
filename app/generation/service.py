@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import signal
 import sqlite3
 import subprocess
 import time
@@ -956,12 +958,7 @@ def _call_local_model(prompt: str, *, max_tokens: int = 300, use_adapter: bool =
             str(max_tokens),
         ]
     )
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=SUBPROCESS_TIMEOUT,
-    )
+    result = _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT)
     if result.returncode != 0:
         raise RuntimeError(f"mlx_lm generate failed (exit {result.returncode}): {result.stderr.strip()}")
     return _strip_mlx_output(result.stdout)
@@ -981,15 +978,39 @@ def _generate_via_ollama(prompt: str, model: str = "mistral", base_url: str = "h
         raise RuntimeError(f"Ollama generation failed: {exc}") from exc
 
 
+def _run_subprocess(cmd: list[str], *, timeout: int = SUBPROCESS_TIMEOUT) -> subprocess.CompletedProcess[str]:
+    """Run a subprocess with a hard timeout that kills the whole process group.
+
+    `subprocess.run(timeout=...)` only SIGKILLs the direct child; if that child
+    (e.g. the `claude` Node CLI or `mlx_lm`) spawned its own subprocesses that
+    inherited the stdout/stderr pipes, the parent's read blocks waiting for EOF
+    until *those* exit — so a single stalled generation can hang far past the
+    timeout (observed: an 8-minute stall on a 120s timeout). Running in a new
+    session and killing the process group on timeout releases the pipes.
+    """
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            proc.kill()
+        proc.communicate()
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
 def _call_claude_cli(prompt: str, *, max_tokens: int = 300) -> str:  # noqa: ARG001
     # Note: claude CLI --print does not support --max-tokens; use -p to pass prompt
     cmd = ["claude", "--print", "-p", prompt]
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=SUBPROCESS_TIMEOUT,
-    )
+    result = _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT)
     if result.returncode != 0:
         stderr = result.stderr.strip()
         raise RuntimeError(f"claude CLI failed (exit {result.returncode}): {stderr}")

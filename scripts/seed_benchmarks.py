@@ -78,22 +78,41 @@ def main() -> None:
     parser.add_argument(
         "--db-path",
         type=Path,
-        default=ROOT_DIR / "var" / "youos.db",
-        help="Path to SQLite database",
+        default=None,
+        help="Path to SQLite database (default: the active instance from YOUOS_DATA_DIR)",
     )
     parser.add_argument(
         "--fixtures",
         type=Path,
         default=ROOT_DIR / "fixtures" / "benchmark_cases.yaml",
-        help="Path to benchmark cases YAML",
+        help="Path to benchmark cases YAML (falls back to configs/benchmarks/golden.yaml)",
     )
     args = parser.parse_args()
 
-    cases = load_cases(args.fixtures)
-    result = seed_benchmarks(cases, args.db_path)
-    print(f"Benchmark seeder complete: {result['total']} cases processed")
-    print(f"  Inserted: {result['inserted']}")
-    print(f"  Updated:  {result['updated']}")
+    from app.core.settings import get_settings
+    from app.db.bootstrap import resolve_sqlite_path
+
+    db_path = args.db_path or resolve_sqlite_path(get_settings().database_url)
+
+    if args.fixtures.exists():
+        cases = load_cases(args.fixtures)
+        result = seed_benchmarks(cases, db_path)
+        print(f"Benchmark seeder complete: {result['total']} cases processed")
+        print(f"  Inserted: {result['inserted']}")
+        print(f"  Updated:  {result['updated']}")
+    else:
+        # No fixture file — seed from the canonical golden.yaml that eval and
+        # autoresearch share, so this never fails on a missing fixture.
+        import sqlite3
+
+        from app.evaluation.service import seed_benchmark_cases_from_golden
+
+        conn = sqlite3.connect(db_path)
+        try:
+            n = seed_benchmark_cases_from_golden(conn)
+        finally:
+            conn.close()
+        print(f"Benchmark seeder complete: seeded {n} cases from golden.yaml into {db_path}")
 
 
 if __name__ == "__main__":
