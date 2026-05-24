@@ -287,7 +287,7 @@
       case "connect_failed":
         return `Can't reach YouOS at ${res.base}. Is the server running?  (run: youos serve)`;
       case "auth_required":
-        return "This YouOS instance is PIN-protected. The extension doesn't support PIN auth yet — remove the PIN or use the web UI.";
+        return "This YouOS instance is PIN-protected. Run `youos token-create` and paste the token into the extension Options.";
       case "rate_limited":
         return "Rate limit reached (max 10 drafts/min). Wait a moment and retry.";
       case "server_error":

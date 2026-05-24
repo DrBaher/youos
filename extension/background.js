@@ -7,18 +7,25 @@
 
 const DEFAULT_BASE = "http://127.0.0.1:8765";
 
-async function getBaseUrl() {
-  const { youosBaseUrl } = await chrome.storage.sync.get("youosBaseUrl");
-  return (youosBaseUrl || DEFAULT_BASE).replace(/\/+$/, "");
+async function getConfig() {
+  const { youosBaseUrl, youosToken } = await chrome.storage.sync.get(["youosBaseUrl", "youosToken"]);
+  return {
+    base: (youosBaseUrl || DEFAULT_BASE).replace(/\/+$/, ""),
+    token: youosToken || "",
+  };
 }
 
 async function apiFetch(path, options) {
-  const base = await getBaseUrl();
+  const { base, token } = await getConfig();
+  const headers = { ...(options.headers || {}) };
+  // Authenticate to PIN-protected instances (the SameSite=Lax session cookie
+  // can't ride along cross-origin from the extension).
+  if (token) headers["X-YouOS-Token"] = token;
   let resp;
   try {
     // redirect:"manual" so an auth redirect to /login surfaces as an
     // opaqueredirect instead of silently following to a non-JSON page.
-    resp = await fetch(base + path, { ...options, redirect: "manual" });
+    resp = await fetch(base + path, { ...options, headers, redirect: "manual" });
   } catch (e) {
     return { ok: false, error: "connect_failed", base, detail: String(e) };
   }
