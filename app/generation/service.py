@@ -139,6 +139,9 @@ def _apply_cached_order(reply_pairs: list[RetrievalMatch], cached_ids: list[str]
 
 
 def _top_exemplar_source_ids(reply_pairs: list[RetrievalMatch], limit: int = 5) -> list[str]:
+    # Prefer feedback-derived quality (metadata["quality_score"]) first, then
+    # relevance score. Retrieval surfaces quality_score into metadata so this
+    # primary key is live in production, not just in tests.
     ranked = sorted(
         [rp for rp in reply_pairs if rp.source_id],
         key=lambda rp: ((rp.metadata or {}).get("quality_score", 1.0), rp.score),
@@ -1202,7 +1205,11 @@ def generate_draft(
         budget = PROMPT_TOKEN_BUDGET - _estimate_tokens(base_prompt)
         used = 0
         trimmed_pairs = []
-        for rp in reply_pairs:  # already sorted by score desc
+        # Trim by score (highest-relevance first) so the token budget keeps the
+        # best exemplars. reply_pairs may have been reordered cache-first by
+        # _apply_cached_order, which must not demote a high-score pair out of the
+        # budget — the cache is for consistency, not selection.
+        for rp in sorted(reply_pairs, key=lambda r: r.score, reverse=True):
             inbound_ex = (rp.inbound_text or "")[:EXEMPLAR_INBOUND_CHARS]
             reply_ex = strip_signature(rp.reply_text or "")[:EXEMPLAR_REPLY_CHARS]
             cost = _estimate_tokens(f"[EXAMPLE]\nInbound: {inbound_ex}\nYour reply: {reply_ex}\n---")
@@ -1259,6 +1266,10 @@ def generate_draft(
         elif fallback_model == "claude":
             draft = _call_claude_cli(prompt, max_tokens=max_tokens)
             model_used = "claude"
+        elif fallback_model == "none":
+            # Fallback explicitly disabled: no local model and no cloud call.
+            draft = "[no model available: local model unavailable and fallback disabled]"
+            model_used = "none"
         else:
             draft = _call_claude_cli(prompt, max_tokens=max_tokens)
             model_used = fallback_model
