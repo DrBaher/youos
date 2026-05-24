@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from app.autoresearch.optimizer import format_report, run_autoresearch
+from app.core.settings import get_settings
+from app.db.bootstrap import resolve_sqlite_path
 from app.generation.service import DraftRequest, generate_draft
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -107,6 +109,19 @@ def _git_tag_run(
         logger.warning("Failed to create autoresearch git tag: %s", exc)
 
 
+def resolve_paths(db_path: Path | None, configs_dir: Path | None) -> tuple[str, Path]:
+    """Resolve the DB URL + configs dir for the active instance.
+
+    Defaults come from settings, which derive from ``YOUOS_DATA_DIR``; explicit
+    CLI args override. This is what makes autoresearch operate on the instance
+    it's meant to tune rather than the repo's default config/DB.
+    """
+    settings = get_settings()
+    resolved_db = db_path or resolve_sqlite_path(settings.database_url)
+    resolved_configs = configs_dir or settings.configs_dir
+    return f"sqlite:///{resolved_db}", resolved_configs
+
+
 def _generate_for_eval(
     prompt_text: str,
     *,
@@ -150,13 +165,22 @@ def main() -> None:
     parser.add_argument(
         "--db-path",
         type=Path,
-        default=ROOT_DIR / "var" / "youos.db",
-        help="Path to SQLite database",
+        default=None,
+        help="Path to SQLite database (default: the active instance from YOUOS_DATA_DIR)",
+    )
+    parser.add_argument(
+        "--configs-dir",
+        type=Path,
+        default=None,
+        help="Path to configs/ directory (default: the active instance from YOUOS_DATA_DIR)",
     )
     args = parser.parse_args()
 
-    database_url = f"sqlite:///{args.db_path}"
-    configs_dir = ROOT_DIR / "configs"
+    # Resolve the DB and configs from the active instance (YOUOS_DATA_DIR) unless
+    # explicitly overridden. These used to be hardcoded to the repo paths, so
+    # autoresearch always optimized the repo's default config against the repo
+    # DB and never touched the actual instance it was meant to tune.
+    database_url, configs_dir = resolve_paths(args.db_path, args.configs_dir)
 
     has_git = _git_available()
     if not has_git:

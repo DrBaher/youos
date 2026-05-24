@@ -13,9 +13,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.core.config import get_ingestion_accounts, get_last_ingest_at, set_last_ingest_at
+from app.core.settings import get_settings
+from app.db.bootstrap import resolve_sqlite_path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_DB = ROOT_DIR / "var" / "youos.db"
+# Operate on the active instance's DB (YOUOS_DATA_DIR), not the repo's, so the
+# autoresearch gate and other DB-dependent steps check the right database.
+DEFAULT_DB = resolve_sqlite_path(get_settings().database_url)
 
 ACCOUNTS = get_ingestion_accounts()
 
