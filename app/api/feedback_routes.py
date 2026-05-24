@@ -217,6 +217,21 @@ def feedback_generate(body: GenerateBody, request: Request) -> dict:
     except Exception:
         logger.warning("Failed to save draft history for sender=%r", body.sender, exc_info=True)
 
+    # Store a draft trace so the UI's "How was this generated?" explain link
+    # works (it fetches /draft/explain?draft_id=...). Without this the link was
+    # never rendered because draft_id was always absent from the response.
+    try:
+        from app.api.routes import _store_trace
+
+        draft_id = _store_trace(
+            inbound_text=body.inbound_text,
+            sender=body.sender,
+            response=response,
+            detected_mode=response.detected_mode,
+        )
+    except Exception:
+        draft_id = None
+
     return {
         "draft": response.draft,
         "precedent_used": response.precedent_used,
@@ -226,6 +241,7 @@ def feedback_generate(body: GenerateBody, request: Request) -> dict:
         "suggested_subject": response.suggested_subject,
         "exemplar_cache_hit": response.exemplar_cache_hit,
         "exemplar_cache_key": response.exemplar_cache_key,
+        "draft_id": draft_id,
     }
 
 
