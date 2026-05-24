@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.17 — 2026-05-24
+
+### Autoresearch reliability
+- **Generation can no longer hang the loop.** The `claude`/`mlx_lm` subprocess calls now run in their own session and kill the whole process group on timeout. `subprocess.run(timeout=)` only kills the direct child, so a generation that spawned children (the `claude` Node CLI does) could keep the stdout pipe open and stall far past the 120s timeout — observed as an 8-minute freeze mid-run.
+- **One bad case no longer aborts the eval suite.** `run_eval_suite` wraps each case's generation; a failure/timeout is logged and scored as a fail, and the loop continues.
+- **benchmark_cases auto-seeds from `configs/benchmarks/golden.yaml`.** `load_benchmark_cases` seeds the table when it's missing or empty, so eval and autoresearch work on a fresh instance instead of crashing on `no such table: benchmark_cases`. `seed_benchmarks.py` now falls back to the same golden source (its old `fixtures/benchmark_cases.yaml` never existed) and targets the active instance's DB.
+
 ## v0.1.16 — 2026-05-24
 
 ### Autoresearch
