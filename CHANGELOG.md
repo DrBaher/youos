@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.15 — 2026-05-24
+
+### Security
+- **Snapshot path traversal (critical).** `restore_snapshot` now refuses any path outside the managed snapshots directory (previously an arbitrary path could overwrite the live DB with any readable file), and `create_snapshot` validates the `tier` as a single safe path component (previously `tier="../.."` could write a DB copy anywhere). Both the API routes and CLI return clean errors.
+- **Server-side session expiry.** `PinAuthMiddleware` now keeps session creation timestamps in memory and rejects/evicts tokens older than `SESSION_MAX_AGE`. Previously only token keys were stored, so a captured token replayed indefinitely until process restart.
+- **Exposed-without-PIN warning.** Startup now prints a security warning when the server is reachable beyond localhost (non-loopback `server.host` or Tailscale) while no PIN is configured — in that state the UI and API are unauthenticated.
+- **Bounded rate-limiter maps.** The draft and login per-IP limiters now evict stale keys so they can't grow unbounded.
+
+### Fixes
+- **Autoresearch composite-weight tuning now takes effect.** Composite weights were cached once at baseline and never reloaded, so the optimizer's weight mutations scored identically and always reverted. Scoring now reads the freshly written config during a run.
+- **DB connection leak.** `generate_draft` wraps its shared SQLite connection in `try/finally`; an exception during retrieval/lookup no longer leaks the handle.
+- **Startup health check** now watches the real `memory` table (the previous `facts` entry never matched, so a dropped table went undetected).
+
 ## v0.1.14 — 2026-03-18
 
 ### ClawHub metadata parity

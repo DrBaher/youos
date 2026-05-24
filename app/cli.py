@@ -758,7 +758,11 @@ def snapshot_create(
     """Create a sqlite snapshot for current instance."""
     settings = get_settings()
     db_path = resolve_sqlite_path(settings.database_url)
-    snap = create_snapshot(db_path, tier=tier)
+    try:
+        snap = create_snapshot(db_path, tier=tier)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        raise typer.Exit(1) from exc
     prune_snapshots(db_path)
     print(str(snap))
 
@@ -791,7 +795,11 @@ def snapshot_restore(
             print("Cancelled.")
             raise typer.Exit(0)
 
-    backup_path = restore_snapshot(db_path, Path(snapshot_path), dry_run=dry_run)
+    try:
+        backup_path = restore_snapshot(db_path, Path(snapshot_path), dry_run=dry_run)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        raise typer.Exit(1) from exc
     print(f"pre_restore_backup={backup_path}")
     print(f"restored_to={db_path}")
 

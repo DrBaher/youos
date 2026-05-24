@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sqlite3
 from dataclasses import dataclass
@@ -11,7 +12,9 @@ from typing import Any
 from app.core.settings import Settings
 from app.db.bootstrap import resolve_sqlite_path
 
-_REQUIRED_TABLES = ("reply_pairs", "draft_history", "facts")
+# NB: facts are stored in the `memory` table (there is no `facts` table); the
+# previous "facts" entry never matched, so a real drop went undetected.
+_REQUIRED_TABLES = ("reply_pairs", "draft_history", "memory")
 
 
 @dataclass(slots=True)
@@ -127,7 +130,36 @@ def _snapshot_root(db_path: Path) -> Path:
     return db_path.parent / "snapshots"
 
 
+_TIER_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _validate_tier(tier: str) -> str:
+    """Reject tier values that aren't a single safe path component.
+
+    Without this, ``tier="../../../tmp/x"`` would escape the snapshots dir and
+    write a full DB copy to an arbitrary location (path traversal).
+    """
+    if not _TIER_RE.match(tier):
+        raise ValueError(f"Invalid snapshot tier: {tier!r} (expected alphanumerics, '-' or '_')")
+    return tier
+
+
+def _ensure_within(root: Path, candidate: Path) -> Path:
+    """Resolve ``candidate`` and confirm it lives inside ``root``.
+
+    Guards the restore path so an attacker can't point it at an arbitrary file
+    on disk (which would otherwise overwrite the live DB) or write outside the
+    managed snapshots directory.
+    """
+    resolved = candidate.expanduser().resolve()
+    root_resolved = root.expanduser().resolve()
+    if not resolved.is_relative_to(root_resolved):
+        raise ValueError(f"Path escapes the snapshots directory: {candidate}")
+    return resolved
+
+
 def create_snapshot(db_path: Path, *, tier: str = "manual") -> Path:
+    _validate_tier(tier)
     now = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     out_dir = _snapshot_root(db_path) / tier
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -167,6 +199,10 @@ def list_snapshots(db_path: Path) -> list[Path]:
 
 
 def restore_snapshot(db_path: Path, snapshot_path: Path, *, dry_run: bool = False) -> Path:
+    # Only allow restoring from inside the managed snapshots directory. Without
+    # this, an arbitrary path would let a caller overwrite the live DB with any
+    # readable file on disk.
+    snapshot_path = _ensure_within(_snapshot_root(db_path), snapshot_path)
     if not snapshot_path.exists():
         raise FileNotFoundError(f"Snapshot not found: {snapshot_path}")
 
@@ -176,6 +212,16 @@ def restore_snapshot(db_path: Path, snapshot_path: Path, *, dry_run: bool = Fals
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
     if db_path.exists():
-        shutil.copy2(db_path, backup_path)
+        # Use the SQLite backup API so the pre-restore copy is consistent even
+        # when the DB is in WAL mode (a plain file copy can miss WAL contents).
+        src = sqlite3.connect(db_path)
+        try:
+            dst = sqlite3.connect(backup_path)
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
+        finally:
+            src.close()
     shutil.copy2(snapshot_path, db_path)
     return backup_path
