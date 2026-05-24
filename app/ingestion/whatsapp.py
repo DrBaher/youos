@@ -80,17 +80,27 @@ def build_reply_pairs(
     messages: list[ParsedMessage],
     user_names: tuple[str, ...],
 ) -> list[tuple[ParsedMessage, ParsedMessage]]:
-    """Pair adjacent inbound + user-reply messages."""
+    """Pair a run of consecutive inbound messages with the next user reply.
+
+    Accumulates consecutive inbound messages (the other party often sends several
+    in a row) and pairs the whole block with the next user reply — the previous
+    i/i+1 pairing silently dropped all but the last inbound message of a run.
+    """
     pairs: list[tuple[ParsedMessage, ParsedMessage]] = []
-    i = 0
-    while i < len(messages) - 1:
-        inbound = messages[i]
-        reply = messages[i + 1]
-        if not _is_user_message(inbound.sender, user_names) and _is_user_message(reply.sender, user_names):
-            pairs.append((inbound, reply))
-            i += 2  # skip past both
+    pending: list[ParsedMessage] = []
+    for msg in messages:
+        if _is_user_message(msg.sender, user_names):
+            if pending:
+                block = ParsedMessage(
+                    timestamp=pending[-1].timestamp,
+                    sender=pending[-1].sender,
+                    text="\n".join(m.text for m in pending),
+                )
+                pairs.append((block, msg))
+                pending = []
+            # A user message with no preceding inbound is user-initiated; skip.
         else:
-            i += 1
+            pending.append(msg)
     return pairs
 
 
@@ -124,6 +134,16 @@ def ingest_whatsapp_export(
 
     if not user_names:
         user_names = get_user_names()
+
+    if not user_names:
+        # Without configured names we can't tell the user's messages from the
+        # other party's. Bail rather than store every message as inbound (which
+        # would pollute the corpus and produce zero reply pairs).
+        return IngestionResult(
+            source_type="whatsapp_export",
+            status="failed",
+            detail="No user names configured — set `user.names` in your config so WhatsApp ingestion can identify your own messages. Nothing was ingested.",
+        )
 
     counts = WhatsAppIngestCounts(total_lines=len(text.splitlines()), parsed_messages=len(messages))
 
