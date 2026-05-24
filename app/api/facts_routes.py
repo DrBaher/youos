@@ -81,10 +81,6 @@ def create_fact(body: FactBody, request: Request) -> dict:
             (body.type.strip(), body.key.strip(), body.fact.strip(), json.dumps(body.tags)),
         )
         conn.commit()
-        row = conn.execute(
-            "SELECT * FROM memory WHERE type = ? AND key = ? AND fact = ?",
-            (body.type.strip(), body.key.strip(), body.fact.strip()),
-        ).fetchone()
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             "SELECT * FROM memory WHERE type = ? AND key = ? AND fact = ?",
