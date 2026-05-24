@@ -267,10 +267,10 @@ def run_eval_suite(
     configs_dir: Path,
     persist: bool = True,
 ) -> EvalSuiteResult:
-    from app.db.bootstrap import resolve_sqlite_path
+    from app.db.bootstrap import connect, resolve_sqlite_path
 
     db_path = resolve_sqlite_path(database_url)
-    conn = sqlite3.connect(db_path)
+    conn = connect(db_path)
     try:
         cases = load_benchmark_cases(conn, request.case_key)
         case_results: list[CaseResult] = []
