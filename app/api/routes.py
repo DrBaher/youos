@@ -94,7 +94,10 @@ def data_safety_snapshots_list(request: Request) -> dict[str, list[str]]:
 def data_safety_snapshots_create(request: Request, tier: str = "manual") -> dict[str, str]:
     settings = request.app.state.settings
     db_path = resolve_sqlite_path(settings.database_url)
-    snapshot_path = create_snapshot(db_path, tier=tier)
+    try:
+        snapshot_path = create_snapshot(db_path, tier=tier)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "ok", "snapshot_path": str(snapshot_path)}
 
 
@@ -109,6 +112,8 @@ def data_safety_snapshots_restore(body: SnapshotRestoreBody, request: Request) -
     db_path = resolve_sqlite_path(settings.database_url)
     try:
         backup_path = restore_snapshot(db_path, Path(body.snapshot_path), dry_run=body.dry_run)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {

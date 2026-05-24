@@ -87,7 +87,7 @@ def run_autoresearch(
         configs_dir=configs_dir,
         persist=True,
     )
-    baseline = scorecard_from_eval_result(baseline_result)
+    baseline = scorecard_from_eval_result(baseline_result, configs_dir)
     eval_count = 1
     current_baseline = baseline
 
@@ -123,7 +123,7 @@ def run_autoresearch(
             persist=True,
         )
         eval_count += 1
-        candidate = scorecard_from_eval_result(candidate_result)
+        candidate = scorecard_from_eval_result(candidate_result, configs_dir)
         outcome = compare_scorecards(current_baseline, candidate)
 
         kept = outcome == "improved"
