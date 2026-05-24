@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.21 — 2026-05-24
+
+### Backend cleanup (code-review findings)
+- Removed the dead, never-mounted `app/api/memory_routes.py` (a stale duplicate of `facts_routes.py`) and a redundant double-`SELECT` in `facts_routes.py`.
+- **Review-queue submit is now race-safe** — a check-then-insert could double-insert the same `reply_pair_id` under concurrent submits; replaced with an atomic `INSERT … WHERE NOT EXISTS`, and the route now uses the pooled `connect()` (busy_timeout + WAL).
+- **Streaming `claude` subprocess hardened** — passes the prompt via `-p` (so a prompt starting with `-` isn't parsed as a flag) and kills the whole process group on error or client disconnect, so a hung/abandoned generation can't linger.
+- **FTS query expansion no longer pollutes ranking** — synonyms are appended bare instead of as `(also: …)`; the literal `also` was being tokenized into every expanded query.
+- Exemplar cache is no longer rewritten to the DB on every cache hit (only on a miss or when the selection changes).
+
 ## v0.1.20 — 2026-05-24
 
 ### Web UI review fixes

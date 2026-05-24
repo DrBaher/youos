@@ -5,7 +5,9 @@ from app.core.query_expansion import SYNONYMS, expand_query
 
 def test_expand_with_known_word():
     result = expand_query("Can we schedule a meeting?")
-    assert "(also:" in result
+    # Synonyms are appended bare (no "also:" label, which polluted FTS ranking).
+    assert result.startswith("Can we schedule a meeting?")
+    assert result != "Can we schedule a meeting?"
     assert "schedule" in result.lower() or "call" in result.lower() or "sync" in result.lower()
 
 
@@ -25,21 +27,28 @@ def test_expand_max_expansions():
     assert result.startswith(text)
 
 
+def test_expand_no_also_label():
+    # Regression: the "(also: ...)" label was tokenized into the FTS query so
+    # the word "also" polluted BM25 ranking. It must not appear.
+    result = expand_query("Can we schedule a meeting?")
+    assert "also" not in result.lower()
+    assert "(" not in result
+
+
 def test_expand_caps_length():
     text = "schedule postpone urgent proposal confirm update issue team"
     result = expand_query(text, max_expansions=3)
-    expansion = result[len(text) :]
-    # Expansion should be <=50 chars + the "(also: " prefix
-    assert len(expansion) <= 60  # "(also: " + 50 chars + ")"
+    expansion = result[len(text):]
+    # Expansion is a leading space + <=50 chars of synonyms.
+    assert len(expansion) <= 52
 
 
 def test_expand_synonym_for_urgent():
     result = expand_query("This is urgent please help")
-    assert "(also:" in result
-    # Should have some urgency synonyms
-    also = result.split("(also: ")[1].rstrip(")")
+    assert result.startswith("This is urgent please help")
+    appended = result[len("This is urgent please help"):]
     urgent_syns = {"asap", "immediately", "critical", "priority"}
-    assert any(s in also for s in urgent_syns)
+    assert any(s in appended for s in urgent_syns)
 
 
 def test_synonyms_dict_structure():
@@ -52,4 +61,5 @@ def test_synonyms_dict_structure():
 def test_expand_via_reverse_lookup():
     """Words that are synonyms (not keys) should also trigger expansion."""
     result = expand_query("We need to reschedule the call")
-    assert "(also:" in result
+    assert result.startswith("We need to reschedule the call")
+    assert result != "We need to reschedule the call"
