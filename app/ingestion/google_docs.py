@@ -44,6 +44,9 @@ def get_default_gog_accounts():
 
 DEFAULT_DRIVE_QUERY = "mimeType = 'application/vnd.google-apps.document' and trashed = false"
 
+# Hard cap on each `gog` CLI call so a stalled gog can't hang ingestion forever.
+GOG_TIMEOUT_SECONDS = 120
+
 
 @dataclass(slots=True)
 class GogDocsLiveOptions:
@@ -456,12 +459,16 @@ def _gog_docs_cat(*, account: str, doc_id: str, max_bytes: int, all_tabs: bool) 
 
 
 def _run_gog_json(command: list[str]) -> Any:
-    completed = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=GOG_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(f"{' '.join(command)} timed out after {GOG_TIMEOUT_SECONDS}s") from exc
     if completed.returncode != 0:
         error_detail = completed.stderr.strip() or completed.stdout.strip() or "unknown gog error"
         raise ValueError(_format_gog_error(command, error_detail))
@@ -472,12 +479,16 @@ def _run_gog_json(command: list[str]) -> Any:
 
 
 def _run_gog_text(command: list[str]) -> str:
-    completed = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=GOG_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(f"{' '.join(command)} timed out after {GOG_TIMEOUT_SECONDS}s") from exc
     if completed.returncode != 0:
         error_detail = completed.stderr.strip() or completed.stdout.strip() or "unknown gog error"
         raise ValueError(_format_gog_error(command, error_detail))
