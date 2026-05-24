@@ -29,7 +29,7 @@ def test_call_local_model_builds_cmd_with_adapter(monkeypatch):
 
         return FakeResult()
 
-    monkeypatch.setattr(svc.subprocess, "run", fake_run)
+    monkeypatch.setattr(svc, "_run_subprocess", fake_run)
     monkeypatch.setattr(svc, "_get_base_model_id", lambda: "test-model")
     svc._call_local_model("prompt", use_adapter=True)
     assert "--adapter-path" in captured_cmd
@@ -51,7 +51,7 @@ def test_call_local_model_builds_cmd_without_adapter(monkeypatch):
 
         return FakeResult()
 
-    monkeypatch.setattr(svc.subprocess, "run", fake_run)
+    monkeypatch.setattr(svc, "_run_subprocess", fake_run)
     monkeypatch.setattr(svc, "_get_base_model_id", lambda: "test-model")
     svc._call_local_model("prompt", use_adapter=False)
     assert "--adapter-path" not in captured_cmd
