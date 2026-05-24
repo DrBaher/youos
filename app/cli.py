@@ -32,6 +32,17 @@ app = typer.Typer(
 )
 
 
+def _run(cmd: list[str]) -> None:
+    """Run a wrapped script and propagate its exit code.
+
+    Without this, `youos` exited 0 even when the underlying script failed, which
+    silently broke scripting/CI gating.
+    """
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        raise typer.Exit(result.returncode)
+
+
 @app.command()
 def quickstart():
     """Lightweight 3-step onramp for users who already have gog configured."""
@@ -166,7 +177,7 @@ def setup(
     cmd = [sys.executable, str(ROOT_DIR / "scripts" / "setup_wizard.py")]
     if check_only:
         cmd.append("--check-only")
-    subprocess.run(cmd)
+    _run(cmd)
 
 
 @app.command()
@@ -336,7 +347,7 @@ def improve(
     cmd = [sys.executable, str(ROOT_DIR / "scripts" / "nightly_pipeline.py")]
     if verbose:
         cmd.append("--verbose")
-    subprocess.run(cmd)
+    _run(cmd)
 
 
 @app.command()
@@ -350,6 +361,9 @@ def note(
 
     settings = get_settings()
     db_path = resolve_sqlite_path(settings.database_url)
+    if not db_path.exists():
+        print(f"Database not found: {db_path}. Run 'youos setup' first.")
+        raise typer.Exit(1)
     conn = sqlite3.connect(db_path)
     try:
         cur = conn.execute(
@@ -486,14 +500,14 @@ def ingest(
         result = ingest_whatsapp_export(Path(whatsapp))
         print(f"[{result.status}] {result.detail}")
         return
-    subprocess.run([sys.executable, str(ROOT_DIR / "scripts" / "ingest_gmail_threads.py"), "--live"])
+    _run([sys.executable, str(ROOT_DIR / "scripts" / "ingest_gmail_threads.py"), "--live"])
 
 
 @app.command()
 def finetune():
     """Run LoRA fine-tuning manually."""
-    subprocess.run([sys.executable, str(ROOT_DIR / "scripts" / "export_feedback_jsonl.py")])
-    subprocess.run([sys.executable, str(ROOT_DIR / "scripts" / "finetune_lora.py")])
+    _run([sys.executable, str(ROOT_DIR / "scripts" / "export_feedback_jsonl.py")])
+    _run([sys.executable, str(ROOT_DIR / "scripts" / "finetune_lora.py")])
 
 
 @app.command(name="finetune-milestone")
@@ -510,7 +524,7 @@ def finetune_milestone(
     ]
     if run:
         cmd.append("--run")
-    subprocess.run(cmd)
+    _run(cmd)
 
 
 @app.command(name="eval")
@@ -519,9 +533,9 @@ def run_eval(
 ):
     """Run benchmark evaluation."""
     if golden:
-        subprocess.run([sys.executable, str(ROOT_DIR / "scripts" / "run_golden_eval.py")])
+        _run([sys.executable, str(ROOT_DIR / "scripts" / "run_golden_eval.py")])
     else:
-        subprocess.run([sys.executable, str(ROOT_DIR / "scripts" / "run_eval.py")])
+        _run([sys.executable, str(ROOT_DIR / "scripts" / "run_eval.py")])
 
 
 @app.command()
@@ -710,6 +724,9 @@ def feedback(
 
     settings = get_settings()
     db_path = resolve_sqlite_path(settings.database_url)
+    if not db_path.exists():
+        print(f"Database not found: {db_path}. Run 'youos setup' first.")
+        raise SystemExit(1)
 
     conn = sqlite3.connect(db_path)
     try:

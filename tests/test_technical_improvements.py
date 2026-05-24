@@ -10,13 +10,13 @@ from unittest.mock import MagicMock, patch
 import yaml
 from typer.testing import CliRunner
 
+from app.cli import app
 from app.core.config import (
     get_last_ingest_at,
     get_ollama_config,
     is_ollama_enabled,
     set_last_ingest_at,
 )
-from scripts.youos_cli import app
 
 runner = CliRunner()
 
