@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.1.14 — 2026-03-18
+
+### ClawHub metadata parity
+- Aligned `clawhub.json` registry metadata with actual package behavior to remove "instruction-only vs full app" ambiguity for install-time trust review: `packageType: application`, `execution: local-python`, explicit install workflow (`venv` + `pip install -e .`), and credential scope (`gog` required for ingestion; Claude/API optional, only when external fallback is enabled).
+- `SKILL.md`: added an explicit safety note that `pip install -e .` executes local package install code and should be reviewed before install.
+
+## v0.1.12–0.1.13 — 2026-03-18
+
+### Data safety & recovery
+- **Instance data guardrails** — startup rejects mismatched DB paths and unsafe locations (e.g. Trash); `YOUOS_DATA_DIR` derives the canonical DB path as `YOUOS_DATA_DIR/var/youos.db`.
+- **Snapshots** — `youos snapshot-create` / `snapshot-list` / `snapshot-restore` (with confirmation + `--dry-run`), plus `youos health-check` integrity checks (required tables + regression warnings).
+- **CI hardening** — resolved Ruff lint failures; `create_app()` tolerates mocked settings without `instance_name`.
+
+## v0.1.11 — 2026-03-18
+
+### Review Queue & quality
+- **Bulk actions + keyboard shortcuts** — merged review-queue bulk submit/skip with expanded shortcuts.
+- **Sender-type style anchors** — explicit `[STYLE ANCHOR — internal|client|personal]` prompt slot to stabilize first-draft tone by audience.
+- **Persistent exemplar cache** — exemplar cache by intent+sender-type (TTL + feedback-triggered invalidation); quickstart default.
+- **Edit-reduction metrics** — surfaced in the Stats dashboard.
+- Narrowed the low-signal filter so valid training pairs are no longer dropped.
+
+### Release packaging
+- Enforced a minimal ClawHub allowlist bundle; added a default release-bundle prep script.
+
 ## v0.1.10 — 2026-03-17
 
 ### Release metadata

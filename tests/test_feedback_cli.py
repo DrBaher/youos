@@ -45,16 +45,11 @@ def test_feedback_basic(tmp_path, monkeypatch):
 
         return S()
 
+    # Patch both the CLI-level alias and the source. Use monkeypatch (not a raw
+    # assignment) so the original is restored on teardown — a bare assignment
+    # here leaks the stub globally and breaks later tests that import app.main.
     monkeypatch.setattr("app.cli.get_settings", fake_settings, raising=False)
-    # Monkeypatch the import inside the function
-
-    try:
-        from app.core import settings as settings_mod
-
-        settings_mod.get_settings = fake_settings
-        monkeypatch.setattr("app.core.settings.get_settings", fake_settings)
-    except Exception:
-        pass
+    monkeypatch.setattr("app.core.settings.get_settings", fake_settings, raising=False)
 
     result = runner.invoke(cli_app, ["feedback", "--inbound", "test inbound", "--reply", "test reply"])
     if result.exit_code != 0:
