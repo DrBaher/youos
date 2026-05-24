@@ -46,6 +46,22 @@ youos token-create   # prints a token once; copy it
 The extension sends it as the `X-YouOS-Token` header. Tokens are stored hashed on
 the server; revoke them with `youos token-revoke`.
 
+### Firefox
+
+The JS/HTML/icons are shared; only the manifest differs (Firefox MV3 uses
+`background.scripts` + `browser_specific_settings`). Build and load it with:
+
+```bash
+./build-firefox.sh   # writes firefox-build/
+```
+
+Then in Firefox: `about:debugging#/runtime/this-firefox` → **Load Temporary
+Add-on** → pick `firefox-build/manifest.json`. You may need to grant the
+`127.0.0.1` host permission in the add-on's permission prompt.
+
+> ⚠️ The Firefox build is **not yet verified in-browser** (built from a shared,
+> cross-browser codebase). Please report issues. The Chrome build is tested.
+
 ## Usage
 
 1. Open an email in Gmail.
@@ -64,14 +80,17 @@ the server; revoke them with `youos token-revoke`.
 - **Gmail DOM selectors** (`.a3s`, `.gD`, `h2.hP`) are Google's and can change.
   If detection stops working, use **re-detect** or paste the message manually;
   the selectors are isolated in `content.js` for easy updates.
-- Chromium only for now. A Firefox build (browser.* shim) is a small follow-up.
+- The code is cross-browser via a `const api = browser ?? chrome` shim, so the
+  same `content.js`/`background.js`/`options.js` run in both engines.
 
 ## Files
 
 | File | Role |
 |------|------|
-| `manifest.json` | MV3 manifest (permissions, content script, service worker) |
+| `manifest.json` | Chrome MV3 manifest (permissions, content script, service worker) |
+| `manifest.firefox.json` | Firefox MV3 manifest (background scripts + gecko settings) |
+| `build-firefox.sh` | Assembles `firefox-build/` from the shared sources |
 | `background.js` | Service worker — proxies API calls to the local server |
 | `content.js` | Gmail extraction, Shadow-DOM panel, insert-into-compose |
-| `options.html` / `options.js` | Set the server URL |
+| `options.html` / `options.js` | Set the server URL and API token |
 | `icons/` | Toolbar/extension icons |
