@@ -1106,7 +1106,10 @@ def generate_draft(
         reply_pairs = _apply_cached_order(reply_pairs, cached_ids)
 
         selected_ids = _top_exemplar_source_ids(reply_pairs)
-        _update_exemplar_cache(detected_intent, sender_type_hint, selected_ids, database_url=database_url)
+        # Only persist on a cache miss or when the selection actually changed —
+        # otherwise every hit triggered a redundant DB write of the same row.
+        if not exemplar_cache_hit or selected_ids != cached_ids[: len(selected_ids)]:
+            _update_exemplar_cache(detected_intent, sender_type_hint, selected_ids, database_url=database_url)
 
         # Build score stats dict from retrieval response
         score_stats = None

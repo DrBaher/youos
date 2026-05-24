@@ -21,7 +21,7 @@ from app.core.config import get_review_batch_size, get_review_draft_model
 from app.core.diff import hybrid_similarity, similarity_ratio
 from app.core.sender import classify_sender
 from app.core.text_utils import decode_html_entities, strip_quoted_text
-from app.db.bootstrap import resolve_sqlite_path
+from app.db.bootstrap import connect, resolve_sqlite_path
 from app.generation.service import DraftRequest, _adapter_available, generate_draft
 
 router = APIRouter(prefix="/review-queue", tags=["review-queue"])
@@ -621,22 +621,21 @@ def review_queue_submit(body: ReviewSubmitBody, request: Request) -> dict:
     db_path = _get_db_path(request)
     edit_distance_pct = round(1.0 - similarity_ratio(body.generated_draft, body.edited_reply), 4)
 
-    conn = sqlite3.connect(db_path)
+    conn = connect(db_path)
     try:
-        # Check for duplicate submission
-        existing = conn.execute(
-            "SELECT id FROM feedback_pairs WHERE reply_pair_id = ?",
-            (body.reply_pair_id,),
-        ).fetchone()
-        if existing:
-            return {"status": "already_submitted", "feedback_id": existing[0]}
-
-        conn.execute(
+        # Atomic insert-if-absent. A plain check-then-insert raced: two concurrent
+        # submits of the same reply_pair_id could both pass the check and double
+        # insert. The WHERE NOT EXISTS runs inside the insert's write transaction,
+        # so at most one row is created.
+        cur = conn.execute(
             """
             INSERT INTO feedback_pairs
                 (inbound_text, generated_draft, edited_reply, feedback_note,
                  rating, edit_distance_pct, reply_pair_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            SELECT ?, ?, ?, ?, ?, ?, ?
+            WHERE NOT EXISTS (
+                SELECT 1 FROM feedback_pairs WHERE reply_pair_id = ?
+            )
             """,
             (
                 body.inbound_text,
@@ -646,9 +645,16 @@ def review_queue_submit(body: ReviewSubmitBody, request: Request) -> dict:
                 body.rating,
                 edit_distance_pct,
                 body.reply_pair_id,
+                body.reply_pair_id,
             ),
         )
         conn.commit()
+        if cur.rowcount == 0:
+            existing = conn.execute(
+                "SELECT id FROM feedback_pairs WHERE reply_pair_id = ?",
+                (body.reply_pair_id,),
+            ).fetchone()
+            return {"status": "already_submitted", "feedback_id": existing[0] if existing else None}
         total = conn.execute("SELECT COUNT(*) FROM feedback_pairs").fetchone()[0]
 
         # Save to draft_history
