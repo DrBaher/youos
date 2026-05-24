@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>YouOS for Gmail — Settings</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+         background: #1a1a2e; color: #e0e0e0; margin: 0; padding: 40px; }
+  .card { max-width: 480px; margin: 0 auto; background: #16213e; border: 1px solid #2a3a4a;
+          border-radius: 12px; padding: 28px; }
+  h1 { color: #00c4a7; font-size: 18px; margin: 0 0 4px; }
+  p { color: #888; font-size: 13px; line-height: 1.5; }
+  label { display: block; font-size: 12px; color: #aaa; margin: 18px 0 6px; }
+  input { width: 100%; background: #0d1b2a; color: #e0e0e0; border: 1px solid #2a3a4a;
+          border-radius: 6px; padding: 10px; font-size: 14px; box-sizing: border-box; }
+  button { margin-top: 18px; background: #00c4a7; color: #1a1a2e; border: none; border-radius: 8px;
+           padding: 10px 20px; font-size: 14px; font-weight: 700; cursor: pointer; }
+  button:hover { background: #00b398; }
+  .saved { color: #9e9; font-size: 13px; margin-left: 12px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>&#x2709;&#xFE0F; YouOS for Gmail</h1>
+    <p>Point this at your local YouOS server. The default matches <code>youos serve</code>.</p>
+    <label for="base">YouOS server URL</label>
+    <input id="base" type="text" placeholder="http://127.0.0.1:8765" />
+    <p>Use <code>http://127.0.0.1:&lt;port&gt;</code> or <code>http://localhost:&lt;port&gt;</code>.
+       PIN-protected instances are not supported yet.</p>
+    <div>
+      <button id="save">Save</button>
+      <span class="saved" id="saved"></span>
+    </div>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>
