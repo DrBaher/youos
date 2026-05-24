@@ -12,9 +12,17 @@ _cached_weights: dict[str, float] | None = None
 
 
 def load_composite_weights(configs_dir: Path | None = None) -> dict[str, float]:
-    """Load composite weights from configs/autoresearch.yaml, with caching."""
+    """Load composite weights from configs/autoresearch.yaml.
+
+    When ``configs_dir`` is given, the file is read fresh (no caching). The
+    autoresearch optimizer rewrites these weights mid-run and re-scores; caching
+    a stale copy would make every composite-weight mutation silently ineffective
+    (it would score identically and always revert). The cache is only used for
+    the default-config path where the file does not change during a process.
+    """
     global _cached_weights
-    if _cached_weights is not None:
+    use_cache = configs_dir is None
+    if use_cache and _cached_weights is not None:
         return _cached_weights
 
     if configs_dir is None:
@@ -32,13 +40,16 @@ def load_composite_weights(configs_dir: Path | None = None) -> dict[str, float]:
                 "avg_keyword_hit": float(weights.get("avg_keyword_hit", _DEFAULT_WEIGHTS["avg_keyword_hit"])),
                 "avg_confidence": float(weights.get("avg_confidence", _DEFAULT_WEIGHTS["avg_confidence"])),
             }
-            _cached_weights = result
+            if use_cache:
+                _cached_weights = result
             return result
         except Exception:
             pass
 
-    _cached_weights = dict(_DEFAULT_WEIGHTS)
-    return _cached_weights
+    if use_cache:
+        _cached_weights = dict(_DEFAULT_WEIGHTS)
+        return _cached_weights
+    return dict(_DEFAULT_WEIGHTS)
 
 
 def reset_weight_cache() -> None:
@@ -61,7 +72,7 @@ class Scorecard:
         return f"pass={self.pass_rate:.0%} kw={self.avg_keyword_hit:.0%} conf={self.avg_confidence:.0%} composite={self.composite:.2f}"
 
 
-def scorecard_from_eval_result(result: EvalSuiteResult) -> Scorecard:
+def scorecard_from_eval_result(result: EvalSuiteResult, configs_dir: Path | None = None) -> Scorecard:
     total = result.total_cases
     if total == 0:
         return Scorecard(
@@ -81,7 +92,7 @@ def scorecard_from_eval_result(result: EvalSuiteResult) -> Scorecard:
     avg_kw = sum(cr.scores.get("keyword_hit_rate", 0.0) for cr in result.case_results) / total
     avg_conf = sum(cr.scores.get("confidence_score", 0.0) for cr in result.case_results) / total
 
-    weights = load_composite_weights()
+    weights = load_composite_weights(configs_dir)
     composite = weights["pass_rate"] * pass_rate + weights["avg_keyword_hit"] * avg_kw + weights["avg_confidence"] * avg_conf
 
     return Scorecard(
