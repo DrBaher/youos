@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.22 — 2026-05-24
+
+### UI polish (deferred review items)
+- Consolidated the two `<style>` blocks in `feedback.html` into one (the second was nested mid-body) — no visual change, just maintainability.
+- The Review Queue keyboard-hints line is now clickable to open the shortcuts overlay (discoverable without knowing the `?` keystroke), with brighter contrast; the overlay also closes on backdrop click and Esc.
+
 ## v0.1.21 — 2026-05-24
 
 ### Backend cleanup (code-review findings)
