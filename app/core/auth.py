@@ -122,6 +122,10 @@ class LoginRateLimiter:
         # Keep only recent attempts
         cutoff = time.time() - self.lockout_seconds
         self._attempts[client_ip] = [t for t in self._attempts[client_ip] if t > cutoff]
+        # Drop other IPs whose attempts have all aged out so the map stays bounded.
+        for ip in [ip for ip, ts in self._attempts.items() if not ts or ts[-1] <= cutoff]:
+            if ip != client_ip:
+                del self._attempts[ip]
 
     def reset(self, client_ip: str) -> None:
         self._attempts.pop(client_ip, None)
