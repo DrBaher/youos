@@ -15,15 +15,15 @@ from app.core.data_safety import (
 from app.core.settings import Settings
 
 
-def _mk_db(path: Path, *, with_facts: bool = True, with_draft_history: bool = True) -> None:
+def _mk_db(path: Path, *, with_memory: bool = True, with_draft_history: bool = True) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     try:
         conn.execute("CREATE TABLE IF NOT EXISTS reply_pairs(id INTEGER PRIMARY KEY)")
         if with_draft_history:
             conn.execute("CREATE TABLE IF NOT EXISTS draft_history(id INTEGER PRIMARY KEY)")
-        if with_facts:
-            conn.execute("CREATE TABLE IF NOT EXISTS facts(id INTEGER PRIMARY KEY)")
+        if with_memory:
+            conn.execute("CREATE TABLE IF NOT EXISTS memory(id INTEGER PRIMARY KEY)")
         conn.commit()
     finally:
         conn.close()
@@ -60,7 +60,7 @@ def test_validate_instance_paths_rejects_mismatched_db(tmp_path: Path, monkeypat
 def test_run_startup_safety_checks_warns_on_missing_tables(tmp_path: Path):
     data_dir = tmp_path / "inst"
     db = data_dir / "var" / "youos.db"
-    _mk_db(db, with_facts=False, with_draft_history=False)
+    _mk_db(db, with_memory=False, with_draft_history=False)
 
     settings = Settings(
         data_dir=data_dir,
@@ -70,7 +70,7 @@ def test_run_startup_safety_checks_warns_on_missing_tables(tmp_path: Path):
     (data_dir / "configs").mkdir(parents=True, exist_ok=True)
 
     report = run_startup_safety_checks(settings)
-    assert any("Required table missing: facts" in w for w in report.warnings)
+    assert any("Required table missing: memory" in w for w in report.warnings)
     assert any("Required table missing: draft_history" in w for w in report.warnings)
 
 
@@ -102,3 +102,36 @@ def test_snapshot_create_list_restore(tmp_path: Path):
     count = conn.execute("SELECT COUNT(*) FROM reply_pairs").fetchone()[0]
     conn.close()
     assert count == 1
+
+
+def test_create_snapshot_rejects_traversal_tier(tmp_path: Path):
+    db = tmp_path / "var" / "youos.db"
+    _mk_db(db)
+    with pytest.raises(ValueError):
+        create_snapshot(db, tier="../../../tmp/evil")
+
+
+def test_create_snapshot_rejects_path_separator_tier(tmp_path: Path):
+    db = tmp_path / "var" / "youos.db"
+    _mk_db(db)
+    with pytest.raises(ValueError):
+        create_snapshot(db, tier="a/b")
+
+
+def test_restore_snapshot_rejects_path_outside_snapshots_dir(tmp_path: Path):
+    db = tmp_path / "var" / "youos.db"
+    _mk_db(db)
+    # An arbitrary file outside the snapshots root must be refused, otherwise it
+    # could be copied over the live DB.
+    evil = tmp_path / "evil.db"
+    _mk_db(evil)
+    with pytest.raises(ValueError):
+        restore_snapshot(db, evil)
+
+
+def test_restore_snapshot_rejects_traversal_path(tmp_path: Path):
+    db = tmp_path / "var" / "youos.db"
+    _mk_db(db)
+    snap_root = db.parent / "snapshots"
+    with pytest.raises(ValueError):
+        restore_snapshot(db, snap_root / ".." / ".." / "etc" / "passwd")
