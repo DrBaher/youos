@@ -34,6 +34,18 @@ passes the result back to the page.
 If your server runs on a different port, open the extension's **Options** (or
 right-click the toolbar icon → Options) and set the URL.
 
+### PIN-protected instances
+
+If your instance has a `server.pin`, generate an API token and paste it into the
+extension Options:
+
+```bash
+youos token-create   # prints a token once; copy it
+```
+
+The extension sends it as the `X-YouOS-Token` header. Tokens are stored hashed on
+the server; revoke them with `youos token-revoke`.
+
 ## Usage
 
 1. Open an email in Gmail.
@@ -49,10 +61,6 @@ right-click the toolbar icon → Options) and set the URL.
 
 ## Limitations / notes
 
-- **PIN-protected instances aren't supported yet.** The extension can't ride the
-  web UI's session cookie (it's `SameSite=Lax`, cross-origin). If you've set a
-  `server.pin`, the extension will report "auth required". A small API-token
-  header is the planned fix.
 - **Gmail DOM selectors** (`.a3s`, `.gD`, `h2.hP`) are Google's and can change.
   If detection stops working, use **re-detect** or paste the message manually;
   the selectors are isolated in `content.js` for easy updates.
