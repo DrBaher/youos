@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import sqlite3
+from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,7 +14,7 @@ import yaml
 
 from app.core.embeddings import cosine_similarity, deserialize_embedding, get_embedding
 from app.core.sender import classify_sender, extract_domain
-from app.db.bootstrap import resolve_sqlite_path
+from app.db.bootstrap import connect, resolve_sqlite_path
 
 ResultType = Literal["document", "chunk", "reply_pair"]
 ScopeType = Literal["all", "documents", "reply_pairs"]
@@ -180,7 +181,7 @@ class RetrievalService:
             "account_emails": list(request.account_emails),
         }
 
-        with sqlite3.connect(self.db_path) as connection:
+        with closing(connect(self.db_path)) as connection:
             connection.row_factory = sqlite3.Row
             use_fts = _has_fts5_table(connection, "chunks_fts")
 
@@ -549,6 +550,8 @@ class RetrievalService:
         )
         # Apply quality_score multiplier from feedback
         quality_score = float(row["quality_score"]) if "quality_score" in row.keys() else 1.0
+        # Surface quality into metadata so exemplar selection can rank by it.
+        metadata["quality_score"] = quality_score
         combined = (lexical_score + metadata_score) * quality_score
 
         combined = self._apply_subject_boost(combined, pair_subject, tokens, self.config.subject_match_boost)
@@ -822,6 +825,8 @@ class RetrievalService:
             sender_domain_hint=request.sender_domain_hint,
         )
         quality_score = float(row["quality_score"]) if "quality_score" in row.keys() else 1.0
+        # Surface quality into metadata so exemplar selection can rank by it.
+        metadata["quality_score"] = quality_score
         combined = (lexical_score + metadata_score) * quality_score
 
         combined = self._apply_subject_boost(combined, pair_subject, tokens, self.config.subject_match_boost)
