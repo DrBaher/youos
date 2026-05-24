@@ -24,6 +24,10 @@ from app.ingestion.run_log import (
     start_ingest_run,
 )
 
+# Hard cap on each `gog` CLI call so a stalled gog (auth prompt, network, token
+# refresh) can't hang ingestion / the nightly pipeline forever.
+GOG_TIMEOUT_SECONDS = 120
+
 SUPPORTED_IMPORT_FORMAT = """
 Supported Gmail import inputs:
 
@@ -459,7 +463,10 @@ def _gog_search_threads(
         if page_token:
             command.extend(["--page", page_token])
 
-        completed = subprocess.run(command, check=False, capture_output=True, text=True)
+        try:
+            completed = subprocess.run(command, check=False, capture_output=True, text=True, timeout=GOG_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError(f"{' '.join(command)} timed out after {GOG_TIMEOUT_SECONDS}s") from exc
         if completed.returncode != 0:
             error_detail = completed.stderr.strip() or completed.stdout.strip() or "unknown gog error"
             raise ValueError(f"{' '.join(command)} failed: {error_detail}")
@@ -516,12 +523,16 @@ def _gog_get_thread(*, account: str, thread_id: str) -> dict[str, Any]:
 
 
 def _run_gog_json(command: list[str]) -> Any:
-    completed = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=GOG_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(f"{' '.join(command)} timed out after {GOG_TIMEOUT_SECONDS}s") from exc
     if completed.returncode != 0:
         error_detail = completed.stderr.strip() or completed.stdout.strip() or "unknown gog error"
         raise ValueError(f"{' '.join(command)} failed: {error_detail}")
@@ -1061,7 +1072,7 @@ def _ingest_thread_documents(
 
 _ACKNOWLEDGMENT_ONLY = re.compile(
     r"^\s*(ok|okay|k|sure|thanks|thank you|ty|thx|noted|got it|will do|sounds good|great|perfect|"
-    r"received|ack|acknowledged|+1|roger|copy that|understood)\s*[.!]?\s*$",
+    r"received|ack|acknowledged|\+1|roger|copy that|understood)\s*[.!]?\s*$",
     re.IGNORECASE,
 )
 _FORWARDED_PATTERN = re.compile(
