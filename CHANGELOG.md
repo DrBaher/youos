@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.19 — 2026-05-24
+
+### Autoresearch reliability (the real `database is locked` fix)
+- **`run_eval_suite` now commits after each case** instead of once at the end of the suite. Previously the suite's connection held a single uncommitted write transaction (the per-case `eval_runs` inserts) across the entire loop — keeping the WAL write lock the whole time. Every per-draft write on another connection (e.g. the exemplar cache) then blocked for the busy_timeout and failed with `database is locked`, and no eval results were visible until the suite ended (so autoresearch recorded nothing). With per-case commits the lock is released between cases. Verified end-to-end on a real instance: `eval_runs` grows per case with zero lock errors. Builds on the busy_timeout + WAL hardening in 0.1.18.
+
 ## v0.1.18 — 2026-05-24
 
 ### Autoresearch reliability (DB concurrency)
