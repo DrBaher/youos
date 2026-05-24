@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.1.23 — 2026-05-24
+
+### Ingestion & CLI fixes (code-review findings)
+- **Critical: Gmail ingestion was completely dead.** A malformed regex (`+1`, an unescaped quantifier) in `gmail_threads.py` raised `re.PatternError` at import time, so the whole module — and thus all Gmail ingestion — failed to load. Escaped to `\+1`; added an import-regression test covering every ingestion module.
+- **WhatsApp pairing dropped messages.** `build_reply_pairs` only paired one inbound with the next reply, silently dropping the earlier messages of a consecutive-inbound run; now accumulates the whole run (matching the Gmail importer). And when no `user.names` are configured it now fails with a clear message instead of misattributing every message as inbound.
+- **CLI commands propagate exit codes.** `setup`/`improve`/`ingest`/`finetune`/`eval` ran underlying scripts but always exited 0 even on failure (broke scripting/CI); they now exit non-zero, and `finetune` short-circuits if its export step fails.
+- **`note`/`feedback` give a clean error** on a missing database instead of a raw traceback.
+- **`gog` calls have timeouts** — Gmail/Docs ingestion can't hang forever on a stalled `gog`.
+- Removed the stale 524-line duplicate CLI `scripts/youos_cli.py` (the shipped entrypoint is `app.cli`); repointed its tests to the real CLI (which also fixes a long-standing flaky `test_cli_stats_no_db`).
+
 ## v0.1.22 — 2026-05-24
 
 ### UI polish (deferred review items)

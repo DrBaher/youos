@@ -81,3 +81,19 @@ def test_build_reply_pairs_skip_consecutive_user():
     assert len(pairs) == 1
     assert pairs[0][0].sender == "Alice"
     assert pairs[0][1].sender == "Bob"
+
+
+def test_build_reply_pairs_accumulates_consecutive_inbound():
+    """Regression: a run of consecutive inbound messages must all be captured,
+    not just the last one before the reply."""
+    text = """\
+1/1/26, 10:00 AM - Alice: Good to hear from you
+1/1/26, 10:00 AM - Alice: Are you free Tuesday?
+1/1/26, 10:05 AM - Bob: Yes, Tuesday works
+"""
+    messages = parse_whatsapp_export(text)
+    pairs = build_reply_pairs(messages, ("Bob",))
+    assert len(pairs) == 1
+    assert "Good to hear from you" in pairs[0][0].text  # previously dropped
+    assert "Are you free Tuesday?" in pairs[0][0].text
+    assert pairs[0][1].text == "Yes, Tuesday works"
