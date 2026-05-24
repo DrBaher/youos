@@ -5,10 +5,14 @@
 // hit CORS + mixed-content when calling http://127.0.0.1; the service worker,
 // granted host_permissions for localhost, is exempt from page CORS.
 
+// Cross-browser: Firefox exposes the promise-based `browser` namespace; Chrome
+// uses `chrome` (also promise-based under MV3). This keeps one shared codebase.
+const api = globalThis.browser ?? globalThis.chrome;
+
 const DEFAULT_BASE = "http://127.0.0.1:8765";
 
 async function getConfig() {
-  const { youosBaseUrl, youosToken } = await chrome.storage.sync.get(["youosBaseUrl", "youosToken"]);
+  const { youosBaseUrl, youosToken } = await api.storage.sync.get(["youosBaseUrl", "youosToken"]);
   return {
     base: (youosBaseUrl || DEFAULT_BASE).replace(/\/+$/, ""),
     token: youosToken || "",
@@ -52,7 +56,7 @@ async function apiFetch(path, options) {
   return { ok: true, data };
 }
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     switch (msg && msg.type) {
       case "youos-generate":
@@ -84,8 +88,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 // Toolbar icon toggles the panel in the active Gmail tab.
-chrome.action.onClicked.addListener((tab) => {
+api.action.onClicked.addListener((tab) => {
   if (tab.id != null) {
-    chrome.tabs.sendMessage(tab.id, { type: "youos-toggle" }).catch(() => {});
+    api.tabs.sendMessage(tab.id, { type: "youos-toggle" }).catch(() => {});
   }
 });
