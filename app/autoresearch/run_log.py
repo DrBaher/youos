@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import sqlite3
-
-from app.db.bootstrap import resolve_sqlite_path
+from app.db.bootstrap import connect, resolve_sqlite_path
 
 _CREATE_TABLE_SQL = """\
 CREATE TABLE IF NOT EXISTS autoresearch_runs (
@@ -25,7 +23,7 @@ CREATE TABLE IF NOT EXISTS autoresearch_runs (
 def ensure_table(database_url: str) -> None:
     """Create the autoresearch_runs table if it doesn't exist."""
     db_path = resolve_sqlite_path(database_url)
-    conn = sqlite3.connect(db_path)
+    conn = connect(db_path)
     try:
         conn.execute(_CREATE_TABLE_SQL)
         conn.commit()
@@ -47,7 +45,7 @@ def log_iteration(
 ) -> None:
     """Log one autoresearch iteration to the database."""
     db_path = resolve_sqlite_path(database_url)
-    conn = sqlite3.connect(db_path)
+    conn = connect(db_path)
     try:
         conn.execute(
             """

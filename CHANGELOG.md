@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.18 — 2026-05-24
+
+### Autoresearch reliability (DB concurrency)
+- **Fixed `database is locked` under concurrent access.** All SQLite connections in the generation, evaluation, and autoresearch-log paths now go through a shared `app.db.bootstrap.connect()` that sets a 30s `busy_timeout` and enables **WAL** journaling. A single draft opens several connections and the nightly pipeline runs while the web server is live, so contention is normal; previously a momentarily-locked write raised immediately (the exemplar-cache and eval writes failed, blocking autoresearch from recording results). Now writers briefly wait, and WAL lets a writer proceed alongside readers.
+
 ## v0.1.17 — 2026-05-24
 
 ### Autoresearch reliability

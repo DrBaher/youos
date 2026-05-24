@@ -24,6 +24,7 @@ from app.core.config import (
 )
 from app.core.sender import classify_sender, extract_domain, first_name_from_display_name
 from app.core.text_utils import strip_quoted_text
+from app.db.bootstrap import connect as _connect
 from app.db.bootstrap import resolve_sqlite_path
 from app.retrieval.service import (
     RetrievalMatch,
@@ -43,7 +44,7 @@ def clear_exemplar_cache(*, database_url: str | None = None) -> None:
     if database_url:
         try:
             db_path = resolve_sqlite_path(database_url)
-            conn = sqlite3.connect(db_path)
+            conn = _connect(db_path)
             try:
                 conn.execute("DELETE FROM exemplar_cache")
                 conn.commit()
@@ -74,7 +75,7 @@ def _get_cached_exemplar_ids(intent_hint: str | None, sender_type: str | None, *
     if database_url:
         try:
             db_path = resolve_sqlite_path(database_url)
-            conn = sqlite3.connect(db_path)
+            conn = _connect(db_path)
             try:
                 row = conn.execute(
                     "SELECT source_ids_json, strftime('%s', updated_at) FROM exemplar_cache WHERE cache_key = ?",
@@ -108,7 +109,7 @@ def _update_exemplar_cache(intent_hint: str | None, sender_type: str | None, sou
     if database_url:
         try:
             db_path = resolve_sqlite_path(database_url)
-            conn = sqlite3.connect(db_path)
+            conn = _connect(db_path)
             try:
                 conn.execute(
                     """
@@ -323,7 +324,7 @@ def _lookup_prior_reply_to_sender(sender: str, database_url: str, conn: sqlite3.
     _own_conn = conn is None
     if _own_conn:
         db_path = resolve_sqlite_path(database_url)
-        conn = sqlite3.connect(db_path)
+        conn = _connect(db_path)
     try:
         row = conn.execute(
             """
@@ -469,7 +470,7 @@ def lookup_facts(
     _own_conn = conn is None
     if _own_conn:
         db_path = resolve_sqlite_path(database_url)
-        conn = sqlite3.connect(db_path)
+        conn = _connect(db_path)
         conn.row_factory = sqlite3.Row
     facts: list[dict[str, Any]] = []
     try:
@@ -532,7 +533,7 @@ def lookup_sender_profile(email: str, database_url: str, conn: sqlite3.Connectio
     _own_conn = conn is None
     if _own_conn:
         db_path = resolve_sqlite_path(database_url)
-        conn = sqlite3.connect(db_path)
+        conn = _connect(db_path)
         conn.row_factory = sqlite3.Row
     try:
         # Check if sender_profiles table exists
@@ -1038,7 +1039,7 @@ def generate_draft(
 
     # Open one shared DB connection for all metadata lookups (P1)
     db_path = resolve_sqlite_path(database_url)
-    shared_conn = sqlite3.connect(db_path)
+    shared_conn = _connect(db_path)
     shared_conn.row_factory = sqlite3.Row
     try:
 
