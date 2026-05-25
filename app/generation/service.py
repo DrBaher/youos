@@ -23,6 +23,7 @@ from app.core.config import (
     get_user_names,
 )
 from app.core.sender import classify_sender, extract_domain, first_name_from_display_name
+from app.core.settings import get_adapter_path
 from app.core.text_utils import strip_quoted_text
 from app.db.bootstrap import connect as _connect
 from app.db.bootstrap import resolve_sqlite_path
@@ -885,7 +886,7 @@ def _estimate_tokens(text: str) -> int:
     return int(len(text.split()) * 1.4)
 
 
-ADAPTER_PATH = Path(__file__).resolve().parents[2] / "models" / "adapters" / "latest"
+ADAPTER_PATH = get_adapter_path()
 
 
 def _get_base_model_id() -> str:
