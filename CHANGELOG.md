@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.40 — 2026-05-25
+
+### UI: stats page surfaces the unused data (rethink, 3/3)
+- **The stats dashboard now renders data it was already fetching but dropping.** Two `/stats/data` keys were returned and never shown: the **draft-quality-by-condition** summary (`draft_events`, from v0.1.36) and **per-persona adapter status** (`persona_adapters`). Added a "Draft Quality by Condition" card (drafts logged, off-target-length rate, and counts by length / confidence / sender type / intent) and a "Per-Persona Adapters" card (trained ✓ + pairs used per cohort). Both hide when there's no data.
+- **Note:** the `outcome_deltas` "data leak" flagged during the survey turned out to be a false alarm — that section is fully wired (HTML + JS). The remaining unused key, `embedding_coverage_by_table`, is left for now (the overall coverage % is already shown in System Health). Pinned with tests that the panels exist, read the right keys, and that `/stats/data` exposes them.
+
+This completes the UI rethink (1/3 shared design system + version fix · 2/3 drafting flow · 3/3 stats panels). The deeper template/component de-duplication remains an incremental, visually-verified follow-up.
+
 ## v0.1.39 — 2026-05-25
 
 ### UI: draft flow surfaces the new capabilities (rethink, 2/3)
