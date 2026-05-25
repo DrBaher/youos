@@ -34,6 +34,112 @@ def _safe_count(conn: sqlite3.Connection, table: str) -> int:
         return 0
 
 
+def _group_counts(conn: sqlite3.Connection, column: str, *, default: str) -> dict[str, int]:
+    """COUNT(*) grouped by a draft_events column (NULLs folded to *default*)."""
+    try:
+        rows = conn.execute(
+            f"SELECT COALESCE({column}, ?) AS k, COUNT(*) AS n FROM draft_events GROUP BY k ORDER BY n DESC",  # noqa: S608
+            (default,),
+        ).fetchall()
+        return {str(r["k"]): int(r["n"]) for r in rows}
+    except sqlite3.OperationalError:
+        return {}
+
+
+def summarize_draft_events(database_url: str) -> dict:
+    """Aggregate the ``draft_events`` signal log into a draft-quality picture.
+
+    Every generated draft is logged with the *conditions* it was produced
+    under (intent, sender_type, confidence, length_flag). This summarizes them
+    so the loop can see *where* drafting is weak — e.g. an intent whose drafts
+    are frequently off the target length, or a cohort that draws mostly
+    low-confidence retrieval. Where a draft can be matched to an edit outcome
+    (a best-effort join to ``draft_history`` on inbound+draft text), it also
+    reports the average edit distance by condition. The model's own drafts are
+    never training targets; this is analysis/observability for the loop.
+    """
+    from app.db.bootstrap import resolve_sqlite_path
+
+    empty = {
+        "total": 0,
+        "by_intent": {},
+        "by_sender_type": {},
+        "by_confidence": {},
+        "by_length_flag": {},
+        "off_target_pct": None,
+        "outcome": {"matched": 0, "avg_edit_distance_by_sender_type": {}, "avg_edit_distance_by_confidence": {}},
+    }
+
+    db_path = resolve_sqlite_path(database_url)
+    if not db_path.exists():
+        return empty
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        total = _safe_count(conn, "draft_events")
+        if total == 0:
+            return empty
+
+        summary = {
+            "total": total,
+            "by_intent": _group_counts(conn, "intent", default="unknown"),
+            "by_sender_type": _group_counts(conn, "sender_type", default="unknown"),
+            "by_confidence": _group_counts(conn, "confidence", default="unknown"),
+            "by_length_flag": _group_counts(conn, "length_flag", default="none"),
+            "off_target_pct": None,
+            "outcome": {"matched": 0, "avg_edit_distance_by_sender_type": {}, "avg_edit_distance_by_confidence": {}},
+        }
+
+        # Fraction of length-annotated drafts that missed the target band.
+        try:
+            off, flagged = conn.execute(
+                """SELECT
+                       SUM(CASE WHEN length_flag IN ('long', 'short') THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN length_flag IS NOT NULL THEN 1 ELSE 0 END)
+                   FROM draft_events"""
+            ).fetchone()
+            if flagged:
+                summary["off_target_pct"] = round(100.0 * (off or 0) / flagged, 1)
+        except sqlite3.OperationalError:
+            pass
+
+        # Best-effort outcome correlation: join to draft_history on the only
+        # available linkage (inbound + draft text). Not unique — same draft can
+        # recur — so this is indicative, not exact; `matched` reports coverage.
+        for key, col in (("avg_edit_distance_by_sender_type", "sender_type"), ("avg_edit_distance_by_confidence", "confidence")):
+            try:
+                rows = conn.execute(
+                    f"""SELECT COALESCE(de.{col}, 'unknown') AS k,
+                               ROUND(AVG(dh.edit_distance_pct), 3) AS avg_ed,
+                               COUNT(*) AS n
+                        FROM draft_events de
+                        JOIN draft_history dh
+                          ON de.inbound_text = dh.inbound_text
+                         AND de.generated_draft = dh.generated_draft
+                        WHERE dh.edit_distance_pct IS NOT NULL
+                        GROUP BY k""",  # noqa: S608
+                ).fetchall()
+                summary["outcome"][key] = {str(r["k"]): {"avg_edit_distance": r["avg_ed"], "n": int(r["n"])} for r in rows}
+            except sqlite3.OperationalError:
+                pass
+
+        try:
+            matched = conn.execute(
+                """SELECT COUNT(*) FROM draft_events de
+                   JOIN draft_history dh
+                     ON de.inbound_text = dh.inbound_text AND de.generated_draft = dh.generated_draft
+                   WHERE dh.edit_distance_pct IS NOT NULL"""
+            ).fetchone()[0]
+            summary["outcome"]["matched"] = int(matched)
+        except sqlite3.OperationalError:
+            pass
+
+        return summary
+    finally:
+        conn.close()
+
+
 def get_corpus_stats(database_url: str) -> dict:
     """Get corpus health statistics."""
     from app.db.bootstrap import resolve_sqlite_path
