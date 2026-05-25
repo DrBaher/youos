@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.26 — 2026-05-25
+
+### Nightly embeds reply_pairs, not just chunks
+- **The nightly embedding skip-gate was chunks-only.** `should_skip_embeddings` / `_count_null_embeddings` counted unembedded rows in `chunks` alone, so an instance with a fully-embedded (or empty) `chunks` table but a backlog of unembedded `reply_pairs` would skip the embedding step every night — reporting "all documents already indexed" while semantic re-ranking stayed off for `reply_pairs`, the *primary* retrieval target. The gate now sums unembedded rows across both `chunks` and `reply_pairs`: a missing table contributes 0 (pre-ingest), a table that exists but hasn't had the `embedding` column migrated yet contributes its full row count (so the indexer runs and migrates it), otherwise `COUNT(embedding IS NULL)`. Behavior-fixing only — the step can now do work it was already meant to, never less. Added regression tests for the reply_pairs-backlog, both-indexed, and unmigrated-column cases.
+
 ## v0.1.25 — 2026-05-25
 
 ### Default to the local MLX model; fix nightly auto-feedback import
