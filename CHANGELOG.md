@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.33 — 2026-05-25
+
+### Smarter drafting 2/4 — draft-time signal capture
+- **Every generated draft is now logged, not just the ones you give feedback on.** `draft_history` is only written when a reply is saved/edited via the review queue or feedback API; drafts you never act on — and the *signals* a draft was produced with (which exemplars, intent, sender_type, confidence, length flag) — left no trace. New append-only `draft_events` table captures one row per `generate_draft` call: `(inbound, draft, account, sender, sender_type, detected_mode, intent, confidence, confidence_reason, model_used, retrieval_method, exemplar_ids, length_flag, created_at)`. This is the raw material for the nightly to learn from far more than explicit edits (consumption by the fine-tune/autoresearch steps is a follow-up).
+- **Default-on but fully fault-isolated.** Gated by `generation.log_drafts` (default `true`; set `false` to opt out). The logger self-heals the table (`CREATE TABLE IF NOT EXISTS`) so it works on a DB that predates it, and it **never raises** — a logging failure can't break drafting (returns `False`, logs a warning). Table added to `schema.sql` and `bootstrap` migrations. Pinned with tests for the write, self-heal, disabled no-op, never-raises, empty-exemplar serialization, and the migration.
+
 ## v0.1.32 — 2026-05-25
 
 ### Smarter drafting 1/4 — post-generation repair pass
