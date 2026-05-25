@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.38 — 2026-05-25
+
+### UI: shared design-system assets + single-source version (rethink, 1/3)
+- **Version now has one source of truth.** It was hardcoded and had drifted across three places — `settings.version` (`0.1.25`), `/api/config` (`0.1.10`), and the UI footers (`YouOS v0.1.10`). New `app/core/version.py:get_version()` resolves it from `pyproject.toml` (repo-based local-first app → accurate without a reinstall), falling back to installed package metadata. `settings.version` and `/api/config` now use it, and the four page footers hydrate the version from `/api/config` (no more hardcoded strings).
+- **Shared front-end assets.** Mounted `/static` and added a design-system stylesheet (`static/youos.css` — the dark + teal palette as CSS variables, plus shared component classes for the multi-candidate picker / draft-quality badges coming next) and `static/youos.js` (hydrates the shared chrome from `/api/config`; small helpers). The four chrome templates (feedback, stats, about, bookmarklet) link them. This is the foundation the next two UI PRs build on; the deeper template de-duplication / component split lands incrementally on top (and is verified visually on a running instance — the UI can't be rendered in CI). Pinned with tests that the version is dynamic (not the old hardcoded value), the static assets serve, and every page links them.
+
 ## v0.1.37 — 2026-05-25
 
 ### Draft-quality-weighted autoresearch objective (closes the draft→tuning loop)

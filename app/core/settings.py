@@ -5,12 +5,14 @@ from pathlib import Path
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.version import get_version
+
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
     app_name: str = "YouOS"
-    version: str = "0.1.25"
+    version: str = Field(default_factory=get_version)
     environment: str = "dev"
     instance_name: str = "YouOS"
     data_dir: Path | None = Field(default=None)  # YOUOS_DATA_DIR — instance root
