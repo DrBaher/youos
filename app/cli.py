@@ -649,6 +649,51 @@ def doctor():
         raise SystemExit(1)
 
 
+config_app = typer.Typer(help="View and toggle YouOS feature flags.")
+app.add_typer(config_app, name="config")
+
+
+@config_app.command(name="list")
+def config_list():
+    """List all feature flags and their current values."""
+    from app.core.feature_flags import list_flags
+
+    for f in list_flags():
+        choices = f"  ({'/'.join(f['choices'])})" if f["type"] == "choice" else ""
+        typer.echo(f"  {f['key']:46s} = {str(f['value']):7s}  {f['label']}{choices}")
+
+
+@config_app.command(name="get")
+def config_get(key: str = typer.Argument(help="Dotted flag key, e.g. generation.multi_candidate.enabled")):
+    """Print the current value of a feature flag."""
+    from app.core.feature_flags import get_flag
+
+    try:
+        typer.echo(get_flag(key))
+    except KeyError:
+        typer.echo(f"Unknown flag: {key}", err=True)
+        raise typer.Exit(1) from None
+
+
+@config_app.command(name="set")
+def config_set(
+    key: str = typer.Argument(help="Dotted flag key, e.g. generation.multi_candidate.enabled"),
+    value: str = typer.Argument(help="New value (true/false for toggles)"),
+):
+    """Set a feature flag (writes youos_config.yaml)."""
+    from app.core.feature_flags import set_flag
+
+    try:
+        stored = set_flag(key, value)
+    except KeyError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    except ValueError as exc:
+        typer.echo(f"Invalid value for {key}: {exc}", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"✓ set {key} = {stored}")
+
+
 model_app = typer.Typer(help="Manage the local model.")
 app.add_typer(model_app, name="model")
 
