@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.37 — 2026-05-25
+
+### Draft-quality-weighted autoresearch objective (closes the draft→tuning loop)
+- **Autoresearch can now bias its objective toward the cohorts where real drafts get edited most.** With `autoresearch.draft_quality_weighting: true`, each golden-eval case is importance-weighted by the average edit distance of its sender_type cohort (from the `draft_events` log via `summarize_draft_events`) — benchmark cases already carry the sender_type as their `category`, which is the join key. Cohorts you rewrite heavily count more in the composite, so the optimizer prioritizes config changes that help where drafting actually struggles, instead of treating every cohort equally. The weights are computed **once per run** and applied to both the baseline and every candidate so their composites stay comparable.
+- **Why this is the sound integration:** autoresearch scores a *hypothetical mutated config* by re-running the golden eval, but draft-quality history was produced under *past* configs and can't be re-derived per candidate — so it can't be a naive term in the per-candidate score. Importance-weighting the eval cases is the principled way to realign the objective with real-world need. (The model's own drafts remain non-targets; this only reweights the synthetic eval.)
+- **Default-off & graceful.** `draft_quality_weighting` defaults `false` (equal weighting — unchanged). Enabled but with no accumulated edit-distance data → empty weights → uniform → still unchanged. Weight = `clamp(1 + 2·edit_distance, 1, 3)`. Pinned with tests for the weight derivation (scaling, clamp, dataless), weighted scoring (failing cohort ↓ / passing cohort ↑ composite; uniform == unweighted; unknown category → weight 1), and the config gate.
+
 ## v0.1.36 — 2026-05-25
 
 ### Consume the draft_events signal — draft-quality-by-condition
