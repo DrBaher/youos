@@ -160,7 +160,7 @@ def _make_match(score: float, snippet: str = "test") -> RetrievalMatch:
 
 
 def test_reranker_graceful_fallback():
-    """Reranker returns matches unchanged when sentence_transformers not available."""
+    """Reranker returns (matches, False) when sentence_transformers not available."""
     import app.core.reranker as reranker_mod
 
     # Reset state
@@ -172,8 +172,9 @@ def test_reranker_graceful_fallback():
         reranker_mod._cross_encoder = None
         # Force ImportError path
         matches = [_make_match(5.0), _make_match(3.0)]
-        result = reranker_mod.rerank("test query", matches, 2)
-        assert result == matches
+        reranked, applied = reranker_mod.rerank("test query", matches, 2)
+        assert reranked == matches
+        assert applied is False
 
 
 def test_reranker_with_mock_encoder():
@@ -188,10 +189,11 @@ def test_reranker_with_mock_encoder():
     reranker_mod._load_attempted = True
 
     matches = [_make_match(5.0, "low relevance"), _make_match(3.0, "high relevance")]
-    result = reranker_mod.rerank("test query", matches, 2)
+    reranked, applied = reranker_mod.rerank("test query", matches, 2)
 
     # Second match should come first after reranking
-    assert result[0].snippet == "high relevance"
+    assert reranked[0].snippet == "high relevance"
+    assert applied is True
 
     # Cleanup
     reranker_mod._cross_encoder = None
