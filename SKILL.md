@@ -21,7 +21,7 @@ metadata:
           - "pip install -e ."
     credentials:
       required:
-        - "gog must be authenticated for Gmail/Docs access"
+        - "A Google ingestion backend for Gmail/Docs (set ingestion.google_backend): gog CLI authenticated (default), Google's gws CLI authenticated, or the native Google-API backend (pip install youos[google] + OAuth)"
       optional:
         - "Claude CLI/API credentials only if model.fallback uses external provider"
     privacy:
