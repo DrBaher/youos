@@ -97,11 +97,21 @@
     <!-- 4. Ingest -->
     <section class="step" data-step="3">
       <h1>Build your corpus</h1>
-      <p class="lead">Pull your sent history so YouOS has examples to learn from.</p>
-      <div class="cmd">youos ingest</div>
-      <p class="hint">Runs in your terminal (can take a few minutes). WhatsApp export: <code>youos ingest --whatsapp chat.txt</code>.</p>
-      <div class="status pending" id="corpusStatus">Not ingested yet.</div>
-      <button class="btn secondary" id="refreshCorpus" style="margin-top:10px;">Check status</button>
+      <p class="lead">Pull your sent history so YouOS has examples to learn from. More history = a better model, but a longer first run.</p>
+      <label class="field">How far back</label>
+      <select id="lookback">
+        <option value="6m">Last 6 months</option>
+        <option value="1y" selected>Last 1 year</option>
+        <option value="2y">Last 2 years</option>
+        <option value="3y">Last 3 years</option>
+        <option value="4y">Last 4 years</option>
+        <option value="all">Everything</option>
+      </select>
+      <div style="margin-top:14px;">
+        <button class="btn" id="runIngest">Run ingestion</button>
+      </div>
+      <div class="status" id="ingestStatus" style="margin-top:14px;"></div>
+      <p class="hint" style="margin-top:14px;">Runs against your connected account(s) in the background. Prefer the terminal? <code>youos ingest</code> · WhatsApp export: <code>youos ingest --whatsapp chat.txt</code>.</p>
     </section>
 
     <!-- 5. Train -->
@@ -214,11 +224,59 @@
       else { el.className = "status pending"; el.textContent = pendingText; }
     }).catch(() => {});
   }
-  const corpusRefresh = () => refresh("corpus_ready", "corpusStatus", "✓ Corpus ingested.", "Not ingested yet — run the command above, then check again.");
   const adapterRefresh = () => refresh("adapter_ready", "adapterStatus", "✓ Adapter trained.", "No adapter yet — drafts use the base model + your exemplars until the nightly trains one.");
-  document.getElementById("refreshCorpus").addEventListener("click", corpusRefresh);
   document.getElementById("refreshAdapter").addEventListener("click", adapterRefresh);
-  corpusRefresh(); adapterRefresh();
+  adapterRefresh();
+
+  // Ingestion: run from the wizard + live status poll.
+  const ingestStatusEl = document.getElementById("ingestStatus");
+  const runBtn = document.getElementById("runIngest");
+  let pollTimer = null;
+
+  function renderIngest(s) {
+    if (!s || s.status === "idle") { ingestStatusEl.className = "status"; ingestStatusEl.textContent = ""; return; }
+    if (s.status === "running" || s.status === "started") {
+      ingestStatusEl.className = "status pending";
+      ingestStatusEl.textContent = "Ingesting… discovered " + (s.discovered || 0) + ", stored " + (s.reply_pairs || 0) + " reply pairs.";
+      runBtn.disabled = true; runBtn.textContent = "Ingesting…";
+      return true; // keep polling
+    }
+    runBtn.disabled = false; runBtn.textContent = "Run ingestion";
+    if (s.status === "failed") {
+      ingestStatusEl.className = "status err";
+      ingestStatusEl.textContent = "✕ Ingestion failed: " + (s.error || "see logs.");
+    } else {
+      ingestStatusEl.className = "status ok";
+      ingestStatusEl.textContent = "✓ Done — " + (s.reply_pairs || 0) + " reply pairs from " + (s.fetched || 0) + " threads.";
+    }
+    return false;
+  }
+
+  function poll() {
+    fetch("/api/ingest/status").then((r) => r.json()).then((s) => {
+      const keepGoing = renderIngest(s);
+      if (keepGoing) { pollTimer = setTimeout(poll, 4000); }
+      else if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+    }).catch(() => {});
+  }
+
+  runBtn.addEventListener("click", () => {
+    const lookback = document.getElementById("lookback").value;
+    ingestStatusEl.className = "status pending"; ingestStatusEl.textContent = "Starting…";
+    runBtn.disabled = true;
+    fetch("/api/ingest", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lookback: lookback }),
+    })
+      .then((r) => (r.ok ? r.json() : r.json().then((e) => Promise.reject(e.detail || "error"))))
+      .then(() => { poll(); })
+      .catch((err) => {
+        runBtn.disabled = false; runBtn.textContent = "Run ingestion";
+        ingestStatusEl.className = "status err"; ingestStatusEl.textContent = "✕ " + err;
+      });
+  });
+
+  poll(); // reflect any in-progress / last run on load
 })();
 </script>
 </body>
