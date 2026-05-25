@@ -418,6 +418,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
         <label for="draft">Draft Email</label>
         <textarea id="draft" placeholder="Click 'Generate Draft' to produce a draft..." readonly></textarea>
         <div id="suggestedSubject" class="suggested-subject" style="display:none;" title="Click to copy"></div>
+        <div id="draftBadges" class="yos-row" style="margin-top:0.4rem;"></div>
+        <div id="draftCandidates" class="yos-candidates"></div>
         <div class="tone-row">
           <label>Re-generate:</label>
           <button class="btn-tone" data-tone="shorter" disabled>Shorter</button>
@@ -930,6 +932,57 @@ function showFactsToast(facts) {
     }
   }
 
+  // --- Draft-quality metadata: length flag, repairs, multi-candidate picker ---
+  const draftBadgesEl = document.getElementById('draftBadges');
+  const draftCandidatesEl = document.getElementById('draftCandidates');
+
+  function clearDraftMeta() {
+    if (draftBadgesEl) draftBadgesEl.innerHTML = '';
+    if (draftCandidatesEl) draftCandidatesEl.innerHTML = '';
+  }
+
+  function renderDraftMeta(data) {
+    clearDraftMeta();
+    if (!data || !draftBadgesEl) return;
+    if (data.length_flag) {
+      const lf = data.length_flag;
+      const cls = lf === 'ok' ? 'yos-badge--ok' : 'yos-badge--warn';
+      const label = lf === 'ok' ? 'length: on target' : (lf === 'long' ? 'length: long' : 'length: short');
+      draftBadgesEl.insertAdjacentHTML('beforeend', '<span class="yos-badge ' + cls + '">' + label + '</span>');
+    }
+    if (Array.isArray(data.repairs) && data.repairs.length) {
+      const pretty = data.repairs.map(r => r.replace(/_/g, ' ')).join(', ');
+      draftBadgesEl.insertAdjacentHTML('beforeend',
+        '<span class="yos-badge yos-badge--accent" title="post-generation repairs applied">repaired: ' + YouOS.esc(pretty) + '</span>');
+    }
+    // Multi-candidate picker (only when several alternatives came back).
+    if (draftCandidatesEl && Array.isArray(data.candidates) && data.candidates.length > 1) {
+      const head = document.createElement('div');
+      head.className = 'yos-note';
+      head.textContent = data.candidates.length + ' candidates — click to use a different one:';
+      draftCandidatesEl.appendChild(head);
+      data.candidates.forEach((c, i) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'yos-candidate';
+        btn.setAttribute('aria-pressed', i === 0 ? 'true' : 'false');
+        const bits = [];
+        if (i === 0) bits.push('<span class="yos-badge yos-badge--accent">best</span>');
+        if (c.temperature != null) bits.push('<span>temp ' + YouOS.esc(c.temperature) + '</span>');
+        if (c.score != null && isFinite(c.score)) bits.push('<span>score ' + Number(c.score).toFixed(2) + '</span>');
+        btn.innerHTML = '<div class="yos-candidate__meta">#' + (i + 1) + ' ' + bits.join(' ') + '</div>' +
+          '<div class="yos-candidate__preview">' + YouOS.esc(String(c.draft || '').slice(0, 220)) + '</div>';
+        btn.addEventListener('click', () => {
+          draft.value = c.draft || '';
+          generatedDraft = c.draft || '';
+          draftCandidatesEl.querySelectorAll('.yos-candidate').forEach(b => b.setAttribute('aria-pressed', 'false'));
+          btn.setAttribute('aria-pressed', 'true');
+        });
+        draftCandidatesEl.appendChild(btn);
+      });
+    }
+  }
+
   btnGen.addEventListener('click', async () => {
     const text = inbound.value.trim();
     if (!text) { showInfo('Please paste an inbound email first.'); return; }
@@ -938,6 +991,7 @@ function showFactsToast(facts) {
     btnGen.innerHTML = 'Generating<span class="spinner"></span>';
     draft.value = '';
     draft.readOnly = true;
+    clearDraftMeta();
     btnSub.disabled = true;
     suggestedSubjectEl.style.display = 'none';
 
@@ -964,6 +1018,7 @@ function showFactsToast(facts) {
         let streamDone = false;
         let streamConfidence = '';
         let streamPrecedent = [];
+        let streamMeta = {};
 
         while (true) {
           const { done, value } = await reader.read();
@@ -979,6 +1034,7 @@ function showFactsToast(facts) {
                 streamDone = true;
                 streamConfidence = payload.confidence || '';
                 streamPrecedent = payload.precedent_used || [];
+                streamMeta = {length_flag: payload.length_flag, repairs: payload.repairs, candidates: payload.candidates};
               } else if (payload.token != null) {
                 // Token already includes its own newline(s); don't add one, or
                 // blank lines (paragraph breaks) get doubled/lost.
@@ -1000,6 +1056,7 @@ function showFactsToast(facts) {
             ' | Confidence: ' + (streamConfidence || 'unknown') + '</div>';
         }
         showInfo('Draft generated (streamed). Edit as needed, then submit.' + extra);
+        renderDraftMeta(streamMeta);
 
         // Fetch subject separately
         try {
@@ -1042,6 +1099,7 @@ function showFactsToast(facts) {
       btnSub.disabled = false;
       toneButtons.forEach(b => b.disabled = false);
       showSubject(data.suggested_subject);
+      renderDraftMeta(data);
 
       let extra = '';
       if (data.precedent_used) {
