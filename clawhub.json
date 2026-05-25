@@ -1,6 +1,6 @@
 {
   "name": "youos",
-  "version": "0.1.30",
+  "version": "0.1.31",
   "displayName": "YouOS \u2014 Personal Email Copilot",
   "description": "Learns your email writing style from your Gmail history and drafts replies that sound like you. Self-improving via LoRA fine-tuning and autoresearch. Runs locally on Apple Silicon with optional external fallback that can be disabled for strict local-only mode.",
   "author": "DrBaher",
@@ -28,7 +28,7 @@
   },
   "credentials": {
     "required": [
-      "gog authentication for Gmail/Docs ingestion"
+      "A Google ingestion backend for Gmail/Docs (ingestion.google_backend): gog CLI (default), Google's gws CLI, or the native Google-API backend (youos[google] extra + OAuth)"
     ],
     "optional": [
       "Claude/API credentials only if external fallback is enabled"
