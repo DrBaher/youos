@@ -10,7 +10,7 @@ from scripts.nightly_pipeline import (
 )
 
 
-def _create_db(tmp_path, *, pairs=0, feedback=0, null_embeddings=0):
+def _create_db(tmp_path, *, pairs=0, feedback=0, null_embeddings=0, reply_pair_null=0, reply_pair_embedded=0):
     db = tmp_path / "test.db"
     conn = sqlite3.connect(db)
     conn.execute(
@@ -42,6 +42,20 @@ def _create_db(tmp_path, *, pairs=0, feedback=0, null_embeddings=0):
         )
     for i in range(null_embeddings):
         conn.execute("INSERT INTO chunks (document_id, chunk_index, content, embedding) VALUES (?, ?, ?, ?)", (1, i, f"c{i}", None))
+    # reply_pairs gets its embedding column lazily (mirrors the real migration:
+    # the column is added by the indexer, not present in the base schema).
+    if reply_pair_null or reply_pair_embedded:
+        conn.execute("ALTER TABLE reply_pairs ADD COLUMN embedding BLOB")
+        for i in range(reply_pair_null):
+            conn.execute(
+                "INSERT INTO reply_pairs (inbound_text, reply_text, embedding) VALUES (?, ?, ?)",
+                (f"rn{i}", f"rn{i}", None),
+            )
+        for i in range(reply_pair_embedded):
+            conn.execute(
+                "INSERT INTO reply_pairs (inbound_text, reply_text, embedding) VALUES (?, ?, ?)",
+                (f"re{i}", f"re{i}", b"\x00\x00\x00\x00"),
+            )
     conn.commit()
     conn.close()
     return db
@@ -82,6 +96,30 @@ def test_skip_embeddings_all_indexed(tmp_path):
 
 def test_no_skip_embeddings_when_null(tmp_path):
     db = _create_db(tmp_path, null_embeddings=5)
+    skip, _ = should_skip_embeddings(db)
+    assert skip is False
+
+
+def test_no_skip_embeddings_when_reply_pairs_null(tmp_path):
+    # Regression: chunks fully embedded but reply_pairs has a backlog.
+    # The old chunks-only gate skipped here, leaving the primary retrieval
+    # table un-embedded forever.
+    db = _create_db(tmp_path, null_embeddings=0, reply_pair_null=5)
+    skip, _ = should_skip_embeddings(db)
+    assert skip is False
+
+
+def test_skip_embeddings_when_both_tables_indexed(tmp_path):
+    # Both chunks and reply_pairs fully embedded → still skips.
+    db = _create_db(tmp_path, reply_pair_embedded=5)
+    skip, _ = should_skip_embeddings(db)
+    assert skip is True
+
+
+def test_no_skip_embeddings_when_reply_pairs_unmigrated(tmp_path):
+    # reply_pairs exists with rows but no embedding column yet (first run
+    # after upgrade) → must run so the indexer migrates and embeds.
+    db = _create_db(tmp_path, pairs=5)
     skip, _ = should_skip_embeddings(db)
     assert skip is False
 
