@@ -262,6 +262,14 @@ def feedback_submit(body: SubmitBody, request: Request) -> dict:
     edit_categories = _analyze_edit_categories(body.generated_draft, body.edited_reply)
     edit_categories_json = json.dumps(edit_categories) if edit_categories else None
     precedents_json = json.dumps(body.precedents_used) if body.precedents_used else None
+    # Persona-routing cohort (Phase 1 of per-persona adapters): the per-
+    # sender_type adapter selected at generation time in Phase 3 will be
+    # trained from feedback pairs filtered on this column, so classify now
+    # while we have body.sender. Defaults to NULL when no sender provided
+    # — the backfill / future generation paths treat NULL as "unknown".
+    from app.core.sender import classify_sender
+
+    sender_type = classify_sender(body.sender) if body.sender else None
     conn = sqlite3.connect(db_path)
     try:
         # Ensure columns exist (in case bootstrap hasn't run yet)
@@ -270,12 +278,14 @@ def feedback_submit(body: SubmitBody, request: Request) -> dict:
             conn.execute("ALTER TABLE feedback_pairs ADD COLUMN edit_categories TEXT")
         if "precedents_used" not in cols:
             conn.execute("ALTER TABLE feedback_pairs ADD COLUMN precedents_used TEXT")
+        if "sender_type" not in cols:
+            conn.execute("ALTER TABLE feedback_pairs ADD COLUMN sender_type TEXT")
         conn.execute(
             """
             INSERT INTO feedback_pairs
                 (inbound_text, generated_draft, edited_reply, feedback_note, rating,
-                 edit_distance_pct, edit_categories, precedents_used)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 edit_distance_pct, edit_categories, precedents_used, sender_type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 body.inbound_text,
@@ -286,6 +296,7 @@ def feedback_submit(body: SubmitBody, request: Request) -> dict:
                 edit_distance_pct,
                 edit_categories_json,
                 precedents_json,
+                sender_type,
             ),
         )
         conn.commit()
