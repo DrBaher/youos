@@ -90,6 +90,12 @@ def stats_page() -> HTMLResponse:
     return HTMLResponse(content=html)
 
 
+@router.get("/settings", response_class=HTMLResponse)
+def settings_page() -> HTMLResponse:
+    html = (ROOT_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
+    return HTMLResponse(content=html)
+
+
 @router.get("/api/stats")
 def api_stats() -> dict[str, Any]:
     """Return API-level stats including embedding cache."""
