@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.facts_routes import router as facts_router
@@ -33,6 +34,7 @@ from app.core.data_safety import run_startup_safety_checks, validate_instance_pa
 from app.core.settings import get_settings
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "templates"
+STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 SESSION_COOKIE = "youos_session"
 SESSION_MAX_AGE = 86400  # 24 hours
 
@@ -236,6 +238,11 @@ def create_app() -> FastAPI:
     app.include_router(stream_router)
     app.include_router(history_router)
     app.include_router(facts_router)
+
+    # Shared front-end assets (design system: youos.css + youos.js). The auth
+    # middleware already skips the /static prefix.
+    if STATIC_DIR.exists():
+        app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     return app
 
 
