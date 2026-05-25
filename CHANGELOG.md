@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.42 — 2026-05-25
+
+### Config-write API (easy flag toggling, 2/4)
+- **`GET /api/config/flags`** lists the whitelisted feature flags with their current values (for the settings page / onboarding wizard to render toggles), and **`POST /api/config/set`** `{key, value}` sets one — restricted to the feature-flag whitelist, so it can never write arbitrary config keys. Inherits the app's auth + Origin protections on state-changing requests (when a PIN is configured). Returns `400` on an unknown key or a value that doesn't fit the flag's type. Pinned with API tests (list, unknown-key 400, bad-value 400, valid set).
+
 ## v0.1.41 — 2026-05-25
 
 ### Feature-flag core + `youos config` CLI (easy flag toggling, 1/4)

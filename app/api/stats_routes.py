@@ -5,8 +5,9 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 
 from app.core.config import load_config
 from app.core.settings import get_adapter_path, get_var_dir
@@ -52,6 +53,35 @@ def get_api_config(request: Request) -> dict[str, Any]:
         "feedback_pair_count": feedback_pair_count,
         "adapter_ready": adapter_ready,
     }
+
+
+class ConfigSetRequest(BaseModel):
+    key: str
+    value: Any
+
+
+@router.get("/api/config/flags")
+def get_config_flags() -> dict:
+    """List the whitelisted feature flags + their current values (for the
+    settings page / onboarding wizard to render toggles)."""
+    from app.core.feature_flags import list_flags
+
+    return {"flags": list_flags()}
+
+
+@router.post("/api/config/set")
+def set_config_flag(body: ConfigSetRequest) -> dict:
+    """Set one whitelisted feature flag. Restricted to the feature-flag
+    whitelist, so this can't write arbitrary config keys."""
+    from app.core.feature_flags import set_flag
+
+    try:
+        value = set_flag(body.key, body.value)
+    except KeyError:
+        raise HTTPException(status_code=400, detail=f"Unknown flag: {body.key}") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid value for {body.key}: {exc}") from None
+    return {"ok": True, "key": body.key, "value": value}
 
 
 @router.get("/stats", response_class=HTMLResponse)
