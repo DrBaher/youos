@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.49 — 2026-05-25
+
+### Run YouOS reliably: `youos service` (launchd background service)
+- **`youos serve` is foreground-only** — it dies on terminal close, reboot, or crash, which is no way to run a daily-driver. New `youos service install` / `uninstall` / `status` installs the server as a macOS **launchd LaunchAgent** (`com.youos.server`): runs the venv uvicorn at the configured host/port, **RunAtLoad** (start at login) + **KeepAlive** (auto-restart on crash), survives reboot, no root. Logs to `var/server.log`; passes `YOUOS_DATA_DIR` through so the agent serves the right instance. README gains a "Run it reliably" section. Tests pin the plist generation (args / KeepAlive / RunAtLoad / data-dir env) and install/uninstall/status (launchctl + LaunchAgents path mocked). The onboarding wizard will offer this too (next).
+
 ## v0.1.48 — 2026-05-25
 
 ### Onboarding wizard: plain-language explanations on every step

@@ -120,6 +120,22 @@ run YouOS — pick whichever Google access path you prefer:
 The default is `gog`, so existing setups are unchanged. WhatsApp ingestion needs
 no Google backend at all (it parses a local export file).
 
+## Run it reliably (background service)
+
+`youos serve` runs in the foreground and stops when you close the terminal. To
+keep YouOS always available — running at login, restarting if it crashes,
+surviving reboot — install it as a macOS background service (a launchd
+LaunchAgent; no root needed):
+
+```bash
+youos service install     # start now + run at every login
+youos service status      # not installed | installed | running
+youos service uninstall   # stop + remove
+```
+
+It serves at your configured host/port (default `127.0.0.1:8901`) and logs to
+`var/server.log`. The onboarding wizard offers this too.
+
 ## Usage
 
 ```bash
