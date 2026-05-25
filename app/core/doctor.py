@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import os
 import shutil
 import socket
@@ -13,6 +14,33 @@ from app.core.settings import get_instance_root, get_models_dir
 from app.db.bootstrap import resolve_sqlite_path
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
+
+
+def _google_backend_status() -> tuple[str, bool, str]:
+    """Health of the configured Google ingestion backend's dependency.
+
+    Returns ``(backend, ok, detail)``. Only the ``gog`` backend requires the
+    OpenClaw ``gog`` CLI; ``gws`` requires Google's own ``gws`` CLI; ``native``
+    requires the ``youos[google]`` libraries. This keeps the doctor (and setup
+    wizard) from failing a ``gws``/``native`` user just because ``gog`` — an
+    OpenClaw tool they don't use — isn't installed.
+    """
+    from app.core.config import get_ingestion_google_backend
+
+    backend = get_ingestion_google_backend()
+    if backend == "gws":
+        if shutil.which("gws") is None:
+            return backend, False, "gws CLI not found in PATH (ingestion.google_backend: gws)"
+        return backend, True, "gws CLI installed"
+    if backend == "native":
+        missing = [m for m in ("googleapiclient", "google_auth_oauthlib") if importlib.util.find_spec(m) is None]
+        if missing:
+            return backend, False, "native backend needs the google extra (pip install youos[google])"
+        return backend, True, "Google API libraries importable"
+    # gog (default)
+    if shutil.which("gog") is None:
+        return backend, False, "gog CLI not found in PATH"
+    return backend, True, "gog CLI installed"
 
 
 def run_doctor_checks() -> tuple[bool, list[str]]:
@@ -26,9 +54,11 @@ def run_doctor_checks() -> tuple[bool, list[str]]:
     if sys.version_info < (3, 11):
         failures.append(f"Python >= 3.11 required (have {sys.version_info.major}.{sys.version_info.minor})")
 
-    # Required: gog CLI installed
-    if shutil.which("gog") is None:
-        failures.append("gog CLI not found in PATH")
+    # Required: the configured Google ingestion backend's dependency
+    # (backend-aware — gog only when ingestion.google_backend is gog).
+    _backend, backend_ok, backend_detail = _google_backend_status()
+    if not backend_ok:
+        failures.append(backend_detail)
 
     # Required: mlx_lm importable
     try:

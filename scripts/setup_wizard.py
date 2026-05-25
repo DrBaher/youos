@@ -57,12 +57,20 @@ def _check_dependencies() -> bool:
         print(f"  Python {py_ver.major}.{py_ver.minor}.{py_ver.micro}  FAIL (need 3.11+)")
         all_ok = False
 
-    # gog CLI
-    if shutil.which("gog"):
-        print("  gog CLI                OK")
+    # Google ingestion backend dependency (backend-aware: gog / gws / native)
+    from app.core.doctor import _google_backend_status
+
+    backend, backend_ok, backend_detail = _google_backend_status()
+    label = f"Google backend ({backend})"
+    if backend_ok:
+        print(f"  {label:<22} OK")
     else:
-        print("  gog CLI                MISSING")
-        print("    Install: pip install gog-cli  OR  see OpenClaw docs for gog setup")
+        print(f"  {label:<22} MISSING")
+        print(f"    {backend_detail}")
+        if backend == "gog":
+            print("    Install: pip install gog-cli  OR  see OpenClaw docs for gog setup")
+        elif backend == "native":
+            print("    Install: pip install 'youos[google]'")
         all_ok = False
 
     # mlx (optional but recommended)
