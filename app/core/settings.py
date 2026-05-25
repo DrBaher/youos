@@ -47,3 +47,18 @@ def get_var_dir() -> Path:
     if settings.data_dir is not None:
         return Path(settings.data_dir).expanduser().resolve() / "var"
     return ROOT_DIR / "var"
+
+
+def get_adapter_path() -> Path:
+    """Return the LoRA adapter directory for the active instance.
+
+    Honors YOUOS_DATA_DIR so per-instance fine-tunes land in (and are read
+    from) the instance's own ``models/adapters/latest``. Without this every
+    instance shared the repo-root adapter dir — fine-tunes overwrote each
+    other and a generation reader looking at the instance dir would not find
+    the adapter that the writer had put in the repo dir.
+    """
+    settings = get_settings()
+    if settings.data_dir is not None:
+        return Path(settings.data_dir).expanduser().resolve() / "models" / "adapters" / "latest"
+    return ROOT_DIR / "models" / "adapters" / "latest"
