@@ -12,9 +12,17 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from app.core.config import get_ingestion_accounts, get_last_ingest_at, set_last_ingest_at
-from app.core.settings import get_settings
-from app.db.bootstrap import resolve_sqlite_path
+# Make the repo root importable so `from scripts.X import Y` (used below for
+# auto-feedback, persona, golden eval helpers) works when this file is invoked
+# directly — e.g. `python3 scripts/nightly_pipeline.py` under launchd puts
+# `scripts/` on sys.path[0] but not the parent, so `import scripts` fails.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from app.core.config import get_ingestion_accounts, get_last_ingest_at, set_last_ingest_at  # noqa: E402
+from app.core.settings import get_settings  # noqa: E402
+from app.db.bootstrap import resolve_sqlite_path  # noqa: E402
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 # Operate on the active instance's DB (YOUOS_DATA_DIR), not the repo's, so the
