@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.34 — 2026-05-25
+
+### Smarter drafting 3/4 — configurable, adaptive decoding
+- **Decoding sampling is now surfaced and adaptive.** Temperature was hardcoded (Ollama `0.7`) or absent (MLX ran with `mlx_lm`'s defaults), and uniform across all intents/confidence. New `generation.decoding` config exposes `temperature` and `top_p`, with an optional per-intent override (`intent_temperature`) and a per-confidence delta (`high_confidence_temperature_delta` / `low_confidence_temperature_delta`) — e.g. drop the temperature when retrieval is high-confidence (favor fidelity) and raise it for creative intents. `_resolve_decoding(intent, confidence)` computes the effective params, which now plumb through the MLX (`--temp`/`--top-p`) and Ollama (`options`) call paths.
+- **Surfacing precondition for autoresearch tuning.** Like the retrieval weights before them, these params being in config is what lets the nightly autoresearch loop A/B-tune them against the golden eval (wiring them into the search space is a follow-up).
+- **Default unchanged.** With no `generation.decoding` config, `_resolve_decoding` returns `(None, None)`: MLX gets no sampling flags (its prior behavior) and Ollama keeps `0.7` — identical output to before. Pinned with tests for the resolver (base / per-intent / confidence-delta + clamp / malformed) and that the params plumb into the MLX command and Ollama options while the default omits them.
+
 ## v0.1.33 — 2026-05-25
 
 ### Smarter drafting 2/4 — draft-time signal capture

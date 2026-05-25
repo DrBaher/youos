@@ -1070,6 +1070,51 @@ def _estimate_tokens(text: str) -> int:
     return int(len(text.split()) * 1.4)
 
 
+def _resolve_decoding(intent: str | None, confidence: str | None) -> tuple[float | None, float | None]:
+    """Resolve ``(temperature, top_p)`` from ``generation.decoding`` config.
+
+    Returns ``(None, None)`` when nothing is configured — preserving each
+    backend's current default (MLX: no ``--temp``/``--top-p``; Ollama: 0.7).
+    Surfacing these (like the retrieval weights) is the precondition for the
+    autoresearch loop to A/B-tune fidelity vs. variety. Supports a per-intent
+    temperature override (``intent_temperature``) and a per-confidence delta
+    (``high_confidence_temperature_delta`` / ``low_confidence_temperature_delta``),
+    e.g. lower temperature when retrieval is high-confidence.
+    """
+    try:
+        from app.core.config import load_config
+
+        cfg = load_config() or {}
+        gen = cfg.get("generation", {}) if isinstance(cfg, dict) else {}
+        dec = gen.get("decoding", {}) if isinstance(gen, dict) else {}
+        if not isinstance(dec, dict) or not dec:
+            return None, None
+
+        temp = dec.get("temperature")
+        intent_temps = dec.get("intent_temperature", {})
+        if intent and isinstance(intent_temps, dict) and intent in intent_temps:
+            temp = intent_temps[intent]
+
+        if temp is not None and confidence:
+            delta_key = {
+                "high": "high_confidence_temperature_delta",
+                "low": "low_confidence_temperature_delta",
+            }.get(confidence)
+            if delta_key and delta_key in dec:
+                try:
+                    temp = max(0.0, float(temp) + float(dec[delta_key]))
+                except (TypeError, ValueError):
+                    pass
+
+        top_p = dec.get("top_p")
+        temp_f = float(temp) if temp is not None else None
+        top_p_f = float(top_p) if top_p is not None else None
+        return temp_f, top_p_f
+    except Exception:
+        logger.debug("Could not resolve generation.decoding", exc_info=True)
+        return None, None
+
+
 ADAPTER_PATH = get_adapter_path()
 
 
@@ -1188,6 +1233,8 @@ def _call_local_model(
     max_tokens: int = 300,
     use_adapter: bool = True,
     adapter_path: Path | None = None,
+    temperature: float | None = None,
+    top_p: float | None = None,
 ) -> str:
     """Run mlx_lm against the base model, optionally with a LoRA adapter.
 
@@ -1214,17 +1261,35 @@ def _call_local_model(
             str(max_tokens),
         ]
     )
+    # Only pass sampling flags when configured — omitting them preserves
+    # mlx_lm's own defaults (the historical behavior).
+    if temperature is not None:
+        cmd.extend(["--temp", str(temperature)])
+    if top_p is not None:
+        cmd.extend(["--top-p", str(top_p)])
     result = _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT)
     if result.returncode != 0:
         raise RuntimeError(f"mlx_lm generate failed (exit {result.returncode}): {result.stderr.strip()}")
     return _strip_mlx_output(result.stdout)
 
 
-def _generate_via_ollama(prompt: str, model: str = "mistral", base_url: str = "http://localhost:11434", *, num_predict: int = 400) -> str:
+def _generate_via_ollama(
+    prompt: str,
+    model: str = "mistral",
+    base_url: str = "http://localhost:11434",
+    *,
+    num_predict: int = 400,
+    temperature: float | None = None,
+    top_p: float | None = None,
+) -> str:
     """Generate via Ollama HTTP API."""
     import urllib.request
 
-    payload = json.dumps({"model": model, "prompt": prompt, "stream": False, "options": {"temperature": 0.7, "num_predict": num_predict}}).encode()
+    # Preserve the historical 0.7 default when temperature isn't configured.
+    options: dict[str, Any] = {"temperature": 0.7 if temperature is None else temperature, "num_predict": num_predict}
+    if top_p is not None:
+        options["top_p"] = top_p
+    payload = json.dumps({"model": model, "prompt": prompt, "stream": False, "options": options}).encode()
     req = urllib.request.Request(f"{base_url}/api/generate", data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -1501,6 +1566,8 @@ def generate_draft(
     if isinstance(intent_avg, dict) and detected_intent in intent_avg:
         avg_reply_words = intent_avg[detected_intent]
     max_tokens = _compute_max_tokens(avg_reply_words, persona=persona, intent=detected_intent)
+    # Decoding params (default None -> each backend keeps its current default).
+    temperature, top_p = _resolve_decoding(detected_intent, confidence)
 
     fallback_model = get_model_fallback()
     try:
@@ -1521,11 +1588,15 @@ def generate_draft(
             if persona_adapter_path is not None:
                 draft = _call_local_model(
                     prompt, max_tokens=max_tokens, adapter_path=persona_adapter_path,
+                    temperature=temperature, top_p=top_p,
                 )
                 model_used = f"qwen2.5-1.5b-lora-{sender_type_hint}"
             else:
                 with_adapter = request.use_adapter and _adapter_available()
-                draft = _call_local_model(prompt, max_tokens=max_tokens, use_adapter=with_adapter)
+                draft = _call_local_model(
+                    prompt, max_tokens=max_tokens, use_adapter=with_adapter,
+                    temperature=temperature, top_p=top_p,
+                )
                 model_used = "qwen2.5-1.5b-lora" if with_adapter else "qwen2.5-1.5b-base"
         elif fallback_model == "ollama":
             from app.core.config import get_ollama_config
@@ -1533,7 +1604,10 @@ def generate_draft(
             ollama_cfg = get_ollama_config()
             ollama_model = ollama_cfg.get("model", "mistral")
             ollama_url = ollama_cfg.get("base_url", "http://localhost:11434")
-            draft = _generate_via_ollama(prompt, model=ollama_model, base_url=ollama_url, num_predict=max_tokens)
+            draft = _generate_via_ollama(
+                prompt, model=ollama_model, base_url=ollama_url, num_predict=max_tokens,
+                temperature=temperature, top_p=top_p,
+            )
             model_used = f"ollama:{ollama_model}"
         elif fallback_model == "claude":
             draft = _call_claude_cli(prompt, max_tokens=max_tokens)
