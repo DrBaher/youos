@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.29 — 2026-05-25
+
+### `gws` ingestion backend — Google's own Workspace CLI (decoupling from OpenClaw, step 2/5)
+- **Added `GwsSource`** to `app/ingestion/adapters.py`, selectable via `ingestion.google_backend: gws`. It drives Google's open-source [Workspace CLI](https://github.com/googleworkspace/cli) (`gws <service> <resource> <method> --params '{...}'`, JSON output): Gmail via `users threads list`/`get`, Docs via Drive `files list`/`get` + Docs `documents get`. Because the Gmail normalizer already consumes the raw Gmail-API message shape, the Gmail path is near-identity (the threads.get resource flows straight through `_normalize_gog_thread_payload`); Docs content comes from a structural-element text walk (handles the tabs feature), Docs metadata from Drive's `files.get`.
+- **Single-account bridging.** `gws` is single-account per credential (no per-command `--account` like `gog`). The adapter sets `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` per call from an optional `ingestion.gws_credentials` map (`{account: creds_file}`); with no mapping it uses the ambient `gws` login. Same rate-limit backoff and per-call timeout as the `gog` backend.
+- **Default unchanged** — `gog` remains the default backend, so this is purely additive. Pinned with fixture-based unit tests (transport, command construction, JSON-envelope unwrapping, credential-env bridging, pagination, the Docs text walk, max-bytes truncation, and that gws Gmail payloads feed the existing normalizer). **Live `gws` ingestion is verified on a real instance** — the container has no authenticated `gws`, and the Discovery-derived command names may need confirmation there.
+
 ## v0.1.28 — 2026-05-25
 
 ### Standalone distribution (decoupling from OpenClaw, step 5/5)
