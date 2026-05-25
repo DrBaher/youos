@@ -19,12 +19,19 @@ class _FakeURL:
 
 
 class _FakeRequest:
-    def __init__(self, path: str, cookies: dict[str, str], headers: dict[str, str] | None = None):
+    def __init__(
+        self,
+        path: str,
+        cookies: dict[str, str],
+        headers: dict[str, str] | None = None,
+        method: str = "GET",
+    ):
         self.url = _FakeURL(path)
         self.cookies = cookies
         # Starlette headers are case-insensitive; the middleware looks up
         # lowercase keys, so tests pass lowercase header names.
         self.headers = headers or {}
+        self.method = method
 
 
 def _make_middleware() -> PinAuthMiddleware:

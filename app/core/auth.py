@@ -9,6 +9,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+# Methods that mutate server state — these are the CSRF-relevant ones.
+STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
+
 
 def _get_sessions_path() -> Path:
     from app.core.settings import get_var_dir
@@ -155,6 +158,88 @@ def verify_api_token(token: str, path: Path | None = None) -> bool:
     if not token:
         return False
     return any(verify_pin(token, h) for h in load_api_token_hashes(path))
+
+
+def _normalize_origin(origin: str) -> str:
+    return origin.strip().rstrip("/")
+
+
+def compute_allowed_origins(config: dict[str, Any]) -> set[str]:
+    """Origins permitted for cookie-authenticated state-changing requests.
+
+    The session cookie is the CSRF-prone credential — a malicious page can
+    cause the browser to attach it to a cross-origin POST. We pin requests to
+    the server's own origin(s):
+
+    - ``http://127.0.0.1:<port>`` / ``http://localhost:<port>`` (the local web UI)
+    - ``http://<configured_host>:<port>`` when ``server.host`` is non-loopback
+      (e.g. LAN deployments)
+    - ``https://<tailscale_hostname>.ts.net`` and ``http://...`` (Tailscale)
+    - any literal origins under ``server.allowed_origins`` (escape hatch for
+      reverse proxies, alternate-port test setups, etc.)
+
+    API-token requests bypass this entirely — they're not CSRF-prone.
+    """
+    server_cfg = config.get("server", {}) if isinstance(config, dict) else {}
+    port = int(server_cfg.get("port", 8901))
+    host = server_cfg.get("host", "127.0.0.1") or "127.0.0.1"
+
+    origins: set[str] = {
+        f"http://127.0.0.1:{port}",
+        f"http://localhost:{port}",
+    }
+    if host not in {"127.0.0.1", "localhost", "::1", "0.0.0.0", ""}:
+        origins.add(f"http://{host}:{port}")
+
+    tailscale = config.get("tailscale", {}) if isinstance(config, dict) else {}
+    ts_host = (tailscale.get("hostname") or "").strip()
+    if ts_host:
+        origins.add(f"https://{ts_host}.ts.net")
+        origins.add(f"http://{ts_host}.ts.net")
+
+    extras = server_cfg.get("allowed_origins") or []
+    if isinstance(extras, list):
+        for entry in extras:
+            if isinstance(entry, str) and entry.strip():
+                origins.add(_normalize_origin(entry))
+
+    return origins
+
+
+def request_origin_allowed(
+    *,
+    method: str,
+    origin: str | None,
+    referer: str | None,
+    allowed_origins: set[str],
+) -> bool:
+    """True if the request may proceed under cookie auth.
+
+    Only the state-changing methods are checked; GET/HEAD/OPTIONS are not
+    targets of classic CSRF because the browser-attached session cookie can't
+    be combined with a writable response in a meaningful way.
+
+    On a state-changing request the ``Origin`` header is the primary signal;
+    when it is absent (some same-origin POSTs from older clients, or
+    server-to-server traffic) we fall back to ``Referer`` matching one of the
+    allowed origins. ``Origin: null`` (sandboxed/file:// contexts) is treated
+    as not-allowed — there is no legitimate same-origin request that needs it.
+    """
+    if method.upper() not in STATE_CHANGING_METHODS:
+        return True
+
+    if origin is not None:
+        normalized = _normalize_origin(origin)
+        if normalized == "null" or not normalized:
+            return False
+        return normalized in allowed_origins
+
+    if referer:
+        for allowed in allowed_origins:
+            if referer == allowed or referer.startswith(allowed + "/"):
+                return True
+
+    return False
 
 
 class LoginRateLimiter:
