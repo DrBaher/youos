@@ -206,6 +206,74 @@ def compute_allowed_origins(config: dict[str, Any]) -> set[str]:
     return origins
 
 
+def compute_token_allowed_origins(config: dict[str, Any]) -> set[str] | None:
+    """Origins permitted for *token*-authenticated state-changing requests.
+
+    Distinct from ``compute_allowed_origins`` (which guards the cookie auth
+    path against CSRF). Token auth isn't CSRF-prone — the attacker would
+    need to know the token to make the browser send it — but a compromised
+    page that exfiltrated the token could otherwise reuse it from any
+    origin. This narrows that surface: if the user configures
+    ``server.token_allowed_origins``, token-authed state-changers must
+    additionally carry an Origin in the set.
+
+    Returns ``None`` when the allowlist is **not configured**, signalling
+    "no extra check; preserve the historical token-authenticates-anywhere
+    behaviour". Returning an empty set would mean "configured to allow no
+    origins, block everything" which is almost certainly a foot-gun, so
+    blank lists are also treated as not-configured.
+
+    Browser extensions don't have a stable cross-install identifier (Chrome
+    unpacked-ID depends on the dev directory; Firefox uses a per-install
+    UUID, not the manifest's ``browser_specific_settings.gecko.id``), so
+    we can't ship a default that "just works". The user reads their own
+    extension's Origin out of the browser's network tab and adds it here.
+    """
+    server_cfg = config.get("server", {}) if isinstance(config, dict) else {}
+    raw = server_cfg.get("token_allowed_origins")
+    if not isinstance(raw, list):
+        return None
+    origins: set[str] = set()
+    for entry in raw:
+        if isinstance(entry, str) and entry.strip():
+            origins.add(_normalize_origin(entry))
+    if not origins:
+        return None
+    return origins
+
+
+def token_request_origin_allowed(
+    *,
+    method: str,
+    origin: str | None,
+    allowed_origins: set[str] | None,
+) -> bool:
+    """Per-request decision for token-authenticated callers.
+
+    Mirrors ``request_origin_allowed`` for the cookie path but with three
+    differences:
+
+    1. ``allowed_origins=None`` (allowlist not configured) → always allowed,
+       preserving the historical token-authenticates-anywhere behaviour.
+       Migrating instances aren't broken by deploying this code.
+    2. No Referer fallback. Token clients (browser extensions, CLIs) are
+       expected to always send Origin when state-changing; a missing Origin
+       on a token POST against an allowlisted instance is treated as
+       suspect, not silently allowed.
+    3. ``Origin: null`` still rejected — same reasoning as the cookie path.
+    """
+    if method.upper() not in STATE_CHANGING_METHODS:
+        return True
+    if allowed_origins is None:
+        return True
+    if origin is None:
+        return False
+    normalized = _normalize_origin(origin)
+    if normalized == "null" or not normalized:
+        return False
+    return normalized in allowed_origins
+
+
 def request_origin_allowed(
     *,
     method: str,
