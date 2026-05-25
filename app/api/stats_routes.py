@@ -298,9 +298,13 @@ def stats_data(request: Request) -> dict[str, Any]:
     # Lets the dashboard render coverage for chunks AND reply_pairs separately
     # without re-querying — and matches the shape emitted by the nightly
     # pipeline log so a chart can render both signals from one source of truth.
-    from app.core.stats import get_embedding_coverage
+    from app.core.stats import get_embedding_coverage, get_persona_adapter_status
 
     embedding_coverage_by_table = get_embedding_coverage(settings.database_url)
+    # Per-persona adapter readiness: {persona: {trained, mtime, pairs_used}}.
+    # Surfaces Phase 2's training state so the user can see which personas
+    # are ready for Phase 3 routed generation without poking the filesystem.
+    persona_adapters = get_persona_adapter_status()
 
     return {
         "pipeline_last_run": pipeline_last_run,
@@ -326,4 +330,5 @@ def stats_data(request: Request) -> dict[str, Any]:
         "system_health": system_health,
         "embedding_coverage": embedding_coverage_by_table,
         "feedback_by_persona": feedback_by_persona,
+        "persona_adapters": persona_adapters,
     }
