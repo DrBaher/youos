@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import get_ingestion_accounts, get_user_emails, get_user_names
+from app.ingestion.adapters import get_google_source
 from app.ingestion.models import IngestionResult
 from app.ingestion.run_log import (
     IngestRunContext,
@@ -402,9 +403,10 @@ def _load_thread_payloads(
 def _load_live_thread_payloads(live: GogLiveOptions) -> tuple[list[dict[str, Any]], int]:
     payloads: list[dict[str, Any]] = []
     discovered_threads = 0
+    source = get_google_source()
     for account in live.accounts:
         try:
-            search_results = _gog_search_threads(
+            search_results = source.search_threads(
                 account=account,
                 query=live.query,
                 max_threads=live.max_threads,
@@ -419,7 +421,7 @@ def _load_live_thread_payloads(live: GogLiveOptions) -> tuple[list[dict[str, Any
                         discovered_threads=discovered_threads,
                         fetched_threads=len(payloads),
                     )
-                thread_payload = _gog_get_thread(account=account, thread_id=thread_id)
+                thread_payload = source.get_thread(account=account, thread_id=thread_id)
                 time.sleep(0.5)
                 enriched_payload = _wrap_live_thread_payload(
                     thread_payload,
