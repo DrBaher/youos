@@ -623,6 +623,25 @@ def review_queue_submit(body: ReviewSubmitBody, request: Request) -> dict:
 
     conn = connect(db_path)
     try:
+        # Persona-routing cohort (Phase 1 of per-persona adapters): derive
+        # sender_type from the linked reply_pair's inbound_author so this row
+        # is correctly cohorted at training time. NULL when the lookup fails
+        # (deleted reply_pair, or one with no inbound_author) — treated as
+        # "unknown" by downstream consumers.
+        sender_type: str | None = None
+        try:
+            row = conn.execute(
+                "SELECT inbound_author FROM reply_pairs WHERE id = ?",
+                (body.reply_pair_id,),
+            ).fetchone()
+            if row and row[0]:
+                from app.core.sender import classify_sender
+
+                sender_type = classify_sender(row[0])
+        except sqlite3.OperationalError:
+            # No reply_pairs table (very fresh install) — leave NULL.
+            pass
+
         # Atomic insert-if-absent. A plain check-then-insert raced: two concurrent
         # submits of the same reply_pair_id could both pass the check and double
         # insert. The WHERE NOT EXISTS runs inside the insert's write transaction,
@@ -631,8 +650,8 @@ def review_queue_submit(body: ReviewSubmitBody, request: Request) -> dict:
             """
             INSERT INTO feedback_pairs
                 (inbound_text, generated_draft, edited_reply, feedback_note,
-                 rating, edit_distance_pct, reply_pair_id)
-            SELECT ?, ?, ?, ?, ?, ?, ?
+                 rating, edit_distance_pct, reply_pair_id, sender_type)
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?
             WHERE NOT EXISTS (
                 SELECT 1 FROM feedback_pairs WHERE reply_pair_id = ?
             )
@@ -645,6 +664,7 @@ def review_queue_submit(body: ReviewSubmitBody, request: Request) -> dict:
                 body.rating,
                 edit_distance_pct,
                 body.reply_pair_id,
+                sender_type,
                 body.reply_pair_id,
             ),
         )
