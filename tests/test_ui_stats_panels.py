@@ -34,3 +34,11 @@ def test_stats_data_exposes_the_keys():
     body = TestClient(app).get("/stats/data").json()
     assert "draft_events" in body
     assert "persona_adapters" in body
+
+
+def test_activity_panel_polls_ingest_and_finetune():
+    body = _stats_html()
+    assert 'id="activityCard"' in body
+    assert 'id="actIngest"' in body and 'id="actFinetune"' in body
+    assert "/api/ingest/status" in body and "/api/finetune/status" in body
+    assert "function pollActivity" in body  # live auto-refresh
