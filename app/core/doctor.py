@@ -84,6 +84,32 @@ def run_doctor_checks_full() -> tuple[bool, list[str], list[str]]:
     if not models_dir.exists() or not any(models_dir.iterdir()):
         warnings.append(f"{models_dir} is empty")
 
+    # Warning: reranker_enabled in config but sentence-transformers not loadable.
+    # Without this the silent fallback would let the user think reranking is
+    # firing when nothing is being reranked — exactly the misconfiguration the
+    # `reranker_applied` response field exists to surface.
+    try:
+        import yaml
+
+        from app.core.settings import get_settings
+
+        cfg_path = Path(get_settings().configs_dir) / "retrieval" / "defaults.yaml"
+        if cfg_path.exists():
+            retrieval_cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+            if isinstance(retrieval_cfg, dict) and retrieval_cfg.get("reranker_enabled"):
+                from app.core.reranker import is_reranker_available
+
+                if not is_reranker_available():
+                    warnings.append(
+                        "reranker_enabled: true in retrieval/defaults.yaml but "
+                        "sentence-transformers isn't loadable — install with "
+                        "`pip install youos[reranker]` or set reranker_enabled: false"
+                    )
+    except Exception:
+        # Doctor must never crash on a single check; the absence of the warning
+        # is its own signal that something went wrong upstream.
+        pass
+
     # Warning: port 8901 free
     try:
         from app.core.config import get_server_port
