@@ -555,15 +555,38 @@ def _count_new_feedback_since_last_run(db_path: Path) -> int:
 
 
 def _count_null_embeddings(db_path: Path) -> int:
-    """Count documents with NULL embedding."""
+    """Count rows still needing an embedding across all embeddable tables.
+
+    The nightly indexer embeds both ``chunks`` and ``reply_pairs``, so the
+    skip-gate must look at both. Counting ``chunks`` alone meant an instance
+    with a fully-embedded (or empty) ``chunks`` table but a backlog of
+    unembedded ``reply_pairs`` would skip indexing every night — silently
+    leaving semantic re-ranking off for the primary retrieval table while
+    reporting "all documents already indexed".
+
+    Per table: a missing table contributes 0 (pre-ingest); a table that
+    exists but has not had the ``embedding`` column migrated yet contributes
+    its full row count (so the indexer runs, adds the column, and embeds);
+    otherwise the count of rows with ``embedding IS NULL``.
+    """
     if not db_path.exists():
         return 0
     conn = sqlite3.connect(db_path)
     try:
-        cols = [row[1] for row in conn.execute("PRAGMA table_info(chunks)").fetchall()]
-        if "embedding" not in cols:
-            return -1  # no embedding column
-        return conn.execute("SELECT COUNT(*) FROM chunks WHERE embedding IS NULL").fetchone()[0]
+        existing = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        total = 0
+        for table in ("chunks", "reply_pairs"):
+            if table not in existing:
+                continue
+            cols = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+            if "embedding" not in cols:
+                # Column not migrated yet — every row needs embedding.
+                total += conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            else:
+                total += conn.execute(f"SELECT COUNT(*) FROM {table} WHERE embedding IS NULL").fetchone()[0]
+        return total
     except Exception:
         return -1
     finally:
@@ -600,7 +623,7 @@ def should_skip_autoresearch(db_path: Path) -> tuple[bool, str]:
 def should_skip_embeddings(db_path: Path) -> tuple[bool, str]:
     n = _count_null_embeddings(db_path)
     if n == 0:
-        return True, "[embeddings] Skipping — all documents already indexed"
+        return True, "[embeddings] Skipping — all chunks and reply_pairs already indexed"
     return False, ""
 
 
