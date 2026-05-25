@@ -118,17 +118,22 @@
     <section class="step" data-step="4">
       <h1>Learn your voice</h1>
       <p class="lead">YouOS analyzes your persona and fine-tunes a local LoRA adapter — automatically each night once you have enough feedback, or on demand.</p>
-      <div class="cmd">youos finetune</div>
-      <div class="status pending" id="adapterStatus">No adapter trained yet (fine on day one — drafts use the base model + your exemplars).</div>
-      <button class="btn secondary" id="refreshAdapter" style="margin-top:10px;">Check status</button>
+      <div style="margin-top:6px;"><button class="btn" id="runFinetune">Start fine-tuning</button></div>
+      <div class="status pending" id="adapterStatus" style="margin-top:14px;">No adapter trained yet — drafts use the base model + your exemplars until you train one.</div>
+      <p class="hint" style="margin-top:12px;">Needs Apple-Silicon MLX and a handful of feedback pairs; runs in the background (several minutes). Terminal equivalent: <code>youos finetune</code>.</p>
     </section>
 
     <!-- 6. Secure -->
     <section class="step" data-step="5">
       <h1>Secure it (optional)</h1>
       <p class="lead">YouOS binds to localhost only. If you expose it (e.g. over Tailscale), protect it with a PIN and/or an API token for the extension.</p>
-      <div class="cmd">youos token-create</div>
-      <p class="hint">See the README's auth section for PIN setup. Skip if you only use it locally.</p>
+      <div style="margin-top:6px;"><button class="btn" id="createToken">Create API token</button></div>
+      <div id="tokenBox" style="display:none;margin-top:14px;">
+        <label class="field">Your API token — shown once; paste it into the Gmail extension's Options</label>
+        <input id="tokenValue" readonly onclick="this.select()" />
+        <p class="hint">Stored hashed on disk. Revoke later with <code>youos token-revoke</code>.</p>
+      </div>
+      <p class="hint" style="margin-top:12px;">A token lets the Gmail extension reach a PIN-protected instance. For a login PIN, see the README's auth section. Skip if you only use YouOS on this machine.</p>
     </section>
 
     <!-- 7. Done -->
@@ -216,17 +221,62 @@
     }).catch(() => { note.textContent = " couldn't save"; note.style.color = "#e74c3c"; });
   });
 
-  // Readiness checks.
-  function refresh(field, elId, okText, pendingText) {
-    fetch("/api/config").then((r) => r.json()).then((d) => {
-      const el = document.getElementById(elId);
-      if (d[field]) { el.className = "status ok"; el.textContent = okText; }
-      else { el.className = "status pending"; el.textContent = pendingText; }
+  // Fine-tune: run from the wizard + poll status.
+  const adapterStatusEl = document.getElementById("adapterStatus");
+  const runFinetuneBtn = document.getElementById("runFinetune");
+  let ftTimer = null;
+
+  function renderFinetune(s) {
+    if (!s) return false;
+    if (s.status === "running") {
+      adapterStatusEl.className = "status pending";
+      adapterStatusEl.textContent = "Fine-tuning… (several minutes; it'll show ✓ when the adapter lands).";
+      runFinetuneBtn.disabled = true; runFinetuneBtn.textContent = "Fine-tuning…";
+      return true;
+    }
+    runFinetuneBtn.disabled = false; runFinetuneBtn.textContent = "Start fine-tuning";
+    if (s.adapter_ready) {
+      adapterStatusEl.className = "status ok";
+      adapterStatusEl.textContent = "✓ Adapter trained — drafts now use your fine-tuned voice.";
+    } else {
+      adapterStatusEl.className = "status pending";
+      adapterStatusEl.textContent = "No adapter yet — drafts use the base model + your exemplars until you train one.";
+    }
+    return false;
+  }
+  function pollFinetune() {
+    fetch("/api/finetune/status").then((r) => r.json()).then((s) => {
+      if (renderFinetune(s)) { ftTimer = setTimeout(pollFinetune, 6000); }
+      else if (ftTimer) { clearTimeout(ftTimer); ftTimer = null; }
     }).catch(() => {});
   }
-  const adapterRefresh = () => refresh("adapter_ready", "adapterStatus", "✓ Adapter trained.", "No adapter yet — drafts use the base model + your exemplars until the nightly trains one.");
-  document.getElementById("refreshAdapter").addEventListener("click", adapterRefresh);
-  adapterRefresh();
+  runFinetuneBtn.addEventListener("click", () => {
+    runFinetuneBtn.disabled = true;
+    adapterStatusEl.className = "status pending"; adapterStatusEl.textContent = "Starting…";
+    fetch("/api/finetune", { method: "POST" })
+      .then((r) => (r.ok ? r.json() : r.json().then((e) => Promise.reject(e.detail || "error"))))
+      .then(() => pollFinetune())
+      .catch((err) => {
+        runFinetuneBtn.disabled = false; runFinetuneBtn.textContent = "Start fine-tuning";
+        adapterStatusEl.className = "status err"; adapterStatusEl.textContent = "✕ " + err;
+      });
+  });
+  pollFinetune(); // reflect current adapter / in-progress training
+
+  // Secure: create an API token from the wizard.
+  document.getElementById("createToken").addEventListener("click", () => {
+    const btn = document.getElementById("createToken");
+    btn.disabled = true; btn.textContent = "Creating…";
+    fetch("/api/token", { method: "POST" })
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((d) => {
+        document.getElementById("tokenValue").value = d.token || "";
+        document.getElementById("tokenBox").style.display = "block";
+        btn.textContent = "Create another";
+        btn.disabled = false;
+      })
+      .catch(() => { btn.disabled = false; btn.textContent = "Create API token"; });
+  });
 
   // Ingestion: run from the wizard + live status poll.
   const ingestStatusEl = document.getElementById("ingestStatus");

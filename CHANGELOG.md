@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.47 — 2026-05-25
+
+### Wizard: run fine-tune + create API token in-browser
+- **"Learn your voice" now runs fine-tuning from the wizard.** A "Start fine-tuning" button → `POST /api/finetune` spawns export + LoRA fine-tune in the background (arg-list, no shell; in-memory guard returns 409 if one's already running), and the step polls `GET /api/finetune/status` → shows "Fine-tuning…" then ✓ when the adapter lands. This **replaces the "Check status" button that appeared to do nothing** (it had re-rendered the same text).
+- **"Secure it" now mints an API token from the wizard.** A "Create API token" button → `POST /api/token` (via `add_api_token()`) shows the token once in a copyable field to paste into the Gmail extension. Terminal equivalents (`youos finetune` / `youos token-create`) stay as notes.
+- Tests cover the spawn + running-guard (409) + status (running/idle/done) and token minting (subprocess + token creation mocked).
+
 ## v0.1.46 — 2026-05-25
 
 ### Wizard: run ingestion in-browser with a lookback window
