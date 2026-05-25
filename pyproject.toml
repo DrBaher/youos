@@ -4,10 +4,26 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "youos"
-version = "0.1.27"
+version = "0.1.28"
 description = "Your personal AI email copilot — learns your writing style from Gmail and drafts replies that sound like you."
 readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "DrBaher" }]
+keywords = ["email", "drafting", "personal-ai", "local-model", "self-improving", "privacy", "apple-silicon", "mlx", "lora"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS :: MacOS X",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Communications :: Email",
+  "Topic :: Office/Business",
+]
 dependencies = [
   "fastapi>=0.115,<1.0",
   "uvicorn[standard]>=0.30,<1.0",
@@ -34,6 +50,11 @@ dev = [
 reranker = [
   "sentence-transformers>=2.2,<4.0"
 ]
+
+[project.urls]
+Homepage = "https://github.com/DrBaher/youos"
+Repository = "https://github.com/DrBaher/youos"
+Changelog = "https://github.com/DrBaher/youos/blob/main/CHANGELOG.md"
 
 [project.scripts]
 youos = "app.cli:app"
