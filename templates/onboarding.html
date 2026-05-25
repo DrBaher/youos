@@ -33,6 +33,8 @@
   .save-note { font-size: 0.8rem; color: #2ecc71; min-height: 1em; }
   .backend-help { display: none; background: #0d1b2a; border-radius: 6px; padding: 12px; margin-top: 12px; font-size: 0.85rem; color: #ccc; }
   .backend-help.show { display: block; }
+  .explain { background: #0d1b2a; border-left: 3px solid #0a8f7c; border-radius: 0 6px 6px 0; padding: 11px 13px; margin: 14px 0; font-size: 0.84rem; color: #b9c4cf; line-height: 1.5; }
+  .explain b { color: #e0e0e0; }
   ul { margin: 6px 0 0 18px; color: #aaa; font-size: 0.85rem; }
   a { color: #00c4a7; }
 </style>
@@ -49,6 +51,7 @@
     <section class="step active" data-step="0">
       <h1>Welcome</h1>
       <p class="lead">A few steps to get YouOS drafting in your voice — all of it runs locally on your Mac. You can change everything later in <a href="/settings">Settings</a>.</p>
+      <div class="explain"><b>What YouOS does:</b> it reads your past sent emails to learn how <em>you</em> write, then drafts replies that sound like you instead of a generic AI. Nothing leaves your computer — your mail, the model, and the drafts all stay local.</div>
       <p class="hint">Prefer the terminal? <code>youos setup</code> runs this same flow with each step automated.</p>
     </section>
 
@@ -56,6 +59,7 @@
     <section class="step" data-step="1">
       <h1>Who are you?</h1>
       <p class="lead">So YouOS knows which messages in a thread are <em>yours</em>.</p>
+      <div class="explain"><b>Why this matters:</b> an email thread is a back-and-forth between people. YouOS uses your name and email addresses to pick out <em>your</em> replies (the ones it should learn your style from) versus everyone else's. Add every address you send from — work and personal.</div>
       <label class="field">Your name</label>
       <input id="idName" placeholder="Jane Doe" />
       <label class="field">Your email addresses (comma-separated)</label>
@@ -70,6 +74,7 @@
     <section class="step" data-step="2">
       <h1>Connect Gmail &amp; Docs</h1>
       <p class="lead">Pick how YouOS reaches your mail. It only ever reads to learn your style.</p>
+      <div class="explain"><b>A "backend" is just the tool YouOS uses to read your Gmail &amp; Docs</b> — all three options only <em>read</em>, and only on your machine. Pick one: <b>gog</b> (easiest if you already use OpenClaw), <b>gws</b> (Google's own command-line tool), or <b>native</b> (talks to Google directly, no separate tool to install). Not sure? Leave it on <b>gog</b>.</div>
       <label class="field">Backend</label>
       <select id="backend">
         <option value="gog">gog — OpenClaw CLI (default)</option>
@@ -98,6 +103,7 @@
     <section class="step" data-step="3">
       <h1>Build your corpus</h1>
       <p class="lead">Pull your sent history so YouOS has examples to learn from. More history = a better model, but a longer first run.</p>
+      <div class="explain"><b>Your "corpus" is the collection of your past emails</b> YouOS studies to learn your voice — your greetings, tone, sign-offs, how long you write. The further back you go, the better it captures your style (and the longer this first pull takes). It only reads; nothing is uploaded or sent anywhere.</div>
       <label class="field">How far back</label>
       <select id="lookback">
         <option value="6m">Last 6 months</option>
@@ -118,6 +124,7 @@
     <section class="step" data-step="4">
       <h1>Learn your voice</h1>
       <p class="lead">YouOS analyzes your persona and fine-tunes a local LoRA adapter — automatically each night once you have enough feedback, or on demand.</p>
+      <div class="explain"><b>"Fine-tuning" teaches a small AI model, running on your Mac, to imitate your writing</b> — using your corpus plus the edits you make to its drafts. (A "LoRA adapter" is just the small file that holds what it learned.) This is <b>optional</b>: YouOS already drafts well from your examples, and it retrains itself each night as you give feedback. Run it now only if you want a head start. Nothing is sent to the cloud.</div>
       <div style="margin-top:6px;"><button class="btn" id="runFinetune">Start fine-tuning</button></div>
       <div class="status pending" id="adapterStatus" style="margin-top:14px;">No adapter trained yet — drafts use the base model + your exemplars until you train one.</div>
       <p class="hint" style="margin-top:12px;">Needs Apple-Silicon MLX and a handful of feedback pairs; runs in the background (several minutes). Terminal equivalent: <code>youos finetune</code>.</p>
@@ -127,6 +134,7 @@
     <section class="step" data-step="5">
       <h1>Secure it (optional)</h1>
       <p class="lead">YouOS binds to localhost only. If you expose it (e.g. over Tailscale), protect it with a PIN and/or an API token for the extension.</p>
+      <div class="explain"><b>By default only your own computer can reach YouOS</b> ("localhost"), so you can safely skip this. You only need security if you open it up to your network or a tool like Tailscale. A <b>PIN</b> is a password for the web pages; an <b>API token</b> is a secret key the Gmail extension uses to prove it's allowed to connect.</div>
       <div style="margin-top:6px;"><button class="btn" id="createToken">Create API token</button></div>
       <div id="tokenBox" style="display:none;margin-top:14px;">
         <label class="field">Your API token — shown once; paste it into the Gmail extension's Options</label>
