@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.43 — 2026-05-25
+
+### Web Settings page (easy flag toggling, 3/4)
+- **A `/settings` page to toggle features in the browser.** Renders the whitelisted feature flags from `GET /api/config/flags` as switches (bool) / selects (choice), saving each change immediately via `POST /api/config/set` with inline saved/error feedback. Added a **Settings** link to the nav across the chrome pages (Draft / Stats / Settings / Bookmarklet / About). Uses the shared design system; same flags as `youos config`. Verified structurally (serves + wired to the API); visual behavior eyeballed on a running instance.
+
 ## v0.1.42 — 2026-05-25
 
 ### Config-write API (easy flag toggling, 2/4)
