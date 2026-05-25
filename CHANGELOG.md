@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.31 — 2026-05-25
+
+### Backend-aware doctor + setup wizard (decoupling from OpenClaw, step 4/5 — complete)
+- **The doctor no longer fails non-`gog` users for a missing `gog`.** `youos doctor` (and the setup wizard's dependency check) previously required the OpenClaw `gog` CLI unconditionally — so a `gws` or `native` user, who may not have `gog` installed at all, failed the health check. A new `_google_backend_status()` keys the required dependency on `ingestion.google_backend`: `gog` → the `gog` CLI, `gws` → Google's `gws` CLI, `native` → the `youos[google]` libraries. The doctor and `scripts/setup_wizard.py` both use it; the wizard now shows `Google backend (<backend>)` with backend-specific install hints.
+- **Manifest credential notes updated.** `clawhub.json` and `SKILL.md` now describe the Google backend as a choice (gog default / gws / native) rather than gog-only. `gog` stays in `requires.bins` — it remains the default and the OpenClaw-skill install path ships it.
+- **Default unchanged** (`gog`), so existing instances see identical doctor behavior. Pinned with tests for each backend × present/absent, that a native user with the extra isn't failed for missing `gog`/`gws`, and the wizard's pass/fail wiring.
+
+This completes the OpenClaw decoupling: YouOS installs standalone (#33), and Gmail/Docs ingestion runs on `gog`, Google's `gws` CLI (#34), or the native Google API (#35) — selectable, with `gog` the default.
+
 ## v0.1.30 — 2026-05-25
 
 ### `native` ingestion backend — direct Google API, no CLI (decoupling from OpenClaw, step 3/5)
