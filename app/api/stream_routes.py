@@ -89,6 +89,11 @@ def _stream_generate(body: StreamBody, settings):
     confidence, _ = _score_confidence(reply_pairs)
     precedent_used = [_precedent_summary(rp) for rp in reply_pairs]
     detected_mode = retrieval_response.detected_mode
+    # Draft-quality metadata, populated when we fall back to generate_draft
+    # (the local-model path; the Claude-CLI streaming path doesn't produce it).
+    length_flag: str | None = None
+    repairs: list[str] = []
+    candidates: list[dict] = []
 
     prompts = _load_prompts(settings.configs_dir)
     persona = _load_persona(settings.configs_dir)
@@ -147,6 +152,9 @@ def _stream_generate(body: StreamBody, settings):
             yield f"data: {json.dumps({'token': response.draft})}\n\n"
             confidence = response.confidence
             precedent_used = response.precedent_used
+            length_flag = response.length_flag
+            repairs = response.repairs
+            candidates = response.candidates
         except Exception as exc:
             yield f"data: {json.dumps({'token': f'[generation failed: {exc}]'})}\n\n"
     finally:
@@ -164,6 +172,9 @@ def _stream_generate(body: StreamBody, settings):
         "precedent_used": precedent_used,
         "exemplar_cache_hit": exemplar_cache_hit,
         "exemplar_cache_key": exemplar_cache_key,
+        "length_flag": length_flag,
+        "repairs": repairs,
+        "candidates": candidates,
     }
     yield f"data: {json.dumps(done_payload)}\n\n"
 

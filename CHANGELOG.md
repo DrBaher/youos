@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.39 — 2026-05-25
+
+### UI: draft flow surfaces the new capabilities (rethink, 2/3)
+- **The draft UI now shows what generation produces.** `length_flag`, `repairs`, and the multi-candidate `candidates` were computed but never rendered. The draft page now shows a **length badge** (`on target` / `long` / `short`), a **"repaired"** badge when the post-generation pass made changes, and a **multi-candidate picker** — when several candidates come back, they render as selectable cards (best first, with temperature/score); clicking one swaps it into the draft. Built on the shared design-system classes from 1/3 (`.yos-badge`, `.yos-candidate`).
+- **Both draft paths covered.** The streaming `/draft/stream` done-event now carries `length_flag`/`repairs`/`candidates` (populated on the local-model fallback path), and both the streaming and non-streaming handlers call the same renderer. Candidates only appear when `generation.multi_candidate.enabled`; repairs only when the repair flags are on — so the default experience just gains the length badge.
+- Pinned with tests that the draft page has the render targets + logic and that the stream done-event carries the fields. (Full SSE/visual behavior is verified on a running instance — the UI can't render in CI.)
+
 ## v0.1.38 — 2026-05-25
 
 ### UI: shared design-system assets + single-source version (rethink, 1/3)
