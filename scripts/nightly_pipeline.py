@@ -966,6 +966,19 @@ def main() -> None:
     except Exception:
         embedding_coverage = {}
 
+    # Draft-quality-by-condition from the draft_events signal log: which
+    # intents/cohorts produce drafts that miss the target length or draw
+    # low-confidence retrieval, plus a best-effort edit-distance-by-condition
+    # correlation. Surfaces *where* drafting is weak for the self-improvement
+    # loop (and a future autoresearch objective). Read-only; tolerant of an
+    # absent/empty table (returns a zeroed summary).
+    try:
+        from app.core.stats import summarize_draft_events
+
+        draft_events_summary = summarize_draft_events(get_settings().database_url)
+    except Exception:
+        draft_events_summary = {}
+
     # `schema_version` lets downstream consumers (stats UI, autoresearch
     # convergence dashboard, future history-jsonl trend view) detect a
     # breaking shape change instead of silently mis-parsing a new field.
@@ -983,6 +996,7 @@ def main() -> None:
         "benchmark_rotated": benchmark_rotated,
         "golden_composite": golden_composite,
         "embedding_coverage": embedding_coverage,
+        "draft_events_summary": draft_events_summary,
     }
     _write_pipeline_log(run_log)
 
