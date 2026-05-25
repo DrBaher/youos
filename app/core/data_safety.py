@@ -179,15 +179,74 @@ def create_snapshot(db_path: Path, *, tier: str = "manual") -> Path:
     return out_path
 
 
-def prune_snapshots(db_path: Path, *, keep_hourly: int = 72, keep_daily: int = 30) -> None:
+def _load_snapshot_retention(
+    *,
+    keep_hourly: int | None,
+    keep_daily: int | None,
+    keep_manual: int | None,
+) -> tuple[int, int, int]:
+    """Resolve retention limits from explicit args > config > historical defaults.
+
+    Historical defaults: 72 hourly, 30 daily, 50 manual — preserved exactly
+    so existing callers that don't pass kwargs see identical behaviour.
+    YAML override key: ``snapshots: {keep_hourly: N, keep_daily: N, keep_manual: N}``.
+    """
+    cfg: dict[str, Any] = {}
+    if keep_hourly is None or keep_daily is None or keep_manual is None:
+        try:
+            from app.core.config import load_config
+
+            raw = load_config() or {}
+            cfg = raw.get("snapshots", {}) if isinstance(raw, dict) else {}
+            if not isinstance(cfg, dict):
+                cfg = {}
+        except Exception:
+            cfg = {}
+
+    def _resolve(arg: int | None, key: str, default: int) -> int:
+        if arg is not None:
+            return int(arg)
+        val = cfg.get(key)
+        if isinstance(val, int) and val >= 0:
+            return val
+        return default
+
+    return (
+        _resolve(keep_hourly, "keep_hourly", 72),
+        _resolve(keep_daily, "keep_daily", 30),
+        _resolve(keep_manual, "keep_manual", 50),
+    )
+
+
+def prune_snapshots(
+    db_path: Path,
+    *,
+    keep_hourly: int | None = None,
+    keep_daily: int | None = None,
+    keep_manual: int | None = None,
+) -> dict[str, int]:
+    """Prune snapshots beyond per-tier retention limits.
+
+    Returns a per-tier count of files removed so callers (the nightly,
+    the CLI) can report what they did. Limits resolve from explicit
+    kwargs > YAML config (``snapshots.keep_*``) > historical defaults
+    (72 / 30 / 50). Existing callers that don't pass kwargs see exactly
+    the same behaviour they always did.
+    """
+    hourly, daily, manual = _load_snapshot_retention(
+        keep_hourly=keep_hourly, keep_daily=keep_daily, keep_manual=keep_manual,
+    )
     root = _snapshot_root(db_path)
-    for tier, keep in (("hourly", keep_hourly), ("daily", keep_daily), ("manual", 50)):
+    removed: dict[str, int] = {"hourly": 0, "daily": 0, "manual": 0}
+    for tier, keep in (("hourly", hourly), ("daily", daily), ("manual", manual)):
         tier_dir = root / tier
         if not tier_dir.exists():
             continue
         files = sorted(tier_dir.glob("youos-*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
         for old in files[keep:]:
             old.unlink(missing_ok=True)
+            removed[tier] += 1
+    return removed
 
 
 def list_snapshots(db_path: Path) -> list[Path]:
