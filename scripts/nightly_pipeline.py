@@ -724,6 +724,18 @@ def main() -> None:
             pass
 
     elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+
+    # Per-table embedding coverage so the dashboard / a debugging session
+    # can answer "is semantic retrieval actually firing on this corpus?"
+    # without ad-hoc SQL. Cheap (two COUNT queries) and tolerant of fresh
+    # corpora (returns {} when tables aren't present yet).
+    try:
+        from app.core.stats import get_embedding_coverage
+
+        embedding_coverage = get_embedding_coverage(get_settings().database_url)
+    except Exception:
+        embedding_coverage = {}
+
     # `schema_version` lets downstream consumers (stats UI, autoresearch
     # convergence dashboard, future history-jsonl trend view) detect a
     # breaking shape change instead of silently mis-parsing a new field.
@@ -740,6 +752,7 @@ def main() -> None:
         "skipped_steps": skipped_steps,
         "benchmark_rotated": benchmark_rotated,
         "golden_composite": golden_composite,
+        "embedding_coverage": embedding_coverage,
     }
     _write_pipeline_log(run_log)
 
