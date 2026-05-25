@@ -92,6 +92,52 @@ _NUMERIC_SURFACES: list[dict[str, Any]] = [
         "min_val": 6.0,
         "max_val": 20.0,
     },
+    # Subject/title/topic/sender boosts. Each was already in scoring code
+    # via RetrievalConfig but only `recency_boost_*` and `account_boost_*`
+    # were exposed for autoresearch — every other lever stayed pinned at its
+    # historical default. Opening them up to the same golden-eval-gated loop
+    # lets the optimizer find the right balance for *this* corpus instead of
+    # the original guesses.
+    {
+        "name": "subject_match_boost",
+        "config_file": "retrieval/defaults.yaml",
+        "yaml_key": "subject_match_boost",
+        "step_size": 0.05,
+        "min_val": 0.0,
+        "max_val": 0.5,
+    },
+    {
+        "name": "topic_match_boost",
+        "config_file": "retrieval/defaults.yaml",
+        "yaml_key": "topic_match_boost",
+        "step_size": 0.05,
+        "min_val": 0.0,
+        "max_val": 0.5,
+    },
+    {
+        "name": "sender_type_boost",
+        "config_file": "retrieval/defaults.yaml",
+        "yaml_key": "sender_type_boost",
+        "step_size": 0.05,
+        "min_val": 0.0,
+        "max_val": 0.5,
+    },
+    {
+        "name": "sender_domain_boost",
+        "config_file": "retrieval/defaults.yaml",
+        "yaml_key": "sender_domain_boost",
+        "step_size": 0.05,
+        "min_val": 0.0,
+        "max_val": 0.4,
+    },
+    {
+        "name": "field_match_bonus_per_token",
+        "config_file": "retrieval/defaults.yaml",
+        "yaml_key": "field_match_bonus_per_token",
+        "step_size": 0.05,
+        "min_val": 0.0,
+        "max_val": 0.5,
+    },
 ]
 
 # E16: Per-mode avg_reply_words surfaces (nested in persona.yaml modes)
