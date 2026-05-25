@@ -15,6 +15,7 @@ from collections import Counter
 from pathlib import Path
 
 from app.core.config import get_internal_domains, get_user_names
+from app.core.settings import get_var_dir
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 
@@ -425,7 +426,7 @@ def main() -> None:
         merge_persona_analysis(
             analysis_path=None,
             persona_path=ROOT_DIR / "configs" / "persona.yaml",
-            log_path=ROOT_DIR / "var" / "persona_merge.log",
+            log_path=get_var_dir() / "persona_merge.log",
             dry_run=True,
             findings_dict=findings,
         )
@@ -437,7 +438,7 @@ def main() -> None:
         # Append drift entry
         from datetime import datetime, timezone
 
-        drift_path = ROOT_DIR / "var" / "persona_drift.jsonl"
+        drift_path = get_var_dir() / "persona_drift.jsonl"
         drift_path.parent.mkdir(parents=True, exist_ok=True)
         drift_entry = {
             "analyzed_at": datetime.now(timezone.utc).isoformat(),

@@ -21,7 +21,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from app.core.config import get_ingestion_accounts, get_last_ingest_at, set_last_ingest_at  # noqa: E402
-from app.core.settings import get_settings  # noqa: E402
+from app.core.settings import get_settings, get_var_dir  # noqa: E402
 from app.db.bootstrap import resolve_sqlite_path  # noqa: E402
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -108,7 +108,7 @@ def step_ingest_gmail(verbose: bool = False) -> bool:
 def step_analyze_persona(verbose: bool = False, dry_run: bool = False) -> bool:
     """Run persona analysis and merge results into persona.yaml."""
     # Decide whether to run --full or --recent-days
-    last_full_path = ROOT_DIR / "var" / "persona_last_full_analysis.txt"
+    last_full_path = get_var_dir() / "persona_last_full_analysis.txt"
     use_full = False
     if last_full_path.exists():
         try:
@@ -145,7 +145,7 @@ def step_analyze_persona(verbose: bool = False, dry_run: bool = False) -> bool:
         merge_persona_analysis(
             analysis_path=ROOT_DIR / "configs" / "persona_analysis.json",
             persona_path=ROOT_DIR / "configs" / "persona.yaml",
-            log_path=ROOT_DIR / "var" / "persona_merge.log",
+            log_path=get_var_dir() / "persona_merge.log",
             dry_run=dry_run,
         )
         print("  [OK] Persona merge completed")
@@ -163,11 +163,16 @@ def step_build_sender_profiles(verbose: bool = False) -> bool:
     )
 
 
+def _pipeline_log_path() -> Path:
+    """Path to the active instance's pipeline state file."""
+    return get_var_dir() / "pipeline_last_run.json"
+
+
 def _load_last_auto_feedback_at() -> str | None:
-    """Load last_auto_feedback_at from var/pipeline_last_run.json."""
+    """Load last_auto_feedback_at from the active instance's pipeline log."""
     import json
 
-    log_path = ROOT_DIR / "var" / "pipeline_last_run.json"
+    log_path = _pipeline_log_path()
     if not log_path.exists():
         return None
     try:
@@ -178,10 +183,10 @@ def _load_last_auto_feedback_at() -> str | None:
 
 
 def _save_last_auto_feedback_at() -> None:
-    """Write last_auto_feedback_at to var/pipeline_last_run.json."""
+    """Write last_auto_feedback_at to the active instance's pipeline log."""
     import json
 
-    log_path = ROOT_DIR / "var" / "pipeline_last_run.json"
+    log_path = _pipeline_log_path()
     log_path.parent.mkdir(parents=True, exist_ok=True)
     data = {}
     if log_path.exists():
@@ -269,7 +274,7 @@ def _check_benchmark_rotation() -> bool:
     """Check if benchmarks need rotation (> 7 days old). Returns True if rotated."""
     import json
 
-    refresh_path = ROOT_DIR / "var" / "benchmark_last_refresh.txt"
+    refresh_path = get_var_dir() / "benchmark_last_refresh.txt"
     needs_refresh = False
     if refresh_path.exists():
         try:
@@ -372,7 +377,7 @@ def _count_new_feedback_since_last_run(db_path: Path) -> int:
 
     if not db_path.exists():
         return 0
-    log_path = ROOT_DIR / "var" / "pipeline_last_run.json"
+    log_path = _pipeline_log_path()
     last_at = None
     if log_path.exists():
         try:
@@ -453,10 +458,10 @@ def should_skip_dedup(db_path: Path) -> tuple[bool, str]:
 
 
 def _write_pipeline_log(run_log: dict) -> None:
-    """Write pipeline run log to var/pipeline_last_run.json."""
+    """Write pipeline run log to the active instance's pipeline_last_run.json."""
     import json
 
-    log_path = ROOT_DIR / "var" / "pipeline_last_run.json"
+    log_path = _pipeline_log_path()
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(json.dumps(run_log, indent=2))
 
@@ -599,7 +604,7 @@ def main() -> None:
         results["golden_eval"] = "OK" if ok else "WARN"
         steps["golden_eval"] = ok
         # Read composite score from results file
-        golden_results_path = ROOT_DIR / "var" / "golden_results.json"
+        golden_results_path = get_var_dir() / "golden_results.json"
         if golden_results_path.exists():
             import json as _json2
 
@@ -680,7 +685,7 @@ def main() -> None:
     import json as _json
 
     benchmark_rotated = False
-    refresh_path = ROOT_DIR / "var" / "benchmark_last_refresh.txt"
+    refresh_path = get_var_dir() / "benchmark_last_refresh.txt"
     if refresh_path.exists():
         try:
             rd = _json.loads(refresh_path.read_text(encoding="utf-8"))

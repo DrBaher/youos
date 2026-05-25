@@ -58,6 +58,9 @@ def _format_scorecard(result: EvalSuiteResult) -> str:
 
 
 def main() -> None:
+    from app.core.settings import get_settings
+    from app.db.bootstrap import resolve_sqlite_path
+
     parser = argparse.ArgumentParser(description="Run YouOS evaluation suite")
     parser.add_argument("--case", type=str, default=None, help="Run a specific case by key")
     parser.add_argument("--tag", type=str, default="default", help="Config tag label for this run")
@@ -65,7 +68,7 @@ def main() -> None:
     parser.add_argument(
         "--db-path",
         type=Path,
-        default=ROOT_DIR / "var" / "youos.db",
+        default=resolve_sqlite_path(get_settings().database_url),
         help="Path to SQLite database",
     )
     args = parser.parse_args()

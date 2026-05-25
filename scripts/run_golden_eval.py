@@ -9,9 +9,13 @@ from typing import Any
 
 import yaml
 
+from app.core.settings import get_var_dir
+
 ROOT_DIR = Path(__file__).resolve().parents[1]
 GOLDEN_PATH = ROOT_DIR / "configs" / "benchmarks" / "golden.yaml"
-RESULTS_PATH = ROOT_DIR / "var" / "golden_results.json"
+# Per-instance: results from each instance's nightly land in its own var/
+# so multiple instances don't clobber each other's last-eval JSON.
+RESULTS_PATH = get_var_dir() / "golden_results.json"
 
 
 def load_golden_cases(path: Path | None = None) -> list[dict[str, Any]]:
@@ -156,10 +160,13 @@ def format_scorecard(summary: dict[str, Any]) -> str:
 
 
 def main() -> None:
+    from app.core.settings import get_settings
+    from app.db.bootstrap import resolve_sqlite_path
+
     parser = argparse.ArgumentParser(description="Run golden benchmark evaluation")
     parser.add_argument("--golden", type=Path, default=GOLDEN_PATH, help="Path to golden.yaml")
     parser.add_argument("--summary-only", action="store_true", help="Print scorecard without saving")
-    parser.add_argument("--db-path", type=Path, default=ROOT_DIR / "var" / "youos.db")
+    parser.add_argument("--db-path", type=Path, default=resolve_sqlite_path(get_settings().database_url))
     args = parser.parse_args()
 
     from app.generation.service import DraftRequest, generate_draft
