@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse
 from app.core.config import load_config
 from app.core.settings import get_adapter_path, get_var_dir
 from app.core.stats import get_corpus_stats, get_model_status, get_pipeline_status, summarize_draft_events
+from app.core.version import get_version
 from app.db.bootstrap import resolve_sqlite_path
 
 router = APIRouter(tags=["stats"])
@@ -45,7 +46,7 @@ def get_api_config(request: Request) -> dict[str, Any]:
     return {
         "display_name": display_name,
         "user_name": user_name,
-        "version": "0.1.10",
+        "version": get_version(),
         "corpus_ready": corpus_ready,
         "model_ready": model_ready,
         "feedback_pair_count": feedback_pair_count,
