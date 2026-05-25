@@ -30,8 +30,11 @@ def _count_quality_pairs(db_path: Path) -> int:
 
 
 def main() -> None:
+    from app.core.settings import get_settings
+    from app.db.bootstrap import resolve_sqlite_path
+
     parser = argparse.ArgumentParser(description="Fine-tune milestone readiness and run helper")
-    parser.add_argument("--db", default=str(ROOT_DIR / "var" / "youos.db"), help="Path to SQLite DB")
+    parser.add_argument("--db", default=str(resolve_sqlite_path(get_settings().database_url)), help="Path to SQLite DB")
     parser.add_argument("--threshold", type=int, default=30, help="Minimum quality feedback pairs")
     parser.add_argument("--run", action="store_true", help="Run export + finetune + pre/post eval when threshold met")
     args = parser.parse_args()

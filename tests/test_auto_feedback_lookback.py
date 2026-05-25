@@ -4,49 +4,59 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+
+import pytest
 
 from scripts.nightly_pipeline import _load_last_auto_feedback_at, _save_last_auto_feedback_at
 
 
-def test_load_last_auto_feedback_at_missing(tmp_path):
+@pytest.fixture
+def _reset_settings():
+    """Clear the lru_cache on get_settings so YOUOS_DATA_DIR monkeypatching takes effect."""
+    from app.core.settings import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture
+def instance_var(monkeypatch, tmp_path, _reset_settings):
+    """Point YOUOS_DATA_DIR at a tmp instance — pipeline log writes land in tmp_path/var/."""
+    monkeypatch.setenv("YOUOS_DATA_DIR", str(tmp_path))
+    return tmp_path / "var"
+
+
+def test_load_last_auto_feedback_at_missing(instance_var):
     """Returns None when file doesn't exist."""
-    with patch("scripts.nightly_pipeline.ROOT_DIR", tmp_path):
-        result = _load_last_auto_feedback_at()
-        assert result is None
+    assert _load_last_auto_feedback_at() is None
 
 
-def test_load_last_auto_feedback_at_present(tmp_path):
+def test_load_last_auto_feedback_at_present(instance_var):
     """Returns timestamp when present in pipeline log."""
-    var_dir = tmp_path / "var"
-    var_dir.mkdir()
+    instance_var.mkdir()
     ts = "2026-03-14T10:00:00+00:00"
-    (var_dir / "pipeline_last_run.json").write_text(json.dumps({"last_auto_feedback_at": ts}))
+    (instance_var / "pipeline_last_run.json").write_text(json.dumps({"last_auto_feedback_at": ts}))
 
-    with patch("scripts.nightly_pipeline.ROOT_DIR", tmp_path):
-        result = _load_last_auto_feedback_at()
-        assert result == ts
+    assert _load_last_auto_feedback_at() == ts
 
 
-def test_save_last_auto_feedback_at(tmp_path):
+def test_save_last_auto_feedback_at(instance_var):
     """Saves timestamp to pipeline log, preserving existing data."""
-    var_dir = tmp_path / "var"
-    var_dir.mkdir()
-    (var_dir / "pipeline_last_run.json").write_text(json.dumps({"status": "ok"}))
+    instance_var.mkdir()
+    (instance_var / "pipeline_last_run.json").write_text(json.dumps({"status": "ok"}))
 
-    with patch("scripts.nightly_pipeline.ROOT_DIR", tmp_path):
-        _save_last_auto_feedback_at()
-        data = json.loads((var_dir / "pipeline_last_run.json").read_text())
-        assert "last_auto_feedback_at" in data
-        assert data["status"] == "ok"  # preserved
+    _save_last_auto_feedback_at()
+    data = json.loads((instance_var / "pipeline_last_run.json").read_text())
+    assert "last_auto_feedback_at" in data
+    assert data["status"] == "ok"  # preserved
 
 
-def test_save_creates_var_dir(tmp_path):
+def test_save_creates_var_dir(instance_var):
     """Creates var/ directory if it doesn't exist."""
-    with patch("scripts.nightly_pipeline.ROOT_DIR", tmp_path):
-        _save_last_auto_feedback_at()
-        data = json.loads((tmp_path / "var" / "pipeline_last_run.json").read_text())
-        assert "last_auto_feedback_at" in data
+    _save_last_auto_feedback_at()
+    data = json.loads((instance_var / "pipeline_last_run.json").read_text())
+    assert "last_auto_feedback_at" in data
 
 
 def test_lookback_computes_days_since():
