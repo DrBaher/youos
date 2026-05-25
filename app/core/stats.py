@@ -140,6 +140,42 @@ def summarize_draft_events(database_url: str) -> dict:
         conn.close()
 
 
+def get_latest_ingest_status(database_url: str) -> dict:
+    """Latest ingestion run's status, for the wizard's live progress poll.
+
+    Maps the run-log's ``started`` to ``running``; returns ``idle`` when there's
+    no run (or no table yet).
+    """
+    from app.db.bootstrap import resolve_sqlite_path
+
+    db_path = resolve_sqlite_path(database_url)
+    if not db_path.exists():
+        return {"status": "idle"}
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            """SELECT status, started_at, completed_at, discovered_count, fetched_count,
+                      stored_reply_pair_count, error_summary
+               FROM ingest_runs ORDER BY id DESC LIMIT 1"""
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return {"status": "idle"}
+    finally:
+        conn.close()
+    if not row:
+        return {"status": "idle"}
+    return {
+        "status": "running" if row["status"] == "started" else row["status"],
+        "started_at": row["started_at"],
+        "completed_at": row["completed_at"],
+        "discovered": row["discovered_count"],
+        "fetched": row["fetched_count"],
+        "reply_pairs": row["stored_reply_pair_count"],
+        "error": row["error_summary"],
+    }
+
+
 def get_corpus_stats(database_url: str) -> dict:
     """Get corpus health statistics."""
     from app.db.bootstrap import resolve_sqlite_path
