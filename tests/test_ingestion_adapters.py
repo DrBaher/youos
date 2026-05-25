@@ -13,7 +13,7 @@ import pytest
 
 from app.core.config import get_ingestion_google_backend
 from app.ingestion import adapters
-from app.ingestion.adapters import GogSource, GoogleWorkspaceSource, get_google_source
+from app.ingestion.adapters import GogSource, GoogleWorkspaceSource, GwsSource, get_google_source
 
 # --- config accessor -------------------------------------------------------
 
@@ -54,13 +54,13 @@ def test_explicit_backend_override_wins_over_config(monkeypatch):
 
 def test_config_drives_factory(monkeypatch):
     monkeypatch.setattr(adapters, "get_ingestion_google_backend", lambda: "gws")
-    with pytest.raises(NotImplementedError, match="gws"):
-        get_google_source()
+    assert isinstance(get_google_source(), GwsSource)
 
 
-def test_gws_backend_not_implemented_yet():
-    with pytest.raises(NotImplementedError, match="gws"):
-        get_google_source(backend="gws")
+def test_gws_backend_returns_gws_source():
+    source = get_google_source(backend="gws")
+    assert isinstance(source, GwsSource)
+    assert source.name == "gws"
 
 
 def test_native_backend_not_implemented_yet():
