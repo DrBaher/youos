@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouOS — Your email. Your model. Your style.</title>
+<meta name="description" content="YouOS is a local-first AI email copilot that learns from your sent Gmail history and drafts replies that sound like you. Runs on your Mac. No cloud, no subscriptions, no tracking.">
+<link rel="canonical" href="https://youos.drbaher.com/">
+<!-- Open Graph / social -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="YouOS — Your email. Your model. Your style.">
+<meta property="og:description" content="A local-first AI email copilot that learns how YOU write and drafts replies in your voice. Runs on Apple Silicon. No cloud.">
+<meta property="og:url" content="https://youos.drbaher.com/">
+<meta property="og:image" content="https://youos.drbaher.com/screenshots/01-draft-reply.png">
+<meta name="twitter:card" content="summary_large_image">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --teal: #00c4a7; --teal-dim: #0a8f7c;
+    --bg: #0d1117; --surface: #161b22; --surface-2: #1c2330;
+    --border: #30363d; --text: #e6edf3; --muted: #8b949e; --bad: #f85149;
+  }
+  html { scroll-behavior: smooth; }
+  body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  a { color: var(--teal); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  h2 { font-size: 2rem; font-weight: 800; letter-spacing: -0.02em; }
+  .container { max-width: 1000px; margin: 0 auto; padding: 0 24px; }
+  .muted { color: var(--muted); }
+
+  /* subtle top glow */
+  .glow { position: absolute; inset: 0; height: 600px; pointer-events: none; z-index: 0;
+    background: radial-gradient(60% 60% at 50% 0%, rgba(0,196,167,0.14), transparent 70%); }
+
+  /* Hero */
+  .hero { position: relative; text-align: center; padding: 110px 24px 70px; }
+  .hero .badge { display: inline-block; font-size: 0.8rem; color: var(--teal); border: 1px solid var(--teal-dim);
+    border-radius: 999px; padding: 5px 14px; margin-bottom: 28px; background: rgba(0,196,167,0.06); }
+  .hero h1 { font-size: 3rem; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 18px; line-height: 1.1; }
+  .hero h1 .accent { color: var(--teal); }
+  .hero .tagline { font-size: 1.25rem; color: var(--muted); margin: 0 auto 36px; max-width: 640px; }
+  .cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: 14px 28px; border-radius: 8px; font-weight: 600; font-size: 1rem; transition: opacity 0.2s, transform 0.05s; }
+  .btn:hover { text-decoration: none; opacity: 0.9; }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary { background: var(--teal); color: var(--bg); }
+  .btn-secondary { border: 1px solid var(--border); color: var(--text); background: var(--surface); }
+
+  /* generic section spacing */
+  section.block { padding: 56px 0; }
+  .section-head { text-align: center; margin-bottom: 44px; }
+  .section-head p { color: var(--muted); margin-top: 10px; }
+
+  /* Problem / solution */
+  .columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+  .columns .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+  .card .bad { color: var(--bad); font-weight: 600; margin-bottom: 8px; }
+  .card .good { color: var(--teal); font-weight: 600; }
+
+  /* Steps */
+  .steps-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 28px; }
+  .step { text-align: center; }
+  .step .icon { font-size: 2.4rem; margin-bottom: 12px; }
+  .step h3 { font-size: 1.05rem; margin-bottom: 8px; }
+  .step p { color: var(--muted); font-size: 0.94rem; }
+
+  /* Screenshots */
+  .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  .shot { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .shot img { display: block; width: 100%; height: auto; }
+  .shot .cap { padding: 12px 16px; color: var(--muted); font-size: 0.9rem; }
+  .shot.wide { grid-column: 1 / -1; }
+
+  /* Backends / no lock-in */
+  .backends { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
+  .backend { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+  .backend .tag { display: inline-block; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--teal); border: 1px solid var(--teal-dim); border-radius: 6px; padding: 2px 8px; margin-bottom: 12px; }
+  .backend code { color: var(--text); background: var(--surface-2); padding: 2px 7px; border-radius: 5px; font-size: 0.88rem; }
+  .backend h3 { font-size: 1.05rem; margin-bottom: 8px; }
+  .backend p { color: var(--muted); font-size: 0.93rem; }
+
+  /* Privacy */
+  .privacy { border: 1px solid var(--teal-dim); background: rgba(0,196,167,0.05); border-radius: 14px;
+    padding: 32px; margin: 0 auto; text-align: center; font-size: 1.12rem; max-width: 760px; }
+
+  /* Install */
+  .install { text-align: center; }
+  .install pre { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 24px 28px; text-align: left; display: inline-block; font-size: 0.92rem; line-height: 1.85;
+    overflow-x: auto; max-width: 100%; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  .install pre .c { color: var(--muted); }
+  .install pre .p { color: var(--teal); }
+  .install .note { color: var(--muted); margin-top: 18px; font-size: 0.95rem; }
+
+  /* Requirements */
+  .reqs { display: flex; gap: 14px 28px; flex-wrap: wrap; justify-content: center; color: var(--muted); }
+  .reqs span { white-space: nowrap; }
+  .reqs b { color: var(--text); font-weight: 600; }
+
+  /* Footer */
+  footer { border-top: 1px solid var(--border); padding: 32px 0 48px; text-align: center; color: var(--muted); font-size: 0.9rem; }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--teal); }
+
+  @media (max-width: 640px) {
+    .hero h1 { font-size: 2.2rem; }
+    .shots { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="glow"></div>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="container">
+    <div class="badge">Local-first · Runs on Apple Silicon</div>
+    <h1>Your email. Your model. <span class="accent">Your style.</span></h1>
+    <p class="tagline">YouOS is an AI email copilot that learns from your sent Gmail history and drafts replies that sound like <em>you</em> — not a generic AI. Everything runs on your Mac.</p>
+    <div class="cta">
+      <a href="#install" class="btn btn-primary">Get started</a>
+      <a href="https://github.com/DrBaher/youos" class="btn btn-secondary">View on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<!-- See it in action -->
+<section class="block">
+  <div class="container">
+    <div class="section-head">
+      <h2>See it in action</h2>
+      <p>Draft a reply in your voice, review how you usually respond, watch it improve.</p>
+    </div>
+    <div class="shots">
+      <div class="shot wide">
+        <img src="screenshots/demo.gif" alt="YouOS drafting an email reply in your style" loading="lazy">
+        <div class="cap">Paste a thread → YouOS drafts a reply grounded in your real past replies.</div>
+      </div>
+      <div class="shot">
+        <img src="screenshots/01-draft-reply.png" alt="YouOS draft reply screen" loading="lazy">
+        <div class="cap">Draft reply — confidence-annotated, with “How was this generated?”</div>
+      </div>
+      <div class="shot">
+        <img src="screenshots/02-stats.png" alt="YouOS stats dashboard" loading="lazy">
+        <div class="cap">Stats — corpus health, persona drift, feedback streaks.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Problem / Solution -->
+<section class="block">
+  <div class="container">
+    <div class="columns">
+      <div class="card">
+        <p class="bad">&#10060; Generic AI sounds like a robot</p>
+        <p class="good">&#9989; YouOS learns your style — per contact, per context</p>
+      </div>
+      <div class="card">
+        <p class="bad">&#10060; Your emails uploaded to the cloud</p>
+        <p class="good">&#9989; Everything stays on your Mac</p>
+      </div>
+      <div class="card">
+        <p class="bad">&#10060; Same drafts for everyone</p>
+        <p class="good">&#9989; Self-improves: your best-rated replies rank higher over time</p>
+      </div>
+      <div class="card">
+        <p class="bad">&#10060; Locked to one tool or vendor</p>
+        <p class="good">&#9989; Standalone or as a skill; Gmail, Docs &amp; WhatsApp exports</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- How it works -->
+<section class="block">
+  <div class="container">
+    <div class="section-head"><h2>How it works</h2></div>
+    <div class="steps-grid">
+      <div class="step">
+        <div class="icon">📥</div>
+        <h3>Connect your sources</h3>
+        <p>Gmail, Google Docs, or WhatsApp — about 5 min to first draft</p>
+      </div>
+      <div class="step">
+        <div class="icon">🧠</div>
+        <h3>Build your corpus</h3>
+        <p>Ingests your sent history; analyzes your persona per sender type</p>
+      </div>
+      <div class="step">
+        <div class="icon">✉️</div>
+        <h3>Draft in your style</h3>
+        <p>Detects intent, isolates by account, greets by first name — steer any draft with optional instructions</p>
+      </div>
+      <div class="step">
+        <div class="icon">🔄</div>
+        <h3>Gets smarter overnight</h3>
+        <p>LoRA fine-tunes locally, golden eval guards quality, rotating benchmarks prevent overfitting</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- No lock-in / backends -->
+<section class="block">
+  <div class="container">
+    <div class="section-head">
+      <h2>No lock-in</h2>
+      <p>Run YouOS standalone or as an OpenClaw skill. Pick how it reaches Gmail &amp; Docs with one config line — <code>ingestion.google_backend</code>.</p>
+    </div>
+    <div class="backends">
+      <div class="backend">
+        <span class="tag">default</span>
+        <h3><code>gog</code></h3>
+        <p>The OpenClaw <code>gog</code> CLI — the original path, still the default.</p>
+      </div>
+      <div class="backend">
+        <span class="tag">CLI</span>
+        <h3><code>gws</code></h3>
+        <p>Google’s own open-source Workspace CLI. No OpenClaw required.</p>
+      </div>
+      <div class="backend">
+        <span class="tag">no CLI</span>
+        <h3><code>native</code></h3>
+        <p>Direct Google API via the <code>youos[google]</code> extra and OAuth — no external CLI at all.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Privacy -->
+<section class="block">
+  <div class="container">
+    <div class="privacy">
+      🔒 Your emails never leave your Mac. The model trains locally on Apple Silicon.<br>No cloud. No subscriptions. No tracking.
+    </div>
+  </div>
+</section>
+
+<!-- Install -->
+<section class="block install" id="install">
+  <div class="container">
+    <div class="section-head"><h2>Get started</h2></div>
+<pre><span class="c"># Clone and install (standalone — no OpenClaw needed)</span>
+git clone https://github.com/DrBaher/youos
+cd youos
+<span class="p">./scripts/install.sh</span>        <span class="c"># makes .venv, installs YouOS, runs the doctor</span>
+
+<span class="c"># First-run setup: accounts, ingestion, style analysis</span>
+source .venv/bin/activate
+<span class="p">youos setup</span>
+
+<span class="c"># Anytime: corpus health &amp; a 10-case golden benchmark</span>
+<span class="p">youos corpus</span>
+<span class="p">youos eval --golden</span></pre>
+    <p class="note">Requires a Google ingestion backend (<code>gog</code>, <code>gws</code>, or <code>native</code>). Also installs as an OpenClaw skill.</p>
+    <div class="reqs" style="margin-top:32px">
+      <span><b>Apple Silicon</b> Mac (M1–M4)</span>
+      <span><b>8GB+</b> RAM (16GB rec.)</span>
+      <span><b>Python 3.11+</b></span>
+      <span><b>~5GB</b> free disk</span>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <p><a href="https://github.com/DrBaher/youos">GitHub</a> &middot; MIT License &middot; Runs standalone or as an <a href="https://openclaw.com">OpenClaw</a> skill</p>
+  </div>
+</footer>
+
+</body>
+</html>
