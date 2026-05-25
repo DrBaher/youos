@@ -18,11 +18,13 @@ from app.api.stream_routes import router as stream_router
 from app.core.auth import (
     LoginRateLimiter,
     compute_allowed_origins,
+    compute_token_allowed_origins,
     create_session_token,
     is_auth_enabled,
     load_sessions,
     persist_new_session,
     request_origin_allowed,
+    token_request_origin_allowed,
     verify_api_token,
     verify_pin,
 )
@@ -38,11 +40,16 @@ SESSION_MAX_AGE = 86400  # 24 hours
 class PinAuthMiddleware(BaseHTTPMiddleware):
     """Redirect unauthenticated requests to /login when PIN is configured.
 
-    Also performs an Origin/Referer check on state-changing requests authed
-    with the session cookie — the cookie's ``SameSite=Lax`` attribute blocks
-    most cross-origin POSTs, but defense-in-depth here makes a CSRF attempt
-    fail at the application layer if a browser ever sends the cookie cross-
-    site. API-token requests bypass the origin check (no CSRF surface).
+    Two Origin checks on state-changing requests:
+
+    1. **Cookie path** — Origin/Referer must match
+       ``compute_allowed_origins`` (defense-in-depth on top of
+       ``SameSite=Lax``).
+    2. **Token path** — if ``server.token_allowed_origins`` is
+       configured, Origin must match that allowlist. When unconfigured
+       (the default), token requests authenticate from any origin
+       (preserves historical behaviour and back-compat with existing
+       extension installs that haven't opted in yet).
     """
 
     SKIP_PREFIXES = ("/login", "/static")
@@ -57,6 +64,10 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
         self.sessions: dict[str, float] = dict(load_sessions())
         self.limiter = LoginRateLimiter()
         self.allowed_origins: set[str] = compute_allowed_origins(config)
+        # `None` means "not configured" — token requests aren't origin-
+        # checked. A configured (non-empty) set narrows token auth to those
+        # origins. Computed once at construction; restart to change.
+        self.token_allowed_origins: set[str] | None = compute_token_allowed_origins(config)
 
     def _origin_check_passes(self, request: Request) -> bool:
         return request_origin_allowed(
@@ -64,6 +75,13 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
             origin=request.headers.get("origin"),
             referer=request.headers.get("referer"),
             allowed_origins=self.allowed_origins,
+        )
+
+    def _token_origin_check_passes(self, request: Request) -> bool:
+        return token_request_origin_allowed(
+            method=request.method,
+            origin=request.headers.get("origin"),
+            allowed_origins=self.token_allowed_origins,
         )
 
     async def dispatch(self, request: Request, call_next):
@@ -91,13 +109,22 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
         # Non-cookie clients (the browser extension) authenticate with an API
         # token sent as `X-YouOS-Token` or `Authorization: Bearer <token>`.
         # Token auth is not CSRF-prone: an attacker can't make the browser
-        # attach a token they don't already know, so no Origin check here.
+        # attach a token they don't already know. We do still check Origin
+        # *when the user has configured an allowlist* — that narrows the
+        # surface so a compromised page that exfiltrated the token can't
+        # also reuse it from any origin. Default (no allowlist) preserves
+        # the historical token-authenticates-anywhere behaviour.
         api_token = request.headers.get("x-youos-token")
         if not api_token:
             auth_header = request.headers.get("authorization", "")
             if auth_header[:7].lower() == "bearer ":
                 api_token = auth_header[7:].strip()
         if api_token and verify_api_token(api_token):
+            if not self._token_origin_check_passes(request):
+                return JSONResponse(
+                    {"detail": "origin not allowed for token auth"},
+                    status_code=403,
+                )
             return await call_next(request)
 
         return RedirectResponse(url="/login", status_code=303)
