@@ -17,7 +17,16 @@ sender_domain_boost: 0.10
 # Cross-encoder reranking (requires sentence-transformers)
 reranker_enabled: false
 
+# Boost applied when a reply-pair's subject literally matches query tokens.
+# Historically hardcoded at construction time; surfaced for autoresearch
+# tuning. Multiplicative on the combined score.
+subject_match_boost: 0.2
+
 topic_match_boost: 0.15
+
+# Per-token contribution to `_field_match_bonus` (title/subject literal-match
+# bonus on top of BM25). Historically the literal `0.25` inside the helper.
+field_match_bonus_per_token: 0.25
 
 # BM25 lexical-score saturation. The historical hardcoded `min(rank*2, 10)`
 # is preserved here; surfaced so the autoresearch loop can A/B-tune them

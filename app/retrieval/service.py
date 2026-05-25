@@ -150,6 +150,11 @@ class RetrievalConfig:
     # against the existing golden-eval gate.
     lexical_scale: float = 2.0
     lexical_cap: float = 10.0
+    # Per-token field-match bonus (the multiplier inside `_field_match_bonus`).
+    # Was hardcoded to 0.25 at module level; surfacing it lets the autoresearch
+    # loop A/B how much extra credit a literal title/subject term-match should
+    # earn over a pure BM25 ranking.
+    field_match_bonus_per_token: float = 0.25
 
 
 def _has_fts5_table(connection: sqlite3.Connection, table_name: str) -> bool:
@@ -489,7 +494,10 @@ class RetrievalService:
         title = row["title"] or ""
         # FTS5 rank is negative (more negative = better match); normalize to positive
         raw_rank = abs(row["fts_rank"]) if row["fts_rank"] else 0.0
-        lexical_score = min(raw_rank * self.config.lexical_scale, self.config.lexical_cap) + _field_match_bonus(title, tokens)
+        lexical_score = (
+            min(raw_rank * self.config.lexical_scale, self.config.lexical_cap)
+            + _field_match_bonus(title, tokens, self.config.field_match_bonus_per_token)
+        )
         metadata_score = self._metadata_score(
             source_type=row["source_type"],
             timestamp=row["updated_at"] or row["created_at"],
@@ -543,7 +551,7 @@ class RetrievalService:
         # Subject match boost
         pair_subject = metadata.get("subject", "")
         if pair_subject:
-            lexical_score += _field_match_bonus(pair_subject, tokens) * 0.5
+            lexical_score += _field_match_bonus(pair_subject, tokens, self.config.field_match_bonus_per_token) * 0.5
 
         metadata_score = self._metadata_score(
             source_type=row["source_type"],
@@ -771,7 +779,10 @@ class RetrievalService:
         chunk_metadata = _loads_json(row["chunk_metadata_json"])
         content = row["content"] or ""
         title = row["title"] or ""
-        lexical_score = _score_text(query, tokens, f"{title}\n{content}") + _field_match_bonus(title, tokens)
+        lexical_score = (
+            _score_text(query, tokens, f"{title}\n{content}")
+            + _field_match_bonus(title, tokens, self.config.field_match_bonus_per_token)
+        )
         if lexical_score <= 0:
             return None
         metadata_score = self._metadata_score(
@@ -818,7 +829,7 @@ class RetrievalService:
         pair_subject = metadata.get("subject", "")
         lexical_score = _score_text(query, tokens, inbound_text) + (_score_text(query, tokens, reply_text) * 0.35)
         if pair_subject:
-            lexical_score += _field_match_bonus(pair_subject, tokens) * 0.5
+            lexical_score += _field_match_bonus(pair_subject, tokens, self.config.field_match_bonus_per_token) * 0.5
         if lexical_score <= 0:
             return None
         metadata_score = self._metadata_score(
@@ -1002,9 +1013,11 @@ def _load_retrieval_config(configs_dir: Path) -> RetrievalConfig:
             sender_domain_boost=float(payload.get("sender_domain_boost", 0.10)),
             sender_type_boost_map={str(k): float(v) for k, v in (payload.get("sender_type_boost_map") or {}).items()},
             reranker_enabled=bool(payload.get("reranker_enabled", False)),
+            subject_match_boost=float(payload.get("subject_match_boost", 0.2)),
             topic_match_boost=float(payload.get("topic_match_boost", 0.15)),
             lexical_scale=float(payload.get("lexical_scale", 2.0)),
             lexical_cap=float(payload.get("lexical_cap", 10.0)),
+            field_match_bonus_per_token=float(payload.get("field_match_bonus_per_token", 0.25)),
         )
 
     # Legacy path
@@ -1111,12 +1124,17 @@ def _score_text(query: str, tokens: list[str], text: str) -> float:
     return score
 
 
-def _field_match_bonus(text: str, tokens: list[str]) -> float:
+def _field_match_bonus(text: str, tokens: list[str], multiplier: float = 0.25) -> float:
+    """Bonus added on top of BM25 when query tokens literally appear in a
+    structured field (title / subject). ``multiplier`` is the per-token
+    contribution — historically hardcoded to 0.25; now configurable via
+    ``RetrievalConfig.field_match_bonus_per_token`` so the autoresearch loop
+    can tune the title/subject vs BM25 balance."""
     if not text:
         return 0.0
     lowered = text.lower()
     matched = sum(1 for token in tokens if token in lowered)
-    return matched * 0.25
+    return matched * multiplier
 
 
 def _recency_bonus(timestamp: str | None, recency_weight: float, boost_days: int = 90) -> float:
