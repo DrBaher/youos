@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "youos"
-version = "0.1.29"
+version = "0.1.30"
 description = "Your personal AI email copilot — learns your writing style from Gmail and drafts replies that sound like you."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -49,6 +49,15 @@ dev = [
 # falls back to FTS+semantic order. See app/core/reranker.py.
 reranker = [
   "sentence-transformers>=2.2,<4.0"
+]
+# Native Google-API ingestion backend (an alternative to the `gog`/`gws`
+# CLIs). Installing this extra is the precondition for
+# `ingestion.google_backend: native`; without it, NativeSource raises a clear
+# error pointing here. See app/ingestion/adapters.py (NativeSource).
+google = [
+  "google-api-python-client>=2.100,<3.0",
+  "google-auth-oauthlib>=1.2,<2.0",
+  "google-auth>=2.30,<3.0"
 ]
 
 [project.urls]
