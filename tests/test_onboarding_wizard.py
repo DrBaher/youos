@@ -72,5 +72,12 @@ def test_welcome_links_shared_assets():
     assert "/static/youos.css" in body and "/static/youos.js" in body
 
 
+def test_welcome_has_plain_language_explainers():
+    body = client.get("/welcome").text
+    # one plain-language explainer callout per step (welcome..secure)
+    assert body.count('class="explain"') >= 6
+    assert "What YouOS does" in body  # jargon-free intro for non-technical users
+
+
 def test_feedback_empty_state_links_to_wizard():
     assert 'href="/welcome"' in client.get("/feedback").text
