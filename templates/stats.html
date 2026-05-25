@@ -204,6 +204,23 @@ body {
         <div class="stat-row"><span class="stat-label">Embedding coverage</span><span class="stat-value" id="shEmbeddingCov">-</span></div>
         <div class="stat-row"><span class="stat-label">LoRA adapter</span><span class="stat-value" id="shAdapter">-</span></div>
       </div>
+
+      <!-- Draft quality by condition (from the draft_events log) -->
+      <div class="card full-width" id="draftEventsCard" style="display:none;">
+        <h2>Draft Quality by Condition</h2>
+        <div class="stat-row"><span class="stat-label">Drafts logged</span><span class="stat-value" id="deTotal">-</span></div>
+        <div class="stat-row"><span class="stat-label">Off-target length</span><span class="stat-value" id="deOffTarget">-</span></div>
+        <div id="deBreakdown" style="margin-top:0.7rem;"></div>
+      </div>
+
+      <!-- Per-persona adapters -->
+      <div class="card" id="personaAdaptersCard" style="display:none;">
+        <h2>Per-Persona Adapters</h2>
+        <table class="sender-table" id="personaAdaptersTable">
+          <thead><tr><th>Cohort</th><th>Trained</th><th>Pairs</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -437,6 +454,39 @@ body {
           (d.system_health.embedding_coverage * 100).toFixed(1) + '%' : 'N/A';
         document.getElementById('shAdapter').innerHTML = d.system_health.adapter_ready ?
           '<span style="color:#00c4a7;">&#x2713; Ready</span>' : '<span style="color:#f0ad4e;">Not trained</span>';
+      }
+
+      // Draft quality by condition (from the draft_events log)
+      var de = d.draft_events || {};
+      if (de.total) {
+        document.getElementById('draftEventsCard').style.display = 'block';
+        document.getElementById('deTotal').textContent = de.total.toLocaleString();
+        document.getElementById('deOffTarget').textContent = de.off_target_pct != null ? de.off_target_pct + '%' : 'N/A';
+        var deDist = function(label, obj) {
+          if (!obj || !Object.keys(obj).length) return '';
+          var parts = Object.keys(obj).map(function(k) { return YouOS.esc(k) + ': ' + obj[k]; }).join('  ·  ');
+          return '<div class="stat-row" style="border:none;padding:2px 0;"><span class="stat-label">' + label +
+            '</span><span class="stat-value" style="font-weight:400;color:#aaa;font-size:0.82rem;">' + parts + '</span></div>';
+        };
+        document.getElementById('deBreakdown').innerHTML =
+          deDist('By length', de.by_length_flag) + deDist('By confidence', de.by_confidence) +
+          deDist('By sender type', de.by_sender_type) + deDist('By intent', de.by_intent);
+      }
+
+      // Per-persona adapter status
+      var pa = d.persona_adapters || {};
+      if (Object.keys(pa).length) {
+        document.getElementById('personaAdaptersCard').style.display = 'block';
+        var paBody = document.querySelector('#personaAdaptersTable tbody');
+        paBody.innerHTML = '';
+        Object.keys(pa).forEach(function(cohort) {
+          var s = pa[cohort] || {};
+          var trained = s.trained ? '<span style="color:#00c4a7;">&#x2713;</span>' : '<span style="color:#666;">&mdash;</span>';
+          var tr = document.createElement('tr');
+          tr.innerHTML = '<td>' + YouOS.esc(cohort) + '</td><td>' + trained + '</td><td>' +
+            (s.pairs_used != null ? s.pairs_used : '-') + '</td>';
+          paBody.appendChild(tr);
+        });
       }
 
       document.getElementById('loading').style.display = 'none';
