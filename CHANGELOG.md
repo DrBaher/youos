@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.46 — 2026-05-25
+
+### Wizard: run ingestion in-browser with a lookback window
+- **The "Build your corpus" step now runs ingestion from the wizard** instead of only printing `youos ingest`. A "How far back" dropdown (6 months / 1 / 2 / 3 / 4 years / Everything) maps to a whitelisted Gmail `newer_than:` filter, and a **Run ingestion** button kicks it off via `POST /api/ingest`, which spawns the ingest script in the background (arg-list, no shell — nothing user-typed reaches the command) and returns immediately. The step then polls `GET /api/ingest/status` (from the `ingest_runs` log) and shows live progress — discovered / stored reply pairs, then ✓ done or the failure. Refuses to double-run (409) while one's in progress; the terminal `youos ingest` stays as a fallback. Tests cover the status reader, lookback validation + query building, the running-guard, and the spawn (subprocess mocked).
+
 ## v0.1.45 — 2026-05-25
 
 ### Onboarding wizard: make the backend install commands obvious

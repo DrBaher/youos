@@ -62,8 +62,9 @@ def test_welcome_page_has_all_steps_and_wiring():
         assert f'data-step="{n}"' in body
     assert "/api/config/identity" in body         # identity performed
     assert "ingestion.google_backend" in body     # backend performed via /api/config/set
-    assert "corpus_ready" in body and "adapter_ready" in body  # guided readiness checks
-    assert "youos ingest" in body                 # operational step guided by command
+    assert "/api/ingest" in body                   # ingestion run + status from the wizard
+    assert "adapter_ready" in body                 # train-step readiness check
+    assert "youos ingest" in body                 # terminal fallback still offered
 
 
 def test_welcome_links_shared_assets():

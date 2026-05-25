@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +13,13 @@ from pydantic import BaseModel
 
 from app.core.config import load_config
 from app.core.settings import get_adapter_path, get_var_dir
-from app.core.stats import get_corpus_stats, get_model_status, get_pipeline_status, summarize_draft_events
+from app.core.stats import (
+    get_corpus_stats,
+    get_latest_ingest_status,
+    get_model_status,
+    get_pipeline_status,
+    summarize_draft_events,
+)
 from app.core.version import get_version
 from app.db.bootstrap import resolve_sqlite_path
 
@@ -65,6 +73,22 @@ class IdentityRequest(BaseModel):
     emails: list[str] | None = None
 
 
+# Lookback → Gmail `newer_than:` filter. Whitelisted so nothing the user types
+# reaches the ingest command; "all" omits the date filter.
+INGEST_LOOKBACKS: dict[str, str] = {
+    "6m": "newer_than:6m",
+    "1y": "newer_than:1y",
+    "2y": "newer_than:2y",
+    "3y": "newer_than:3y",
+    "4y": "newer_than:4y",
+    "all": "",
+}
+
+
+class IngestRequest(BaseModel):
+    lookback: str = "1y"
+
+
 @router.get("/api/config/flags")
 def get_config_flags() -> dict:
     """List the whitelisted feature flags + their current values (for the
@@ -99,6 +123,40 @@ def set_config_identity(body: IdentityRequest) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     return {"ok": True, **result}
+
+
+@router.post("/api/ingest")
+def trigger_ingest(body: IngestRequest, request: Request) -> dict:
+    """Kick off Gmail ingestion in the background, bounded by a lookback window.
+
+    The lookback is whitelisted and the command is an arg list (no shell), so
+    nothing user-supplied is interpolated into a command. Returns immediately;
+    the wizard polls /api/ingest/status for progress.
+    """
+    if body.lookback not in INGEST_LOOKBACKS:
+        raise HTTPException(status_code=400, detail=f"lookback must be one of {sorted(INGEST_LOOKBACKS)}")
+
+    database_url = request.app.state.settings.database_url
+    if get_latest_ingest_status(database_url).get("status") == "running":
+        raise HTTPException(status_code=409, detail="An ingestion is already running.")
+
+    date_filter = INGEST_LOOKBACKS[body.lookback]
+    query = f"in:anywhere {date_filter}".strip()
+    script = ROOT_DIR / "scripts" / "ingest_gmail_threads.py"
+    # Detached background process: fetch all threads within the date window.
+    subprocess.Popen(  # noqa: S603
+        [sys.executable, str(script), "--live", "--query", query, "--max-threads", "0"],
+        cwd=str(ROOT_DIR),
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return {"started": True, "lookback": body.lookback, "query": query}
+
+
+@router.get("/api/ingest/status")
+def ingest_status(request: Request) -> dict:
+    return get_latest_ingest_status(request.app.state.settings.database_url)
 
 
 @router.get("/stats", response_class=HTMLResponse)
