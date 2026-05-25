@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.35 — 2026-05-25
+
+### Smarter drafting 4/4 — multi-candidate generation + ranking
+- **Optionally generate several drafts and keep the best.** With `generation.multi_candidate.enabled: true`, `generate_draft` produces one local-model draft per configured temperature (`temperatures`, default `[0.3, 0.7, 1.0]`) and returns the highest-scoring one. The deterministic scorer (`_score_candidate`) disqualifies empty/placeholder/signature-only drafts and rewards length-fit (peaking at the persona's target words) plus honoring the persona greeting/closing. The ranked alternatives are surfaced on `DraftResponse.candidates` (draft, model_used, temperature, score) for the review queue.
+- **Refactor:** the Phase-3 adapter precedence is now factored into `_local_draft_once`, shared by the single-draft and multi-candidate paths (one source of truth for adapter routing); the greeting/closing are resolved once and reused by both ranking and the repair pass.
+- **Default-off** — `enabled` defaults `false`, so drafting makes exactly one model call and `candidates` is empty, identical to before. It's gated because it multiplies model calls (latency/cost); the quality benefit is best assessed live on a real instance. Pinned with tests for the config, usability check, scorer (length-fit / disqualification / greeting-closing credit), ranker ordering, and end-to-end (one call per temperature → best chosen + alternatives surfaced; single call + empty candidates when disabled).
+
 ## v0.1.34 — 2026-05-25
 
 ### Smarter drafting 3/4 — configurable, adaptive decoding
