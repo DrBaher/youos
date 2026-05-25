@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 import yaml
 
-from app.core.embeddings import cosine_similarity, deserialize_embedding, get_embedding
+from app.core.embeddings import cosine_similarity, deserialize_embedding, get_embedding, get_embedding_model_id
 from app.core.sender import classify_sender, extract_domain
 from app.db.bootstrap import connect, resolve_sqlite_path
 
@@ -352,13 +352,27 @@ class RetrievalService:
         fts_max = max((m.score for m in matches[:top_n]), default=SEMANTIC_SCALE_FACTOR)
         scale_factor = max(fts_max, 1.0)
 
+        # Stale-embedding detection: if the configured embedding model differs
+        # from the one a stored row was produced with, the cosine sim is
+        # comparing vectors in different spaces — meaningless. Legacy rows
+        # (embedding_model_id IS NULL) predate this column and are trusted as
+        # matching the current model (no forced re-embed on upgrade).
+        current_model_id = get_embedding_model_id()
+        has_model_id_col = _has_column(connection, table, "embedding_model_id")
+        select_cols = "embedding, embedding_model_id" if has_model_id_col else "embedding"
+
         for match in matches[:top_n]:
             row_id = getattr(match, id_field)
             if row_id is None:
                 continue
-            row = connection.execute(f"SELECT embedding FROM {table} WHERE id = ?", (row_id,)).fetchone()
+            row = connection.execute(f"SELECT {select_cols} FROM {table} WHERE id = ?", (row_id,)).fetchone()  # noqa: S608
             if not row or not row["embedding"] or len(row["embedding"]) < 4:
                 continue
+            if has_model_id_col:
+                stored_model_id = row["embedding_model_id"]
+                if stored_model_id is not None and stored_model_id != current_model_id:
+                    # Stale — different model, different embedding space.
+                    continue
             emb = deserialize_embedding(row["embedding"])
             sim = cosine_similarity(query_emb, emb)
             # Normalize sim from [-1,1] to [0,1] range, then scale to match FTS score range
@@ -1042,6 +1056,11 @@ def _has_embedding_column(connection: sqlite3.Connection, table: str) -> bool:
     """Check if the table has an embedding column."""
     cols = [row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()]
     return "embedding" in cols
+
+
+def _has_column(connection: sqlite3.Connection, table: str, column: str) -> bool:
+    cols = [row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()]
+    return column in cols
 
 
 def _embedding_coverage(connection: sqlite3.Connection, table: str) -> float:

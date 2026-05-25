@@ -22,6 +22,27 @@ _model = None
 _tokenizer = None
 
 
+def get_embedding_model_id() -> str:
+    """Identifier of the model used to produce embeddings.
+
+    Today this is the LoRA base (e.g. ``Qwen/Qwen2.5-1.5B-Instruct``), but
+    surfacing it as a function lets us:
+
+    - record which model produced each stored embedding (so a future swap
+      can detect and re-embed stale rows), and
+    - let users override it via the ``embeddings.model_id`` config key
+      without having to change the LoRA base.
+    """
+    from app.core.config import load_config
+
+    cfg = load_config() or {}
+    emb_cfg = cfg.get("embeddings", {}) if isinstance(cfg, dict) else {}
+    override = emb_cfg.get("model_id") if isinstance(emb_cfg, dict) else None
+    if isinstance(override, str) and override.strip():
+        return override.strip()
+    return get_base_model()
+
+
 def _load_model():
     """Lazy-load the Qwen model and tokenizer for embedding generation."""
     global _model, _tokenizer
@@ -33,7 +54,7 @@ def _load_model():
     except ImportError as exc:
         raise RuntimeError("mlx_lm is required for embedding generation. Install with: pip install mlx-lm") from exc
 
-    model_id = get_base_model()
+    model_id = get_embedding_model_id()
     _model, _tokenizer = load(model_id)
     return _model, _tokenizer
 

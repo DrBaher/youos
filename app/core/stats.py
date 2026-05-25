@@ -213,3 +213,54 @@ def get_pipeline_status(project_root: Path) -> dict | None:
         return json.loads(log_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
+
+
+def get_embedding_coverage(database_url: str) -> dict[str, float]:
+    """Fraction of rows with non-empty embeddings, per indexed table.
+
+    Returns ``{"chunks": 0.42, "reply_pairs": 0.31}`` when both tables exist
+    and have rows. Missing / empty tables are silently omitted — so a fresh
+    instance returns ``{}`` rather than zeros that would imply "indexed,
+    but every row failed".
+
+    Used to answer "is semantic retrieval actually firing on this corpus?"
+    from the stats endpoint and the nightly pipeline log — without this,
+    the only way to tell was to add ad-hoc logging inside the retrieval
+    reranker. Mirrors ``app.retrieval.service._embedding_coverage`` which
+    is per-table and connection-scoped; this is the public, multi-table,
+    db-path-scoped version intended for stats callers.
+    """
+    from app.db.bootstrap import resolve_sqlite_path
+
+    db_path = resolve_sqlite_path(database_url)
+    if not db_path.exists():
+        return {}
+
+    coverage: dict[str, float] = {}
+    conn = sqlite3.connect(db_path)
+    try:
+        existing_tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        for table in ("chunks", "reply_pairs"):
+            if table not in existing_tables:
+                continue
+            cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            if "embedding" not in cols:
+                continue
+            total = _safe_count(conn, table)
+            if total == 0:
+                continue
+            row = conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE embedding IS NOT NULL AND LENGTH(embedding) > 0"  # noqa: S608
+            ).fetchone()
+            embedded = row[0] if row else 0
+            coverage[table] = round(embedded / total, 4)
+    except sqlite3.OperationalError:
+        return coverage
+    finally:
+        conn.close()
+    return coverage
