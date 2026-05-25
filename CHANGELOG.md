@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.28 — 2026-05-25
+
+### Standalone distribution (decoupling from OpenClaw, step 5/5)
+- **YouOS installs and runs without OpenClaw / clawhub.** Added `scripts/install.sh` — a re-runnable installer that locates a Python ≥ 3.11, creates `.venv`, installs YouOS (with optional extras, e.g. `./scripts/install.sh reranker`), and runs `youos doctor` for an immediate setup readout. The clawhub skill artifacts (`clawhub.json`, `SKILL.md`, `prepare_clawhub_release.sh`) are kept, so YouOS ships **both** standalone and as an OpenClaw skill.
+- **PyPI-ready packaging metadata.** `pyproject.toml` now declares `license`, `authors`, `keywords`, trove `classifiers`, and `[project.urls]`.
+- **README documents the standalone path and the pluggable Google backend.** Quick start now leads with `./scripts/install.sh` (with a manual fallback) and a new "Google ingestion backend" section explains `ingestion.google_backend` (`gog` available today; `gws` and `native` in progress). Fixed the stale `cd ~/Projects/youos` path in the old quick start.
+
 ## v0.1.27 — 2026-05-25
 
 ### Pluggable Google Workspace ingestion backend (decoupling from OpenClaw, step 1/5)
