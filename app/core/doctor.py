@@ -9,6 +9,9 @@ import socket
 import sys
 from pathlib import Path
 
+from app.core.settings import get_instance_root, get_models_dir
+from app.db.bootstrap import resolve_sqlite_path
+
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
 
@@ -33,10 +36,10 @@ def run_doctor_checks() -> tuple[bool, list[str]]:
     except ImportError:
         failures.append("mlx_lm not importable (pip install mlx-lm)")
 
-    # Required: youos_config.yaml exists
-    config_path = ROOT_DIR / "youos_config.yaml"
+    # Required: youos_config.yaml exists (in the active instance, not the repo)
+    config_path = get_instance_root() / "youos_config.yaml"
     if not config_path.exists():
-        failures.append("youos_config.yaml not found")
+        failures.append(f"youos_config.yaml not found at {config_path}")
 
     # Required: user.emails set
     try:
@@ -60,10 +63,12 @@ def run_doctor_checks_full() -> tuple[bool, list[str], list[str]]:
     passed, failures = run_doctor_checks()
     warnings: list[str] = []
 
-    # Warning: var/youos.db exists
-    db_path = ROOT_DIR / "var" / "youos.db"
+    # Warning: youos.db exists (in the active instance, not the repo)
+    from app.core.settings import get_settings
+
+    db_path = resolve_sqlite_path(get_settings().database_url)
     if not db_path.exists():
-        warnings.append("var/youos.db not found")
+        warnings.append(f"{db_path} not found")
 
     # Warning: >= 3GB disk free
     try:
@@ -74,10 +79,10 @@ def run_doctor_checks_full() -> tuple[bool, list[str], list[str]]:
     except Exception:
         warnings.append("Could not check disk space")
 
-    # Warning: models/ has content
-    models_dir = ROOT_DIR / "models"
+    # Warning: models/ has content (active instance, not the repo)
+    models_dir = get_models_dir()
     if not models_dir.exists() or not any(models_dir.iterdir()):
-        warnings.append("models/ directory is empty")
+        warnings.append(f"{models_dir} is empty")
 
     # Warning: port 8901 free
     try:

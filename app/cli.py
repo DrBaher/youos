@@ -20,7 +20,7 @@ from app.core.data_safety import (
     restore_snapshot,
     run_startup_safety_checks,
 )
-from app.core.settings import get_adapter_path, get_settings
+from app.core.settings import get_adapter_path, get_instance_root, get_settings
 from app.db.bootstrap import resolve_sqlite_path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -118,18 +118,25 @@ def export_data(
         output = str(Path.home() / f"youos-backup-{today}.tar.gz")
 
     output_path = Path(output).expanduser().resolve()
+    # Source from the active instance (YOUOS_DATA_DIR if set, else repo).
+    # Archive layout stays repo-relative ("var/youos.db", "youos_config.yaml",
+    # "configs/...", "models/adapters/latest/...") so the format is stable
+    # across instances and existing backups still restore cleanly.
+    settings = get_settings()
+    instance_root = get_instance_root()
+    db_source = resolve_sqlite_path(settings.database_url)
+    config_source = instance_root / "youos_config.yaml"
+    configs_dir = Path(settings.configs_dir)
+
     include_paths = [
-        ("var/youos.db", ROOT_DIR / "var" / "youos.db"),
-        ("youos_config.yaml", ROOT_DIR / "youos_config.yaml"),
+        ("var/youos.db", db_source),
+        ("youos_config.yaml", config_source),
     ]
-    # configs/ directory
-    configs_dir = ROOT_DIR / "configs"
     if configs_dir.is_dir():
         for f in configs_dir.rglob("*"):
             if f.is_file():
-                include_paths.append((str(f.relative_to(ROOT_DIR)), f))
-    # models/adapters/latest/ (instance-aware; archived under a stable
-    # repo-relative path so the layout doesn't change with YOUOS_DATA_DIR).
+                arcname = str(Path("configs") / f.relative_to(configs_dir))
+                include_paths.append((arcname, f))
     adapters_dir = get_adapter_path()
     if adapters_dir.is_dir():
         for f in adapters_dir.rglob("*"):
@@ -158,17 +165,24 @@ def import_data(
         print(f"File not found: {archive}")
         raise SystemExit(1)
 
-    db_path = ROOT_DIR / "var" / "youos.db"
+    # Extract into the active instance, not the repo root. Archive layout is
+    # repo-relative ("var/youos.db", "youos_config.yaml", "configs/...",
+    # "models/adapters/latest/...") so the same archive restores into any
+    # instance — pre- or post-PR-#16 — without format changes.
+    settings = get_settings()
+    instance_root = get_instance_root()
+    db_path = resolve_sqlite_path(settings.database_url)
     if db_path.exists():
-        confirm = typer.confirm("var/youos.db already exists. Overwrite?", default=False)
+        confirm = typer.confirm(f"{db_path} already exists. Overwrite?", default=False)
         if not confirm:
             print("Import cancelled.")
             raise SystemExit(0)
 
+    instance_root.mkdir(parents=True, exist_ok=True)
     with tarfile.open(archive, "r:gz") as tar:
-        tar.extractall(path=ROOT_DIR, filter="data")
+        tar.extractall(path=instance_root, filter="data")
 
-    print(f"Imported from {archive}")
+    print(f"Imported from {archive} into {instance_root}")
 
 
 @app.command()
@@ -466,7 +480,7 @@ def stats():
 
     corpus = get_corpus_stats(settings.database_url)
     model = get_model_status(Path(settings.configs_dir))
-    pipeline = get_pipeline_status(ROOT_DIR)
+    pipeline = get_pipeline_status(get_instance_root())
 
     table = Table(title="YouOS Stats", show_header=True, header_style="bold cyan")
     table.add_column("Metric", style="dim")
