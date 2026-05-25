@@ -144,8 +144,18 @@
       <p class="hint" style="margin-top:12px;">A token lets the Gmail extension reach a PIN-protected instance. For a login PIN, see the README's auth section. Skip if you only use YouOS on this machine.</p>
     </section>
 
-    <!-- 7. Done -->
+    <!-- 7. Keep it running -->
     <section class="step" data-step="6">
+      <h1>Keep it running</h1>
+      <p class="lead">Install YouOS as a background service so it's always available.</p>
+      <div class="explain"><b>Right now YouOS only runs while a terminal stays open.</b> Installing it as a background service (a macOS LaunchAgent) makes it start automatically when you log in, restart itself if it crashes, and survive a reboot — so the Gmail extension and web app are always there. No password or admin rights needed; it still only listens on your own computer.</div>
+      <div style="margin-top:6px;"><button class="btn" id="installService">Install background service</button></div>
+      <div class="status" id="serviceStatus" style="margin-top:14px;"></div>
+      <p class="hint" style="margin-top:12px;">Terminal equivalent: <code>youos service install</code> · remove anytime with <code>youos service uninstall</code>.</p>
+    </section>
+
+    <!-- 8. Done -->
+    <section class="step" data-step="7">
       <h1>You're set 🎉</h1>
       <p class="lead">Start drafting — and fine-tune behavior (multi-candidate, repairs, persona routing, …) anytime in Settings.</p>
       <div style="display:flex; gap:10px; margin-top:8px;">
@@ -285,6 +295,31 @@
       })
       .catch(() => { btn.disabled = false; btn.textContent = "Create API token"; });
   });
+
+  // Keep it running: install the launchd background service from the wizard.
+  const serviceStatusEl = document.getElementById("serviceStatus");
+  const installSvcBtn = document.getElementById("installService");
+  function renderService(s) {
+    const running = s === "running (LaunchAgent loaded)";
+    serviceStatusEl.className = "status " + (running ? "ok" : "pending");
+    serviceStatusEl.textContent = running ? "✓ Installed — YouOS runs at login and restarts automatically." : "Status: " + (s || "not installed");
+    if (running) { installSvcBtn.textContent = "Reinstall"; }
+  }
+  function refreshService() {
+    fetch("/api/service/status").then((r) => r.json()).then((d) => renderService(d.status)).catch(() => {});
+  }
+  installSvcBtn.addEventListener("click", () => {
+    installSvcBtn.disabled = true; installSvcBtn.textContent = "Installing…";
+    serviceStatusEl.className = "status pending"; serviceStatusEl.textContent = "Installing…";
+    fetch("/api/service/install", { method: "POST" })
+      .then((r) => (r.ok ? r.json() : r.json().then((e) => Promise.reject(e.detail || "error"))))
+      .then(() => { installSvcBtn.disabled = false; refreshService(); })
+      .catch((err) => {
+        installSvcBtn.disabled = false; installSvcBtn.textContent = "Install background service";
+        serviceStatusEl.className = "status err"; serviceStatusEl.textContent = "✕ " + err;
+      });
+  });
+  refreshService();
 
   // Ingestion: run from the wizard + live status poll.
   const ingestStatusEl = document.getElementById("ingestStatus");

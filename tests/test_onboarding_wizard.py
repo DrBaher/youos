@@ -58,7 +58,7 @@ def test_identity_endpoint(monkeypatch):
 
 def test_welcome_page_has_all_steps_and_wiring():
     body = client.get("/welcome").text
-    for n in range(7):  # 7-step comprehensive flow
+    for n in range(8):  # comprehensive flow (incl. "Keep it running")
         assert f'data-step="{n}"' in body
     assert "/api/config/identity" in body         # identity performed
     assert "ingestion.google_backend" in body     # backend performed via /api/config/set
