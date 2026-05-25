@@ -1,0 +1,66 @@
+/* YouOS shared design system.
+ *
+ * Single home for the palette (as CSS variables) and the shared component
+ * classes the templates use. Extracted from the per-template inline styles so
+ * new UI (multi-candidate picker, draft-quality badges, stats panels) styles
+ * consistently and the look lives in one place. Values match the existing
+ * dark + teal #00c4a7 theme and the landing page (site/index.html).
+ */
+
+:root {
+  --teal: #00c4a7;
+  --teal-dim: #0a8f7c;
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --surface-2: #0d1b2a;
+  --border: #2a3a4a;
+  --border-subtle: #333;
+  --text: #e0e0e0;
+  --muted: #aaa;
+  --muted-2: #888;
+  --faint: #666;
+  --warn: #f0ad4e;
+  --error: #e74c3c;
+  --success: #2ecc71;
+  --radius: 8px;
+}
+
+/* --- Badges (confidence, length flag, repairs, sender type) -------------- */
+.yos-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: var(--surface-2);
+  vertical-align: middle;
+}
+.yos-badge--ok { color: var(--success); border-color: var(--success); }
+.yos-badge--warn { color: var(--warn); border-color: var(--warn); }
+.yos-badge--error { color: var(--error); border-color: var(--error); }
+.yos-badge--accent { color: var(--teal); border-color: var(--teal-dim); }
+
+/* --- Candidate picker (multi-candidate drafting) ------------------------- */
+.yos-candidates { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.yos-candidate {
+  text-align: left;
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.yos-candidate:hover { border-color: var(--teal-dim); }
+.yos-candidate[aria-pressed="true"] { border-color: var(--teal); background: rgba(0, 196, 167, 0.08); }
+.yos-candidate__meta { display: flex; gap: 10px; align-items: center; margin-bottom: 6px; font-size: 0.72rem; color: var(--muted-2); }
+.yos-candidate__preview { font-size: 0.86rem; color: var(--muted); line-height: 1.45; white-space: pre-wrap; }
+
+/* --- Small helpers ------------------------------------------------------- */
+.yos-note { font-size: 0.8rem; color: var(--muted-2); }
+.yos-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
