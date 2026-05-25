@@ -254,19 +254,35 @@ def stats_data(request: Request) -> dict[str, Any]:
         try:
             corpus_size = conn2.execute("SELECT COUNT(*) FROM reply_pairs").fetchone()[0]
             last_ingestion = conn2.execute("SELECT MAX(paired_at) FROM reply_pairs").fetchone()[0]
-            embedding_count = conn2.execute("SELECT COUNT(*) FROM chunks WHERE metadata_json LIKE '%embedding%'").fetchone()[0]
-            total_chunks = conn2.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-            embedding_coverage = round(embedding_count / total_chunks, 3) if total_chunks > 0 else 0.0
+            # Previous query (`metadata_json LIKE '%embedding%'`) didn't look at
+            # the actual `embedding` BLOB column at all — it just matched the
+            # literal string "embedding" inside the metadata JSON, so it was
+            # producing a meaningless coverage value. Route through the
+            # canonical helper that checks the BLOB column. `system_health`
+            # keeps its single-float shape (chunks-only) for stats.html back-
+            # compat; the per-table structured view is added below as a
+            # top-level `embedding_coverage` field.
+            from app.core.stats import get_embedding_coverage
+
+            coverage_by_table = get_embedding_coverage(settings.database_url)
             system_health = {
                 "corpus_size": corpus_size,
                 "last_ingestion": last_ingestion,
-                "embedding_coverage": embedding_coverage,
+                "embedding_coverage": coverage_by_table.get("chunks", 0.0),
                 "adapter_ready": (get_adapter_path() / "adapters.safetensors").exists(),
             }
         except sqlite3.OperationalError:
             pass
     finally:
         conn2.close()
+
+    # Structured per-table view, additive to system_health.embedding_coverage.
+    # Lets the dashboard render coverage for chunks AND reply_pairs separately
+    # without re-querying — and matches the shape emitted by the nightly
+    # pipeline log so a chart can render both signals from one source of truth.
+    from app.core.stats import get_embedding_coverage
+
+    embedding_coverage_by_table = get_embedding_coverage(settings.database_url)
 
     return {
         "pipeline_last_run": pipeline_last_run,
@@ -290,4 +306,5 @@ def stats_data(request: Request) -> dict[str, Any]:
         "outcome_deltas": outcome_deltas,
         "sender_accuracy": sender_accuracy,
         "system_health": system_health,
+        "embedding_coverage": embedding_coverage_by_table,
     }
