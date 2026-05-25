@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from app.autoresearch.optimizer import format_report, run_autoresearch
-from app.core.settings import get_settings
+from app.core.settings import get_settings, get_var_dir
 from app.db.bootstrap import resolve_sqlite_path
 from app.generation.service import DraftRequest, generate_draft
 
@@ -56,7 +56,10 @@ def _log_git_hash_to_autoresearch_log() -> None:
     if not commit_hash:
         logger.warning("Could not get git commit hash for autoresearch log")
         return
-    log_path = ROOT_DIR / "var" / "autoresearch_log.md"
+    # Match `app.core.stats.AUTORESEARCH_LOG` which already reads from the
+    # active instance's var/ — without this, the writer (here) and reader
+    # (stats) used different files on a non-default YOUOS_DATA_DIR.
+    log_path = get_var_dir() / "autoresearch_log.md"
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     entry = f"\n## Run started — {timestamp}\n- Git commit: {commit_hash}\n"
     with open(log_path, "a", encoding="utf-8") as f:

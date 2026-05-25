@@ -9,20 +9,26 @@ from pathlib import Path
 
 import yaml
 
+from app.core.settings import get_settings
+from app.db.bootstrap import resolve_sqlite_path
+
 ROOT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_DB = ROOT_DIR / "var" / "youos.db"
 DEFAULT_OUTPUT_DIR = ROOT_DIR / "data" / "feedback"
 CONFIGS_DIR = ROOT_DIR / "configs"
 
 
 def parse_args() -> argparse.Namespace:
+    # Same shape as scripts/finetune_lora.py: defaults resolved at call time
+    # so YOUOS_DATA_DIR set on the calling shell (e.g. the nightly under
+    # launchd) lands the export's DB read on the active instance.
+    default_db = resolve_sqlite_path(get_settings().database_url)
     p = argparse.ArgumentParser(description="Export feedback pairs to JSONL")
     p.add_argument("--all", action="store_true", help="Export all pairs, not just unused")
     p.add_argument("--since", type=str, default=None, help="Only pairs created after this date (YYYY-MM-DD)")
     p.add_argument("--output", type=str, default=None, help="Output file path (default: data/feedback/train.jsonl)")
     p.add_argument("--min-rating", type=int, default=3, help="Minimum rating to include (default: 3)")
     p.add_argument("--min-edit-pct", type=float, default=0.05, help="Minimum edit distance pct (default: 0.05)")
-    p.add_argument("--db", type=str, default=str(DEFAULT_DB), help="Database path")
+    p.add_argument("--db", type=str, default=str(default_db), help="Database path")
     p.add_argument("--no-persona", action="store_true", help="Use bare format without persona/system prompt")
     p.add_argument("--configs-dir", type=str, default=str(CONFIGS_DIR), help="Configs directory")
     p.add_argument("--dpo", action="store_true", help="Export DPO preference pairs (chosen/rejected)")
