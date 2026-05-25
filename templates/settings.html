@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouOS — Settings</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; line-height: 1.5; }
+  .container { max-width: 820px; margin: 0 auto; padding: 0 24px 48px; }
+  .oc-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; border-bottom: 1px solid #2a3a4a; flex-wrap: wrap; gap: 0.5rem; }
+  .oc-logo { display: flex; align-items: center; gap: 0.5rem; }
+  .oc-wordmark { color: #00c4a7; font-weight: 700; font-size: 1.1rem; }
+  .oc-nav { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+  .oc-nav-link { color: #888; text-decoration: none; font-size: 0.85rem; font-weight: 500; transition: color 0.2s; }
+  .oc-nav-link:hover, .oc-nav-link.active { color: #00c4a7; }
+  h1 { font-size: 1.6rem; margin: 28px 0 4px; color: #00c4a7; }
+  .sub { color: #888; font-size: 0.9rem; margin-bottom: 20px; }
+  .card { background: #16213e; border: 1px solid #2a3a4a; border-radius: 12px; padding: 8px 20px; }
+  .flag-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 0; border-bottom: 1px solid #222e44; }
+  .flag-row:last-child { border-bottom: none; }
+  .flag-label { font-weight: 600; font-size: 0.95rem; }
+  .flag-help { color: #888; font-size: 0.82rem; margin-top: 3px; }
+  .flag-ctrl { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+  .flag-status { font-size: 0.78rem; min-width: 56px; text-align: right; }
+  .flag-status.ok { color: #2ecc71; }
+  .flag-status.err { color: #e74c3c; }
+  select { background: #0d1b2a; color: #e0e0e0; border: 1px solid #2a3a4a; border-radius: 6px; padding: 6px 8px; font-size: 0.85rem; }
+  /* toggle switch */
+  .switch { position: relative; display: inline-block; width: 42px; height: 24px; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider { position: absolute; inset: 0; background: #2a3a4a; border-radius: 24px; transition: .2s; cursor: pointer; }
+  .slider::before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; top: 3px; background: #888; border-radius: 50%; transition: .2s; }
+  .switch input:checked + .slider { background: rgba(0,196,167,0.35); }
+  .switch input:checked + .slider::before { transform: translateX(18px); background: #00c4a7; }
+  .note { color: #777; font-size: 0.8rem; margin-top: 16px; }
+  .oc-footer { border-top: 1px solid #2a3a4a; margin-top: 32px; padding: 20px 0; display: flex; gap: 0.6rem; justify-content: center; color: #666; font-size: 0.82rem; }
+  .oc-footer a { color: #666; }
+</style>
+<link rel="stylesheet" href="/static/youos.css">
+<script src="/static/youos.js" defer></script>
+</head>
+<body>
+<div class="container">
+  <header class="oc-header">
+    <div class="oc-logo">
+      <span>&#x2709;&#xFE0F;</span>
+      <span class="oc-wordmark" id="appName">YouOS</span>
+    </div>
+    <nav class="oc-nav">
+      <a href="/feedback" class="oc-nav-link">Draft Email</a>
+      <a href="/stats" class="oc-nav-link">Stats</a>
+      <a href="/settings" class="oc-nav-link active">Settings</a>
+      <a href="/bookmarklet" class="oc-nav-link">Bookmarklet</a>
+      <a href="/about" class="oc-nav-link">About</a>
+    </nav>
+  </header>
+
+  <h1>Settings</h1>
+  <p class="sub">Toggle YouOS features. Changes are saved immediately and apply to the next draft (or the next nightly run for training/autoresearch options).</p>
+
+  <div class="card" id="flags"><p class="sub" style="padding:16px 0;">Loading…</p></div>
+
+  <p class="note">Prefer the terminal? The same flags are available via <code>youos config list</code> / <code>youos config set &lt;key&gt; &lt;value&gt;</code>.</p>
+
+  <footer class="oc-footer">
+    <span>YouOS <span id="appVersion"></span></span>
+    <span>&middot;</span>
+    <a href="https://github.com/DrBaher/youos" target="_blank">GitHub</a>
+    <span>&middot;</span>
+    <span>Your data stays local</span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  const wrap = document.getElementById("flags");
+
+  function controlFor(f) {
+    if (f.type === "choice") {
+      const sel = document.createElement("select");
+      (f.choices || []).forEach((c) => {
+        const o = document.createElement("option");
+        o.value = c; o.textContent = c;
+        if (c === f.value) o.selected = true;
+        sel.appendChild(o);
+      });
+      return { el: sel, read: () => sel.value, node: sel };
+    }
+    const label = document.createElement("label");
+    label.className = "switch";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = !!f.value;
+    const slider = document.createElement("span");
+    slider.className = "slider";
+    label.append(input, slider);
+    return { el: input, read: () => input.checked, node: label };
+  }
+
+  fetch("/api/config/flags")
+    .then((r) => r.json())
+    .then((d) => {
+      wrap.innerHTML = "";
+      (d.flags || []).forEach((f) => {
+        const row = document.createElement("div");
+        row.className = "flag-row";
+
+        const meta = document.createElement("div");
+        const lbl = document.createElement("div");
+        lbl.className = "flag-label";
+        lbl.textContent = f.label;
+        const help = document.createElement("div");
+        help.className = "flag-help";
+        help.textContent = f.help || "";
+        meta.append(lbl, help);
+
+        const ctrlWrap = document.createElement("div");
+        ctrlWrap.className = "flag-ctrl";
+        const status = document.createElement("span");
+        status.className = "flag-status";
+        const ctrl = controlFor(f);
+
+        ctrl.el.addEventListener("change", () => {
+          const value = ctrl.read();
+          status.className = "flag-status";
+          status.textContent = "…";
+          fetch("/api/config/set", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key: f.key, value: value }),
+          })
+            .then((r) => (r.ok ? r.json() : r.json().then((e) => Promise.reject(e.detail || "error"))))
+            .then(() => {
+              status.className = "flag-status ok";
+              status.textContent = "saved ✓";
+              setTimeout(() => { status.textContent = ""; }, 1600);
+            })
+            .catch((err) => {
+              status.className = "flag-status err";
+              status.textContent = "✕ " + err;
+            });
+        });
+
+        ctrlWrap.append(ctrl.node, status);
+        row.append(meta, ctrlWrap);
+        wrap.appendChild(row);
+      });
+    })
+    .catch(() => { wrap.textContent = "Could not load settings."; });
+})();
+</script>
+</body>
+</html>
