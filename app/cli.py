@@ -20,7 +20,7 @@ from app.core.data_safety import (
     restore_snapshot,
     run_startup_safety_checks,
 )
-from app.core.settings import get_settings
+from app.core.settings import get_adapter_path, get_settings
 from app.db.bootstrap import resolve_sqlite_path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -128,12 +128,14 @@ def export_data(
         for f in configs_dir.rglob("*"):
             if f.is_file():
                 include_paths.append((str(f.relative_to(ROOT_DIR)), f))
-    # models/adapters/latest/
-    adapters_dir = ROOT_DIR / "models" / "adapters" / "latest"
+    # models/adapters/latest/ (instance-aware; archived under a stable
+    # repo-relative path so the layout doesn't change with YOUOS_DATA_DIR).
+    adapters_dir = get_adapter_path()
     if adapters_dir.is_dir():
         for f in adapters_dir.rglob("*"):
             if f.is_file():
-                include_paths.append((str(f.relative_to(ROOT_DIR)), f))
+                arcname = str(Path("models/adapters/latest") / f.relative_to(adapters_dir))
+                include_paths.append((arcname, f))
 
     with tarfile.open(output_path, "w:gz") as tar:
         for arcname, filepath in include_paths:
@@ -272,7 +274,7 @@ def status():
 
     # Model info
     model_used = config.get("model", {}).get("base", "Qwen/Qwen2.5-1.5B-Instruct")
-    adapter_path = ROOT_DIR / "models" / "adapters" / "latest" / "adapters.safetensors"
+    adapter_path = get_adapter_path() / "adapters.safetensors"
     if adapter_path.exists():
         mtime = os.path.getmtime(adapter_path)
         dt = datetime.fromtimestamp(mtime)
@@ -660,7 +662,7 @@ def model_show():
     config_path = ROOT_DIR / "youos_config.yaml"
     config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
     base = config.get("model", {}).get("base", "Qwen/Qwen2.5-1.5B-Instruct")
-    adapter = ROOT_DIR / "models" / "adapters" / "latest" / "adapters.safetensors"
+    adapter = get_adapter_path() / "adapters.safetensors"
     typer.echo(f"Base model:  {base}")
     typer.echo(f"Adapter:     {'✅ trained' if adapter.exists() else '❌ not trained yet'}")
 

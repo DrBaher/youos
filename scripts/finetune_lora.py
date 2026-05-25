@@ -11,22 +11,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.core.config import get_base_model
+from app.core.settings import get_adapter_path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT_DIR / "var" / "youos.db"
 DEFAULT_DATA_DIR = ROOT_DIR / "data" / "feedback"
-DEFAULT_ADAPTER_DIR = ROOT_DIR / "models" / "adapters" / "latest"
 BASE_MODEL = get_base_model()
 
 
 def parse_args() -> argparse.Namespace:
+    # Resolved lazily so YOUOS_DATA_DIR set in the calling shell lands the
+    # adapter in the active instance, not the repo root.
+    default_adapter_dir = get_adapter_path()
     p = argparse.ArgumentParser(description="LoRA fine-tuning with mlx_lm")
     p.add_argument("--iters", type=int, default=None, help="Training iterations (overrides auto-scaling)")
     p.add_argument("--num-layers", type=int, default=None, help="Number of LoRA layers (overrides auto-scaling)")
     p.add_argument("--learning-rate", type=float, default=None, help="Learning rate (overrides auto-scaling)")
     p.add_argument("--auto", action=argparse.BooleanOptionalAction, default=True, help="Auto-scale hyperparameters (default: True)")
     p.add_argument("--data-dir", type=str, default=str(DEFAULT_DATA_DIR), help="Directory with train.jsonl/valid.jsonl")
-    p.add_argument("--adapter-dir", type=str, default=str(DEFAULT_ADAPTER_DIR), help="Output adapter directory")
+    p.add_argument("--adapter-dir", type=str, default=str(default_adapter_dir), help="Output adapter directory")
     p.add_argument("--db", type=str, default=str(DEFAULT_DB), help="Database path")
     p.add_argument("--dry-run", action="store_true", help="Show config without training")
     p.add_argument("--dpo", action="store_true", help="Use DPO training with data/dpo_train.jsonl")
