@@ -66,6 +66,14 @@ def _migrate_feedback_pairs(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE feedback_pairs ADD COLUMN edit_categories TEXT")
     if "precedents_used" not in cols:
         connection.execute("ALTER TABLE feedback_pairs ADD COLUMN precedents_used TEXT")
+    # `sender_type` is the persona-routing axis added in Phase 1 of the
+    # per-persona adapters work. NULL on rows that predate this column (the
+    # backfill script `scripts/backfill_feedback_sender_type.py` derives it
+    # from the linked reply_pair's inbound_author for the historical pairs;
+    # NULL is still legal after backfill for rows whose reply_pair_id is
+    # None, which is treated as "unknown" for cohort purposes).
+    if "sender_type" not in cols:
+        connection.execute("ALTER TABLE feedback_pairs ADD COLUMN sender_type TEXT")
 
 
 def _migrate_reply_pairs(connection: sqlite3.Connection) -> None:
