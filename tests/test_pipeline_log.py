@@ -1,27 +1,42 @@
 """Tests for pipeline failure log."""
 
 import json
-from unittest.mock import patch
+
+import pytest
 
 
-def test_write_pipeline_log(tmp_path):
+@pytest.fixture
+def _reset_settings():
+    from app.core.settings import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture
+def instance_var(monkeypatch, tmp_path, _reset_settings):
+    monkeypatch.setenv("YOUOS_DATA_DIR", str(tmp_path))
+    return tmp_path / "var"
+
+
+def test_write_pipeline_log(instance_var):
     """Test that pipeline log is written as valid JSON."""
     from scripts.nightly_pipeline import _write_pipeline_log
 
-    with patch("scripts.nightly_pipeline.ROOT_DIR", tmp_path):
-        (tmp_path / "var").mkdir()
-        run_log = {
-            "run_at": "2026-03-16T01:00:00+00:00",
-            "status": "ok",
-            "steps": {"dedup": True, "ingestion": True},
-            "errors": [],
-        }
-        _write_pipeline_log(run_log)
-        log_path = tmp_path / "var" / "pipeline_last_run.json"
-        assert log_path.exists()
-        data = json.loads(log_path.read_text())
-        assert data["status"] == "ok"
-        assert data["steps"]["dedup"] is True
+    instance_var.mkdir()
+    run_log = {
+        "run_at": "2026-03-16T01:00:00+00:00",
+        "status": "ok",
+        "steps": {"dedup": True, "ingestion": True},
+        "errors": [],
+    }
+    _write_pipeline_log(run_log)
+    log_path = instance_var / "pipeline_last_run.json"
+    assert log_path.exists()
+    data = json.loads(log_path.read_text())
+    assert data["status"] == "ok"
+    assert data["steps"]["dedup"] is True
 
 
 def test_pipeline_status_logic():
@@ -51,23 +66,22 @@ def test_pipeline_status_logic():
     assert status == "failed"
 
 
-def test_pipeline_log_on_error(tmp_path):
+def test_pipeline_log_on_error(instance_var):
     """Test that log is written even when errors occur."""
     from scripts.nightly_pipeline import _write_pipeline_log
 
-    with patch("scripts.nightly_pipeline.ROOT_DIR", tmp_path):
-        (tmp_path / "var").mkdir()
-        run_log = {
-            "run_at": "2026-03-16T01:00:00+00:00",
-            "status": "partial",
-            "steps": {"dedup": True, "ingestion": False},
-            "errors": ["Gmail ingestion failed"],
-        }
-        _write_pipeline_log(run_log)
-        data = json.loads((tmp_path / "var" / "pipeline_last_run.json").read_text())
-        assert data["status"] == "partial"
-        assert len(data["errors"]) == 1
-        assert "Gmail" in data["errors"][0]
+    instance_var.mkdir()
+    run_log = {
+        "run_at": "2026-03-16T01:00:00+00:00",
+        "status": "partial",
+        "steps": {"dedup": True, "ingestion": False},
+        "errors": ["Gmail ingestion failed"],
+    }
+    _write_pipeline_log(run_log)
+    data = json.loads((instance_var / "pipeline_last_run.json").read_text())
+    assert data["status"] == "partial"
+    assert len(data["errors"]) == 1
+    assert "Gmail" in data["errors"][0]
 
 
 def test_stats_endpoint_includes_pipeline(tmp_path):

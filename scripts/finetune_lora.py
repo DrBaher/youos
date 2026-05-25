@@ -11,18 +11,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.core.config import get_base_model
-from app.core.settings import get_adapter_path
+from app.core.settings import get_adapter_path, get_settings
+from app.db.bootstrap import resolve_sqlite_path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_DB = ROOT_DIR / "var" / "youos.db"
 DEFAULT_DATA_DIR = ROOT_DIR / "data" / "feedback"
 BASE_MODEL = get_base_model()
 
 
 def parse_args() -> argparse.Namespace:
     # Resolved lazily so YOUOS_DATA_DIR set in the calling shell lands the
-    # adapter in the active instance, not the repo root.
+    # adapter (and DB read) in the active instance, not the repo root —
+    # the nightly invokes this script as a subprocess without --db / --adapter-dir.
     default_adapter_dir = get_adapter_path()
+    default_db = resolve_sqlite_path(get_settings().database_url)
     p = argparse.ArgumentParser(description="LoRA fine-tuning with mlx_lm")
     p.add_argument("--iters", type=int, default=None, help="Training iterations (overrides auto-scaling)")
     p.add_argument("--num-layers", type=int, default=None, help="Number of LoRA layers (overrides auto-scaling)")
@@ -30,7 +32,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--auto", action=argparse.BooleanOptionalAction, default=True, help="Auto-scale hyperparameters (default: True)")
     p.add_argument("--data-dir", type=str, default=str(DEFAULT_DATA_DIR), help="Directory with train.jsonl/valid.jsonl")
     p.add_argument("--adapter-dir", type=str, default=str(default_adapter_dir), help="Output adapter directory")
-    p.add_argument("--db", type=str, default=str(DEFAULT_DB), help="Database path")
+    p.add_argument("--db", type=str, default=str(default_db), help="Database path")
     p.add_argument("--dry-run", action="store_true", help="Show config without training")
     p.add_argument("--dpo", action="store_true", help="Use DPO training with data/dpo_train.jsonl")
     return p.parse_args()
