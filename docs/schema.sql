@@ -192,6 +192,29 @@ CREATE TABLE IF NOT EXISTS draft_history (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Append-only draft-event signal log: one row per generated draft (not only
+-- those the user gives feedback on), with the exemplar ids / intent /
+-- sender_type / confidence the draft was produced with. Richer training
+-- signal for the nightly than feedback-only `draft_history`.
+CREATE TABLE IF NOT EXISTS draft_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    inbound_text TEXT NOT NULL,
+    generated_draft TEXT NOT NULL,
+    account_email TEXT,
+    sender TEXT,
+    sender_type TEXT,
+    detected_mode TEXT,
+    intent TEXT,
+    confidence TEXT,
+    confidence_reason TEXT,
+    model_used TEXT,
+    retrieval_method TEXT,
+    exemplar_ids TEXT NOT NULL DEFAULT '[]',
+    length_flag TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_draft_events_created ON draft_events(created_at);
+
 -- Facts store: context-aware facts surfaced via /api/facts (type: contact | project | user_pref)
 -- Exposed as "Facts" in the UI and API; stored in the `memory` table for backwards compatibility.
 CREATE TABLE IF NOT EXISTS memory (

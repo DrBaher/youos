@@ -45,6 +45,7 @@ def bootstrap_database() -> Path:
         _migrate_memory(connection)
         _migrate_review_streaks(connection)
         _migrate_exemplar_cache(connection)
+        _migrate_draft_events(connection)
         _populate_fts(connection)
         connection.commit()
     finally:
@@ -185,3 +186,33 @@ def _migrate_exemplar_cache(connection: sqlite3.Connection) -> None:
         )
     """)
     connection.execute("CREATE INDEX IF NOT EXISTS idx_exemplar_cache_updated ON exemplar_cache(updated_at)")
+
+
+def _migrate_draft_events(connection: sqlite3.Connection) -> None:
+    """Create the append-only draft-event signal log if it doesn't exist.
+
+    One row per generated draft (not just ones the user gives feedback on),
+    capturing the exemplar ids / intent / sender_type / confidence the draft
+    was produced with — richer training signal for the nightly than
+    feedback-only `draft_history`.
+    """
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS draft_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            inbound_text TEXT NOT NULL,
+            generated_draft TEXT NOT NULL,
+            account_email TEXT,
+            sender TEXT,
+            sender_type TEXT,
+            detected_mode TEXT,
+            intent TEXT,
+            confidence TEXT,
+            confidence_reason TEXT,
+            model_used TEXT,
+            retrieval_method TEXT,
+            exemplar_ids TEXT NOT NULL DEFAULT '[]',
+            length_flag TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_draft_events_created ON draft_events(created_at)")
