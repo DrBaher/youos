@@ -915,6 +915,47 @@ def _local_model_available() -> bool:
     return shutil.which("mlx_lm") is not None
 
 
+def _persona_adapter_available(sender_type: str | None) -> Path | None:
+    """Return the path to a per-persona adapter, or None when not available.
+
+    Phase 3 of per-persona adapters. The routing decision in
+    `generate_draft` calls this with the inbound's `sender_type_hint`; a
+    non-None return means the per-persona adapter is on disk and routing
+    can use it instead of the global. NULL/unknown/empty sender_type
+    returns None — we don't have a persona adapter for "unknown" and
+    routing should fall through to the global in that case.
+    """
+    if not sender_type or sender_type == "unknown":
+        return None
+    from app.core.settings import get_persona_adapter_path
+
+    path = get_persona_adapter_path(sender_type)
+    if (path / "adapters.safetensors").exists():
+        return path
+    return None
+
+
+def _persona_routing_enabled() -> bool:
+    """True when ``personas.routing_enabled: true`` is set in the config.
+
+    Default-off so existing installs upgrade through Phases 1+2 without
+    any generation behavior change — the user opts in once Phase 2 has
+    accumulated per-persona adapters they want to use.
+    """
+    try:
+        from app.core.config import load_config
+
+        raw = load_config() or {}
+        if not isinstance(raw, dict):
+            return False
+        personas_cfg = raw.get("personas") or {}
+        if not isinstance(personas_cfg, dict):
+            return False
+        return bool(personas_cfg.get("routing_enabled", False))
+    except Exception:
+        return False
+
+
 def _compute_max_tokens(avg_reply_words: int | None, *, persona: dict[str, Any] | None = None, intent: str | None = None) -> int:
     """Compute max_tokens as a rough upper bound from avg_reply_words.
 
@@ -964,15 +1005,30 @@ def _strip_mlx_output(raw: str) -> str:
     return "\n".join(clean).strip()
 
 
-def _call_local_model(prompt: str, *, max_tokens: int = 300, use_adapter: bool = True) -> str:
+def _call_local_model(
+    prompt: str,
+    *,
+    max_tokens: int = 300,
+    use_adapter: bool = True,
+    adapter_path: Path | None = None,
+) -> str:
+    """Run mlx_lm against the base model, optionally with a LoRA adapter.
+
+    `adapter_path` overrides the global ADAPTER_PATH — used by Phase-3
+    persona routing to point at `<models>/adapters/personas/<sender_type>/`
+    instead of the global `<models>/adapters/latest/`. Falls back to
+    ADAPTER_PATH when `use_adapter=True` and `adapter_path` is None
+    (preserves the historical behavior).
+    """
     cmd = [
         "mlx_lm",
         "generate",
         "--model",
         _get_base_model_id(),
     ]
-    if use_adapter:
-        cmd.extend(["--adapter-path", str(ADAPTER_PATH)])
+    chosen_adapter = adapter_path if adapter_path is not None else (ADAPTER_PATH if use_adapter else None)
+    if chosen_adapter is not None:
+        cmd.extend(["--adapter-path", str(chosen_adapter)])
     cmd.extend(
         [
             "--prompt",
@@ -1272,11 +1328,28 @@ def generate_draft(
     fallback_model = get_model_fallback()
     try:
         if request.use_local_model and _local_model_available():
-            # Use the LoRA adapter when present and the caller wants it;
-            # otherwise run the base model rather than failing over to cloud.
-            with_adapter = request.use_adapter and _adapter_available()
-            draft = _call_local_model(prompt, max_tokens=max_tokens, use_adapter=with_adapter)
-            model_used = "qwen2.5-1.5b-lora" if with_adapter else "qwen2.5-1.5b-base"
+            # Phase 3 routing precedence:
+            # 1. Per-persona adapter when (a) routing is on, (b) the caller
+            #    wants an adapter, (c) the inbound's sender_type maps to a
+            #    trained adapter on disk.
+            # 2. Global "latest" adapter when no persona adapter applies
+            #    and one is trained.
+            # 3. Base model otherwise.
+            # Each fallback is honest in `model_used` so the trace records
+            # which adapter actually generated the draft — important when
+            # tuning persona vs global on the same corpus.
+            persona_adapter_path: Path | None = None
+            if request.use_adapter and _persona_routing_enabled():
+                persona_adapter_path = _persona_adapter_available(sender_type_hint)
+            if persona_adapter_path is not None:
+                draft = _call_local_model(
+                    prompt, max_tokens=max_tokens, adapter_path=persona_adapter_path,
+                )
+                model_used = f"qwen2.5-1.5b-lora-{sender_type_hint}"
+            else:
+                with_adapter = request.use_adapter and _adapter_available()
+                draft = _call_local_model(prompt, max_tokens=max_tokens, use_adapter=with_adapter)
+                model_used = "qwen2.5-1.5b-lora" if with_adapter else "qwen2.5-1.5b-base"
         elif fallback_model == "ollama":
             from app.core.config import get_ollama_config
 

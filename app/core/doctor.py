@@ -84,6 +84,30 @@ def run_doctor_checks_full() -> tuple[bool, list[str], list[str]]:
     if not models_dir.exists() or not any(models_dir.iterdir()):
         warnings.append(f"{models_dir} is empty")
 
+    # Warning: personas.routing_enabled in config but no per-persona
+    # adapters are trained yet — every draft will silently fall through
+    # to the global, defeating the point of flipping the routing flag.
+    # Catches the order-of-operations misconfig where the user enables
+    # routing before Phase 2's nightly has accumulated any adapters.
+    try:
+        from app.core.config import load_config
+        from app.core.stats import get_persona_adapter_status
+
+        cfg = load_config() or {}
+        if isinstance(cfg, dict):
+            personas_cfg = cfg.get("personas") or {}
+            if isinstance(personas_cfg, dict) and personas_cfg.get("routing_enabled"):
+                statuses = get_persona_adapter_status()
+                if not any(s.get("trained") for s in statuses.values()):
+                    warnings.append(
+                        "personas.routing_enabled: true but no per-persona adapters "
+                        "are trained yet — every draft will fall through to the "
+                        "global adapter. Wait for the nightly's finetune-personas "
+                        "step to accumulate adapters, or set routing_enabled: false."
+                    )
+    except Exception:
+        pass
+
     # Warning: reranker_enabled in config but sentence-transformers not loadable.
     # Without this the silent fallback would let the user think reranking is
     # firing when nothing is being reranked — exactly the misconfiguration the
