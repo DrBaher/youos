@@ -215,6 +215,51 @@ def get_pipeline_status(project_root: Path) -> dict | None:
         return None
 
 
+def get_persona_adapter_status() -> dict[str, dict]:
+    """Return ``{persona: {trained: bool, mtime: iso|None, pairs_used: int|None}}``.
+
+    One entry per sender_type cohort (internal / external_client / personal /
+    automated) — "unknown" excluded since Phase 2 doesn't train an adapter
+    for it. Used by the stats endpoint and the doctor check so the user
+    can see which personas have a trained adapter without poking the
+    filesystem.
+
+    ``mtime`` and ``pairs_used`` come from the adapter's `meta.json`
+    (written by `scripts/finetune_lora.py`) when present; otherwise mtime
+    falls back to the safetensors file's mtime and pairs_used is None.
+    """
+    from app.core.settings import get_persona_adapter_path
+
+    out: dict[str, dict] = {}
+    for persona in ("internal", "external_client", "personal", "automated"):
+        adapter_dir = get_persona_adapter_path(persona)
+        sfile = adapter_dir / "adapters.safetensors"
+        meta_path = adapter_dir / "meta.json"
+        entry: dict = {"trained": sfile.exists(), "mtime": None, "pairs_used": None}
+        if not sfile.exists():
+            out[persona] = entry
+            continue
+        # Prefer the train metadata json; fall back to fs mtime.
+        if meta_path.exists():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                entry["mtime"] = meta.get("trained_at")
+                entry["pairs_used"] = meta.get("pairs_used")
+            except Exception:
+                pass
+        if entry["mtime"] is None:
+            try:
+                from datetime import datetime, timezone
+
+                entry["mtime"] = datetime.fromtimestamp(
+                    sfile.stat().st_mtime, tz=timezone.utc
+                ).isoformat()
+            except Exception:
+                pass
+        out[persona] = entry
+    return out
+
+
 def get_embedding_coverage(database_url: str) -> dict[str, float]:
     """Fraction of rows with non-empty embeddings, per indexed table.
 
