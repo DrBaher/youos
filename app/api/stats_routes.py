@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 
 from app.core.config import load_config
 from app.core.settings import get_adapter_path, get_var_dir
-from app.core.stats import get_corpus_stats, get_model_status, get_pipeline_status
+from app.core.stats import get_corpus_stats, get_model_status, get_pipeline_status, summarize_draft_events
 from app.db.bootstrap import resolve_sqlite_path
 
 router = APIRouter(tags=["stats"])
@@ -73,6 +73,7 @@ def stats_data(request: Request) -> dict[str, Any]:
     corpus = get_corpus_stats(settings.database_url)
     model = get_model_status(Path(settings.configs_dir))
     pipeline_last_run = get_pipeline_status(get_var_dir().parent)
+    draft_events = summarize_draft_events(settings.database_url)
 
     # Extract benchmark_trend from model status (kept together for source consistency)
     benchmark_trend = model.pop("benchmark_trend", [])
@@ -331,4 +332,5 @@ def stats_data(request: Request) -> dict[str, Any]:
         "embedding_coverage": embedding_coverage_by_table,
         "feedback_by_persona": feedback_by_persona,
         "persona_adapters": persona_adapters,
+        "draft_events": draft_events,
     }

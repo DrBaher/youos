@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.36 — 2026-05-25
+
+### Consume the draft_events signal — draft-quality-by-condition
+- **The per-draft signal log (`draft_events`, v0.1.33) is now turned into an actionable picture, surfaced in the nightly log and `/stats/data`.** New `summarize_draft_events()` (`app/core/stats.py`) aggregates the log by **condition**: counts per intent / sender_type / confidence / length_flag, the **off-target length rate** (% of length-annotated drafts flagged `long`/`short` — a direct signal that a cohort's target-words are mis-calibrated), and a **best-effort edit-distance-by-condition correlation** (LEFT JOIN to `draft_history` on inbound+draft text, with a `matched` coverage count since that key isn't unique). This tells the self-improvement loop *where* drafting is weak.
+- **Why not "train on drafts":** the LoRA target is always the user's edited reply (ground truth); a model's own draft is never a training target (that would just reinforce current behavior). `draft_events`' unique value is the *conditions* a draft was produced under — analysis/observability, and the substrate a future autoresearch objective can optimize. Wired into `scripts/nightly_pipeline.py` (`draft_events_summary` in the run log) and the `/stats/data` API. Read-only and tolerant of an absent/empty table. Pinned with tests for the condition counts, off-target rate (NULL flags excluded), the outcome correlation, and the empty/missing-table paths.
+
 ## v0.1.35 — 2026-05-25
 
 ### Smarter drafting 4/4 — multi-candidate generation + ranking
