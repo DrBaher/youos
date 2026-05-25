@@ -1,17 +1,15 @@
 """Pluggable Google Workspace data sources for ingestion.
 
 Gmail-thread and Google-Doc ingestion fetch their raw data through a
-backend-agnostic :class:`GoogleWorkspaceSource`. Today the only implementation
-is :class:`GogSource`, which shells out to the OpenClaw ``gog`` CLI exactly as
-before — so this layer introduces **zero behavior change**.
+backend-agnostic :class:`GoogleWorkspaceSource`, so YouOS can decouple from the
+OpenClaw ``gog`` CLI. Implementations:
 
-The seam exists so YouOS can decouple from ``gog``. Two further backends are
-planned and will live alongside :class:`GogSource` here:
-
-- ``gws`` — Google's own open-source Workspace CLI (single-account, JSON-by-
-  default, ``gws <service> <resource> <method> --params '{...}'``).
+- :class:`GogSource` — the OpenClaw ``gog`` CLI (default; zero behavior change).
+- :class:`GwsSource` — Google's own open-source Workspace CLI ``gws``
+  (single-account, JSON-by-default, ``gws <service> <resource> <method>
+  --params '{...}'``).
 - ``native`` — a direct Google-API client (``google-api-python-client`` +
-  ``google-auth-oauthlib``), no external CLI.
+  ``google-auth-oauthlib``), no external CLI. *Planned.*
 
 Each method returns the **canonical payload** the ingestion normalizers already
 consume (``_normalize_thread_payload`` / ``_wrap_live_doc_payload`` etc.) —
@@ -26,11 +24,27 @@ unchanged.
 
 from __future__ import annotations
 
+import json
+import logging
+import os
+import subprocess
+import time
 from typing import Any, Protocol, runtime_checkable
 
 from app.core.config import get_ingestion_google_backend
 
+logger = logging.getLogger(__name__)
+
 SUPPORTED_BACKENDS = ("gog", "gws", "native")
+
+# --- gws (Google Workspace CLI) transport tunables ------------------------
+# Hard per-call cap so a stalled `gws` (auth prompt, token refresh, network)
+# can't hang ingestion forever — mirrors the gog backend's GOG_TIMEOUT_SECONDS.
+GWS_TIMEOUT_SECONDS = 120
+# Same rate-limit backoff philosophy as the gog backend.
+_GWS_BACKOFF_SECONDS = (2, 4, 8, 16)
+# Search-page size for Gmail threads.list pagination.
+_GWS_THREAD_PAGE_SIZE = 50
 
 
 @runtime_checkable
@@ -109,12 +123,281 @@ class GogSource:
         return _gog_docs_cat(account=account, doc_id=doc_id, max_bytes=max_bytes, all_tabs=all_tabs)
 
 
+def _load_gws_credentials() -> dict[str, str]:
+    """Optional per-account credentials map from ``ingestion.gws_credentials``.
+
+    ``gws`` is single-account per credential (no per-command ``--account`` like
+    ``gog``). To bridge YouOS's multi-account ingestion loop, an instance may
+    map each ingestion account to a gws credentials file; the adapter sets
+    ``GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`` per call. With no mapping the
+    ambient gws credentials (env / default login) are used as-is.
+    """
+    try:
+        from app.core.config import load_config
+
+        cfg = load_config() or {}
+        ingestion = cfg.get("ingestion", {}) if isinstance(cfg, dict) else {}
+        creds = ingestion.get("gws_credentials", {}) if isinstance(ingestion, dict) else {}
+        if isinstance(creds, dict):
+            return {str(k): str(v) for k, v in creds.items()}
+    except Exception:  # never let a config hiccup break source construction
+        logger.debug("Could not read ingestion.gws_credentials", exc_info=True)
+    return {}
+
+
+def _unwrap_gws_envelope(raw: Any) -> Any:
+    """Drill through a possible ``{result|data|response: {...}}`` wrapper.
+
+    ``gws`` emits structured JSON; whether it wraps the Google resource in an
+    envelope is version-dependent, so we defensively descend a few common
+    wrapper keys. Google resources themselves never use these as top-level
+    keys (threads/messages/files nest their data under their own keys), so this
+    is a no-op when ``gws`` returns the bare resource.
+    """
+    cur = raw
+    for _ in range(4):
+        if not isinstance(cur, dict):
+            break
+        for wrapper in ("result", "data", "response"):
+            nested = cur.get(wrapper)
+            if isinstance(nested, dict):
+                cur = nested
+                break
+        else:
+            break
+    return cur
+
+
+def _docs_document_to_text(document: dict[str, Any], *, all_tabs: bool) -> str:
+    """Flatten a Docs API ``documents.get`` resource to plain text.
+
+    Walks paragraph ``textRun`` content. Honors the tabs feature: with
+    ``all_tabs`` every tab's body is concatenated; otherwise the top-level body
+    (falling back to the first tab for tabs-only documents).
+    """
+
+    def walk_body(body: dict[str, Any]) -> str:
+        out: list[str] = []
+        for element in body.get("content", []) or []:
+            if not isinstance(element, dict):
+                continue
+            paragraph = element.get("paragraph")
+            if not isinstance(paragraph, dict):
+                continue
+            for pe in paragraph.get("elements", []) or []:
+                if not isinstance(pe, dict):
+                    continue
+                text_run = pe.get("textRun")
+                if isinstance(text_run, dict):
+                    content = text_run.get("content")
+                    if isinstance(content, str):
+                        out.append(content)
+        return "".join(out)
+
+    tabs = document.get("tabs")
+    bodies: list[str] = []
+    if all_tabs and isinstance(tabs, list) and tabs:
+        for tab in tabs:
+            doc_tab = tab.get("documentTab") if isinstance(tab, dict) else None
+            if isinstance(doc_tab, dict) and isinstance(doc_tab.get("body"), dict):
+                bodies.append(walk_body(doc_tab["body"]))
+    else:
+        body = document.get("body")
+        if isinstance(body, dict):
+            bodies.append(walk_body(body))
+        elif isinstance(tabs, list) and tabs:
+            doc_tab = tabs[0].get("documentTab") if isinstance(tabs[0], dict) else None
+            if isinstance(doc_tab, dict) and isinstance(doc_tab.get("body"), dict):
+                bodies.append(walk_body(doc_tab["body"]))
+
+    return "\n".join(b.strip() for b in bodies if b.strip())
+
+
+# Drive file fields the docs normalizer reads (title/uri/timestamps/owner).
+_GWS_DRIVE_FIELDS = (
+    "id,name,mimeType,webViewLink,createdTime,modifiedTime,"
+    "owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress)"
+)
+
+
+class GwsSource:
+    """Backend backed by Google's own Workspace CLI, ``gws``.
+
+    ``gws`` (github.com/googleworkspace/cli) is dynamically generated from
+    Google's Discovery Service, so its command surface mirrors the Google API
+    method paths (``gws gmail users threads get --params '{...}'``) and it emits
+    structured JSON by default. Because the Gmail normalizer already consumes
+    the raw Gmail API message shape, the Gmail path is almost identity: we hand
+    the threads.get resource straight to ``_normalize_gog_thread_payload`` (its
+    unwrap/thread-id logic is backend-agnostic). Docs go through Drive
+    ``files.get`` (metadata) + Docs ``documents.get`` (text).
+
+    Command names follow the Google API method paths; if a future ``gws``
+    Discovery rendering differs, they are all localized to this class.
+    Live ingestion is verified on a real instance (the container has no
+    authenticated ``gws``).
+    """
+
+    name = "gws"
+
+    def __init__(self, *, credentials: dict[str, str] | None = None) -> None:
+        self._credentials = credentials if credentials is not None else _load_gws_credentials()
+        # Avoid re-fetching documents.get for both docs_info and docs_cat.
+        self._doc_cache: dict[str, dict[str, Any]] = {}
+
+    # --- transport ---------------------------------------------------------
+    def _run_json(self, args: list[str], *, account: str | None, params: dict[str, Any]) -> Any:
+        command = ["gws", *args, "--params", json.dumps(params, separators=(",", ":"))]
+        env = os.environ.copy()
+        creds = self._credentials.get(account) if account else None
+        if creds:
+            env["GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE"] = str(creds)
+
+        last_error = ""
+        from app.ingestion.gmail_threads import _looks_like_rate_limit
+
+        for backoff in (*_GWS_BACKOFF_SECONDS, None):
+            try:
+                completed = subprocess.run(
+                    command,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=GWS_TIMEOUT_SECONDS,
+                    env=env,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise ValueError(f"{' '.join(command)} timed out after {GWS_TIMEOUT_SECONDS}s") from exc
+
+            if completed.returncode == 0:
+                try:
+                    return _unwrap_gws_envelope(json.loads(completed.stdout))
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"{' '.join(command)} returned invalid JSON: {exc}") from exc
+
+            error_detail = completed.stderr.strip() or completed.stdout.strip() or "unknown gws error"
+            last_error = error_detail
+            if not _looks_like_rate_limit(error_detail) or backoff is None:
+                raise ValueError(f"{' '.join(command)} failed: {error_detail}")
+            time.sleep(backoff)
+
+        raise ValueError(f"{' '.join(command)} failed after retries: {last_error}")
+
+    # --- Gmail -------------------------------------------------------------
+    def search_threads(self, *, account: str, query: str, max_threads: int | None) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        page_token: str | None = None
+        while True:
+            params: dict[str, Any] = {"userId": "me", "q": query, "maxResults": _GWS_THREAD_PAGE_SIZE}
+            if page_token:
+                params["pageToken"] = page_token
+            payload = self._run_json(["gmail", "users", "threads", "list"], account=account, params=params)
+
+            threads = payload.get("threads") if isinstance(payload, dict) else None
+            if not isinstance(threads, list):
+                threads = []
+            results.extend(item for item in threads if isinstance(item, dict))
+
+            if max_threads is not None and len(results) >= max_threads:
+                return results[:max_threads]
+
+            page_token = payload.get("nextPageToken") if isinstance(payload, dict) else None
+            if not page_token or not threads:
+                return results
+            time.sleep(1.5)  # pace between pages, like the gog backend
+
+    def get_thread(self, *, account: str, thread_id: str) -> dict[str, Any]:
+        from app.ingestion.gmail_threads import _normalize_gog_thread_payload
+
+        payload = self._run_json(
+            ["gmail", "users", "threads", "get"],
+            account=account,
+            params={"userId": "me", "id": thread_id, "format": "full"},
+        )
+        if not isinstance(payload, dict):
+            raise ValueError(f"gws gmail threads get returned malformed JSON for thread {thread_id}.")
+        # The Gmail-API thread shape is exactly what the normalizer consumes.
+        return _normalize_gog_thread_payload(payload, requested_thread_id=thread_id)
+
+    # --- Drive / Docs ------------------------------------------------------
+    def drive_search(self, *, account: str, query: str, max_docs: int | None, raw_query: bool) -> list[dict[str, Any]]:
+        # raw_query: pass `query` verbatim as the Drive `q`. Otherwise full-text
+        # search restricted to Google Docs (this is the Docs importer).
+        if raw_query:
+            drive_q = query
+        else:
+            escaped = query.replace("\\", "\\\\").replace("'", "\\'")
+            drive_q = f"fullText contains '{escaped}' and mimeType = 'application/vnd.google-apps.document'"
+
+        results: list[dict[str, Any]] = []
+        page_token: str | None = None
+        page_size = 100
+        while True:
+            params: dict[str, Any] = {
+                "q": drive_q,
+                "pageSize": page_size,
+                "fields": "files(id,name,mimeType,webViewLink),nextPageToken",
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            payload = self._run_json(["drive", "files", "list"], account=account, params=params)
+
+            files = payload.get("files") if isinstance(payload, dict) else None
+            if not isinstance(files, list):
+                files = []
+            results.extend(item for item in files if isinstance(item, dict))
+
+            if max_docs is not None and len(results) >= max_docs:
+                return results[:max_docs]
+
+            page_token = payload.get("nextPageToken") if isinstance(payload, dict) else None
+            if not page_token or not files:
+                return results
+            time.sleep(1.0)
+
+    def _document_get(self, *, account: str, doc_id: str) -> dict[str, Any]:
+        cached = self._doc_cache.get(doc_id)
+        if cached is not None:
+            return cached
+        payload = self._run_json(
+            ["docs", "documents", "get"],
+            account=account,
+            params={"documentId": doc_id},
+        )
+        if not isinstance(payload, dict):
+            raise ValueError(f"gws docs documents get returned malformed JSON for doc {doc_id}.")
+        self._doc_cache[doc_id] = payload
+        return payload
+
+    def docs_info(self, *, account: str, doc_id: str) -> dict[str, Any]:
+        document = self._document_get(account=account, doc_id=doc_id)
+        # Keep it light — the full body lives in content_text, not metadata.
+        return {"documentId": doc_id, "title": document.get("title")}
+
+    def drive_get(self, *, account: str, doc_id: str) -> dict[str, Any]:
+        payload = self._run_json(
+            ["drive", "files", "get"],
+            account=account,
+            params={"fileId": doc_id, "fields": _GWS_DRIVE_FIELDS},
+        )
+        if not isinstance(payload, dict):
+            raise ValueError(f"gws drive files get returned malformed JSON for doc {doc_id}.")
+        return payload
+
+    def docs_cat(self, *, account: str, doc_id: str, max_bytes: int, all_tabs: bool) -> str:
+        document = self._document_get(account=account, doc_id=doc_id)
+        text = _docs_document_to_text(document, all_tabs=all_tabs)
+        if max_bytes and len(text.encode("utf-8")) > max_bytes:
+            text = text.encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore")
+        return text.strip()
+
+
 def get_google_source(backend: str | None = None) -> GoogleWorkspaceSource:
     """Return the configured Google Workspace ingestion backend.
 
     ``backend`` overrides the configured value (handy for tests). When omitted
-    it reads ``ingestion.google_backend`` (default ``gog``). The ``gws`` and
-    ``native`` backends are reserved but not wired up yet and raise
+    it reads ``ingestion.google_backend`` (default ``gog``). The ``native``
+    backend is reserved but not wired up yet and raises
     :class:`NotImplementedError`; an unrecognized explicit override raises
     :class:`ValueError`.
     """
@@ -122,10 +405,7 @@ def get_google_source(backend: str | None = None) -> GoogleWorkspaceSource:
     if name == "gog":
         return GogSource()
     if name == "gws":
-        raise NotImplementedError(
-            "The 'gws' (Google Workspace CLI) ingestion backend is not wired up yet. "
-            "Set `ingestion.google_backend: gog` for now."
-        )
+        return GwsSource()
     if name == "native":
         raise NotImplementedError(
             "The 'native' (Google API) ingestion backend is not wired up yet. "
