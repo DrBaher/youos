@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.50 — 2026-05-25
+
+### Wizard: install the background service in-browser ("Keep it running")
+- **New wizard step** between Secure and Done: a plain-language explanation of why a background service matters (runs at login, restarts on crash, survives reboot, localhost-only, no root) and an **Install background service** button → `POST /api/service/install` (the launchd LaunchAgent from v0.1.49), with a live status line via `GET /api/service/status`. Completes the "make every operational step actionable from the wizard" pass. Tests cover the endpoints (install ok / failure→500 / status; `service.install` mocked) and the wizard wiring.
+
 ## v0.1.49 — 2026-05-25
 
 ### Run YouOS reliably: `youos service` (launchd background service)
