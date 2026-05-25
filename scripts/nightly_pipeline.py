@@ -262,6 +262,126 @@ def step_index_embeddings(verbose: bool = False) -> dict:
     return {"ok": result}
 
 
+def _load_min_pairs_per_persona() -> int:
+    """Threshold below which a persona cohort is too thin to train.
+
+    Read from ``finetune.min_pairs_per_persona`` in the active instance's
+    config; defaults to 30 (matches the existing
+    ``finetune-milestone`` threshold for the global adapter, so a user
+    who knows that number knows this one).
+    """
+    try:
+        from app.core.config import load_config
+
+        raw = load_config() or {}
+        val = (raw.get("finetune", {}) if isinstance(raw, dict) else {}).get("min_pairs_per_persona")
+        if isinstance(val, int) and val > 0:
+            return val
+    except Exception:
+        pass
+    return 30
+
+
+def _persona_cohorts_above_threshold(db_path: Path, threshold: int) -> dict[str, int]:
+    """Return {sender_type: count} for cohorts that have >= threshold pairs.
+
+    "Unknown" is excluded — we don't train a persona adapter for pairs we
+    couldn't classify, since the prompt-side persona modes don't have a
+    style anchor for it either.
+    """
+    if not db_path.exists():
+        return {}
+    counts: dict[str, int] = {}
+    conn = sqlite3.connect(db_path)
+    try:
+        try:
+            rows = conn.execute(
+                "SELECT sender_type, COUNT(*) FROM feedback_pairs "
+                "WHERE sender_type IS NOT NULL AND sender_type != 'unknown' "
+                "GROUP BY sender_type HAVING COUNT(*) >= ?",
+                (threshold,),
+            ).fetchall()
+            counts = {row[0]: int(row[1]) for row in rows}
+        except sqlite3.OperationalError:
+            # Pre-migration DB — column not present. Caller treats empty
+            # dict as "no cohorts to train", which is the right answer.
+            pass
+    finally:
+        conn.close()
+    return counts
+
+
+def step_finetune_personas(verbose: bool = False) -> dict:
+    """Train per-persona adapters for any cohort above the threshold.
+
+    Phase 2 of per-persona adapters. Skipped silently when no cohort
+    qualifies (the common case until the user accumulates enough
+    feedback per sender_type). For each qualifying cohort, runs the
+    same export → finetune subprocess pipeline as the global, with
+    ``--persona <sender_type>`` set so the adapter lands at
+    ``<models>/adapters/personas/<sender_type>/`` and the per-row
+    used_in_finetune marking is skipped (the global still needs those
+    rows).
+    """
+    print(f"\n{'=' * 60}")
+    print("STEP: Per-persona fine-tuning")
+    print(f"{'=' * 60}")
+
+    db_path = resolve_sqlite_path(get_settings().database_url)
+    threshold = _load_min_pairs_per_persona()
+    eligible = _persona_cohorts_above_threshold(db_path, threshold)
+
+    if not eligible:
+        msg = f"[finetune-personas] No cohorts above threshold ({threshold} pairs)"
+        print(msg)
+        return {"ok": True, "skipped": True, "trained": [], "threshold": threshold}
+
+    trained: list[str] = []
+    failed: list[str] = []
+    for persona, count in sorted(eligible.items()):
+        print(f"  Training persona '{persona}' (cohort size: {count})")
+        # Export to a per-persona JSONL so the existing finetune script
+        # can pick it up unchanged. Each persona gets its own data dir
+        # so concurrent training (future) doesn't clobber.
+        persona_data_dir = ROOT_DIR / "data" / "feedback" / f"persona-{persona}"
+        export_ok = _run_step(
+            f"Export feedback (persona={persona})",
+            [
+                sys.executable,
+                str(ROOT_DIR / "scripts" / "export_feedback_jsonl.py"),
+                "--persona", persona,
+                "--output", str(persona_data_dir / "train.jsonl"),
+            ],
+        )
+        if not export_ok:
+            failed.append(persona)
+            continue
+        finetune_ok = _run_step(
+            f"Finetune (persona={persona})",
+            [
+                sys.executable,
+                str(ROOT_DIR / "scripts" / "finetune_lora.py"),
+                "--persona", persona,
+                "--data-dir", str(persona_data_dir),
+            ],
+            timeout=3600,
+        )
+        if finetune_ok:
+            trained.append(persona)
+        else:
+            failed.append(persona)
+
+    ok = not failed
+    return {
+        "ok": ok,
+        "skipped": False,
+        "threshold": threshold,
+        "trained": trained,
+        "failed": failed,
+        "eligible_counts": eligible,
+    }
+
+
 def step_snapshot_daily(verbose: bool = False) -> dict:
     """Take a daily snapshot of the active instance's DB, then prune per policy.
 
@@ -673,6 +793,37 @@ def main() -> None:
         results["finetune"] = f"skipped (only {unused} unused pairs, need 10)"
         steps["finetune"] = True
     _record_duration("finetune", _t)
+
+    # 3a-bis. Per-persona fine-tuning (Phase 2). Skipped silently when no
+    # cohort exceeds `finetune.min_pairs_per_persona` (default 30). Runs
+    # after the global so that any persona's adapter is at least as fresh
+    # as the global it falls back to in Phase-3 routed generation.
+    _t = time.monotonic()
+    try:
+        persona_result = step_finetune_personas(verbose=verbose)
+        if persona_result.get("skipped"):
+            results["finetune_personas"] = (
+                f"skipped (no cohort >= {persona_result['threshold']} pairs)"
+            )
+            steps["finetune_personas"] = True
+            skipped_steps.append("finetune_personas")
+        else:
+            trained = persona_result.get("trained", [])
+            failed = persona_result.get("failed", [])
+            if persona_result.get("ok"):
+                results["finetune_personas"] = f"trained {len(trained)}: {trained}"
+                steps["finetune_personas"] = True
+            else:
+                results["finetune_personas"] = (
+                    f"trained {len(trained)}, failed {len(failed)}: {failed}"
+                )
+                steps["finetune_personas"] = False
+                errors.append(f"Persona fine-tune failed for: {failed}")
+    except Exception as exc:
+        results["finetune_personas"] = f"error: {exc}"
+        steps["finetune_personas"] = False
+        errors.append(f"Per-persona fine-tune error: {exc}")
+    _record_duration("finetune_personas", _t)
 
     # 3b. Golden evaluation (after fine-tuning, before autoresearch)
     _t = time.monotonic()

@@ -35,6 +35,20 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--db", type=str, default=str(default_db), help="Database path")
     p.add_argument("--dry-run", action="store_true", help="Show config without training")
     p.add_argument("--dpo", action="store_true", help="Use DPO training with data/dpo_train.jsonl")
+    p.add_argument(
+        "--persona",
+        type=str,
+        default=None,
+        help=(
+            "Train a per-persona adapter for the given sender_type cohort "
+            "(e.g. --persona internal). When set, the adapter lands at "
+            "<models>/adapters/personas/<persona>/ instead of the global "
+            "<models>/adapters/latest/, and the post-train "
+            "`used_in_finetune=1` marking is skipped (the global adapter "
+            "still needs those rows). Used by Phase 2 of the per-persona "
+            "adapters work."
+        ),
+    )
     return p.parse_args()
 
 
@@ -165,10 +179,16 @@ def run_training(args: argparse.Namespace) -> None:
         if m:
             val_loss = float(m.group(1))
 
-    # Mark feedback pairs as used
+    # Mark feedback pairs as used — but only for global-adapter training.
+    # Per-persona training re-uses the entire cohort each run (see the
+    # `--persona` matching change in export_feedback_jsonl.py), so marking
+    # those rows as used would prevent the global adapter from ever seeing
+    # them again. The global adapter still wants the incremental
+    # used_in_finetune behaviour, so we keep it for the no-persona path.
+    persona = getattr(args, "persona", None)
     db_path = Path(args.db)
     pairs_used = 0
-    if db_path.exists():
+    if db_path.exists() and not persona:
         conn = sqlite3.connect(db_path)
         try:
             cursor = conn.execute("UPDATE feedback_pairs SET used_in_finetune = 1 WHERE used_in_finetune = 0")
@@ -177,7 +197,10 @@ def run_training(args: argparse.Namespace) -> None:
         finally:
             conn.close()
 
-    # Save metadata
+    # Save metadata. Persona attribution lets downstream consumers (stats,
+    # doctor, the routed generation in Phase 3) distinguish "global adapter
+    # trained N pairs ago" from "internal persona adapter trained M pairs
+    # ago" — without it both would just say "adapters.safetensors mtime".
     meta = {
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "base_model": BASE_MODEL,
@@ -186,6 +209,7 @@ def run_training(args: argparse.Namespace) -> None:
         "num_layers": num_layers,
         "learning_rate": learning_rate,
         "final_val_loss": val_loss,
+        "persona": persona,
     }
     meta_path = adapter_dir / "meta.json"
     with open(meta_path, "w", encoding="utf-8") as f:
@@ -200,6 +224,20 @@ def run_training(args: argparse.Namespace) -> None:
 
 def main() -> None:
     args = parse_args()
+
+    # Persona routing: when --persona is set and --adapter-dir wasn't
+    # explicitly overridden, redirect the output to the persona-specific
+    # sibling. Without this, persona training would overwrite the global
+    # adapter at `adapters/latest/` — defeating the whole point of having
+    # per-cohort adapters. Explicit --adapter-dir always wins for the
+    # "I know what I'm doing" path (e.g. eval comparisons).
+    if args.persona:
+        from app.core.settings import get_adapter_path, get_persona_adapter_path
+
+        default_global = str(get_adapter_path())
+        if args.adapter_dir == default_global:
+            args.adapter_dir = str(get_persona_adapter_path(args.persona))
+
     run_training(args)
 
 
