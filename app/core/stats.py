@@ -10,22 +10,19 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
 
-def _get_adapter_path() -> Path:
-    from app.core.settings import get_settings
-
-    settings = get_settings()
-    if settings.data_dir is not None:
-        return Path(settings.data_dir).expanduser().resolve() / "models" / "adapters" / "latest"
-    return ROOT_DIR / "models" / "adapters" / "latest"
-
-
 def _get_var_path(filename: str) -> Path:
     from app.core.settings import get_var_dir
 
     return get_var_dir() / filename
 
 
-ADAPTER_PATH = _get_adapter_path()
+def _resolve_adapter_path() -> Path:
+    from app.core.settings import get_adapter_path
+
+    return get_adapter_path()
+
+
+ADAPTER_PATH = _resolve_adapter_path()
 AUTORESEARCH_JSONL = _get_var_path("autoresearch_runs.jsonl")
 AUTORESEARCH_LOG = _get_var_path("autoresearch_log.md")
 
