@@ -839,6 +839,81 @@ def _repair_draft(
     return text, repairs, _length_flag(text, target_words)
 
 
+def _draft_logging_enabled() -> bool:
+    """``generation.log_drafts`` — default True (append-only local signal log)."""
+    try:
+        from app.core.config import load_config
+
+        cfg = load_config() or {}
+        gen = cfg.get("generation", {}) if isinstance(cfg, dict) else {}
+        if isinstance(gen, dict):
+            return gen.get("log_drafts", True) is not False
+    except Exception:
+        logger.debug("Could not read generation.log_drafts", exc_info=True)
+    return True
+
+
+def _log_draft_event(
+    database_url: str,
+    *,
+    inbound_text: str,
+    draft: str,
+    account_email: str | None,
+    sender: str | None,
+    sender_type: str | None,
+    detected_mode: str | None,
+    intent: str | None,
+    confidence: str | None,
+    confidence_reason: str | None,
+    model_used: str | None,
+    retrieval_method: str | None,
+    exemplar_ids: list[str],
+    length_flag: str | None,
+) -> bool:
+    """Append one row to ``draft_events``. Never raises — logging a draft must
+    not break drafting. Returns True if a row was written.
+
+    Self-heals the table (``CREATE TABLE IF NOT EXISTS``) so it works on an
+    instance whose DB predates this table without requiring a bootstrap.
+    """
+    if not _draft_logging_enabled():
+        return False
+    try:
+        db_path = resolve_sqlite_path(database_url)
+        conn = _connect(db_path)
+        try:
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS draft_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    inbound_text TEXT NOT NULL, generated_draft TEXT NOT NULL,
+                    account_email TEXT, sender TEXT, sender_type TEXT,
+                    detected_mode TEXT, intent TEXT, confidence TEXT,
+                    confidence_reason TEXT, model_used TEXT, retrieval_method TEXT,
+                    exemplar_ids TEXT NOT NULL DEFAULT '[]', length_flag TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )"""
+            )
+            conn.execute(
+                """INSERT INTO draft_events
+                   (inbound_text, generated_draft, account_email, sender, sender_type,
+                    detected_mode, intent, confidence, confidence_reason, model_used,
+                    retrieval_method, exemplar_ids, length_flag)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    inbound_text, draft, account_email, sender, sender_type, detected_mode,
+                    intent, confidence, confidence_reason, model_used, retrieval_method,
+                    json.dumps([str(i) for i in (exemplar_ids or [])]), length_flag,
+                ),
+            )
+            conn.commit()
+            return True
+        finally:
+            conn.close()
+    except Exception:
+        logger.warning("Failed to log draft event", exc_info=True)
+        return False
+
+
 def assemble_prompt(
     *,
     inbound_message: str,
@@ -1516,6 +1591,26 @@ def generate_draft(
 
     # Generate subject line
     suggested_subject = generate_subject(request.inbound_message, draft, database_url, configs_dir)
+
+    # Capture the draft event (exemplars/intent/sender_type/confidence the
+    # draft was produced with) for the nightly's training signal. Fault-
+    # isolated: never affects the returned draft.
+    _log_draft_event(
+        database_url,
+        inbound_text=request.inbound_message,
+        draft=draft,
+        account_email=request.account_email,
+        sender=request.sender,
+        sender_type=sender_type_hint,
+        detected_mode=detected_mode,
+        intent=detected_intent,
+        confidence=confidence,
+        confidence_reason=confidence_reason,
+        model_used=model_used,
+        retrieval_method=retrieval_response.retrieval_method,
+        exemplar_ids=selected_ids,
+        length_flag=length_flag,
+    )
 
     return DraftResponse(
         draft=draft,
