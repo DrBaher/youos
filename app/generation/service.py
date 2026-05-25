@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -668,14 +669,20 @@ def generate_subject(inbound_text: str, draft: str, database_url: str, configs_d
             f"Inbound:\n{inbound_text[:500]}\n\nDraft reply:\n{draft[:500]}\n\n"
             "Output ONLY the subject line, nothing else."
         )
-        result = _call_claude_cli(prompt)
+        # Prefer the local model so subject generation doesn't depend on the
+        # Claude CLI (which was the silent failure source in the nightly job
+        # and stalled draft generation by 120s on every benchmark case).
+        if _local_model_available():
+            result = _call_local_model(prompt, max_tokens=30, use_adapter=False)
+        else:
+            result = _call_claude_cli(prompt)
         # Clean up: remove quotes, "Subject:" prefix
         result = result.strip().strip('"').strip("'")
         if result.lower().startswith("subject:"):
             result = result[len("subject:") :].strip()
         return result[:80] if result else None
     except Exception:
-        logger.warning("Subject generation via Claude CLI failed", exc_info=True)
+        logger.warning("Subject generation failed", exc_info=True)
         return None
 
 
@@ -894,6 +901,17 @@ def _get_base_model_id() -> str:
 
 def _adapter_available() -> bool:
     return (ADAPTER_PATH / "adapters.safetensors").exists()
+
+
+def _local_model_available() -> bool:
+    """Local MLX generation is usable when the `mlx_lm` CLI is on PATH.
+
+    Distinct from `_adapter_available()`: the LoRA adapter is optional —
+    when absent, generation falls back to the base model rather than
+    failing over to a cloud model. The review_queue's "auto" mode keeps
+    its stricter "must have adapter" gate via `_adapter_available()`.
+    """
+    return shutil.which("mlx_lm") is not None
 
 
 def _compute_max_tokens(avg_reply_words: int | None, *, persona: dict[str, Any] | None = None, intent: str | None = None) -> int:
@@ -1252,9 +1270,12 @@ def generate_draft(
 
     fallback_model = get_model_fallback()
     try:
-        if request.use_local_model and _adapter_available():
-            draft = _call_local_model(prompt, max_tokens=max_tokens, use_adapter=request.use_adapter)
-            model_used = "qwen2.5-1.5b-lora"
+        if request.use_local_model and _local_model_available():
+            # Use the LoRA adapter when present and the caller wants it;
+            # otherwise run the base model rather than failing over to cloud.
+            with_adapter = request.use_adapter and _adapter_available()
+            draft = _call_local_model(prompt, max_tokens=max_tokens, use_adapter=with_adapter)
+            model_used = "qwen2.5-1.5b-lora" if with_adapter else "qwen2.5-1.5b-base"
         elif fallback_model == "ollama":
             from app.core.config import get_ollama_config
 

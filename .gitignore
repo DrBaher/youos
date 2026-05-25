@@ -22,5 +22,10 @@ instances/*/data/
 instances/*/models/
 instances/*/youos_config.yaml
 
+# Pipeline / autoresearch runtime state (per-instance, not source)
+var/
+# Local benchmark fixtures contain real corpus content
+fixtures/
+
 # Generated Firefox extension build
 extension/firefox-build/

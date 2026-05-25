@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.25 — 2026-05-25
+
+### Default to the local MLX model; fix nightly auto-feedback import
+- **Subject generation no longer goes to the Claude CLI by default.** `generate_subject` was hardcoded to `_call_claude_cli`, which meant every benchmark case in the nightly pipeline paid a 120s subprocess timeout when the CLI wasn't reachable (the silent failure mode on the launchd-driven nightly). It now uses the local MLX model when `mlx_lm` is on PATH, falling back to the Claude CLI only when MLX is unavailable.
+- **Draft generation runs the base MLX model when no LoRA adapter is present.** Previously `generate_draft` gated local-model use on `_adapter_available()` and fell over to the cloud whenever the adapter was missing — defeating the point of having MLX installed on instances that haven't finished a fine-tune yet. New `_local_model_available()` (checks for the `mlx_lm` CLI) gates whether to use local generation at all; the LoRA adapter is now an optional enhancement (`use_adapter` becomes effective only when both the caller asks for it *and* the adapter exists on disk). `model_used` is reported as `qwen2.5-1.5b-lora` or `qwen2.5-1.5b-base` accordingly. The Review Queue's stricter "auto = must have adapter" gate is preserved via the existing `_adapter_available()`.
+- **Nightly pipeline can now import its sibling scripts.** Running `python3 scripts/nightly_pipeline.py` directly under launchd puts only `scripts/` on `sys.path[0]`, so `from scripts.extract_auto_feedback import …` failed with `No module named 'scripts'` — visible in `var/pipeline_last_run.json` as `"Auto-feedback error: No module named 'scripts'"`. The script now prepends the repo root to `sys.path` before importing.
+
 ## v0.1.24 — 2026-05-24
 
 ### Retrieval & generation fixes (code-review findings)
