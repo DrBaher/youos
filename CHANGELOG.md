@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.32 — 2026-05-25
+
+### Smarter drafting 1/4 — post-generation repair pass
+- **Drafts get a final repair/annotation pass before being returned.** Previously the model's output was returned after only an emptiness check. New `_repair_draft()` in `app/generation/service.py` always adds a non-mutating `length_flag` (`ok`/`long`/`short` vs. the persona's target words) to `DraftResponse`, and — when opted in — enforces the persona greeting/closing the model dropped and strips a trailing duplicate signature. (Both `_resolve_greeting`/`_resolve_closing` are injected as a prompt *instruction* today but never enforced; signature-stripping was computed but only used for the emptiness check, never applied to the returned draft.)
+- **Default-off, behavior-preserving.** The two mutating repairs are gated behind `generation.repair.enforce_greeting_closing` and `generation.repair.strip_trailing_signature` (both default `false`); the length flag is metadata only. Placeholder/error drafts (`[...]`) are left untouched. Flip the flags on per instance once verified against real drafts. Pinned with tests for length-flag thresholds, greeting/closing detection, each opt-in mutation, no-double-add, and the default-off no-op.
+
 ## v0.1.31 — 2026-05-25
 
 ### Backend-aware doctor + setup wizard (decoupling from OpenClaw, step 4/5 — complete)
