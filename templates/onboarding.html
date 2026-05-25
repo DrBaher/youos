@@ -77,9 +77,21 @@
         <option value="native">native — Google API (youos[google])</option>
       </select>
       <span class="save-note" id="backendNote"></span>
-      <div class="backend-help" id="help-gog"><b>gog:</b> install &amp; authenticate the gog CLI, then <code>gog auth login</code> for each account.</div>
-      <div class="backend-help" id="help-gws"><b>gws:</b> install Google's Workspace CLI, then <code>gws auth login</code>.</div>
-      <div class="backend-help" id="help-native"><b>native:</b> <code>pip install 'youos[google]'</code>, set <code>ingestion.google_oauth_client_secrets</code>, then authorize each account.</div>
+      <div class="backend-help" id="help-gog">
+        <b>gog — OpenClaw CLI.</b> Install it, then authenticate each account:
+        <div class="cmd">pip install gog-cli</div>
+        <div class="cmd">gog auth login</div>
+        <span class="hint">Different setup? See <a href="https://github.com/openclaw/gog" target="_blank">github.com/openclaw/gog</a>.</span>
+      </div>
+      <div class="backend-help" id="help-gws">
+        <b>gws — Google Workspace CLI.</b> Install from <a href="https://github.com/googleworkspace/cli" target="_blank">github.com/googleworkspace/cli</a>, then:
+        <div class="cmd">gws auth login</div>
+      </div>
+      <div class="backend-help" id="help-native">
+        <b>native — Google API (no external CLI).</b> Install the extra, then authorize each account:
+        <div class="cmd">pip install 'youos[google]'</div>
+        <span class="hint">Then set <code>ingestion.google_oauth_client_secrets</code> to your Google OAuth client JSON (Settings or config), and run the authorize step.</span>
+      </div>
     </section>
 
     <!-- 4. Ingest -->
