@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.27 — 2026-05-25
+
+### Pluggable Google Workspace ingestion backend (decoupling from OpenClaw, step 1/5)
+- **Gmail/Docs ingestion now fetches through a backend-agnostic seam.** Introduced `app/ingestion/adapters.py` with a `GoogleWorkspaceSource` protocol and a `get_google_source()` factory selected by a new `ingestion.google_backend` config key. The lone implementation today is `GogSource`, a thin delegating wrapper over the existing `_gog_*` helpers — **zero behavior change**; the subprocess transport, rate-limit retry, and gog-shape normalization are untouched. `gmail_threads.py` and `google_docs.py` now resolve the source via the factory instead of calling `_gog_*` directly (6 call sites). This is the foundation for moving off the OpenClaw `gog` CLI: the reserved `gws` (Google's own Workspace CLI) and `native` (direct Google API) backends are recognized by the factory and raise a clear `NotImplementedError` until they land in later steps.
+- **Default-safe.** `ingestion.google_backend` defaults to `gog`, and an unrecognized value degrades to `gog` at config-read time (a typo can't break ingestion; the doctor will flag it in a later step). Pinned with tests covering the config accessor, factory selection/override, the not-yet-implemented backends, and `GogSource` delegation.
+
 ## v0.1.26 — 2026-05-25
 
 ### Nightly embeds reply_pairs, not just chunks
