@@ -1,0 +1,45 @@
+name: Deploy landing page to GitHub Pages
+
+# Publishes the YouOS landing page (site/) to GitHub Pages at
+# https://youos.drbaher.com. The artifact is assembled from site/ plus the
+# real screenshots/ assets, so there's a single source of truth for images.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "screenshots/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deploy; don't cancel an in-progress production deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble site (page + screenshots)
+        run: |
+          mkdir -p _site
+          cp -R site/. _site/
+          mkdir -p _site/screenshots
+          cp -R screenshots/. _site/screenshots/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
