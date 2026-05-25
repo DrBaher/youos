@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.facts_routes import router as facts_router
@@ -17,10 +17,12 @@ from app.api.stats_routes import router as stats_router
 from app.api.stream_routes import router as stream_router
 from app.core.auth import (
     LoginRateLimiter,
+    compute_allowed_origins,
     create_session_token,
     is_auth_enabled,
     load_sessions,
     persist_new_session,
+    request_origin_allowed,
     verify_api_token,
     verify_pin,
 )
@@ -34,7 +36,14 @@ SESSION_MAX_AGE = 86400  # 24 hours
 
 
 class PinAuthMiddleware(BaseHTTPMiddleware):
-    """Redirect unauthenticated requests to /login when PIN is configured."""
+    """Redirect unauthenticated requests to /login when PIN is configured.
+
+    Also performs an Origin/Referer check on state-changing requests authed
+    with the session cookie — the cookie's ``SameSite=Lax`` attribute blocks
+    most cross-origin POSTs, but defense-in-depth here makes a CSRF attempt
+    fail at the application layer if a browser ever sends the cookie cross-
+    site. API-token requests bypass the origin check (no CSRF surface).
+    """
 
     SKIP_PREFIXES = ("/login", "/static")
 
@@ -47,6 +56,15 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
         # indefinitely until process restart, ignoring SESSION_MAX_AGE.
         self.sessions: dict[str, float] = dict(load_sessions())
         self.limiter = LoginRateLimiter()
+        self.allowed_origins: set[str] = compute_allowed_origins(config)
+
+    def _origin_check_passes(self, request: Request) -> bool:
+        return request_origin_allowed(
+            method=request.method,
+            origin=request.headers.get("origin"),
+            referer=request.headers.get("referer"),
+            allowed_origins=self.allowed_origins,
+        )
 
     async def dispatch(self, request: Request, call_next):
         if not is_auth_enabled(self.config):
@@ -61,12 +79,19 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
             created_at = self.sessions.get(token)
             if created_at is not None:
                 if time.time() - created_at < SESSION_MAX_AGE:
+                    if not self._origin_check_passes(request):
+                        return JSONResponse(
+                            {"detail": "origin not allowed"},
+                            status_code=403,
+                        )
                     return await call_next(request)
                 # Expired — evict so it can't be reused.
                 self.sessions.pop(token, None)
 
         # Non-cookie clients (the browser extension) authenticate with an API
         # token sent as `X-YouOS-Token` or `Authorization: Bearer <token>`.
+        # Token auth is not CSRF-prone: an attacker can't make the browser
+        # attach a token they don't already know, so no Origin check here.
         api_token = request.headers.get("x-youos-token")
         if not api_token:
             auth_header = request.headers.get("authorization", "")
