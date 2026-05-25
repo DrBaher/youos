@@ -112,6 +112,11 @@ class RetrievalResponse:
     max_score: float | None = None
     mean_score: float | None = None
     score_stddev: float | None = None
+    # True only when the cross-encoder actually ran (vs. silent fallback).
+    # Distinct from `reranker_enabled` config: a misconfigured instance with
+    # the flag on but no sentence-transformers installed gets False here,
+    # and the retrieval_method label above stays honest.
+    reranker_applied: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -124,6 +129,7 @@ class RetrievalResponse:
             "chunks": [match.to_dict() for match in self.chunks],
             "reply_pairs": [match.to_dict() for match in self.reply_pairs],
             "partial_semantic_coverage": self.partial_semantic_coverage,
+            "reranker_applied": self.reranker_applied,
         }
 
 
@@ -142,6 +148,13 @@ class RetrievalConfig:
     sender_domain_boost: float = 0.10
     sender_type_boost_map: dict[str, float] = field(default_factory=dict)
     reranker_enabled: bool = False
+    # Cross-encoder reranker knobs (only consulted when reranker_enabled).
+    # ``reranker_model_id=None`` → use app.core.reranker.DEFAULT_RERANKER_MODEL_ID.
+    # ``reranker_blend_weight=None`` → 0.6 (CE 60% / FTS 40%, the historical default).
+    # ``reranker_ce_score_scale=None`` → 10.0 (scale CE [0,1] up to FTS-comparable range).
+    reranker_model_id: str | None = None
+    reranker_blend_weight: float | None = None
+    reranker_ce_score_scale: float | None = None
     subject_match_boost: float = 0.2
     topic_match_boost: float = 0.15
     # BM25 lexical-score saturation knobs. Defaults match the historical
@@ -268,21 +281,36 @@ class RetrievalService:
                         match.score = round(match.score * 1.3, 4)
                 reply_pairs.sort(key=lambda m: (-m.score, m.result_type, m.source_id))
 
-            # Optional cross-encoder reranking
+            # Optional cross-encoder reranking. Track whether the CE actually
+            # fired (vs. silently fell back when the dep isn't installed or
+            # the model fails to load) so the retrieval_method label below
+            # reports honestly. Without this, a misconfigured instance with
+            # `reranker_enabled: true` but no sentence-transformers installed
+            # would claim `+reranker` in every trace and the user would never
+            # know reranking wasn't happening.
+            reranker_applied = False
             if self.config.reranker_enabled:
-                from app.core.reranker import is_reranker_available, rerank
+                from app.core.reranker import rerank
 
-                if is_reranker_available():
-                    top_k_rp = request.top_k_reply_pairs or self.config.top_k_reply_pairs
-                    if len(reply_pairs) > top_k_rp:
-                        reply_pairs = rerank(query, reply_pairs, top_k_rp)
-                    top_k_ch = request.top_k_chunks or self.config.top_k_chunks
-                    if len(chunks) > top_k_ch:
-                        chunks = rerank(query, chunks, top_k_ch)
+                rerank_kwargs = {
+                    "model_id": self.config.reranker_model_id,
+                    "blend_weight": self.config.reranker_blend_weight,
+                    "ce_score_scale": self.config.reranker_ce_score_scale,
+                }
+                top_k_rp = request.top_k_reply_pairs or self.config.top_k_reply_pairs
+                if len(reply_pairs) > top_k_rp:
+                    reply_pairs, rp_applied = rerank(query, reply_pairs, top_k_rp, **rerank_kwargs)
+                    reranker_applied = reranker_applied or rp_applied
+                top_k_ch = request.top_k_chunks or self.config.top_k_chunks
+                if len(chunks) > top_k_ch:
+                    chunks, ch_applied = rerank(query, chunks, top_k_ch, **rerank_kwargs)
+                    reranker_applied = reranker_applied or ch_applied
 
         method = "fts5_bm25" if use_fts else "lexical_v1"
         if semantic_enabled:
             method = f"{method}+semantic"
+        if reranker_applied:
+            method = f"{method}+reranker"
 
         # Compute score stats for reply_pairs
         max_score = None
@@ -311,6 +339,7 @@ class RetrievalService:
             max_score=max_score,
             mean_score=mean_score,
             score_stddev=score_stddev,
+            reranker_applied=reranker_applied,
         )
 
     # -- Semantic reranking ────────────────────────────────────────────────
@@ -1027,6 +1056,17 @@ def _load_retrieval_config(configs_dir: Path) -> RetrievalConfig:
             sender_domain_boost=float(payload.get("sender_domain_boost", 0.10)),
             sender_type_boost_map={str(k): float(v) for k, v in (payload.get("sender_type_boost_map") or {}).items()},
             reranker_enabled=bool(payload.get("reranker_enabled", False)),
+            reranker_model_id=(payload.get("reranker_model_id") or None) or None,
+            reranker_blend_weight=(
+                float(payload["reranker_blend_weight"])
+                if isinstance(payload.get("reranker_blend_weight"), (int, float))
+                else None
+            ),
+            reranker_ce_score_scale=(
+                float(payload["reranker_ce_score_scale"])
+                if isinstance(payload.get("reranker_ce_score_scale"), (int, float))
+                else None
+            ),
             subject_match_boost=float(payload.get("subject_match_boost", 0.2)),
             topic_match_boost=float(payload.get("topic_match_boost", 0.15)),
             lexical_scale=float(payload.get("lexical_scale", 2.0)),
