@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.45 — 2026-05-25
+
+### Onboarding wizard: make the backend install commands obvious
+- **The "Connect Gmail & Docs" step buried the install step in prose.** Each backend's help now shows the actual commands as copyable command blocks (matching the ingest/train steps): `gog` → `pip install gog-cli` + `gog auth login`; `gws` → repo link + `gws auth login`; `native` → `pip install 'youos[google]'` + the OAuth-client note. So it's clear a new user must run something to connect, not just pick from the dropdown.
+
 ## v0.1.44 — 2026-05-25
 
 ### Web onboarding wizard (4/4)
