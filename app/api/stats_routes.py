@@ -89,6 +89,24 @@ def stats_data(request: Request) -> dict[str, Any]:
         except sqlite3.OperationalError:
             pass
 
+        # Per-persona feedback pair counts. Phase 1 of per-persona adapters
+        # surfaces "how many pairs per cohort" so the user can see when each
+        # cohort crosses the (Phase 2) training threshold without needing
+        # ad-hoc SQL. NULL bucketed as "unknown" so existing pre-backfill
+        # rows are visible rather than invisible.
+        feedback_by_persona: dict[str, int] = {}
+        try:
+            rows = conn.execute(
+                "SELECT COALESCE(sender_type, 'unknown') AS persona, COUNT(*) AS n "
+                "FROM feedback_pairs GROUP BY persona"
+            ).fetchall()
+            feedback_by_persona = {str(r["persona"]): int(r["n"]) for r in rows}
+        except sqlite3.OperationalError:
+            # Pre-migration DB — column doesn't exist yet. Surface as empty
+            # dict so a downstream UI can render "no data yet" rather than
+            # crashing on the missing key.
+            pass
+
         total_profiles = 0
         top_senders: list[dict[str, Any]] = []
         try:
@@ -307,4 +325,5 @@ def stats_data(request: Request) -> dict[str, Any]:
         "sender_accuracy": sender_accuracy,
         "system_health": system_health,
         "embedding_coverage": embedding_coverage_by_table,
+        "feedback_by_persona": feedback_by_persona,
     }
