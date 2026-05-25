@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.41 — 2026-05-25
+
+### Feature-flag core + `youos config` CLI (easy flag toggling, 1/4)
+- **No more hand-editing YAML to flip a flag.** New `app/core/feature_flags.py` defines a **whitelist** of the session's toggles (`generation.multi_candidate.enabled`, `generation.repair.*`, `generation.log_drafts`, `autoresearch.draft_quality_weighting`, `personas.routing_enabled`, `ingestion.google_backend`) with label/type/default, and `get`/`set`/`list` helpers (dotted paths, bool/choice coercion, persisted via the existing `save_config`). Writes are restricted to the whitelist — the same guard makes the upcoming web config-write path safe.
+- **`youos config` CLI:** `youos config list` (all flags + current values), `youos config get <key>`, `youos config set <key> <value>`. This is the foundation shared by the forthcoming web **Settings page** and **onboarding wizard**. Pinned with tests for the core (round-trip, coercion, whitelist guard, sibling-preservation) and the CLI wiring.
+
 ## v0.1.40 — 2026-05-25
 
 ### UI: stats page surfaces the unused data (rethink, 3/3)

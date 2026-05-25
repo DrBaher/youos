@@ -127,7 +127,7 @@
       width: 100%; background: #0d1b2a; color: #e0e0e0; border: 1px solid #2a3a4a;
       border-radius: 6px; padding: 8px; font-size: 13px; resize: vertical;
     }
-    textarea.inbound { min-height: 52px; }
+    textarea.inbound { min-height: 170px; }
     textarea.draft { min-height: 130px; }
     .tones { display: flex; gap: 6px; margin-top: 6px; }
     .tone { flex: 1; background: #16213e; color: #aaa; border: 1px solid #2a3a4a; border-radius: 6px; padding: 6px; font-size: 12px; cursor: pointer; }
@@ -147,6 +147,18 @@
     .badge.low { background: #f66; color: #500; }
     .reason { font-size: 11px; color: #888; margin-top: 6px; line-height: 1.4; }
     .subject { font-size: 11px; color: #7b9; margin-top: 6px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .mbadge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; border: 1px solid #2a3a4a; color: #aaa; }
+    .mbadge.ok { color: #2ecc71; border-color: #2ecc71; }
+    .mbadge.warn { color: #f0ad4e; border-color: #f0ad4e; }
+    .mbadge.accent { color: #00c4a7; border-color: #00c4a7; }
+    .cands { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+    .cands .chead { font-size: 11px; color: #888; }
+    .cand { text-align: left; background: #0d1b2a; border: 1px solid #2a3a4a; border-radius: 6px; padding: 8px; color: #e0e0e0; cursor: pointer; font-size: 12px; }
+    .cand:hover { border-color: #00b398; }
+    .cand.sel { border-color: #00c4a7; background: rgba(0,196,167,0.08); }
+    .cand .cm { font-size: 10px; color: #888; margin-bottom: 4px; }
+    .cand .cp { color: #aaa; line-height: 1.4; white-space: pre-wrap; }
     .stars { font-size: 22px; letter-spacing: 2px; margin-top: 4px; }
     .star { cursor: pointer; color: #444; }
     .star.on { color: #fc4; }
@@ -179,6 +191,8 @@
       <div id="result" class="hidden">
         <label>Draft <span id="conf"></span></label>
         <textarea class="draft" id="draft"></textarea>
+        <div class="meta" id="meta"></div>
+        <div class="cands" id="candidates"></div>
         <div class="subject" id="subject"></div>
         <div class="reason" id="reason"></div>
         <div class="row">
@@ -211,6 +225,7 @@
       result: $("result"), draft: $("draft"), conf: $("conf"), subject: $("subject"),
       reason: $("reason"), insert: $("insert"), copy: $("copy"),
       stars: $("stars"), submit: $("submit"), redetect: $("redetect"),
+      meta: $("meta"), candidates: $("candidates"),
     };
 
     // Tone buttons
@@ -308,6 +323,8 @@
       return;
     }
     clearMsg();
+    els.meta.innerHTML = "";
+    els.candidates.innerHTML = "";
     els.generate.disabled = true;
     els.generate.textContent = "Generating…";
     const body = {
@@ -337,7 +354,60 @@
     els.conf.textContent = c ? c : "";
     els.reason.textContent = d.confidence_reason || "";
     els.subject.textContent = d.suggested_subject ? "Suggested subject: " + d.suggested_subject : "";
+    renderMeta(d);
     els.result.classList.remove("hidden");
+  }
+
+  // Surface the draft-quality fields the web UI also shows: length flag,
+  // post-generation repairs, and the multi-candidate picker.
+  function renderMeta(d) {
+    els.meta.innerHTML = "";
+    els.candidates.innerHTML = "";
+
+    if (d.length_flag) {
+      const b = document.createElement("span");
+      b.className = "mbadge " + (d.length_flag === "ok" ? "ok" : "warn");
+      b.textContent = d.length_flag === "ok" ? "length: on target" : "length: " + d.length_flag;
+      els.meta.appendChild(b);
+    }
+    if (Array.isArray(d.repairs) && d.repairs.length) {
+      const b = document.createElement("span");
+      b.className = "mbadge accent";
+      b.title = "post-generation repairs applied";
+      b.textContent = "repaired: " + d.repairs.map((r) => r.replace(/_/g, " ")).join(", ");
+      els.meta.appendChild(b);
+    }
+
+    const cands = Array.isArray(d.candidates) ? d.candidates : [];
+    if (cands.length > 1) {
+      const head = document.createElement("div");
+      head.className = "chead";
+      head.textContent = cands.length + " candidates — click to use one:";
+      els.candidates.appendChild(head);
+      cands.forEach((c, i) => {
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "cand" + (i === 0 ? " sel" : "");
+        const meta = document.createElement("div");
+        meta.className = "cm";
+        const bits = ["#" + (i + 1)];
+        if (i === 0) bits.push("best");
+        if (c.temperature != null) bits.push("temp " + c.temperature);
+        if (c.score != null && isFinite(c.score)) bits.push("score " + Number(c.score).toFixed(2));
+        meta.textContent = bits.join(" · ");
+        const prev = document.createElement("div");
+        prev.className = "cp";
+        prev.textContent = String(c.draft || "").slice(0, 200);
+        card.append(meta, prev);
+        card.addEventListener("click", () => {
+          els.draft.value = c.draft || "";
+          state.generatedDraft = c.draft || "";
+          els.candidates.querySelectorAll(".cand").forEach((x) => x.classList.remove("sel"));
+          card.classList.add("sel");
+        });
+        els.candidates.appendChild(card);
+      });
+    }
   }
 
   function onInsert() {
