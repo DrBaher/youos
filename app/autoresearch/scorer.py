@@ -58,6 +58,46 @@ def reset_weight_cache() -> None:
     _cached_weights = None
 
 
+def draft_quality_weighting_enabled(configs_dir: Path | None = None) -> bool:
+    """Whether to weight eval cases by real-world draft quality (default off)."""
+    if configs_dir is None:
+        configs_dir = Path(__file__).resolve().parents[2] / "configs"
+    config_path = configs_dir / "autoresearch.yaml"
+    if config_path.exists():
+        import yaml
+
+        try:
+            data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            return bool(data.get("draft_quality_weighting", False))
+        except Exception:
+            return False
+    return False
+
+
+def draft_quality_case_weights(summary: dict, *, k: float = 2.0, max_weight: float = 3.0) -> dict[str, float]:
+    """Per-sender_type eval-case weights from a ``summarize_draft_events`` summary.
+
+    Cohorts whose real drafts get edited more (higher avg edit distance) are
+    weighted higher, so the optimizer is pushed toward configs that help where
+    drafting actually struggles. Benchmark cases carry the sender_type as their
+    ``category`` (the join key). ``edit_distance`` is in [0, 1]; weight =
+    clamp(1 + k·edit_distance, 1, max_weight). Cohorts with no edit-distance
+    data are absent (treated as weight 1.0 by the scorer); an empty/dataless
+    summary yields ``{}`` → uniform weighting (no behavior change).
+    """
+    if not isinstance(summary, dict):
+        return {}
+    outcome = summary.get("outcome", {})
+    by_sender = outcome.get("avg_edit_distance_by_sender_type", {}) if isinstance(outcome, dict) else {}
+    weights: dict[str, float] = {}
+    for sender, info in (by_sender or {}).items():
+        ed = info.get("avg_edit_distance") if isinstance(info, dict) else None
+        if ed is None:
+            continue
+        weights[str(sender)] = max(1.0, min(max_weight, 1.0 + k * float(ed)))
+    return weights
+
+
 @dataclass
 class Scorecard:
     config_tag: str
@@ -72,7 +112,22 @@ class Scorecard:
         return f"pass={self.pass_rate:.0%} kw={self.avg_keyword_hit:.0%} conf={self.avg_confidence:.0%} composite={self.composite:.2f}"
 
 
-def scorecard_from_eval_result(result: EvalSuiteResult, configs_dir: Path | None = None) -> Scorecard:
+def scorecard_from_eval_result(
+    result: EvalSuiteResult,
+    configs_dir: Path | None = None,
+    *,
+    case_weights: dict[str, float] | None = None,
+) -> Scorecard:
+    """Score an eval suite result.
+
+    ``case_weights`` (sender_type → weight, from ``draft_quality_case_weights``)
+    importance-weights the composite inputs (pass_rate / keyword / confidence)
+    by ``CaseResult.category``, so the objective emphasizes the cohorts where
+    real-world drafting is weakest. Cases whose category isn't in the map get
+    weight 1.0; ``None`` or all-1.0 weights reduce to the equal-average
+    behavior. Weighting must be applied identically to baseline and candidate
+    so their composites stay comparable.
+    """
     total = result.total_cases
     if total == 0:
         return Scorecard(
@@ -85,12 +140,21 @@ def scorecard_from_eval_result(result: EvalSuiteResult, configs_dir: Path | None
             composite=0.0,
         )
 
-    pass_rate = result.passed / total
+    # warn/fail rates are display-only (not in the composite) → left unweighted.
     warn_rate = result.warned / total
     fail_rate = result.failed / total
 
-    avg_kw = sum(cr.scores.get("keyword_hit_rate", 0.0) for cr in result.case_results) / total
-    avg_conf = sum(cr.scores.get("confidence_score", 0.0) for cr in result.case_results) / total
+    crs = result.case_results
+    if case_weights:
+        ws = [max(0.0, float(case_weights.get(cr.category, 1.0))) for cr in crs]
+        wsum = sum(ws) or float(len(crs))
+        pass_rate = sum(w * (1.0 if cr.pass_fail == "pass" else 0.0) for w, cr in zip(ws, crs, strict=False)) / wsum
+        avg_kw = sum(w * cr.scores.get("keyword_hit_rate", 0.0) for w, cr in zip(ws, crs, strict=False)) / wsum
+        avg_conf = sum(w * cr.scores.get("confidence_score", 0.0) for w, cr in zip(ws, crs, strict=False)) / wsum
+    else:
+        pass_rate = result.passed / total
+        avg_kw = sum(cr.scores.get("keyword_hit_rate", 0.0) for cr in crs) / total
+        avg_conf = sum(cr.scores.get("confidence_score", 0.0) for cr in crs) / total
 
     weights = load_composite_weights(configs_dir)
     composite = weights["pass_rate"] * pass_rate + weights["avg_keyword_hit"] * avg_kw + weights["avg_confidence"] * avg_conf
