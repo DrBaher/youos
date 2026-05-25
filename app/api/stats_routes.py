@@ -60,6 +60,11 @@ class ConfigSetRequest(BaseModel):
     value: Any
 
 
+class IdentityRequest(BaseModel):
+    name: str | None = None
+    emails: list[str] | None = None
+
+
 @router.get("/api/config/flags")
 def get_config_flags() -> dict:
     """List the whitelisted feature flags + their current values (for the
@@ -84,6 +89,18 @@ def set_config_flag(body: ConfigSetRequest) -> dict:
     return {"ok": True, "key": body.key, "value": value}
 
 
+@router.post("/api/config/identity")
+def set_config_identity(body: IdentityRequest) -> dict:
+    """Set the user's name / email addresses (onboarding + settings)."""
+    from app.core.feature_flags import set_identity
+
+    try:
+        result = set_identity(body.name, body.emails)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return {"ok": True, **result}
+
+
 @router.get("/stats", response_class=HTMLResponse)
 def stats_page() -> HTMLResponse:
     html = TEMPLATE_PATH.read_text(encoding="utf-8")
@@ -93,6 +110,12 @@ def stats_page() -> HTMLResponse:
 @router.get("/settings", response_class=HTMLResponse)
 def settings_page() -> HTMLResponse:
     html = (ROOT_DIR / "templates" / "settings.html").read_text(encoding="utf-8")
+    return HTMLResponse(content=html)
+
+
+@router.get("/welcome", response_class=HTMLResponse)
+def onboarding_page() -> HTMLResponse:
+    html = (ROOT_DIR / "templates" / "onboarding.html").read_text(encoding="utf-8")
     return HTMLResponse(content=html)
 
 

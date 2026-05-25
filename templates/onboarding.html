@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouOS — Set up</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; line-height: 1.55; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 40px 24px 64px; }
+  .brand { color: #00c4a7; font-weight: 700; font-size: 1.15rem; margin-bottom: 24px; }
+  .steps-bar { display: flex; gap: 6px; margin-bottom: 28px; }
+  .step-dot { flex: 1; height: 4px; border-radius: 2px; background: #2a3a4a; }
+  .step-dot.done { background: #0a8f7c; }
+  .step-dot.active { background: #00c4a7; }
+  .card { background: #16213e; border: 1px solid #2a3a4a; border-radius: 14px; padding: 28px; }
+  .step { display: none; }
+  .step.active { display: block; }
+  .step h1 { font-size: 1.4rem; color: #00c4a7; margin-bottom: 6px; }
+  .step .lead { color: #aaa; font-size: 0.92rem; margin-bottom: 18px; }
+  label.field { display: block; font-size: 0.8rem; color: #888; text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 5px; }
+  input, select, textarea { width: 100%; background: #0d1b2a; color: #e0e0e0; border: 1px solid #2a3a4a; border-radius: 6px; padding: 9px; font-size: 0.9rem; }
+  .cmd { background: #0d1b2a; border: 1px solid #2a3a4a; border-radius: 6px; padding: 10px 12px; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 0.85rem; color: #00c4a7; margin: 10px 0; overflow-x: auto; }
+  .hint { color: #888; font-size: 0.82rem; margin-top: 8px; }
+  .status { font-size: 0.85rem; margin-top: 12px; }
+  .status.ok { color: #2ecc71; }
+  .status.pending { color: #f0ad4e; }
+  .btn { background: #00c4a7; color: #1a1a2e; border: none; border-radius: 8px; padding: 10px 18px; font-size: 0.9rem; font-weight: 700; cursor: pointer; }
+  .btn:hover { background: #00b398; }
+  .btn.secondary { background: transparent; color: #aaa; border: 1px solid #2a3a4a; }
+  .btn.link { background: transparent; color: #00c4a7; border: 1px solid #0a8f7c; }
+  .nav { display: flex; justify-content: space-between; align-items: center; margin-top: 24px; }
+  .save-note { font-size: 0.8rem; color: #2ecc71; min-height: 1em; }
+  .backend-help { display: none; background: #0d1b2a; border-radius: 6px; padding: 12px; margin-top: 12px; font-size: 0.85rem; color: #ccc; }
+  .backend-help.show { display: block; }
+  ul { margin: 6px 0 0 18px; color: #aaa; font-size: 0.85rem; }
+  a { color: #00c4a7; }
+</style>
+<link rel="stylesheet" href="/static/youos.css">
+<script src="/static/youos.js" defer></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">&#x2709;&#xFE0F; <span id="appName">YouOS</span> · Set up</div>
+  <div class="steps-bar" id="dots"></div>
+
+  <div class="card">
+    <!-- 1. Welcome -->
+    <section class="step active" data-step="0">
+      <h1>Welcome</h1>
+      <p class="lead">A few steps to get YouOS drafting in your voice — all of it runs locally on your Mac. You can change everything later in <a href="/settings">Settings</a>.</p>
+      <p class="hint">Prefer the terminal? <code>youos setup</code> runs this same flow with each step automated.</p>
+    </section>
+
+    <!-- 2. Identity -->
+    <section class="step" data-step="1">
+      <h1>Who are you?</h1>
+      <p class="lead">So YouOS knows which messages in a thread are <em>yours</em>.</p>
+      <label class="field">Your name</label>
+      <input id="idName" placeholder="Jane Doe" />
+      <label class="field">Your email addresses (comma-separated)</label>
+      <input id="idEmails" placeholder="jane@work.com, jane@personal.com" />
+      <div class="nav" style="margin-top:14px;">
+        <span class="save-note" id="idNote"></span>
+        <button class="btn" id="idSave">Save</button>
+      </div>
+    </section>
+
+    <!-- 3. Connect -->
+    <section class="step" data-step="2">
+      <h1>Connect Gmail &amp; Docs</h1>
+      <p class="lead">Pick how YouOS reaches your mail. It only ever reads to learn your style.</p>
+      <label class="field">Backend</label>
+      <select id="backend">
+        <option value="gog">gog — OpenClaw CLI (default)</option>
+        <option value="gws">gws — Google's Workspace CLI</option>
+        <option value="native">native — Google API (youos[google])</option>
+      </select>
+      <span class="save-note" id="backendNote"></span>
+      <div class="backend-help" id="help-gog"><b>gog:</b> install &amp; authenticate the gog CLI, then <code>gog auth login</code> for each account.</div>
+      <div class="backend-help" id="help-gws"><b>gws:</b> install Google's Workspace CLI, then <code>gws auth login</code>.</div>
+      <div class="backend-help" id="help-native"><b>native:</b> <code>pip install 'youos[google]'</code>, set <code>ingestion.google_oauth_client_secrets</code>, then authorize each account.</div>
+    </section>
+
+    <!-- 4. Ingest -->
+    <section class="step" data-step="3">
+      <h1>Build your corpus</h1>
+      <p class="lead">Pull your sent history so YouOS has examples to learn from.</p>
+      <div class="cmd">youos ingest</div>
+      <p class="hint">Runs in your terminal (can take a few minutes). WhatsApp export: <code>youos ingest --whatsapp chat.txt</code>.</p>
+      <div class="status pending" id="corpusStatus">Not ingested yet.</div>
+      <button class="btn secondary" id="refreshCorpus" style="margin-top:10px;">Check status</button>
+    </section>
+
+    <!-- 5. Train -->
+    <section class="step" data-step="4">
+      <h1>Learn your voice</h1>
+      <p class="lead">YouOS analyzes your persona and fine-tunes a local LoRA adapter — automatically each night once you have enough feedback, or on demand.</p>
+      <div class="cmd">youos finetune</div>
+      <div class="status pending" id="adapterStatus">No adapter trained yet (fine on day one — drafts use the base model + your exemplars).</div>
+      <button class="btn secondary" id="refreshAdapter" style="margin-top:10px;">Check status</button>
+    </section>
+
+    <!-- 6. Secure -->
+    <section class="step" data-step="5">
+      <h1>Secure it (optional)</h1>
+      <p class="lead">YouOS binds to localhost only. If you expose it (e.g. over Tailscale), protect it with a PIN and/or an API token for the extension.</p>
+      <div class="cmd">youos token-create</div>
+      <p class="hint">See the README's auth section for PIN setup. Skip if you only use it locally.</p>
+    </section>
+
+    <!-- 7. Done -->
+    <section class="step" data-step="6">
+      <h1>You're set 🎉</h1>
+      <p class="lead">Start drafting — and fine-tune behavior (multi-candidate, repairs, persona routing, …) anytime in Settings.</p>
+      <div style="display:flex; gap:10px; margin-top:8px;">
+        <a class="btn" href="/feedback">Start drafting</a>
+        <a class="btn link" href="/settings">Open Settings</a>
+      </div>
+    </section>
+
+    <div class="nav">
+      <button class="btn secondary" id="prev">Back</button>
+      <button class="btn" id="next">Next</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const steps = Array.from(document.querySelectorAll(".step"));
+  const dotsWrap = document.getElementById("dots");
+  const prevBtn = document.getElementById("prev");
+  const nextBtn = document.getElementById("next");
+  let i = 0;
+
+  steps.forEach(() => {
+    const d = document.createElement("div");
+    d.className = "step-dot";
+    dotsWrap.appendChild(d);
+  });
+  const dots = Array.from(dotsWrap.children);
+
+  function show(n) {
+    i = Math.max(0, Math.min(steps.length - 1, n));
+    steps.forEach((s, k) => s.classList.toggle("active", k === i));
+    dots.forEach((d, k) => { d.className = "step-dot" + (k < i ? " done" : k === i ? " active" : ""); });
+    prevBtn.style.visibility = i === 0 ? "hidden" : "visible";
+    nextBtn.style.visibility = i === steps.length - 1 ? "hidden" : "visible";
+  }
+  prevBtn.addEventListener("click", () => show(i - 1));
+  nextBtn.addEventListener("click", () => show(i + 1));
+  show(0);
+
+  // Prefill identity + backend from current config.
+  fetch("/api/config").then((r) => r.json()).then((d) => {
+    if (d.user_name) document.getElementById("idName").value = d.user_name;
+  }).catch(() => {});
+  fetch("/api/config/flags").then((r) => r.json()).then((d) => {
+    const b = (d.flags || []).find((f) => f.key === "ingestion.google_backend");
+    if (b) { document.getElementById("backend").value = b.value; showBackendHelp(b.value); }
+  }).catch(() => {});
+
+  // Identity save.
+  document.getElementById("idSave").addEventListener("click", () => {
+    const name = document.getElementById("idName").value.trim();
+    const emails = document.getElementById("idEmails").value.split(",").map((s) => s.trim()).filter(Boolean);
+    const note = document.getElementById("idNote");
+    note.textContent = "saving…"; note.style.color = "#888";
+    fetch("/api/config/identity", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name, emails: emails }),
+    }).then((r) => (r.ok ? r.json() : Promise.reject())).then(() => {
+      note.textContent = "saved ✓"; note.style.color = "#2ecc71";
+    }).catch(() => { note.textContent = "couldn't save"; note.style.color = "#e74c3c"; });
+  });
+
+  // Backend select.
+  function showBackendHelp(v) {
+    ["gog", "gws", "native"].forEach((k) => {
+      document.getElementById("help-" + k).classList.toggle("show", k === v);
+    });
+  }
+  document.getElementById("backend").addEventListener("change", (e) => {
+    const v = e.target.value;
+    showBackendHelp(v);
+    const note = document.getElementById("backendNote");
+    note.textContent = " saving…";
+    fetch("/api/config/set", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: "ingestion.google_backend", value: v }),
+    }).then((r) => (r.ok ? r.json() : Promise.reject())).then(() => {
+      note.textContent = " saved ✓"; note.style.color = "#2ecc71";
+    }).catch(() => { note.textContent = " couldn't save"; note.style.color = "#e74c3c"; });
+  });
+
+  // Readiness checks.
+  function refresh(field, elId, okText, pendingText) {
+    fetch("/api/config").then((r) => r.json()).then((d) => {
+      const el = document.getElementById(elId);
+      if (d[field]) { el.className = "status ok"; el.textContent = okText; }
+      else { el.className = "status pending"; el.textContent = pendingText; }
+    }).catch(() => {});
+  }
+  const corpusRefresh = () => refresh("corpus_ready", "corpusStatus", "✓ Corpus ingested.", "Not ingested yet — run the command above, then check again.");
+  const adapterRefresh = () => refresh("adapter_ready", "adapterStatus", "✓ Adapter trained.", "No adapter yet — drafts use the base model + your exemplars until the nightly trains one.");
+  document.getElementById("refreshCorpus").addEventListener("click", corpusRefresh);
+  document.getElementById("refreshAdapter").addEventListener("click", adapterRefresh);
+  corpusRefresh(); adapterRefresh();
+})();
+</script>
+</body>
+</html>
