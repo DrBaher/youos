@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.51 — 2026-05-25
+
+### Stats: live Activity panel for ingestion + fine-tuning
+- **The `/stats` dashboard now reports in-progress jobs**, not just results. A new "Activity" card auto-refreshes (polls `GET /api/ingest/status` + `GET /api/finetune/status` every 5s) and shows ingestion (⏳ "Ingesting… N found, M stored" / ✓ last-ingest reply-pair count / ✕ failed) and fine-tuning (⏳ "Fine-tuning…" / ✓ adapter trained / idle). Previously these were visible only while on the wizard's steps; now you can watch a long-running ingest or fine-tune from the dashboard regardless of where it was launched. Reuses the existing status endpoints — no backend change.
+
 ## v0.1.50 — 2026-05-25
 
 ### Wizard: install the background service in-browser ("Keep it running")
