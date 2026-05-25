@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.48 — 2026-05-25
+
+### Onboarding wizard: plain-language explanations on every step
+- **Each step now has a jargon-free "what this means / why it matters" callout** for users who won't know the terms. Welcome explains what YouOS *is* (and that everything stays local); Identity explains why it needs your addresses (to tell your replies from others' in a thread); Connect explains a "backend" is just the tool that reads your mail (read-only, local) with a one-line plain description of gog/gws/native; Build-your-corpus defines "corpus"; Learn-your-voice explains fine-tuning / LoRA in plain terms and that it's optional; Secure explains localhost/PIN/token and that most users can skip it. Content-only.
+
 ## v0.1.47 — 2026-05-25
 
 ### Wizard: run fine-tune + create API token in-browser
