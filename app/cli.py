@@ -810,6 +810,32 @@ def snapshot_list():
         print(str(snap))
 
 
+@app.command("snapshot-prune")
+def snapshot_prune(
+    keep_hourly: int = typer.Option(None, "--keep-hourly", help="Override retention for hourly tier"),
+    keep_daily: int = typer.Option(None, "--keep-daily", help="Override retention for daily tier"),
+    keep_manual: int = typer.Option(None, "--keep-manual", help="Override retention for manual tier"),
+):
+    """Prune old snapshots per the retention policy.
+
+    Defaults come from ``snapshots.keep_{hourly,daily,manual}`` in the
+    instance config, falling back to 72/30/50 if unset. Override per-call
+    with the flags. Returns counts so scripting can act on what was pruned.
+    """
+    settings = get_settings()
+    db_path = resolve_sqlite_path(settings.database_url)
+    removed = prune_snapshots(
+        db_path,
+        keep_hourly=keep_hourly,
+        keep_daily=keep_daily,
+        keep_manual=keep_manual,
+    )
+    total = sum(removed.values())
+    for tier, n in removed.items():
+        print(f"{tier}: pruned {n}")
+    print(f"total pruned: {total}")
+
+
 @app.command("snapshot-restore")
 def snapshot_restore(
     snapshot_path: str = typer.Argument(..., help="Path to snapshot db file"),
