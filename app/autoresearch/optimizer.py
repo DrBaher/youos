@@ -19,6 +19,8 @@ from app.autoresearch.run_log import ensure_table, log_iteration
 from app.autoresearch.scorer import (
     Scorecard,
     compare_scorecards,
+    draft_quality_case_weights,
+    draft_quality_weighting_enabled,
     scorecard_from_eval_result,
 )
 from app.evaluation.service import EvalRequest, run_eval_suite
@@ -79,6 +81,19 @@ def run_autoresearch(
     # Ensure logging table exists
     ensure_table(database_url)
 
+    # Draft-quality case weights (default off): computed ONCE from the current
+    # draft_events log and applied to every scorecard this run, so baseline and
+    # candidates stay comparable. Pushes the objective toward the cohorts where
+    # real drafts get edited most. No data / disabled → None → equal weighting.
+    case_weights: dict[str, float] | None = None
+    try:
+        if draft_quality_weighting_enabled(configs_dir):
+            from app.core.stats import summarize_draft_events
+
+            case_weights = draft_quality_case_weights(summarize_draft_events(database_url)) or None
+    except Exception:
+        case_weights = None
+
     # 1. Establish baseline
     baseline_result = run_eval_suite(
         EvalRequest(config_tag=f"{run_tag}_baseline"),
@@ -87,7 +102,7 @@ def run_autoresearch(
         configs_dir=configs_dir,
         persist=True,
     )
-    baseline = scorecard_from_eval_result(baseline_result, configs_dir)
+    baseline = scorecard_from_eval_result(baseline_result, configs_dir, case_weights=case_weights)
     eval_count = 1
     current_baseline = baseline
 
@@ -123,7 +138,7 @@ def run_autoresearch(
             persist=True,
         )
         eval_count += 1
-        candidate = scorecard_from_eval_result(candidate_result, configs_dir)
+        candidate = scorecard_from_eval_result(candidate_result, configs_dir, case_weights=case_weights)
         outcome = compare_scorecards(current_baseline, candidate)
 
         kept = outcome == "improved"
