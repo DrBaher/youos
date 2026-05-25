@@ -202,6 +202,24 @@ def create_token() -> dict:
     return {"token": add_api_token()}
 
 
+@router.post("/api/service/install")
+def service_install() -> dict:
+    """Install + start the launchd background service (run at login, auto-restart)."""
+    from app.core import service
+
+    ok, message = service.install()
+    if not ok:
+        raise HTTPException(status_code=500, detail=message)
+    return {"ok": True, "message": message}
+
+
+@router.get("/api/service/status")
+def service_status() -> dict:
+    from app.core import service
+
+    return {"status": service.status()}
+
+
 @router.get("/stats", response_class=HTMLResponse)
 def stats_page() -> HTMLResponse:
     html = TEMPLATE_PATH.read_text(encoding="utf-8")
