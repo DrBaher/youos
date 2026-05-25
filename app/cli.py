@@ -694,6 +694,38 @@ def config_set(
     typer.echo(f"✓ set {key} = {stored}")
 
 
+service_app = typer.Typer(help="Run the YouOS server reliably in the background (macOS launchd).")
+app.add_typer(service_app, name="service")
+
+
+@service_app.command(name="install")
+def service_install():
+    """Install + start YouOS as a background service (runs at login, auto-restarts)."""
+    from app.core import service
+
+    ok, msg = service.install()
+    typer.echo(("✓ " if ok else "✗ ") + msg)
+    if not ok:
+        raise typer.Exit(1)
+
+
+@service_app.command(name="uninstall")
+def service_uninstall():
+    """Stop + remove the background service."""
+    from app.core import service
+
+    _, msg = service.uninstall()
+    typer.echo(msg)
+
+
+@service_app.command(name="status")
+def service_status():
+    """Show whether the background service is installed / running."""
+    from app.core import service
+
+    typer.echo(f"YouOS service: {service.status()}")
+
+
 model_app = typer.Typer(help="Manage the local model.")
 app.add_typer(model_app, name="model")
 
