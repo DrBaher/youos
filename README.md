@@ -71,22 +71,31 @@ Gmail (sent mail)          Your feedback
 - Apple Silicon Mac (M1/M2/M3/M4)
 - 8GB+ RAM (16GB recommended)
 - Python 3.11+
-- [gog CLI](https://github.com/openclaw/gog) configured with your Gmail account(s)
+- A Google ingestion backend for Gmail/Docs — see [Google ingestion backend](#google-ingestion-backend) below (the [gog CLI](https://github.com/openclaw/gog) works today)
 - ~5GB free disk space
 
 ## Quick start
 
+YouOS installs and runs standalone — no OpenClaw / clawhub required.
+
 ```bash
-# Clone and install
-cd ~/Projects/youos
-pip install -e .
+# Clone, then from the repo root:
+./scripts/install.sh          # creates .venv, installs YouOS, runs the doctor
 
-# Run the setup wizard
-youos setup
-
-# Or run directly
-python3 scripts/setup_wizard.py
+source .venv/bin/activate
+youos setup                   # guided first-run
 ```
+
+<details>
+<summary>Manual install (instead of the script)</summary>
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .              # add extras like: pip install -e ".[reranker]"
+youos setup                   # or: python3 scripts/setup_wizard.py
+```
+</details>
 
 The setup wizard walks you through:
 1. Dependency check
@@ -95,6 +104,21 @@ The setup wizard walks you through:
 4. Writing style analysis
 5. Optional initial fine-tuning
 6. Server setup
+
+## Google ingestion backend
+
+Gmail and Google Docs ingestion fetch through a pluggable backend, selected by
+`ingestion.google_backend` in `youos_config.yaml`. You don't need OpenClaw to
+run YouOS — pick whichever Google access path you prefer:
+
+| `ingestion.google_backend` | What it uses | Status |
+| --- | --- | --- |
+| `gog` *(default)* | the [gog CLI](https://github.com/openclaw/gog) | ✅ available |
+| `gws` | [Google's own Workspace CLI](https://github.com/googleworkspace/cli) | 🚧 in progress |
+| `native` | direct Google API (`youos[google]` extra, OAuth) | 🚧 in progress |
+
+The default is `gog`, so existing setups are unchanged. WhatsApp ingestion needs
+no Google backend at all (it parses a local export file).
 
 ## Usage
 
