@@ -27,6 +27,13 @@ dev = [
   "ruff>=0.6,<1.0",
   "mypy>=1.11,<2.0"
 ]
+# Cross-encoder reranker (off by default via `reranker_enabled: false` in
+# retrieval/defaults.yaml). Installing this extra is the precondition for
+# flipping that flag on — without it the reranker module logs a warning and
+# falls back to FTS+semantic order. See app/core/reranker.py.
+reranker = [
+  "sentence-transformers>=2.2,<4.0"
+]
 
 [project.scripts]
 youos = "app.cli:app"
