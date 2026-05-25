@@ -14,10 +14,18 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-CONFIG_PATH = ROOT_DIR / "youos_config.yaml"
 
 # Add root to path for imports
 sys.path.insert(0, str(ROOT_DIR))
+
+# Resolve the config path through settings so setup writes (and re-reads)
+# the active instance's config when YOUOS_DATA_DIR is set, rather than
+# always editing the repo's youos_config.yaml — which left every instance
+# silently sharing one config file and the wizard's writes invisible to
+# `youos status`/`youos ui` running for that instance.
+from app.core.settings import get_instance_root  # noqa: E402
+
+CONFIG_PATH = get_instance_root() / "youos_config.yaml"
 
 
 def _print_banner():
@@ -343,7 +351,11 @@ def _run_ingestion(config: dict) -> dict:
             print("You can start drafting now while full ingestion continues in the background.")
 
             full_query = _query_for_months(months)
-            log_dir = ROOT_DIR / "var"
+            # Per-instance: background-ingest logs land in the active
+            # instance's var/, so multi-instance setups don't co-mingle logs.
+            from app.core.settings import get_var_dir
+
+            log_dir = get_var_dir()
             log_dir.mkdir(parents=True, exist_ok=True)
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
