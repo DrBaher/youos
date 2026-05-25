@@ -28,6 +28,30 @@ from app.ingestion.run_log import (
 # refresh) can't hang ingestion / the nightly pipeline forever.
 GOG_TIMEOUT_SECONDS = 120
 
+# Gmail rate-limit retry: detect Google's quota-exceeded responses
+# (their wording varies — 429, "rate limit", "quota", "userRateLimitExceeded",
+# "rateLimitExceeded") and back off exponentially. Caps at 5 attempts /
+# ~30s total wait so a single search page can't stall ingestion indefinitely
+# on a sustained outage.
+_GOG_RATE_LIMIT_PATTERNS = (
+    "429",
+    "rateLimitExceeded",
+    "userRateLimitExceeded",
+    "quotaExceeded",
+    "rate limit",
+    "quota exceeded",
+    "Too Many Requests",
+)
+_GOG_BACKOFF_SECONDS = (2, 4, 8, 16)  # 4 retries → max wait 30s
+
+
+def _looks_like_rate_limit(text: str) -> bool:
+    """True if a gog error string smells like a Google rate-limit response."""
+    if not text:
+        return False
+    haystack = text.lower()
+    return any(p.lower() in haystack for p in _GOG_RATE_LIMIT_PATTERNS)
+
 SUPPORTED_IMPORT_FORMAT = """
 Supported Gmail import inputs:
 
@@ -463,18 +487,10 @@ def _gog_search_threads(
         if page_token:
             command.extend(["--page", page_token])
 
-        try:
-            completed = subprocess.run(command, check=False, capture_output=True, text=True, timeout=GOG_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired as exc:
-            raise ValueError(f"{' '.join(command)} timed out after {GOG_TIMEOUT_SECONDS}s") from exc
-        if completed.returncode != 0:
-            error_detail = completed.stderr.strip() or completed.stdout.strip() or "unknown gog error"
-            raise ValueError(f"{' '.join(command)} failed: {error_detail}")
-
-        try:
-            payload = json.loads(completed.stdout)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"{' '.join(command)} returned invalid JSON: {exc}") from exc
+        # Route through `_run_gog_json` so search pages get the same rate-
+        # limit retry/backoff as individual thread fetches — without this,
+        # a 429 in the middle of a long search would abort the whole run.
+        payload = _run_gog_json(command)
 
         # nextPageToken lives in the envelope when --results-only is omitted
         next_page_token: str | None = None
@@ -523,23 +539,44 @@ def _gog_get_thread(*, account: str, thread_id: str) -> dict[str, Any]:
 
 
 def _run_gog_json(command: list[str]) -> Any:
-    try:
-        completed = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=GOG_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise ValueError(f"{' '.join(command)} timed out after {GOG_TIMEOUT_SECONDS}s") from exc
-    if completed.returncode != 0:
+    """Run a gog subprocess and parse stdout as JSON, with rate-limit retry.
+
+    On a returncode != 0 we inspect stderr/stdout for Google's quota-exceeded
+    wording (`_looks_like_rate_limit`) and retry with exponential backoff
+    (2s, 4s, 8s, 16s — 4 retries, ~30s max wait). Non-rate-limit errors
+    raise immediately; transient quota errors get a chance to clear before
+    propagating. Without this, a single rate-limited search page would
+    abort the whole ingestion run on the first 429 of a long sync.
+    """
+    last_error: str = ""
+    for _attempt, backoff in enumerate((*_GOG_BACKOFF_SECONDS, None), start=1):
+        try:
+            completed = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=GOG_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError(f"{' '.join(command)} timed out after {GOG_TIMEOUT_SECONDS}s") from exc
+
+        if completed.returncode == 0:
+            try:
+                return json.loads(completed.stdout)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{' '.join(command)} returned invalid JSON: {exc}") from exc
+
         error_detail = completed.stderr.strip() or completed.stdout.strip() or "unknown gog error"
-        raise ValueError(f"{' '.join(command)} failed: {error_detail}")
-    try:
-        return json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"{' '.join(command)} returned invalid JSON: {exc}") from exc
+        last_error = error_detail
+        if not _looks_like_rate_limit(error_detail) or backoff is None:
+            # Either a non-retryable error or we're out of attempts.
+            raise ValueError(f"{' '.join(command)} failed: {error_detail}")
+        # Rate-limited; wait and retry.
+        time.sleep(backoff)
+
+    # Defensive — the loop above always returns or raises.
+    raise ValueError(f"{' '.join(command)} failed after retries: {last_error}")
 
 
 def _coerce_list_payload(payload: Any, *, command_name: str) -> list[Any]:
