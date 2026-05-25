@@ -125,6 +125,23 @@ def get_tailscale_hostname(config: dict[str, Any] | None = None) -> str:
     return cfg.get("tailscale", {}).get("hostname", "")
 
 
+def get_user_timezone(config: dict[str, Any] | None = None) -> str:
+    """Return ``user.timezone`` (IANA name) or ``UTC`` when unset/invalid.
+
+    Used by ingestion paths that need to attach tzinfo to naive timestamps
+    (WhatsApp exports record local times with no offset). Falling back to
+    UTC rather than tzlocal() because the server's clock may be in a
+    different zone than the device that produced the export — UTC at
+    least makes the timestamps monotonic across sources, even if the
+    wall-clock interpretation is wrong by a few hours.
+    """
+    cfg = config or load_config()
+    tz = (cfg.get("user", {}) or {}).get("timezone", "") or ""
+    if not isinstance(tz, str) or not tz.strip():
+        return "UTC"
+    return tz.strip()
+
+
 def get_autoresearch_iterations(config: dict[str, Any] | None = None) -> int:
     cfg = config or load_config()
     return int(cfg.get("autoresearch", {}).get("iterations", 80))
