@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.44 — 2026-05-25
+
+### Web onboarding wizard (4/4)
+- **A guided first-run wizard at `/welcome`** mirroring the steps of the terminal `youos setup`: Welcome → Identity → Connect Gmail/Docs → Build corpus → Learn your voice → Secure → Done. It **performs** the config steps in the browser (identity via a new `POST /api/config/identity`; Google backend via `/api/config/set`) and **guides** the operational steps (ingest / fine-tune / auth / PIN) with the exact command plus a live ✓ readiness check against `/api/config` (`corpus_ready` / `adapter_ready`). Feature toggles link to the Settings page (no duplication).
+- **First-run entry point:** the draft page's empty state (shown when there's no corpus) now leads with a "Run the setup wizard →" button to `/welcome`, with `youos setup` as the terminal alternative.
+- **Why guided, not fully automated:** there are no web endpoints for ingest/fine-tune/OAuth/PIN (only `/trigger-autoresearch`), and building those long-running/shell/OAuth actions as blind web endpoints would be a large, separate effort that duplicates `youos setup`. The wizard drives everything it safely can and points to the one command for the rest. New `set_identity()` write path is validated like the flag whitelist. Verified structurally (serves + wired + 7 steps); visual flow eyeballed on a running instance.
+
+This completes the config UX series: `youos config` CLI (#47) · config-write API (#48) · Settings page (#49) · onboarding wizard (this).
+
 ## v0.1.43 — 2026-05-25
 
 ### Web Settings page (easy flag toggling, 3/4)

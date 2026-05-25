@@ -141,3 +141,29 @@ def set_flag(key: str, raw_value: Any, *, config_path: Path | None = None) -> An
     _set_dotted(cfg, key, value)
     save_config(cfg, config_path)
     return value
+
+
+def set_identity(
+    name: str | None = None,
+    emails: list[str] | None = None,
+    *,
+    config_path: Path | None = None,
+) -> dict[str, Any]:
+    """Persist the user's identity (``user.name`` / ``user.emails``).
+
+    Used by the onboarding wizard / settings. Not a feature flag, but the same
+    controlled, validated write path. Returns the stored identity.
+    """
+    cfg = copy.deepcopy(load_config(config_path))
+    user = cfg.setdefault("user", {})
+    if not isinstance(user, dict):
+        user = {}
+        cfg["user"] = user
+    if name is not None:
+        user["name"] = str(name).strip()
+    if emails is not None:
+        if not isinstance(emails, list):
+            raise ValueError("emails must be a list")
+        user["emails"] = [str(e).strip() for e in emails if str(e).strip()]
+    save_config(cfg, config_path)
+    return {"name": user.get("name", ""), "emails": user.get("emails", [])}
