@@ -9,6 +9,7 @@ from __future__ import annotations
 import sqlite3
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -488,8 +489,17 @@ def main() -> None:
     steps: dict[str, bool] = {}
     errors: list[str] = []
     skipped_steps: list[str] = []
+    # Wall-clock per step (monotonic, seconds). Without this, a 4-hour nightly
+    # tells you nothing about *where* the time went — every step blob just
+    # reports OK/WARN. Recorded for the success path, error path, AND the
+    # skipped path so a "skipped: xxx" entry is observably ~0s.
+    step_durations: dict[str, float] = {}
+
+    def _record_duration(name: str, t0: float) -> None:
+        step_durations[name] = round(time.monotonic() - t0, 3)
 
     # 0. Corpus deduplication (best-effort, before ingestion) — with skip gate
+    _t = time.monotonic()
     skip, skip_msg = should_skip_dedup(DEFAULT_DB)
     if skip:
         print(skip_msg)
@@ -507,8 +517,10 @@ def main() -> None:
             results["dedup"] = f"error: {exc}"
             steps["dedup"] = False
             errors.append(f"Corpus deduplication error: {exc}")
+    _record_duration("dedup", _t)
 
     # 1. Gmail ingestion
+    _t = time.monotonic()
     try:
         ok = step_ingest_gmail(verbose=verbose)
         results["ingestion"] = "OK" if ok else "WARN"
@@ -519,8 +531,10 @@ def main() -> None:
         results["ingestion"] = f"error: {exc}"
         steps["ingestion"] = False
         errors.append(f"Gmail ingestion error: {exc}")
+    _record_duration("ingestion", _t)
 
     # 1b. Benchmark auto-refresh
+    _t = time.monotonic()
     try:
         from app.core.config import _load_raw_config
 
@@ -546,8 +560,10 @@ def main() -> None:
         results["benchmark_refresh"] = f"error: {exc}"
         steps["benchmark_refresh"] = False
         errors.append(f"Benchmark refresh error: {exc}")
+    _record_duration("benchmark_refresh", _t)
 
     # 2. Auto-feedback extraction
+    _t = time.monotonic()
     try:
         feedback = step_auto_feedback(verbose=verbose)
         results["auto_feedback"] = f"captured {feedback['captured']} pairs"
@@ -557,10 +573,12 @@ def main() -> None:
         results["auto_feedback"] = f"error: {exc}"
         steps["auto_feedback"] = False
         errors.append(f"Auto-feedback error: {exc}")
+    _record_duration("auto_feedback", _t)
 
     # 3. Export + fine-tune (only if enough data)
     unused = _count_unused_feedback(DEFAULT_DB)
 
+    _t = time.monotonic()
     if feedback["captured"] >= 5:
         try:
             ok = step_export_feedback(verbose=verbose)
@@ -575,7 +593,9 @@ def main() -> None:
     else:
         results["export"] = f"skipped (only {feedback['captured']} new pairs, need 5)"
         steps["export"] = True
+    _record_duration("export", _t)
 
+    _t = time.monotonic()
     skip_ft, skip_ft_msg = should_skip_finetune(DEFAULT_DB)
     if skip_ft:
         print(skip_ft_msg)
@@ -596,8 +616,10 @@ def main() -> None:
     else:
         results["finetune"] = f"skipped (only {unused} unused pairs, need 10)"
         steps["finetune"] = True
+    _record_duration("finetune", _t)
 
     # 3b. Golden evaluation (after fine-tuning, before autoresearch)
+    _t = time.monotonic()
     golden_composite = None
     try:
         ok = step_golden_eval(verbose=verbose)
@@ -616,8 +638,10 @@ def main() -> None:
         results["golden_eval"] = f"error: {exc}"
         steps["golden_eval"] = False
         errors.append(f"Golden evaluation error: {exc}")
+    _record_duration("golden_eval", _t)
 
     # 4. Embedding indexer (after fine-tuning) — with skip gate
+    _t = time.monotonic()
     skip_emb, skip_emb_msg = should_skip_embeddings(DEFAULT_DB)
     if skip_emb:
         print(skip_emb_msg)
@@ -636,8 +660,10 @@ def main() -> None:
             results["embeddings"] = f"error: {exc}"
             steps["embeddings"] = False
             errors.append(f"Embedding indexer error: {exc}")
+    _record_duration("embeddings", _t)
 
     # 5. Autoresearch — with skip gate
+    _t = time.monotonic()
     skip_ar, skip_ar_msg = should_skip_autoresearch(DEFAULT_DB)
     if skip_ar:
         print(skip_ar_msg)
@@ -655,6 +681,7 @@ def main() -> None:
             results["autoresearch"] = f"error: {exc}"
             steps["autoresearch"] = False
             errors.append(f"Autoresearch error: {exc}")
+    _record_duration("autoresearch", _t)
 
     # Include recent git log after autoresearch
     try:
@@ -696,10 +723,19 @@ def main() -> None:
         except Exception:
             pass
 
+    elapsed = (datetime.now(timezone.utc) - start).total_seconds()
+    # `schema_version` lets downstream consumers (stats UI, autoresearch
+    # convergence dashboard, future history-jsonl trend view) detect a
+    # breaking shape change instead of silently mis-parsing a new field.
+    # Bump when adding a required field or changing an existing one's
+    # semantics; additive optional fields don't need a bump.
     run_log = {
+        "schema_version": "v1",
         "run_at": start.isoformat(),
+        "duration_seconds": round(elapsed, 2),
         "status": status,
         "steps": steps,
+        "step_durations": step_durations,
         "errors": errors,
         "skipped_steps": skipped_steps,
         "benchmark_rotated": benchmark_rotated,
@@ -708,12 +744,16 @@ def main() -> None:
     _write_pipeline_log(run_log)
 
     # Summary
-    elapsed = (datetime.now(timezone.utc) - start).total_seconds()
     print(f"\n{'=' * 60}")
     print("NIGHTLY PIPELINE SUMMARY")
     print(f"{'=' * 60}")
     for step, step_status in results.items():
-        print(f"  {step}: {step_status}")
+        duration = step_durations.get(step)
+        # Skip the duration column for non-step entries like recent_commits.
+        if duration is not None:
+            print(f"  {step}: {step_status} ({duration:.1f}s)")
+        else:
+            print(f"  {step}: {step_status}")
     print(f"\nStatus: {status}")
     print(f"Completed in {elapsed:.0f}s")
 
