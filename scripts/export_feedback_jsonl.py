@@ -34,6 +34,17 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dpo", action="store_true", help="Export DPO preference pairs (chosen/rejected)")
     p.add_argument("--curriculum", action=argparse.BooleanOptionalAction, default=True, help="Sort first 20%% by quality (curriculum learning)")
     p.add_argument("--no-dedup", action="store_true", help="Disable near-duplicate deduplication")
+    p.add_argument(
+        "--persona",
+        type=str,
+        default=None,
+        help=(
+            "Filter to one sender_type cohort for per-persona fine-tuning "
+            "(e.g. --persona internal). Omit to export all cohorts mixed "
+            "together for the global adapter. Used by Phase 2 of the "
+            "per-persona adapters work."
+        ),
+    )
     return p.parse_args()
 
 
@@ -243,12 +254,29 @@ def export(args: argparse.Namespace) -> None:
         query = "SELECT inbound_text, edited_reply, rating, edit_distance_pct, created_at, COALESCE(rating, 3) as quality_score FROM feedback_pairs WHERE 1=1"
         params: list = []
 
-        if not args.all:
+        # `used_in_finetune` is a global flag — it gates the incremental
+        # global-adapter loop ("don't retrain on data the global already saw").
+        # Per-persona training should use the *entire* cohort every time
+        # (each persona's adapter is smallish and retrains from scratch), so
+        # `--persona` implicitly bypasses this filter. Otherwise the first
+        # persona to train would steal pairs from the global / other personas.
+        # ``getattr`` since some legacy callers (tests, direct invocations)
+        # build a Namespace without the new attribute.
+        persona_filter = getattr(args, "persona", None)
+        if not args.all and not persona_filter:
             query += " AND used_in_finetune = 0"
 
         if args.since:
             query += " AND created_at >= ?"
             params.append(args.since)
+
+        if persona_filter:
+            # Filter to one sender_type cohort. We explicitly do NOT include
+            # NULL-sender_type rows here — those are pre-Phase-1 historical
+            # rows that haven't been backfilled, and we'd rather have a smaller
+            # honest cohort than dilute it with un-classifiable data.
+            query += " AND sender_type = ?"
+            params.append(persona_filter.strip().lower())
 
         rows = conn.execute(query, params).fetchall()
     finally:
