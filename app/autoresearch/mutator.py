@@ -71,6 +71,27 @@ _NUMERIC_SURFACES: list[dict[str, Any]] = [
         "min_val": 100,
         "max_val": 600,
     },
+    # BM25 lexical-score saturation. Historically hardcoded
+    # `min(raw_rank * 2.0, 10.0)` — strong matches above raw_rank=5 all
+    # flattened to lexical_score=10 and lost their order. Surfacing the scale
+    # and cap lets autoresearch's golden-eval-gated loop find the right
+    # ramp/ceiling for this corpus instead of guessing.
+    {
+        "name": "lexical_scale",
+        "config_file": "retrieval/defaults.yaml",
+        "yaml_key": "lexical_scale",
+        "step_size": 0.5,
+        "min_val": 0.5,
+        "max_val": 4.0,
+    },
+    {
+        "name": "lexical_cap",
+        "config_file": "retrieval/defaults.yaml",
+        "yaml_key": "lexical_cap",
+        "step_size": 2.0,
+        "min_val": 6.0,
+        "max_val": 20.0,
+    },
 ]
 
 # E16: Per-mode avg_reply_words surfaces (nested in persona.yaml modes)
