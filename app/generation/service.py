@@ -190,6 +190,8 @@ class DraftResponse:
     # (only when the opt-in repair flags are enabled).
     length_flag: str | None = None
     repairs: list[str] = field(default_factory=list)
+    # Ranked alternatives when multi-candidate generation is enabled (else []).
+    candidates: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -1115,6 +1117,88 @@ def _resolve_decoding(intent: str | None, confidence: str | None) -> tuple[float
         return None, None
 
 
+# --- Multi-candidate generation + ranking -----------------------------------
+# Optionally generate several drafts (a temperature spread) and return the
+# best by a deterministic scorer. Off by default — it multiplies model calls.
+
+
+def _multi_candidate_config() -> dict[str, Any]:
+    """Read ``generation.multi_candidate`` (default disabled)."""
+    try:
+        from app.core.config import load_config
+
+        cfg = load_config() or {}
+        gen = cfg.get("generation", {}) if isinstance(cfg, dict) else {}
+        mc = gen.get("multi_candidate", {}) if isinstance(gen, dict) else {}
+        mc = mc if isinstance(mc, dict) else {}
+        temps = mc.get("temperatures")
+        if not isinstance(temps, list) or not temps:
+            temps = [0.3, 0.7, 1.0]
+        return {"enabled": bool(mc.get("enabled", False)), "temperatures": [float(t) for t in temps]}
+    except Exception:
+        logger.debug("Could not read generation.multi_candidate", exc_info=True)
+        return {"enabled": False, "temperatures": [0.3, 0.7, 1.0]}
+
+
+def _is_usable_draft(text: str) -> bool:
+    """Mirror the empty/signature-only check used by the fallback path."""
+    non_ws = len(text.replace(" ", "").replace("\n", "").replace("\t", ""))
+    if non_ws < 10:
+        return False
+    stripped_all = text.strip()
+    if stripped_all.startswith("[") and stripped_all.endswith("]"):
+        return False
+    stripped = strip_signature(text).strip()
+    return not (len(stripped) < 15 and non_ws > 0)
+
+
+def _score_candidate(text: str, *, target_words: int | None, greeting: str, closing: str) -> float:
+    """Deterministic candidate score (higher is better).
+
+    Unusable (empty/placeholder/signature-only) drafts are disqualified.
+    Otherwise: length-fit (peaks at the persona target) plus credit for
+    honoring the persona greeting/closing when those are configured.
+    """
+    if not _is_usable_draft(text):
+        return float("-inf")
+    score = 0.0
+    if target_words and target_words > 0:
+        ratio = len(text.split()) / target_words
+        score += max(0.0, 1.0 - abs(ratio - 1.0))  # 1.0 at exact match, →0 as it drifts
+        if _length_flag(text, target_words) == "ok":
+            score += 0.5
+    if greeting:
+        score += 0.5 if _draft_has_greeting(text, greeting) else 0.0
+    if closing:
+        score += 0.5 if _draft_has_closing(text, closing) else 0.0
+    return score
+
+
+def _rank_candidates(
+    raw: list[tuple[str, str, float | None]],
+    *,
+    target_words: int | None,
+    greeting: str,
+    closing: str,
+) -> list[dict[str, Any]]:
+    """Score and sort candidates best-first.
+
+    ``raw`` is a list of ``(draft, model_used, temperature)``. Returns dicts
+    with the draft, model_used, temperature and score, sorted descending.
+    """
+    scored = [
+        {
+            "draft": draft,
+            "model_used": model_used,
+            "temperature": temperature,
+            "score": _score_candidate(draft, target_words=target_words, greeting=greeting, closing=closing),
+        }
+        for draft, model_used, temperature in raw
+    ]
+    scored.sort(key=lambda c: c["score"], reverse=True)
+    return scored
+
+
 ADAPTER_PATH = get_adapter_path()
 
 
@@ -1271,6 +1355,37 @@ def _call_local_model(
     if result.returncode != 0:
         raise RuntimeError(f"mlx_lm generate failed (exit {result.returncode}): {result.stderr.strip()}")
     return _strip_mlx_output(result.stdout)
+
+
+def _local_draft_once(
+    prompt: str,
+    *,
+    max_tokens: int,
+    temperature: float | None,
+    top_p: float | None,
+    request: "DraftRequest",
+    sender_type_hint: str | None,
+) -> tuple[str, str]:
+    """Produce one local-model draft, honoring the Phase-3 adapter precedence.
+
+    Returns ``(draft, model_used)``. Factored out so both the single-draft
+    path and multi-candidate generation share the exact same adapter routing.
+    """
+    persona_adapter_path: Path | None = None
+    if request.use_adapter and _persona_routing_enabled():
+        persona_adapter_path = _persona_adapter_available(sender_type_hint)
+    if persona_adapter_path is not None:
+        draft = _call_local_model(
+            prompt, max_tokens=max_tokens, adapter_path=persona_adapter_path,
+            temperature=temperature, top_p=top_p,
+        )
+        return draft, f"qwen2.5-1.5b-lora-{sender_type_hint}"
+    with_adapter = request.use_adapter and _adapter_available()
+    draft = _call_local_model(
+        prompt, max_tokens=max_tokens, use_adapter=with_adapter,
+        temperature=temperature, top_p=top_p,
+    )
+    return draft, ("qwen2.5-1.5b-lora" if with_adapter else "qwen2.5-1.5b-base")
 
 
 def _generate_via_ollama(
@@ -1569,35 +1684,45 @@ def generate_draft(
     # Decoding params (default None -> each backend keeps its current default).
     temperature, top_p = _resolve_decoding(detected_intent, confidence)
 
+    # Greeting/closing resolved once — reused by candidate ranking and the
+    # post-generation repair pass below.
+    repair_greeting = _resolve_greeting(persona, sender_type_hint, first_name)
+    repair_closing = _resolve_closing(persona, sender_type_hint)
+
     fallback_model = get_model_fallback()
+    candidates: list[dict[str, Any]] = []
     try:
         if request.use_local_model and _local_model_available():
-            # Phase 3 routing precedence:
-            # 1. Per-persona adapter when (a) routing is on, (b) the caller
-            #    wants an adapter, (c) the inbound's sender_type maps to a
-            #    trained adapter on disk.
-            # 2. Global "latest" adapter when no persona adapter applies
-            #    and one is trained.
-            # 3. Base model otherwise.
-            # Each fallback is honest in `model_used` so the trace records
-            # which adapter actually generated the draft — important when
-            # tuning persona vs global on the same corpus.
-            persona_adapter_path: Path | None = None
-            if request.use_adapter and _persona_routing_enabled():
-                persona_adapter_path = _persona_adapter_available(sender_type_hint)
-            if persona_adapter_path is not None:
-                draft = _call_local_model(
-                    prompt, max_tokens=max_tokens, adapter_path=persona_adapter_path,
-                    temperature=temperature, top_p=top_p,
+            # Phase 3 routing precedence is encapsulated in _local_draft_once:
+            #   1. per-persona adapter (routing on + caller wants it + trained)
+            #   2. global "latest" adapter when one is trained
+            #   3. base model otherwise
+            # `model_used` is honest about which adapter actually ran.
+            mc = _multi_candidate_config()
+            if mc["enabled"]:
+                # Generate a temperature spread, then keep the best-scoring draft.
+                raw: list[tuple[str, str, float | None]] = []
+                for t in mc["temperatures"]:
+                    try:
+                        d, mu = _local_draft_once(
+                            prompt, max_tokens=max_tokens, temperature=t, top_p=top_p,
+                            request=request, sender_type_hint=sender_type_hint,
+                        )
+                        raw.append((d, mu, t))
+                    except Exception:
+                        logger.warning("multi-candidate: one candidate failed", exc_info=True)
+                if not raw:
+                    raise RuntimeError("all draft candidates failed")
+                candidates = _rank_candidates(
+                    raw, target_words=avg_reply_words, greeting=repair_greeting, closing=repair_closing,
                 )
-                model_used = f"qwen2.5-1.5b-lora-{sender_type_hint}"
+                draft = candidates[0]["draft"]
+                model_used = candidates[0]["model_used"]
             else:
-                with_adapter = request.use_adapter and _adapter_available()
-                draft = _call_local_model(
-                    prompt, max_tokens=max_tokens, use_adapter=with_adapter,
-                    temperature=temperature, top_p=top_p,
+                draft, model_used = _local_draft_once(
+                    prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p,
+                    request=request, sender_type_hint=sender_type_hint,
                 )
-                model_used = "qwen2.5-1.5b-lora" if with_adapter else "qwen2.5-1.5b-base"
         elif fallback_model == "ollama":
             from app.core.config import get_ollama_config
 
@@ -1653,12 +1778,10 @@ def generate_draft(
     # Post-generation repair: always annotate length; optionally enforce the
     # persona greeting/closing and strip a trailing duplicate signature (both
     # default-off — see _get_repair_config).
-    _repair_greeting = _resolve_greeting(persona, sender_type_hint, first_name)
-    _repair_closing = _resolve_closing(persona, sender_type_hint)
     draft, repairs, length_flag = _repair_draft(
         draft,
-        greeting=_repair_greeting,
-        closing=_repair_closing,
+        greeting=repair_greeting,
+        closing=repair_closing,
         target_words=avg_reply_words,
         config=_get_repair_config(),
     )
@@ -1702,4 +1825,5 @@ def generate_draft(
         exemplar_cache_key=exemplar_cache_key,
         length_flag=length_flag,
         repairs=repairs,
+        candidates=candidates,
     )
