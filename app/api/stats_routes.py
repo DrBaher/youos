@@ -159,6 +159,49 @@ def ingest_status(request: Request) -> dict:
     return get_latest_ingest_status(request.app.state.settings.database_url)
 
 
+# Tracks an in-progress wizard-launched fine-tune (single-worker dev server).
+_finetune_proc: Any = None
+
+
+@router.post("/api/finetune")
+def trigger_finetune() -> dict:
+    """Run export + LoRA fine-tune in the background (same as `youos finetune`)."""
+    global _finetune_proc
+    if _finetune_proc is not None and _finetune_proc.poll() is None:
+        raise HTTPException(status_code=409, detail="Fine-tuning is already running.")
+    scripts = ROOT_DIR / "scripts"
+    # Sequential export -> finetune in one detached process; paths are constants
+    # (no user input), invoked as an arg list (no shell).
+    code = (
+        "import subprocess,sys;"
+        f"subprocess.run([sys.executable, {str(scripts / 'export_feedback_jsonl.py')!r}], check=False);"
+        f"subprocess.run([sys.executable, {str(scripts / 'finetune_lora.py')!r}], check=False)"
+    )
+    _finetune_proc = subprocess.Popen(  # noqa: S603
+        [sys.executable, "-c", code],
+        cwd=str(ROOT_DIR),
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return {"started": True}
+
+
+@router.get("/api/finetune/status")
+def finetune_status() -> dict:
+    running = _finetune_proc is not None and _finetune_proc.poll() is None
+    adapter_ready = (get_adapter_path() / "adapters.safetensors").exists()
+    return {"status": "running" if running else ("done" if adapter_ready else "idle"), "adapter_ready": adapter_ready}
+
+
+@router.post("/api/token")
+def create_token() -> dict:
+    """Create an API token for the browser extension (shown once)."""
+    from app.core.auth import add_api_token
+
+    return {"token": add_api_token()}
+
+
 @router.get("/stats", response_class=HTMLResponse)
 def stats_page() -> HTMLResponse:
     html = TEMPLATE_PATH.read_text(encoding="utf-8")
