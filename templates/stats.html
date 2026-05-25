@@ -110,6 +110,13 @@ body {
   <div id="loading" class="loading" role="status" aria-live="polite">Loading stats...</div>
   <div id="content" role="main" style="display:none;">
     <div class="grid">
+      <!-- Live activity (ingestion / fine-tuning) -->
+      <div class="card full-width" id="activityCard">
+        <h2>Activity</h2>
+        <div class="stat-row"><span class="stat-label">Ingestion</span><span class="stat-value" id="actIngest">—</span></div>
+        <div class="stat-row"><span class="stat-label">Fine-tuning</span><span class="stat-value" id="actFinetune">—</span></div>
+      </div>
+
       <!-- Corpus Health -->
       <div class="card">
         <h2>Corpus Health <span class="card-updated" id="corpusUpdated"></span></h2>
@@ -496,6 +503,31 @@ body {
       document.getElementById('loading').textContent = 'Error loading stats: ' + e.message;
     }
   })();
+
+  // Live activity: poll ingestion + fine-tune status (independent of the
+  // one-shot stats load), so long-running jobs are visible here no matter
+  // which page launched them.
+  function setAct(id, text, kind) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text;
+    el.style.color = kind === 'ok' ? '#2ecc71' : kind === 'run' ? '#f0ad4e' : kind === 'err' ? '#e74c3c' : '#888';
+  }
+  function pollActivity() {
+    fetch('/api/ingest/status').then(function (r) { return r.json(); }).then(function (s) {
+      if (s.status === 'running') setAct('actIngest', '⏳ Ingesting… ' + (s.discovered || 0) + ' found, ' + (s.reply_pairs || 0) + ' stored', 'run');
+      else if (s.status === 'completed') setAct('actIngest', '✓ Last ingest: ' + (s.reply_pairs || 0) + ' reply pairs', 'ok');
+      else if (s.status === 'failed') setAct('actIngest', '✕ Failed: ' + (s.error || 'see logs'), 'err');
+      else setAct('actIngest', 'Idle', '');
+    }).catch(function () {});
+    fetch('/api/finetune/status').then(function (r) { return r.json(); }).then(function (s) {
+      if (s.status === 'running') setAct('actFinetune', '⏳ Fine-tuning…', 'run');
+      else if (s.adapter_ready) setAct('actFinetune', '✓ Adapter trained', 'ok');
+      else setAct('actFinetune', 'Idle (no adapter yet)', '');
+    }).catch(function () {});
+    setTimeout(pollActivity, 5000);
+  }
+  pollActivity();
 })();
 </script>
 </body>
