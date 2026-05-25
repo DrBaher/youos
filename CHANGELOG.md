@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.30 — 2026-05-25
+
+### `native` ingestion backend — direct Google API, no CLI (decoupling from OpenClaw, step 3/5)
+- **Added `NativeSource`** to `app/ingestion/adapters.py`, selectable via `ingestion.google_backend: native`. It talks to the Google API directly (`google-api-python-client` + `google-auth-oauthlib`) — no external CLI at all. Gmail via `users().threads().list()/get()`, Drive via `files().list()/get()`, Docs via `documents().get()`. Because the native client and `gws` both return the raw Google API shape, the native backend **reuses the same shaping** as `gws` (`_normalize_gog_thread_payload`, the Docs text walk, the Drive-query builder, byte truncation) — same mapping, different transport.
+- **New `youos[google]` extra** carries the Google libraries. They're imported lazily inside `NativeSource` methods, so the base install and importing `app.ingestion.adapters` never require them; calling a native method without the extra raises a clear `pip install youos[google]` error.
+- **Multi-account via per-account OAuth tokens.** Unlike `gws`, `native` is naturally multi-account: tokens are stored per account under the instance dir (`var/google_tokens/<account>.json`, or `ingestion.google_token_dir`), auto-refreshed on expiry. First-run authorization is the interactive `NativeSource.authorize_account()` (OAuth installed-app flow), which reads the client JSON from `ingestion.google_oauth_client_secrets`.
+- **Default unchanged** — `gog` remains default; purely additive. Unit-tested via a mocked service object (pagination/cap, thread normalization feeding the existing normalizer, Drive query building, `documents.get` caching across `docs_info`+`docs_cat`, truncation, metadata fields), the deterministic absence-of-extra error path, and token-path resolution. **Live OAuth + ingestion is verified on a real instance** (the container has no browser/Google account).
+
 ## v0.1.29 — 2026-05-25
 
 ### `gws` ingestion backend — Google's own Workspace CLI (decoupling from OpenClaw, step 2/5)
