@@ -8,8 +8,10 @@ OpenClaw ``gog`` CLI. Implementations:
 - :class:`GwsSource` — Google's own open-source Workspace CLI ``gws``
   (single-account, JSON-by-default, ``gws <service> <resource> <method>
   --params '{...}'``).
-- ``native`` — a direct Google-API client (``google-api-python-client`` +
-  ``google-auth-oauthlib``), no external CLI. *Planned.*
+- :class:`NativeSource` — a direct Google-API client
+  (``google-api-python-client`` + ``google-auth-oauthlib``, the
+  ``youos[google]`` extra), no external CLI; multi-account via per-account
+  OAuth tokens.
 
 Each method returns the **canonical payload** the ingestion normalizers already
 consume (``_normalize_thread_payload`` / ``_wrap_live_doc_payload`` etc.) —
@@ -29,6 +31,7 @@ import logging
 import os
 import subprocess
 import time
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from app.core.config import get_ingestion_google_backend
@@ -43,8 +46,37 @@ SUPPORTED_BACKENDS = ("gog", "gws", "native")
 GWS_TIMEOUT_SECONDS = 120
 # Same rate-limit backoff philosophy as the gog backend.
 _GWS_BACKOFF_SECONDS = (2, 4, 8, 16)
+
+# --- shared Google-API shaping (gws + native) -----------------------------
 # Search-page size for Gmail threads.list pagination.
-_GWS_THREAD_PAGE_SIZE = 50
+_THREAD_PAGE_SIZE = 50
+# Drive file fields the docs normalizer reads (title/uri/timestamps/owner).
+_DRIVE_FILE_FIELDS = (
+    "id,name,mimeType,webViewLink,createdTime,modifiedTime,"
+    "owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress)"
+)
+# OAuth scopes the native backend requests (read-only ingestion).
+_NATIVE_SCOPES = (
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/documents.readonly",
+)
+
+
+def _build_drive_query(query: str, *, raw_query: bool) -> str:
+    """Drive ``q`` for a docs search. Raw passes through; otherwise full-text,
+    restricted to Google Docs (this is the Docs importer)."""
+    if raw_query:
+        return query
+    escaped = query.replace("\\", "\\\\").replace("'", "\\'")
+    return f"fullText contains '{escaped}' and mimeType = 'application/vnd.google-apps.document'"
+
+
+def _truncate_text_bytes(text: str, max_bytes: int) -> str:
+    """Truncate to ``max_bytes`` UTF-8 bytes (0/falsey = no limit), then strip."""
+    if max_bytes and len(text.encode("utf-8")) > max_bytes:
+        text = text.encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore")
+    return text.strip()
 
 
 @runtime_checkable
@@ -213,13 +245,6 @@ def _docs_document_to_text(document: dict[str, Any], *, all_tabs: bool) -> str:
     return "\n".join(b.strip() for b in bodies if b.strip())
 
 
-# Drive file fields the docs normalizer reads (title/uri/timestamps/owner).
-_GWS_DRIVE_FIELDS = (
-    "id,name,mimeType,webViewLink,createdTime,modifiedTime,"
-    "owners(displayName,emailAddress),lastModifyingUser(displayName,emailAddress)"
-)
-
-
 class GwsSource:
     """Backend backed by Google's own Workspace CLI, ``gws``.
 
@@ -288,7 +313,7 @@ class GwsSource:
         results: list[dict[str, Any]] = []
         page_token: str | None = None
         while True:
-            params: dict[str, Any] = {"userId": "me", "q": query, "maxResults": _GWS_THREAD_PAGE_SIZE}
+            params: dict[str, Any] = {"userId": "me", "q": query, "maxResults": _THREAD_PAGE_SIZE}
             if page_token:
                 params["pageToken"] = page_token
             payload = self._run_json(["gmail", "users", "threads", "list"], account=account, params=params)
@@ -321,14 +346,7 @@ class GwsSource:
 
     # --- Drive / Docs ------------------------------------------------------
     def drive_search(self, *, account: str, query: str, max_docs: int | None, raw_query: bool) -> list[dict[str, Any]]:
-        # raw_query: pass `query` verbatim as the Drive `q`. Otherwise full-text
-        # search restricted to Google Docs (this is the Docs importer).
-        if raw_query:
-            drive_q = query
-        else:
-            escaped = query.replace("\\", "\\\\").replace("'", "\\'")
-            drive_q = f"fullText contains '{escaped}' and mimeType = 'application/vnd.google-apps.document'"
-
+        drive_q = _build_drive_query(query, raw_query=raw_query)
         results: list[dict[str, Any]] = []
         page_token: str | None = None
         page_size = 100
@@ -378,7 +396,7 @@ class GwsSource:
         payload = self._run_json(
             ["drive", "files", "get"],
             account=account,
-            params={"fileId": doc_id, "fields": _GWS_DRIVE_FIELDS},
+            params={"fileId": doc_id, "fields": _DRIVE_FILE_FIELDS},
         )
         if not isinstance(payload, dict):
             raise ValueError(f"gws drive files get returned malformed JSON for doc {doc_id}.")
@@ -386,20 +404,224 @@ class GwsSource:
 
     def docs_cat(self, *, account: str, doc_id: str, max_bytes: int, all_tabs: bool) -> str:
         document = self._document_get(account=account, doc_id=doc_id)
-        text = _docs_document_to_text(document, all_tabs=all_tabs)
-        if max_bytes and len(text.encode("utf-8")) > max_bytes:
-            text = text.encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore")
-        return text.strip()
+        return _truncate_text_bytes(_docs_document_to_text(document, all_tabs=all_tabs), max_bytes)
+
+
+_GOOGLE_EXTRA_HINT = "The 'native' ingestion backend needs the google extra: pip install youos[google]"
+
+
+def _native_config() -> dict[str, Any]:
+    try:
+        from app.core.config import load_config
+
+        cfg = load_config() or {}
+        ingestion = cfg.get("ingestion", {}) if isinstance(cfg, dict) else {}
+        return ingestion if isinstance(ingestion, dict) else {}
+    except Exception:
+        logger.debug("Could not read ingestion config for native backend", exc_info=True)
+        return {}
+
+
+class NativeSource:
+    """Backend backed by the Google API directly — no external CLI.
+
+    Uses ``google-api-python-client`` + ``google-auth-oauthlib`` (the
+    ``youos[google]`` extra). Per-account OAuth tokens are stored under the
+    instance dir, so this is naturally multi-account (unlike ``gws``). The
+    response shaping is identical to :class:`GwsSource` — both speak the raw
+    Google API — so it reuses ``_normalize_gog_thread_payload`` and
+    ``_docs_document_to_text``.
+
+    Google libraries are imported lazily inside methods, so importing this
+    module (and the base ``youos`` install) never requires the extra. First-run
+    authorization is interactive (:meth:`authorize_account`) and is run on a
+    real instance; the container has no browser/OAuth, so methods here are
+    unit-tested against a mocked service.
+    """
+
+    name = "native"
+
+    def __init__(self, *, token_dir: str | Path | None = None, client_secrets_path: str | None = None) -> None:
+        self._token_dir_override = Path(token_dir) if token_dir else None
+        self._client_secrets_override = client_secrets_path
+        self._services: dict[tuple[str, str, str], Any] = {}
+        self._doc_cache: dict[str, dict[str, Any]] = {}
+
+    # --- auth / clients ----------------------------------------------------
+    def _token_dir(self) -> Path:
+        if self._token_dir_override is not None:
+            return self._token_dir_override
+        configured = _native_config().get("google_token_dir")
+        if isinstance(configured, str) and configured.strip():
+            return Path(configured).expanduser()
+        from app.core.settings import get_instance_root
+
+        return get_instance_root() / "var" / "google_tokens"
+
+    def _token_path(self, account: str) -> Path:
+        safe = account.replace("/", "_").replace("\\", "_")
+        return self._token_dir() / f"{safe}.json"
+
+    def _client_secrets(self) -> str:
+        if self._client_secrets_override:
+            return self._client_secrets_override
+        configured = _native_config().get("google_oauth_client_secrets")
+        if isinstance(configured, str) and configured.strip():
+            return configured
+        raise RuntimeError(
+            "Set `ingestion.google_oauth_client_secrets` to your Google OAuth client JSON to use the native backend."
+        )
+
+    def _load_credentials(self, account: str) -> Any:
+        try:
+            from google.auth.transport.requests import Request
+            from google.oauth2.credentials import Credentials
+        except ImportError as exc:
+            raise RuntimeError(_GOOGLE_EXTRA_HINT) from exc
+
+        token_path = self._token_path(account)
+        if not token_path.exists():
+            raise RuntimeError(
+                f"No stored Google credentials for {account!r} at {token_path}. "
+                "Authorize first (youos setup, or NativeSource.authorize_account)."
+            )
+        creds = Credentials.from_authorized_user_file(str(token_path), scopes=list(_NATIVE_SCOPES))
+        if not creds.valid:
+            if creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+                token_path.write_text(creds.to_json(), encoding="utf-8")
+            else:
+                raise RuntimeError(f"Stored Google credentials for {account!r} are invalid; re-authorize.")
+        return creds
+
+    def _service(self, account: str, api: str, version: str) -> Any:
+        key = (account, api, version)
+        svc = self._services.get(key)
+        if svc is None:
+            try:
+                from googleapiclient.discovery import build
+            except ImportError as exc:
+                raise RuntimeError(_GOOGLE_EXTRA_HINT) from exc
+            svc = build(api, version, credentials=self._load_credentials(account), cache_discovery=False)
+            self._services[key] = svc
+        return svc
+
+    def authorize_account(self, account: str, *, client_secrets_path: str | None = None) -> Path:
+        """Run the interactive OAuth flow for ``account`` and store its token.
+
+        Interactive (opens a browser) — invoked on a real instance, not in
+        tests. Returns the path the token was written to.
+        """
+        try:
+            from google_auth_oauthlib.flow import InstalledAppFlow
+        except ImportError as exc:
+            raise RuntimeError(_GOOGLE_EXTRA_HINT) from exc
+
+        secrets = client_secrets_path or self._client_secrets()
+        flow = InstalledAppFlow.from_client_secrets_file(secrets, scopes=list(_NATIVE_SCOPES))
+        creds = flow.run_local_server(port=0)
+        token_path = self._token_path(account)
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        token_path.write_text(creds.to_json(), encoding="utf-8")
+        return token_path
+
+    # --- Gmail -------------------------------------------------------------
+    def search_threads(self, *, account: str, query: str, max_threads: int | None) -> list[dict[str, Any]]:
+        service = self._service(account, "gmail", "v1")
+        results: list[dict[str, Any]] = []
+        page_token: str | None = None
+        while True:
+            resp = (
+                service.users()
+                .threads()
+                .list(userId="me", q=query, maxResults=_THREAD_PAGE_SIZE, pageToken=page_token)
+                .execute()
+            )
+            threads = resp.get("threads") if isinstance(resp, dict) else None
+            if not isinstance(threads, list):
+                threads = []
+            results.extend(item for item in threads if isinstance(item, dict))
+
+            if max_threads is not None and len(results) >= max_threads:
+                return results[:max_threads]
+
+            page_token = resp.get("nextPageToken") if isinstance(resp, dict) else None
+            if not page_token or not threads:
+                return results
+
+    def get_thread(self, *, account: str, thread_id: str) -> dict[str, Any]:
+        from app.ingestion.gmail_threads import _normalize_gog_thread_payload
+
+        service = self._service(account, "gmail", "v1")
+        payload = service.users().threads().get(userId="me", id=thread_id, format="full").execute()
+        if not isinstance(payload, dict):
+            raise ValueError(f"native gmail threads get returned malformed payload for thread {thread_id}.")
+        return _normalize_gog_thread_payload(payload, requested_thread_id=thread_id)
+
+    # --- Drive / Docs ------------------------------------------------------
+    def drive_search(self, *, account: str, query: str, max_docs: int | None, raw_query: bool) -> list[dict[str, Any]]:
+        service = self._service(account, "drive", "v3")
+        drive_q = _build_drive_query(query, raw_query=raw_query)
+        results: list[dict[str, Any]] = []
+        page_token: str | None = None
+        while True:
+            resp = (
+                service.files()
+                .list(
+                    q=drive_q,
+                    pageSize=100,
+                    pageToken=page_token,
+                    fields="files(id,name,mimeType,webViewLink),nextPageToken",
+                )
+                .execute()
+            )
+            files = resp.get("files") if isinstance(resp, dict) else None
+            if not isinstance(files, list):
+                files = []
+            results.extend(item for item in files if isinstance(item, dict))
+
+            if max_docs is not None and len(results) >= max_docs:
+                return results[:max_docs]
+
+            page_token = resp.get("nextPageToken") if isinstance(resp, dict) else None
+            if not page_token or not files:
+                return results
+
+    def _document_get(self, *, account: str, doc_id: str) -> dict[str, Any]:
+        cached = self._doc_cache.get(doc_id)
+        if cached is not None:
+            return cached
+        service = self._service(account, "docs", "v1")
+        payload = service.documents().get(documentId=doc_id).execute()
+        if not isinstance(payload, dict):
+            raise ValueError(f"native docs documents get returned malformed payload for doc {doc_id}.")
+        self._doc_cache[doc_id] = payload
+        return payload
+
+    def docs_info(self, *, account: str, doc_id: str) -> dict[str, Any]:
+        document = self._document_get(account=account, doc_id=doc_id)
+        return {"documentId": doc_id, "title": document.get("title")}
+
+    def drive_get(self, *, account: str, doc_id: str) -> dict[str, Any]:
+        service = self._service(account, "drive", "v3")
+        payload = service.files().get(fileId=doc_id, fields=_DRIVE_FILE_FIELDS).execute()
+        if not isinstance(payload, dict):
+            raise ValueError(f"native drive files get returned malformed payload for doc {doc_id}.")
+        return payload
+
+    def docs_cat(self, *, account: str, doc_id: str, max_bytes: int, all_tabs: bool) -> str:
+        document = self._document_get(account=account, doc_id=doc_id)
+        return _truncate_text_bytes(_docs_document_to_text(document, all_tabs=all_tabs), max_bytes)
 
 
 def get_google_source(backend: str | None = None) -> GoogleWorkspaceSource:
     """Return the configured Google Workspace ingestion backend.
 
     ``backend`` overrides the configured value (handy for tests). When omitted
-    it reads ``ingestion.google_backend`` (default ``gog``). The ``native``
-    backend is reserved but not wired up yet and raises
-    :class:`NotImplementedError`; an unrecognized explicit override raises
-    :class:`ValueError`.
+    it reads ``ingestion.google_backend`` (default ``gog``). An unrecognized
+    explicit override raises :class:`ValueError`. (The ``native`` backend needs
+    the ``youos[google]`` extra; that's enforced lazily when its methods run,
+    not at construction.)
     """
     name = (backend or get_ingestion_google_backend()).strip().lower()
     if name == "gog":
@@ -407,10 +629,7 @@ def get_google_source(backend: str | None = None) -> GoogleWorkspaceSource:
     if name == "gws":
         return GwsSource()
     if name == "native":
-        raise NotImplementedError(
-            "The 'native' (Google API) ingestion backend is not wired up yet. "
-            "Set `ingestion.google_backend: gog` for now."
-        )
+        return NativeSource()
     raise ValueError(
         f"Unknown ingestion.google_backend {name!r}; expected one of {', '.join(SUPPORTED_BACKENDS)}."
     )
