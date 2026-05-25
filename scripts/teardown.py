@@ -12,6 +12,14 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
 
+# Resolve instance paths via settings so teardown honors YOUOS_DATA_DIR —
+# without this, running `scripts/teardown.py` with an instance set would
+# print "delete this" pointing at the repo dirs while the actual user data
+# (DB, adapters, var/) sat untouched in the instance, and the rmtree below
+# would scrub the repo's own dev artefacts instead.
+from app.core.settings import get_instance_root, get_models_dir, get_var_dir  # noqa: E402
+from app.db.bootstrap import resolve_sqlite_path  # noqa: E402
+
 
 def _dir_size(path: Path) -> str:
     """Human-readable directory size."""
@@ -80,14 +88,19 @@ def _remove_cron() -> None:
 
 
 def teardown(delete_all: bool = False) -> None:
-    db_path = ROOT_DIR / "var" / "youos.db"
-    data_dir = ROOT_DIR / "data"
-    models_dir = ROOT_DIR / "models"
-    var_dir = ROOT_DIR / "var"
+    from app.core.settings import get_settings
+
+    settings = get_settings()
+    instance_root = get_instance_root()
+    db_path = resolve_sqlite_path(settings.database_url)
+    data_dir = instance_root / "data"
+    models_dir = get_models_dir()
+    var_dir = get_var_dir()
 
     print()
     print("YouOS Teardown")
     print("=" * 40)
+    print(f"Target instance: {instance_root}")
     print()
 
     # Stop server
@@ -116,8 +129,8 @@ def teardown(delete_all: bool = False) -> None:
             removed.append(str(d))
             print(f"  Removed {d}/")
 
-    # Remove analysis file
-    analysis = ROOT_DIR / "configs" / "persona_analysis.json"
+    # Remove analysis file (in the instance configs, not the repo)
+    analysis = Path(settings.configs_dir) / "persona_analysis.json"
     if analysis.exists():
         analysis.unlink()
         print(f"  Removed {analysis}")

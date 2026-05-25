@@ -41,12 +41,32 @@ def get_settings() -> Settings:
     return Settings()
 
 
-def get_var_dir() -> Path:
-    """Return the var/ directory for the active instance (or project root var/)."""
+def get_instance_root() -> Path:
+    """Return the root of the active instance — ``data_dir`` if set, else repo root.
+
+    Use this when an absolute path under an instance is needed and the more
+    specific helpers (``get_var_dir``, ``get_models_dir``, ``get_adapter_path``)
+    don't apply — e.g. the per-instance ``youos_config.yaml``.
+    """
     settings = get_settings()
     if settings.data_dir is not None:
-        return Path(settings.data_dir).expanduser().resolve() / "var"
-    return ROOT_DIR / "var"
+        return Path(settings.data_dir).expanduser().resolve()
+    return ROOT_DIR
+
+
+def get_var_dir() -> Path:
+    """Return the var/ directory for the active instance (or project root var/)."""
+    return get_instance_root() / "var"
+
+
+def get_models_dir() -> Path:
+    """Return the models/ directory for the active instance.
+
+    Houses ``adapters/latest/`` (the LoRA adapter) and any future per-instance
+    model artifacts. Centralised here so doctor / teardown / status report on
+    the same directory the fine-tune writer (``scripts.finetune_lora``) uses.
+    """
+    return get_instance_root() / "models"
 
 
 def get_adapter_path() -> Path:
@@ -58,7 +78,4 @@ def get_adapter_path() -> Path:
     other and a generation reader looking at the instance dir would not find
     the adapter that the writer had put in the repo dir.
     """
-    settings = get_settings()
-    if settings.data_dir is not None:
-        return Path(settings.data_dir).expanduser().resolve() / "models" / "adapters" / "latest"
-    return ROOT_DIR / "models" / "adapters" / "latest"
+    return get_models_dir() / "adapters" / "latest"
