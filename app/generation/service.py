@@ -9,7 +9,7 @@ import signal
 import sqlite3
 import subprocess
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -185,6 +185,11 @@ class DraftResponse:
     empty_output_retried: bool = False
     exemplar_cache_hit: bool = False
     exemplar_cache_key: str | None = None
+    # Post-generation repair (see _repair_draft). length_flag is always
+    # computed ("ok"/"long"/"short"/None); repairs lists any mutations applied
+    # (only when the opt-in repair flags are enabled).
+    length_flag: str | None = None
+    repairs: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -735,6 +740,103 @@ def _resolve_closing(persona: dict[str, Any], sender_type: str | None) -> str:
     elif "default" in closing_patterns:
         closing = closing_patterns["default"]
     return closing
+
+
+# --- Post-generation repair -------------------------------------------------
+# The model output is returned with only an emptiness check today. This pass
+# optionally repairs the draft and always annotates its length. Mutations are
+# OFF by default (behavior-preserving) — flip them on per instance once their
+# effect has been verified against real drafts.
+
+_GREETING_TOKENS = ("hi ", "hi,", "hey", "hello", "dear", "good morning", "good afternoon", "good evening")
+_CLOSING_TOKENS = (
+    "best", "cheers", "regards", "kind regards", "thanks", "thank you",
+    "sincerely", "talk soon", "warmly", "all the best", "speak soon",
+)
+
+
+def _get_repair_config() -> dict[str, bool]:
+    """Read ``generation.repair`` flags (all default False / behavior-preserving)."""
+    from app.core.config import load_config
+
+    cfg = load_config() or {}
+    gen = cfg.get("generation", {}) if isinstance(cfg, dict) else {}
+    rep = gen.get("repair", {}) if isinstance(gen, dict) else {}
+    rep = rep if isinstance(rep, dict) else {}
+    return {
+        "enforce_greeting_closing": bool(rep.get("enforce_greeting_closing", False)),
+        "strip_trailing_signature": bool(rep.get("strip_trailing_signature", False)),
+    }
+
+
+def _draft_has_greeting(text: str, greeting: str) -> bool:
+    first = text.lstrip().split("\n", 1)[0].strip().lower()
+    if not first:
+        return False
+    g = greeting.strip().lower().rstrip(",")
+    if g and first.startswith(g.split()[0]):
+        return True
+    return any(first.startswith(tok) for tok in _GREETING_TOKENS)
+
+
+def _draft_has_closing(text: str, closing: str) -> bool:
+    tail = "\n".join(text.rstrip().splitlines()[-3:]).lower()
+    if not tail:
+        return False
+    c_first = closing.strip().lower().split("\n", 1)[0].split(",", 1)[0].strip()
+    if c_first and c_first in tail:
+        return True
+    return any(tok in tail for tok in _CLOSING_TOKENS)
+
+
+def _length_flag(text: str, target_words: int | None) -> str | None:
+    """Non-mutating length annotation relative to the persona's target words."""
+    if not target_words or target_words <= 0:
+        return None
+    n = len(text.split())
+    if n == 0:
+        return None
+    if n > target_words * 2:
+        return "long"
+    if n < max(1, target_words // 2):
+        return "short"
+    return "ok"
+
+
+def _repair_draft(
+    draft: str,
+    *,
+    greeting: str,
+    closing: str,
+    target_words: int | None,
+    config: dict[str, bool],
+) -> tuple[str, list[str], str | None]:
+    """Optionally repair a draft; always return its length flag.
+
+    Returns ``(text, repairs_applied, length_flag)``. Placeholder/error drafts
+    (``[...]``) are left untouched.
+    """
+    repairs: list[str] = []
+    text = draft
+    stripped_all = text.strip()
+    if stripped_all.startswith("[") and stripped_all.endswith("]"):
+        return text, repairs, None
+
+    if config.get("strip_trailing_signature"):
+        stripped = strip_signature(text).rstrip()
+        if stripped and stripped != text.rstrip():
+            text = stripped
+            repairs.append("stripped_trailing_signature")
+
+    if config.get("enforce_greeting_closing"):
+        if greeting and not _draft_has_greeting(text, greeting):
+            text = f"{greeting}\n\n{text.lstrip()}"
+            repairs.append("added_greeting")
+        if closing and not _draft_has_closing(text, closing):
+            text = f"{text.rstrip()}\n\n{closing}"
+            repairs.append("added_closing")
+
+    return text, repairs, _length_flag(text, target_words)
 
 
 def assemble_prompt(
@@ -1399,6 +1501,19 @@ def generate_draft(
         except Exception:
             logger.warning("Failed to update pipeline log", exc_info=True)
 
+    # Post-generation repair: always annotate length; optionally enforce the
+    # persona greeting/closing and strip a trailing duplicate signature (both
+    # default-off — see _get_repair_config).
+    _repair_greeting = _resolve_greeting(persona, sender_type_hint, first_name)
+    _repair_closing = _resolve_closing(persona, sender_type_hint)
+    draft, repairs, length_flag = _repair_draft(
+        draft,
+        greeting=_repair_greeting,
+        closing=_repair_closing,
+        target_words=avg_reply_words,
+        config=_get_repair_config(),
+    )
+
     # Generate subject line
     suggested_subject = generate_subject(request.inbound_message, draft, database_url, configs_dir)
 
@@ -1416,4 +1531,6 @@ def generate_draft(
         empty_output_retried=empty_output_retried,
         exemplar_cache_hit=exemplar_cache_hit,
         exemplar_cache_key=exemplar_cache_key,
+        length_flag=length_flag,
+        repairs=repairs,
     )
