@@ -262,6 +262,39 @@ def step_index_embeddings(verbose: bool = False) -> dict:
     return {"ok": result}
 
 
+def step_snapshot_daily(verbose: bool = False) -> dict:
+    """Take a daily snapshot of the active instance's DB, then prune per policy.
+
+    Skipped silently when the DB doesn't exist yet (fresh instance) so a
+    pre-first-ingest nightly doesn't litter the snapshots dir with empty
+    DB files. Returns a tiny dict so the pipeline log can record what was
+    snapshotted and how many older files were retired by the prune step.
+    """
+    from app.core.data_safety import create_snapshot, prune_snapshots
+
+    print(f"\n{'=' * 60}")
+    print("STEP: Daily snapshot")
+    print(f"{'=' * 60}")
+
+    # Resolve lazily — DEFAULT_DB was captured at module import, but tests
+    # (and any caller that sets YOUOS_DATA_DIR after the module is first
+    # imported) need the path to reflect the *current* settings.
+    db_path = resolve_sqlite_path(get_settings().database_url)
+    if not db_path.exists():
+        print("  [SKIP] daily_snapshot — DB not yet created (pre-first-ingest)")
+        return {"ok": True, "skipped": True}
+
+    try:
+        snap = create_snapshot(db_path, tier="daily")
+        removed = prune_snapshots(db_path)
+        total_removed = sum(removed.values())
+        print(f"  [OK] snapshot={snap}, pruned={removed} (total={total_removed})")
+        return {"ok": True, "skipped": False, "snapshot_path": str(snap), "pruned": removed}
+    except Exception as exc:
+        print(f"  [WARN] daily_snapshot failed: {exc}")
+        return {"ok": False, "skipped": False, "error": str(exc)}
+
+
 def step_deduplicate(verbose: bool = False) -> bool:
     """Run corpus deduplication (best-effort)."""
     return _run_step(
@@ -497,6 +530,29 @@ def main() -> None:
 
     def _record_duration(name: str, t0: float) -> None:
         step_durations[name] = round(time.monotonic() - t0, 3)
+
+    # -1. Daily snapshot — first, so the snapshot reflects pre-pipeline state.
+    # If the nightly later corrupts something (a bad fine-tune, a bad migration),
+    # the user can restore from this morning's snapshot without losing their
+    # corpus. Skipped silently on fresh instances (DB doesn't exist yet).
+    _t = time.monotonic()
+    try:
+        snap_result = step_snapshot_daily(verbose=verbose)
+        if snap_result.get("skipped"):
+            results["daily_snapshot"] = "skipped (pre-first-ingest)"
+            steps["daily_snapshot"] = True
+            skipped_steps.append("daily_snapshot")
+        else:
+            ok = snap_result["ok"]
+            results["daily_snapshot"] = "OK" if ok else "WARN"
+            steps["daily_snapshot"] = ok
+            if not ok:
+                errors.append(f"Daily snapshot failed: {snap_result.get('error', 'unknown')}")
+    except Exception as exc:
+        results["daily_snapshot"] = f"error: {exc}"
+        steps["daily_snapshot"] = False
+        errors.append(f"Daily snapshot error: {exc}")
+    _record_duration("daily_snapshot", _t)
 
     # 0. Corpus deduplication (best-effort, before ingestion) — with skip gate
     _t = time.monotonic()
