@@ -19,6 +19,13 @@ reranker_enabled: false
 
 topic_match_boost: 0.15
 
+# BM25 lexical-score saturation. The historical hardcoded `min(rank*2, 10)`
+# is preserved here; surfaced so the autoresearch loop can A/B-tune them
+# against the golden-eval gate. scale ramps how fast lexical_score grows per
+# unit of FTS5 rank; cap is the ceiling above which all matches tie.
+lexical_scale: 2.0
+lexical_cap: 10.0
+
 sender_type_boost_map:
   external_client: 1.3
   personal: 0.8

@@ -144,6 +144,12 @@ class RetrievalConfig:
     reranker_enabled: bool = False
     subject_match_boost: float = 0.2
     topic_match_boost: float = 0.15
+    # BM25 lexical-score saturation knobs. Defaults match the historical
+    # hardcoded `min(raw_rank * 2.0, 10.0)` so behaviour is unchanged when the
+    # config is silent; the autoresearch loop can A/B alternative values
+    # against the existing golden-eval gate.
+    lexical_scale: float = 2.0
+    lexical_cap: float = 10.0
 
 
 def _has_fts5_table(connection: sqlite3.Connection, table_name: str) -> bool:
@@ -483,7 +489,7 @@ class RetrievalService:
         title = row["title"] or ""
         # FTS5 rank is negative (more negative = better match); normalize to positive
         raw_rank = abs(row["fts_rank"]) if row["fts_rank"] else 0.0
-        lexical_score = min(raw_rank * 2.0, 10.0) + _field_match_bonus(title, tokens)
+        lexical_score = min(raw_rank * self.config.lexical_scale, self.config.lexical_cap) + _field_match_bonus(title, tokens)
         metadata_score = self._metadata_score(
             source_type=row["source_type"],
             timestamp=row["updated_at"] or row["created_at"],
@@ -532,7 +538,7 @@ class RetrievalService:
         inbound_text = row["inbound_text"] or ""
         reply_text = row["reply_text"] or ""
         raw_rank = abs(row["fts_rank"]) if row["fts_rank"] else 0.0
-        lexical_score = min(raw_rank * 2.0, 10.0)
+        lexical_score = min(raw_rank * self.config.lexical_scale, self.config.lexical_cap)
 
         # Subject match boost
         pair_subject = metadata.get("subject", "")
@@ -997,6 +1003,8 @@ def _load_retrieval_config(configs_dir: Path) -> RetrievalConfig:
             sender_type_boost_map={str(k): float(v) for k, v in (payload.get("sender_type_boost_map") or {}).items()},
             reranker_enabled=bool(payload.get("reranker_enabled", False)),
             topic_match_boost=float(payload.get("topic_match_boost", 0.15)),
+            lexical_scale=float(payload.get("lexical_scale", 2.0)),
+            lexical_cap=float(payload.get("lexical_cap", 10.0)),
         )
 
     # Legacy path
