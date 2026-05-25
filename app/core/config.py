@@ -100,6 +100,21 @@ def get_ingestion_accounts(config: dict[str, Any] | None = None) -> tuple[str, .
     return get_user_emails(cfg)
 
 
+def get_ingestion_google_backend(config: dict[str, Any] | None = None) -> str:
+    """Which backend fetches Gmail/Docs: ``gog`` (default), ``gws``, or ``native``.
+
+    Surfaced so YouOS can move off the OpenClaw ``gog`` CLI without code
+    changes — ``gws`` is Google's own Workspace CLI and ``native`` is the
+    direct Google-API client. An unrecognized value degrades to ``gog`` (the
+    always-available default) rather than breaking ingestion at config-read
+    time; the doctor is responsible for flagging a misconfigured backend.
+    """
+    cfg = config or load_config()
+    raw = cfg.get("ingestion", {}).get("google_backend", "gog")
+    value = str(raw).strip().lower() if raw else "gog"
+    return value if value in ("gog", "gws", "native") else "gog"
+
+
 def get_base_model(config: dict[str, Any] | None = None) -> str:
     cfg = config or load_config()
     return cfg.get("model", {}).get("base", "Qwen/Qwen2.5-1.5B-Instruct")

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import get_ingestion_accounts
+from app.ingestion.adapters import GoogleWorkspaceSource, get_google_source
 from app.ingestion.models import IngestionResult
 from app.ingestion.run_log import (
     IngestRunContext,
@@ -301,14 +302,19 @@ def _load_doc_payloads(
 def _load_live_doc_payloads(live: GogDocsLiveOptions) -> tuple[list[dict[str, Any]], int]:
     payloads: list[dict[str, Any]] = []
     discovered_docs = 0
+    source = get_google_source()
     for account in live.accounts:
         try:
-            doc_targets = [(doc_id, None) for doc_id in live.doc_ids] if live.doc_ids else _discover_doc_ids(account=account, live=live)
+            doc_targets = (
+                [(doc_id, None) for doc_id in live.doc_ids]
+                if live.doc_ids
+                else _discover_doc_ids(account=account, live=live, source=source)
+            )
             discovered_docs += len(doc_targets)
             for doc_id, search_result in doc_targets:
-                docs_info = _gog_docs_info(account=account, doc_id=doc_id)
-                drive_file = _gog_drive_get(account=account, doc_id=doc_id)
-                content_text = _gog_docs_cat(
+                docs_info = source.docs_info(account=account, doc_id=doc_id)
+                drive_file = source.drive_get(account=account, doc_id=doc_id)
+                content_text = source.docs_cat(
                     account=account,
                     doc_id=doc_id,
                     max_bytes=live.max_bytes,
@@ -342,8 +348,10 @@ def _load_live_doc_payloads(live: GogDocsLiveOptions) -> tuple[list[dict[str, An
     return payloads, discovered_docs
 
 
-def _discover_doc_ids(account: str, *, live: GogDocsLiveOptions) -> list[tuple[str, dict[str, Any] | None]]:
-    search_results = _gog_drive_search(
+def _discover_doc_ids(
+    account: str, *, live: GogDocsLiveOptions, source: GoogleWorkspaceSource
+) -> list[tuple[str, dict[str, Any] | None]]:
+    search_results = source.drive_search(
         account=account,
         query=live.query,
         max_docs=live.max_docs,
