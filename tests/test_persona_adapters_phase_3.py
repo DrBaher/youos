@@ -232,7 +232,7 @@ def _stub_generation_helpers(monkeypatch, *, sender, calls):
     monkeypatch.setattr(svc, "_connect", lambda _p: __import__("sqlite3").connect(":memory:"))
     monkeypatch.setattr(svc, "resolve_sqlite_path", lambda _u: __import__("pathlib").Path("/tmp/x.db"))
 
-    def _stub_call(prompt, *, max_tokens, use_adapter=True, adapter_path=None):
+    def _stub_call(prompt, *, max_tokens, use_adapter=True, adapter_path=None, **_kw):
         calls.append({"use_adapter": use_adapter, "adapter_path": adapter_path})
         return "this is a generated draft long enough to pass the empty-output retry"
 
