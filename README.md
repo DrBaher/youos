@@ -27,7 +27,7 @@ Gmail (sent mail)          Your feedback
 
 ![YouOS demo](screenshots/demo.gif)
 
-> 🌐 [Landing page](https://dewy-haven-wgpz.here.now/)
+> 🌐 [youos.you.com](https://youos.you.com/)
 
 ## What it does
 
