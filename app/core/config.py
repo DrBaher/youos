@@ -191,14 +191,14 @@ def get_review_batch_size(config: dict[str, Any] | None = None) -> int:
 def get_review_draft_model(config: dict[str, Any] | None = None) -> str:
     """Read review.draft_model from config.
 
-    'claude'  — use Claude CLI (faster, default)
-    'local'   — use local Qwen adapter (private, slower)
-    'auto'    — use local if adapter is ready, else Claude
+    'claude'  — use Claude CLI
+    'local'   — use local Qwen adapter (private)
+    'auto'    — (default) use local if an adapter is trained, else Claude
     """
     cfg = config or load_config()
-    val = cfg.get("review", {}).get("draft_model", "claude").lower().strip()
+    val = cfg.get("review", {}).get("draft_model", "auto").lower().strip()
     if val not in ("claude", "local", "auto"):
-        return "claude"
+        return "auto"
     return val
 
 

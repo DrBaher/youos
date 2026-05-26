@@ -161,11 +161,32 @@ async def _lifespan(app: FastAPI):
                 "Set a PIN under `server.pin` in your config before exposing YouOS."
             )
 
+    # Pre-warm the local model server (load the model once, off the request path)
+    # so the first draft isn't slow. Background thread → never blocks startup; a
+    # no-op when disabled or when mlx_lm is unavailable.
+    try:
+        from app.core import model_server
+
+        if model_server.is_enabled():
+            import threading
+
+            threading.Thread(target=model_server.ensure_running, daemon=True).start()
+    except Exception:
+        pass
+
     yield
     # Clear embedding cache on shutdown
     from app.core.embeddings import clear_embedding_cache
 
     clear_embedding_cache()
+
+    # Stop the managed model server so it doesn't outlive YouOS.
+    try:
+        from app.core import model_server
+
+        model_server.stop()
+    except Exception:
+        pass
 
 
 def create_app() -> FastAPI:
