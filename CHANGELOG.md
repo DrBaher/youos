@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.0-beta.14 — 2026-05-26
+
+### ClawHub pack is text-only again (fixes upload rejection)
+ClawHub rejects non-text files in a skill bundle, so the b13 pack — which had added `screenshots/` and `extension/` (the latter ships PNG icons) — was rejected on upload ("Remove non-text files: …png/.jpg"). Reverted the allowlist to **text-only** (the original set: `app/`, `clawhub.json`, `configs/`, `PRIVACY.md`, `pyproject.toml`, `README.md`, `scripts/`, `SKILL.md`): the registry resolves `clawhub.json`'s screenshot paths from the homepage repo, and the browser extension is installed from the repo's `extension/` folder (SKILL.md updated to say so). Added a **binary guard** to `prepare_clawhub_release.sh` that aborts if any non-text file slips into the bundle. The bundle is now 1.0M / 0 binaries (zip 278K).
+
 ## v0.2.0-beta.13 — 2026-05-26
 
 ### ClawHub release pack now includes the extension + screenshots
