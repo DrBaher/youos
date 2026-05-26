@@ -59,6 +59,27 @@ def count_jsonl_lines(path: Path) -> int:
         return sum(1 for _ in f)
 
 
+def strip_curriculum_line(train_path: Path) -> bool:
+    """Remove the leading ``{"_curriculum": ...}`` annotation line if present.
+
+    The exporter prepends a metadata line recording the warmup split. mlx_lm
+    (>=0.31) treats *every* JSONL line as a training record and rejects this one
+    ("Unsupported data format"), aborting training on the very first line. The
+    curriculum ordering (warmup examples first) lives in the row order, not this
+    annotation, so dropping it preserves the curriculum benefit. Idempotent;
+    returns True if a line was stripped.
+    """
+    if not train_path.exists():
+        return False
+    with open(train_path, encoding="utf-8") as f:
+        lines = f.readlines()
+    if lines and '"_curriculum"' in lines[0]:
+        with open(train_path, "w", encoding="utf-8") as f:
+            f.writelines(lines[1:])
+        return True
+    return False
+
+
 def compute_auto_config(train_count: int) -> dict[str, int | float]:
     """Compute auto-scaled hyperparameters based on training set size."""
     iters = min(300, max(50, train_count * 3))
@@ -76,7 +97,9 @@ def run_training(args: argparse.Namespace) -> None:
     train_count = count_jsonl_lines(train_path)
     valid_count = count_jsonl_lines(valid_path)
 
-    # Detect and report curriculum metadata
+    # Detect, report, and strip curriculum metadata. mlx_lm rejects the
+    # annotation line as a bad record (see strip_curriculum_line), so we must
+    # remove it before training — not just discount it from the count.
     if train_path.exists():
         with open(train_path, encoding="utf-8") as f:
             first_line = f.readline().strip()
@@ -84,9 +107,10 @@ def run_training(args: argparse.Namespace) -> None:
             try:
                 meta = json.loads(first_line)
                 print(f"Curriculum learning detected: warmup={meta.get('warmup_count')}, total={meta.get('total')}")
-                train_count -= 1  # don't count metadata line
             except json.JSONDecodeError:
                 pass
+            if strip_curriculum_line(train_path):
+                train_count -= 1  # metadata line removed; no longer present
 
     # Determine hyperparameters
     if args.auto:

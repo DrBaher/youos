@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.56 — 2026-05-26
+
+### Fix: the wizard's "Start fine-tuning" silently did nothing for a history-only corpus
+Surfaced while running the cross-model comparison (v0.1.55) on a real corpus — training the adapter required two manual workarounds that a normal user would just hit as dead ends:
+- **Organic pairs were filtered out of training.** The export's edit-distance floor (`--min-edit-pct`, default 0.05) discarded every *organic* pair — real sent replies have `edit_distance_pct=0` because there was no YouOS draft to diff against. For a fresh user whose only data is historical sent mail, that meant **"No qualifying pairs after filtering"** and an empty train set. Organic pairs (`feedback_pairs.organic=1`) are now **exempt from the edit-distance floor** (it only ever made sense for review-queue pairs that had a draft). Column-detected, so DBs predating the `organic` column still export unchanged.
+- **mlx_lm rejected the curriculum metadata line.** `finetune_lora.py` left the leading `{"_curriculum": ...}` annotation line in `train.jsonl`; mlx_lm (≥0.31) treats every line as a training record and aborts on it ("Unsupported data format") — on line 1. It's now **stripped before training** via `strip_curriculum_line()` (the curriculum *ordering* is in the row order, so the benefit is preserved). Idempotent.
+
+Net: `youos finetune` / the wizard's fine-tune button now train a working voice adapter out of the box on a purely historical corpus. Tests (5) pin organic-pair survival (and that non-organic low-edit pairs are still filtered) plus curriculum-line stripping (strip/no-op/idempotent/missing-file). Existing export/finetune tests unchanged (backward-compatible).
+
 ## v0.1.55 — 2026-05-26
 
 ### Compare the LLM backends on *your own* mail (`youos compare-models`)
