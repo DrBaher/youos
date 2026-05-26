@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>YouOS — Gmail Bookmarklet</title>
+<title>YouOS — Gmail extension</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -120,58 +120,69 @@ body {
       <a href="/feedback" class="oc-nav-link">Draft Email</a>
       <a href="/stats" class="oc-nav-link">Stats</a>
       <a href="/settings" class="oc-nav-link">Settings</a>
-      <a href="/bookmarklet" class="oc-nav-link active">Bookmarklet</a>
+      <a href="/bookmarklet" class="oc-nav-link active">Gmail</a>
       <a href="/about" class="oc-nav-link">About</a>
     </nav>
   </header>
 
   <div class="hero">
-    <h1 class="hero-title">One-click email drafting from Gmail</h1>
-    <p class="hero-sub">Install the bookmarklet and generate AI-drafted replies without leaving your inbox.</p>
+    <h1 class="hero-title">Draft in Gmail — in your voice</h1>
+    <p class="hero-sub">The YouOS extension adds a draft panel right inside Gmail. Install it once; everything stays on your Mac.</p>
   </div>
 
   <div class="note" style="border-left-color:#00c4a7;margin-bottom:1.5rem;">
-    <strong>✨ New: the YouOS browser extension</strong> is the recommended way to draft from Gmail — more reliable than this bookmarklet (no Gmail DOM fragility, works with PIN-protected instances). See the <a href="https://github.com/DrBaher/youos/tree/main/extension" style="color:#00c4a7;">extension setup guide</a>. The bookmarklet below remains as a no-install fallback.
+    <strong>✨ Recommended:</strong> the browser extension is more reliable than the bookmarklet — no Gmail markup fragility, works with PIN-protected instances, and lets you generate, insert, and rate drafts without leaving your inbox.
   </div>
-  <div class="bookmarklet-wrap">
-    <p>Drag this button to your bookmarks bar:</p>
-    <a class="bookmarklet-link" href="javascript:void(function(){try{var s=document.title.replace(/ - [^-]+@[^-]+ - Gmail.*$/,'').replace(/^Gmail - /,'');var b='';var els=document.querySelectorAll('.a3s.aiL, .a3s.aXjCH, div[data-message-id] .a3s');if(els.length>0){b=els[els.length-1].innerText.substring(0,2000)}else{var gs=document.querySelectorAll('[role=listitem] .ii.gt');if(gs.length>0){b=gs[gs.length-1].innerText.substring(0,2000)}}if(!b){var all=document.querySelectorAll('.ii.gt');if(all.length>0){b=all[all.length-1].innerText.substring(0,2000)}}var f='';var fromEls=document.querySelectorAll('span[email], .gD');if(fromEls.length>0){var last=fromEls[fromEls.length-1];f=last.getAttribute('email')||last.innerText}var p=prompt('Optional reply instruction (e.g. decline politely, suggest Tue 14:00)','');if(p===null){return}var u='YOUOS_BASE_URL/draft-popup?inbound='+encodeURIComponent(b)+'&sender='+encodeURIComponent(f)+'&subject='+encodeURIComponent(s)+'&user_prompt='+encodeURIComponent(p);window.open(u,'youos_draft','width=440,height=760')}catch(e){alert('YouOS error: '+e.message)}})()">&#x1F4E7; YouOS Draft</a>
+
+  <!-- Extension install (primary path) -->
+  <div class="bookmarklet-wrap" style="text-align:left;padding:1.5rem 1.75rem;">
+    <h3 style="margin:0 0 0.25rem;color:#00c4a7;">Install the extension — Chrome, Edge, or Brave</h3>
+    <p style="color:#8b98a9;margin:0 0 1rem;font-size:0.9rem;">~1 minute, no app store needed.</p>
+    <ol style="line-height:1.9;margin:0;padding-left:1.2rem;">
+      <li><strong>Keep your YouOS server running.</strong> It already is — this page is served by it.</li>
+      <li>Open <code>chrome://extensions</code> &nbsp;(or <code>edge://extensions</code> / <code>brave://extensions</code>).</li>
+      <li>Turn on <strong>Developer mode</strong> (toggle, top-right).</li>
+      <li>Click <strong>Load unpacked</strong> and select this folder:
+        <div style="margin:0.5rem 0;background:#0d1b2a;border:1px solid #2a3a4a;border-radius:6px;padding:0.6rem 0.8rem;font-family:ui-monospace,Menlo,monospace;font-size:0.85rem;color:#e0e0e0;overflow-x:auto;">YOUOS_EXTENSION_PATH</div>
+      </li>
+      <li>Open Gmail and click the teal <strong>✉</strong> button (bottom-right), or the toolbar icon, to open the draft panel.</li>
+    </ol>
+    <p class="note" style="margin-top:1.1rem;">
+      <strong>Different port?</strong> Open the extension's <strong>Options</strong> and set the server URL.
+      <strong>PIN-protected instance?</strong> Run <code>youos token-create</code> and paste the token into Options (sent as the <code>X-YouOS-Token</code> header, stored only in your browser).
+      <strong>Firefox:</strong> run <code>./build-firefox.sh</code> in the extension folder, then load <code>firefox-build/</code> via <code>about:debugging</code> (experimental).
+    </p>
   </div>
 
   <div class="steps-grid">
     <div class="step-card">
       <div class="step-num">1</div>
-      <div class="step-title">Install</div>
-      <div class="step-desc">Drag the button above to your browser's bookmarks bar.</div>
+      <div class="step-title">Open an email</div>
+      <div class="step-desc">Any conversation in Gmail.</div>
     </div>
     <div class="step-card">
       <div class="step-num">2</div>
-      <div class="step-title">Open an email</div>
-      <div class="step-desc">Navigate to any email conversation in Gmail.</div>
+      <div class="step-title">Generate</div>
+      <div class="step-desc">Sender + message auto-detected. Add an instruction or tone, then Generate — drafted in your voice by your local model.</div>
     </div>
     <div class="step-card">
       <div class="step-num">3</div>
-      <div class="step-title">Click &amp; draft</div>
-      <div class="step-desc">Click the bookmark — YouOS opens with subject/sender/body pre-filled plus an optional instruction field.</div>
+      <div class="step-title">Insert &amp; rate</div>
+      <div class="step-desc">Insert into the reply box (keeps your signature), then rate 1–5 — YouOS learns from it, same as the Review Queue.</div>
     </div>
   </div>
 
-  <div class="mockup-section">
-    <h3>How it works</h3>
-    <div class="mockup-flow">
-      <div class="mockup-box">Gmail inbox<br><small>Open any email</small></div>
-      <span class="mockup-arrow">&rarr;</span>
-      <div class="mockup-box">Click bookmark<br><small>Extracts subject, sender, body</small></div>
-      <span class="mockup-arrow">&rarr;</span>
-      <div class="mockup-box">YouOS drafts<br><small>Add optional instruction + AI reply in your voice</small></div>
+  <!-- Bookmarklet (no-install fallback) -->
+  <details style="margin-top:1.5rem;border:1px solid #2a3a4a;border-radius:8px;padding:0.5rem 1rem;background:#111a2b;">
+    <summary style="cursor:pointer;color:#8b98a9;font-weight:600;">No-install fallback: the bookmarklet</summary>
+    <p style="color:#8b98a9;font-size:0.9rem;">Prefer not to install an extension? Drag this button to your bookmarks bar, then click it on any open Gmail thread. It can break when Gmail changes its markup — the extension doesn't.</p>
+    <div class="bookmarklet-wrap">
+      <a class="bookmarklet-link" href="javascript:void(function(){try{var s=document.title.replace(/ - [^-]+@[^-]+ - Gmail.*$/,'').replace(/^Gmail - /,'');var b='';var els=document.querySelectorAll('.a3s.aiL, .a3s.aXjCH, div[data-message-id] .a3s');if(els.length>0){b=els[els.length-1].innerText.substring(0,2000)}else{var gs=document.querySelectorAll('[role=listitem] .ii.gt');if(gs.length>0){b=gs[gs.length-1].innerText.substring(0,2000)}}if(!b){var all=document.querySelectorAll('.ii.gt');if(all.length>0){b=all[all.length-1].innerText.substring(0,2000)}}var f='';var fromEls=document.querySelectorAll('span[email], .gD');if(fromEls.length>0){var last=fromEls[fromEls.length-1];f=last.getAttribute('email')||last.innerText}var p=prompt('Optional reply instruction (e.g. decline politely, suggest Tue 14:00)','');if(p===null){return}var u='YOUOS_BASE_URL/draft-popup?inbound='+encodeURIComponent(b)+'&sender='+encodeURIComponent(f)+'&subject='+encodeURIComponent(s)+'&user_prompt='+encodeURIComponent(p);window.open(u,'youos_draft','width=440,height=760')}catch(e){alert('YouOS error: '+e.message)}})()">&#x1F4E7; YouOS Draft</a>
     </div>
-  </div>
+  </details>
 
-  <div class="note">
-    <strong>Privacy:</strong> The bookmarklet extracts the email subject, sender, and body text
-    from the currently open Gmail thread and opens YouOS with those fields pre-filled.
-    You can optionally add a reply instruction in the popup before generating.
-    No data leaves your machine — everything runs locally.
+  <div class="note" style="margin-top:1.5rem;">
+    <strong>Privacy:</strong> the extension only ever talks to your local server (<code>127.0.0.1</code>) — via its background worker, so no server changes or CORS needed. Email content never leaves your machine.
   </div>
 
   <footer class="oc-footer">
