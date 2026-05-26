@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YouOS for Gmail",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Draft Gmail replies in your own voice using your local YouOS instance. Everything stays on your machine.",
   "icons": {
     "16": "icons/icon16.png",
