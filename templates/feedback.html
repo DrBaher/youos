@@ -79,6 +79,18 @@ textarea {
 }
 textarea:focus { outline: none; border-color: #7b61ff; }
 textarea::placeholder, input::placeholder { color: #8a93a3; opacity: 1; }
+.model-ready-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+  background: #2a2410; border: 1px solid #6b5a16; border-radius: 8px;
+  padding: 0.7rem 1rem; margin-bottom: 1rem; color: #f0d98a; font-size: 0.88rem;
+}
+.model-ready-banner .mrb-text { flex: 1; min-width: 220px; }
+.model-ready-banner .mrb-actions { display: flex; gap: 0.5rem; }
+.model-ready-banner .mrb-btn {
+  padding: 0.35rem 0.8rem; border-radius: 6px; border: 1px solid #6b5a16;
+  background: #6b5a16; color: #fff; font-size: 0.8rem; cursor: pointer; white-space: nowrap;
+}
+.model-ready-banner .mrb-btn--ghost { background: transparent; color: #f0d98a; }
 .meta-row {
   display: flex; gap: 1.5rem; align-items: flex-end;
   flex-wrap: wrap; margin-bottom: 1.5rem;
@@ -390,6 +402,15 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 
   <!-- Tab 1: Draft Reply -->
   <div class="tab-content active" id="tab-draft-reply">
+    <!-- Soft "please wait" gate: shown until the voice model is trained AND
+         benchmarked. Drafting stays usable (base-model drafts) if they proceed. -->
+    <div id="modelReadyBanner" class="model-ready-banner" style="display:none;">
+      <div class="mrb-text"><span id="mrbMsg"></span></div>
+      <div class="mrb-actions">
+        <button type="button" class="mrb-btn" id="mrbDismiss">Draft anyway</button>
+        <button type="button" class="mrb-btn mrb-btn--ghost" id="mrbRefresh">Refresh</button>
+      </div>
+    </div>
     <div class="draft-sender-row">
       <div class="sender-input-main">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;">
@@ -673,6 +694,30 @@ function showFactsToast(facts) {
       document.getElementById('mainContent').style.display = 'block';
     }
   }).catch(() => {});
+
+  // Soft "please wait" gate: until the voice model is trained AND benchmarked,
+  // tell the user drafts won't sound like them yet. Drafting stays usable; the
+  // banner is dismissible and refreshes the phase. Hidden once ready (or dismissed).
+  (function modelReadinessGate() {
+    const banner = document.getElementById('modelReadyBanner');
+    const msgEl = document.getElementById('mrbMsg');
+    if (!banner || !msgEl) return;
+    let dismissed = false;
+    function check() {
+      fetch('/api/model/readiness').then(r => r.json()).then(s => {
+        if (dismissed || !s || s.ready) { banner.style.display = 'none'; return; }
+        const phaseLabel = { training: 'training', benchmarking: 'benchmarking',
+          benchmark_pending: 'benchmarking pending', not_started: 'not started' }[s.phase] || s.phase;
+        msgEl.textContent = '⏳ Preparing your voice model — ' + phaseLabel + '. ' + (s.message || '');
+        banner.style.display = 'flex';
+        // Keep polling while it's actively training/benchmarking.
+        if (s.phase === 'training' || s.phase === 'benchmarking') setTimeout(check, 8000);
+      }).catch(() => {});
+    }
+    document.getElementById('mrbDismiss').addEventListener('click', () => { dismissed = true; banner.style.display = 'none'; });
+    document.getElementById('mrbRefresh').addEventListener('click', check);
+    check();
+  })();
 
   // Tab switching
   const tabs = document.querySelectorAll('.tab');

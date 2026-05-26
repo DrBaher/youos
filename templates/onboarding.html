@@ -302,16 +302,20 @@
   function refreshDoneStatus() {
     const el = document.getElementById("doneAdapter");
     if (!el) return;
-    fetch("/api/finetune/status").then((r) => r.json()).then((s) => {
-      if (s.status === "running") {
-        el.className = "status pending";
-        el.textContent = "🧠 Your voice model is still training in the background — drafts switch to it automatically when it's ready.";
-      } else if (s.adapter_ready) {
+    // Use the readiness phase (train → benchmark → ready) so we ask the user to
+    // wait until the model is complete AND benchmarked before relying on drafts.
+    fetch("/api/model/readiness").then((r) => r.json()).then((s) => {
+      if (s.ready) {
         el.className = "status ok";
-        el.textContent = "✓ Your voice model is trained — drafts now sound like you.";
+        el.textContent = "✓ Your voice model is trained and benchmarked — drafts now sound like you.";
+      } else if (s.phase === "training" || s.phase === "benchmarking") {
+        el.className = "status pending";
+        el.textContent = "🧠 Preparing your voice model (" + s.phase + ")… please wait before relying on drafts — "
+          + "they use the base model until it's ready. This continues in the background; you can close this.";
+        setTimeout(refreshDoneStatus, 8000);
       } else {
         el.className = "status pending";
-        el.textContent = "Drafts use the base model + your examples for now; your voice model retrains tonight (or run it from Settings).";
+        el.textContent = (s.message || "Drafts use the base model for now.") + " Until then, drafts won't sound like you yet.";
       }
     }).catch(() => {});
   }
