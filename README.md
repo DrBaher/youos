@@ -68,7 +68,7 @@ Gmail (sent mail)          Your feedback
 
 ## Requirements
 
-- Apple Silicon Mac (M1/M2/M3/M4)
+- Apple Silicon Mac (M1/M2/M3/M4) — the local model runs on **MLX**, which `./scripts/install.sh` installs for you (it's the `youos[mlx]` extra; not bundled with macOS)
 - 8GB+ RAM (16GB recommended)
 - Python 3.11+
 - A Google ingestion backend for Gmail/Docs — see [Google ingestion backend](#google-ingestion-backend) below (the [gog CLI](https://github.com/openclaw/gog) works today)
