@@ -16,21 +16,34 @@ def test_get_corpus_stats_no_db(tmp_path):
     assert result["total_feedback_pairs"] == 0
 
 
-def test_get_model_status_no_adapter():
-    """Returns claude fallback when no adapter exists."""
-    with patch("app.core.stats.ADAPTER_PATH", Path("/nonexistent/adapters")):
+def test_get_model_status_no_adapter_with_mlx():
+    """No adapter but mlx_lm present → drafts run on the BASE model (not Claude).
+
+    The old code reported "claude" here — the false-confidence bug: with the
+    local engine available, a missing adapter means base-model drafting, not a
+    cloud fallback.
+    """
+    with patch("app.core.stats.ADAPTER_PATH", Path("/nonexistent/adapters")), patch("shutil.which", return_value="/usr/bin/mlx_lm"):
+        result = get_model_status(Path("/tmp/configs"))
+    assert result["generation_model"] == "qwen2.5-1.5b-base"
+    assert result["lora_adapter_exists"] is False
+    assert result["local_available"] is True
+
+
+def test_get_model_status_no_mlx_is_claude():
+    """No local engine → genuinely the cloud fallback, adapter or not."""
+    with patch("app.core.stats.ADAPTER_PATH", Path("/nonexistent/adapters")), patch("shutil.which", return_value=None):
         result = get_model_status(Path("/tmp/configs"))
     assert result["generation_model"] == "claude"
-    assert result["lora_adapter_exists"] is False
-    assert result["lora_trained_at"] is None
+    assert result["local_available"] is False
 
 
 def test_get_model_status_with_adapter(tmp_path):
-    """Returns local model info when adapter exists."""
+    """Adapter present + mlx_lm available → local LoRA."""
     adapter_dir = tmp_path / "adapters"
     adapter_dir.mkdir()
     (adapter_dir / "adapters.safetensors").write_text("fake")
-    with patch("app.core.stats.ADAPTER_PATH", adapter_dir):
+    with patch("app.core.stats.ADAPTER_PATH", adapter_dir), patch("shutil.which", return_value="/usr/bin/mlx_lm"):
         result = get_model_status(Path("/tmp/configs"))
     assert result["generation_model"] == "qwen2.5-1.5b-lora"
     assert result["lora_adapter_exists"] is True

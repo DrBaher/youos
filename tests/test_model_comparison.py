@@ -94,6 +94,29 @@ def test_no_override_preserves_default_local(monkeypatch):
     assert resp.model_used == "qwen2.5-1.5b-base"
 
 
+def test_forced_backend_drafts_are_not_logged(monkeypatch):
+    """Benchmark drafts (backend_override set) must NOT pollute draft_events —
+    otherwise compare-models corrupts the 'drafting with' reality signal."""
+    from unittest.mock import MagicMock
+
+    svc = _stub_generation(monkeypatch)
+    logged = MagicMock(return_value=True)
+    monkeypatch.setattr(svc, "_log_draft_event", logged)
+
+    svc.generate_draft(
+        svc.DraftRequest(inbound_message="hi", backend_override="claude"),
+        database_url="sqlite:///x", configs_dir=Path("/tmp"),
+    )
+    logged.assert_not_called()
+
+    # A normal draft (no override) still logs.
+    svc.generate_draft(
+        svc.DraftRequest(inbound_message="hi"),
+        database_url="sqlite:///x", configs_dir=Path("/tmp"),
+    )
+    logged.assert_called_once()
+
+
 # --- fell-back detection ---------------------------------------------------
 
 
