@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.0-beta.8 — 2026-05-26
+
+### Failures now link how to fix them
+On the Stats dashboard, failure messages (the Activity card's ingestion failure and the Pipeline card's error list — e.g. "Gmail ingestion failed", "Autoresearch failed") now show an inline **"How to fix"** expander with an actionable tip, the relevant command, and a "More help →" link. A small failure→fix map covers the common cases (ingestion/backend, autoresearch, fine-tuning, MLX/embeddings) with a `youos doctor` fallback for anything unmapped — so a red error tells you what to do, not just that something broke.
+
 ## v0.2.0-beta.7 — 2026-05-26
 
 ### Readiness banner: a working "Refresh" + run the benchmark from the UI
