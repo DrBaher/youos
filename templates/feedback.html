@@ -169,6 +169,16 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   vertical-align: middle; margin-left: 0.4rem;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* Draft loading overlay — masks the local model's cold-start (~3s to first token). */
+.draft-loading {
+  position: absolute; inset: 0; display: flex; flex-direction: column; gap: 0.7rem;
+  align-items: center; justify-content: center; text-align: center; padding: 1rem;
+  background: rgba(22,33,62,0.88); border-radius: 6px; color: #9fb3c8; font-size: 0.85rem;
+}
+.draft-loading .spinner.spinner--lg {
+  width: 26px; height: 26px; border-width: 3px; margin-left: 0;
+  border-color: rgba(0,196,167,0.25); border-top-color: #00c4a7;
+}
 /* Empty State */
 .empty-state { text-align: center; padding: 4rem 2rem; }
 .empty-emoji { font-size: 3rem; margin-bottom: 1rem; }
@@ -439,7 +449,13 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
       </div>
       <div class="panel">
         <label for="draft">Draft Email</label>
-        <textarea id="draft" placeholder="Click 'Generate Draft' to produce a draft..." readonly></textarea>
+        <div class="draft-area-wrap" style="position:relative;">
+          <textarea id="draft" placeholder="Click 'Generate Draft' to produce a draft..." readonly></textarea>
+          <div id="draftLoading" class="draft-loading" style="display:none;">
+            <span class="spinner spinner--lg"></span>
+            <span id="draftLoadingMsg">Generating…</span>
+          </div>
+        </div>
         <div id="suggestedSubject" class="suggested-subject" style="display:none;" title="Click to copy"></div>
         <div id="draftBadges" class="yos-row" style="margin-top:0.4rem;"></div>
         <div id="draftCandidates" class="yos-candidates"></div>
@@ -1041,6 +1057,26 @@ function showFactsToast(facts) {
     }
   }
 
+  // Loading overlay over the draft area — masks the local model's cold-start
+  // (~3s to the first token on a fresh subprocess). Hidden as soon as text
+  // streams in. After a beat with no token, it explains the wait.
+  const draftLoadingEl = document.getElementById('draftLoading');
+  const draftLoadingMsgEl = document.getElementById('draftLoadingMsg');
+  let draftLoadingTimer = null;
+  function showDraftLoading() {
+    if (!draftLoadingEl) return;
+    draftLoadingMsgEl.textContent = 'Generating…';
+    draftLoadingEl.style.display = 'flex';
+    clearTimeout(draftLoadingTimer);
+    draftLoadingTimer = setTimeout(() => {
+      draftLoadingMsgEl.textContent = 'Warming up your local model — the first draft is the slowest, then it stays fast.';
+    }, 1500);
+  }
+  function hideDraftLoading() {
+    clearTimeout(draftLoadingTimer);
+    if (draftLoadingEl) draftLoadingEl.style.display = 'none';
+  }
+
   btnGen.addEventListener('click', async () => {
     const text = inbound.value.trim();
     if (!text) { showInfo('Please paste an inbound email first.'); return; }
@@ -1052,6 +1088,7 @@ function showFactsToast(facts) {
     clearDraftMeta();
     btnSub.disabled = true;
     suggestedSubjectEl.style.display = 'none';
+    showDraftLoading();
 
     // Try streaming first
     try {
@@ -1094,6 +1131,8 @@ function showFactsToast(facts) {
                 streamPrecedent = payload.precedent_used || [];
                 streamMeta = {length_flag: payload.length_flag, repairs: payload.repairs, candidates: payload.candidates};
               } else if (payload.token != null) {
+                // First token arrived — drop the cold-start loader.
+                hideDraftLoading();
                 // Token already includes its own newline(s); don't add one, or
                 // blank lines (paragraph breaks) get doubled/lost.
                 draft.value += payload.token;
@@ -1102,6 +1141,7 @@ function showFactsToast(facts) {
           }
         }
         draft.classList.remove('streaming-cursor');
+        hideDraftLoading();  // safety: also covers a zero-token stream
         generatedDraft = draft.value.trim();
         draft.value = generatedDraft;
         btnSub.disabled = false;
@@ -1177,6 +1217,7 @@ function showFactsToast(facts) {
     } catch (e) {
       showInfo('Error: ' + e.message);
     } finally {
+      hideDraftLoading();
       btnGen.disabled = false;
       btnGen.textContent = draftMode === 'compose' ? 'Generate Email' : 'Generate Reply';
     }
