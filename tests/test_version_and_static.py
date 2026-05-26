@@ -51,6 +51,18 @@ def test_chrome_pages_link_shared_assets_and_version_target():
         assert "YouOS v0.1.10" not in body, f"{path} still has hardcoded version"
 
 
+def test_stats_failures_link_troubleshooting():
+    """Failures (Activity ingestion + Pipeline errors) get an actionable
+    'How to fix' with a mapped command, not just a red error string."""
+    body = TestClient(app).get("/stats").text
+    assert "troubleshootHtml" in body and "How to fix" in body
+    # Failure→fix mapping covers the common pipeline failures.
+    assert "youos doctor" in body and "youos finetune" in body
+    # Wired into both the Activity ingestion failure and the Pipeline error list.
+    assert "troubleshootHtml(s.error)" in body
+    assert "troubleshootHtml(d.pipeline_last_run.errors[ei])" in body
+
+
 def test_gmail_page_promotes_extension_with_install_steps():
     """The /bookmarklet page leads with the extension + concrete install steps,
     and injects the real extension/ folder path for 'Load unpacked'."""
