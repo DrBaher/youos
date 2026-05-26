@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.0-beta.4 — 2026-05-26
+
+### Promote the Gmail extension + fix its out-of-box port
+The in-app **Gmail page** (`/bookmarklet`, nav relabeled "Bookmarklet" → "Gmail") now leads with the **browser extension** and walks through installing it inline — start the server, open `chrome://extensions`, enable Developer mode, **Load unpacked** (the page injects the exact `extension/` folder path to select), open Gmail. Covers Options (server URL / `youos token-create` for PIN-protected instances) and the Firefox build. The bookmarklet is demoted to a collapsible "no-install fallback."
+- **Fixed the extension's default port**: it defaulted to `127.0.0.1:8765` while YouOS serves on `8901`, so it wouldn't connect out-of-box (you'd have to set the URL every install). Now defaults to `8901` across `background.js`, `options.js`, `options.html`, the README, and the regenerated `firefox-build/`. Extension bumped to 0.1.1.
+
+Test pins the page promoting the extension with install steps + the injected folder path.
+
 ## v0.2.0-beta.3 — 2026-05-26
 
 ### About page corrected + a screenshot capture guide

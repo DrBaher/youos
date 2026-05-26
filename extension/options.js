@@ -1,5 +1,5 @@
 const api = globalThis.browser ?? globalThis.chrome;
-const DEFAULT_BASE = "http://127.0.0.1:8765";
+const DEFAULT_BASE = "http://127.0.0.1:8901";
 const baseInput = document.getElementById("base");
 const tokenInput = document.getElementById("token");
 const saved = document.getElementById("saved");
