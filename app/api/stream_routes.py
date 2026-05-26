@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 from typing import Literal
@@ -15,11 +16,14 @@ from app.core.sender import classify_sender, extract_domain
 from app.core.text_utils import strip_quoted_text
 from app.generation.service import (
     DraftRequest,
+    _adapter_available,
     _apply_cached_order,
     _format_sender_context,
+    _get_base_model_id,
     _get_cached_exemplar_ids,
     _load_persona,
     _load_prompts,
+    _local_model_available,
     _precedent_summary,
     _score_confidence,
     _top_exemplar_source_ids,
@@ -39,6 +43,48 @@ class StreamBody(BaseModel):
     sender: str | None = None
     mode: Literal["reply", "compose"] | None = "reply"
     user_prompt: str | None = None
+
+
+def _iter_mlx_body(stdout):
+    """Stream the generated text out of mlx_lm's framed stdout.
+
+    mlx_lm frames output as ``<prelude> ===== <generated text> ===== <stats>``.
+    We read in small chunks (not lines — a short reply is a single line and would
+    otherwise buffer to the end, killing the live-typing effect), drop the
+    prelude and stats, and withhold only a trailing run that could be the *start*
+    of the closing delimiter (``\\n=*``) so body text streams chunk-by-chunk.
+    """
+    buf = ""
+    in_body = False
+    while True:
+        chunk = stdout.read(64)
+        if not chunk:
+            break
+        buf += chunk
+        if not in_body:
+            m = re.search(r"={5,}[^\n]*\n", buf)
+            if not m:
+                continue
+            in_body = True
+            buf = buf[m.end():]
+        close = re.search(r"\n={5,}", buf)
+        if close:
+            head = buf[: close.start()]
+            if head:
+                yield head
+            return
+        hold = re.search(r"\n=*$", buf)  # might be the opening of the closing delimiter
+        if hold:
+            out, buf = buf[: hold.start()], buf[hold.start():]
+        else:
+            out, buf = buf, ""
+        if out:
+            yield out
+    # EOF with no closing delimiter — flush whatever body remains.
+    if in_body and buf:
+        tail = re.split(r"\n={5,}", buf)[0]
+        if tail:
+            yield tail
 
 
 def _stream_generate(body: StreamBody, settings):
@@ -119,27 +165,60 @@ def _stream_generate(body: StreamBody, settings):
         user_prompt=body.user_prompt,
     )
 
-    # Try streaming via claude CLI subprocess
+    # Prefer the local fine-tuned model for streaming when it's ready (mlx_lm on
+    # PATH + a trained adapter) so the Draft Reply tab drafts in YOUR voice,
+    # on-device. Fall back to the Claude CLI only when there's no adapter yet;
+    # any streaming error drops to the non-streaming generate_draft below.
+    from app.core.settings import get_adapter_path
+
+    stream_local = _local_model_available() and _adapter_available()
     proc = None
     try:
-        # Pass the prompt via -p so a prompt beginning with '-' isn't parsed as a
-        # flag; new session so we can kill the whole process group on cleanup.
-        proc = subprocess.Popen(
-            ["claude", "--print", "-p", prompt],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-        )
-        for line in proc.stdout:
-            # Emit each line including its trailing newline, blank lines too, so
-            # paragraph breaks in the draft survive streaming. The token carries
-            # its own newline; the client must not add one.
-            yield f"data: {json.dumps({'token': line})}\n\n"
-        proc.wait(timeout=120)
-        if proc.returncode != 0:
-            raise RuntimeError("claude CLI failed")
-        model_used = "claude"  # streamed via the Claude CLI
+        if stream_local:
+            # mlx_lm frames output as: <prelude> ===== <generated text> ===== <stats>.
+            # Stream only the body between the delimiters; PYTHONUNBUFFERED so the
+            # child flushes tokens as generated instead of buffering to the end.
+            cmd = [
+                "mlx_lm", "generate",
+                "--model", _get_base_model_id(),
+                "--adapter-path", str(get_adapter_path()),
+                "--prompt", prompt,
+                "--max-tokens", "400",
+            ]
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            )
+            for piece in _iter_mlx_body(proc.stdout):
+                yield f"data: {json.dumps({'token': piece})}\n\n"
+            proc.wait(timeout=120)
+            if proc.returncode != 0:
+                raise RuntimeError("mlx_lm generate failed")
+            model_used = "qwen2.5-1.5b-lora"  # streamed from the local LoRA adapter
+        else:
+            # No trained adapter (or no mlx_lm): stream via the Claude CLI. Pass
+            # the prompt via -p so one beginning with '-' isn't parsed as a flag;
+            # new session so we can kill the whole process group on cleanup.
+            proc = subprocess.Popen(
+                ["claude", "--print", "-p", prompt],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
+            for line in proc.stdout:
+                # Emit each line including its trailing newline, blank lines too, so
+                # paragraph breaks survive streaming. The token carries its own
+                # newline; the client must not add one.
+                yield f"data: {json.dumps({'token': line})}\n\n"
+            proc.wait(timeout=120)
+            if proc.returncode != 0:
+                raise RuntimeError("claude CLI failed")
+            model_used = "claude"  # streamed via the Claude CLI
     except Exception:
         # Fallback: generate full draft non-streaming
         try:
