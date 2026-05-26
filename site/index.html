@@ -110,6 +110,42 @@
   .reqs span { white-space: nowrap; }
   .reqs b { color: var(--text); font-weight: 600; }
 
+  /* Flow diagram */
+  .flow { display: flex; flex-direction: column; align-items: center; gap: 0; }
+  .flow-box { border: 1px solid var(--border); border-radius: 10px; padding: 12px 18px; background: var(--surface);
+    text-align: center; width: 340px; max-width: 90vw; }
+  .flow-box.accent { border-color: var(--teal-dim); }
+  .flow-box.final { border-color: var(--teal); background: rgba(0,196,167,0.06); font-weight: 700; }
+  .flow-box small { display: block; color: var(--muted); font-size: 0.8rem; margin-top: 4px; font-weight: 400; }
+  .flow-arrow { color: var(--teal); padding: 7px 0; }
+  .flow-loop { margin-top: 26px; padding: 22px 18px 18px; width: 100%; max-width: 760px;
+    border: 1px dashed var(--border); border-radius: 14px; background: rgba(0,196,167,0.03); }
+  .flow-loop-title { text-align: center; color: var(--teal); font-weight: 700; font-size: 0.82rem;
+    text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 16px; }
+  .flow-loop-row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; align-items: stretch; }
+  .flow-loop-row .flow-box { width: 220px; }
+  .flow-loop-arrow { display: flex; align-items: center; color: var(--teal); }
+  .flow-loop-note { text-align: center; color: var(--muted); font-size: 0.85rem; margin-top: 16px; }
+  .flow-loop-note strong { color: var(--teal); }
+
+  /* Tech stack */
+  .tech { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  .tech .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+  .tech .card b { color: var(--teal); display: block; margin-bottom: 6px; font-size: 0.95rem; }
+  .tech .card span { color: var(--muted); font-size: 0.9rem; }
+  .tech .card code { color: var(--text); background: var(--surface-2); padding: 1px 6px; border-radius: 5px; font-size: 0.84rem; }
+
+  /* FAQ */
+  .faq { max-width: 760px; margin: 0 auto; }
+  .faq details { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); margin-bottom: 10px; padding: 0 18px; }
+  .faq summary { cursor: pointer; font-weight: 600; padding: 14px 0; list-style: none; }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::before { content: "+ "; color: var(--teal); font-weight: 700; }
+  .faq details[open] summary { color: var(--teal); }
+  .faq details[open] summary::before { content: "− "; }
+  .faq p { color: var(--muted); padding: 0 0 16px; margin: 0; font-size: 0.95rem; }
+  .faq p code { color: var(--text); background: var(--surface-2); padding: 1px 6px; border-radius: 5px; font-size: 0.85rem; }
+
   /* Footer */
   footer { border-top: 1px solid var(--border); padding: 32px 0 48px; text-align: center; color: var(--muted); font-size: 0.9rem; }
   footer a { color: var(--muted); }
@@ -243,6 +279,33 @@
         <p>LoRA fine-tunes locally, golden eval guards quality, rotating benchmarks prevent overfitting</p>
       </div>
     </div>
+
+    <!-- The pipeline, end to end -->
+    <div class="flow" style="margin-top:48px;">
+      <div class="flow-box accent">Gmail · Google Docs · WhatsApp<small>your communication corpus</small></div>
+      <div class="flow-arrow">&darr;</div>
+      <div class="flow-box">Ingestion<small>gog / gws / native backend + parser</small></div>
+      <div class="flow-arrow">&darr;</div>
+      <div class="flow-box">Reply Pairs DB<small>SQLite + FTS5</small></div>
+      <div class="flow-arrow">&darr;</div>
+      <div class="flow-box">Retrieval Engine<small>BM25 + semantic + quality-score boosting</small></div>
+      <div class="flow-arrow">&darr;</div>
+      <div class="flow-box accent">Draft Generation<small>your local Qwen + LoRA, served warm · Claude fallback</small></div>
+      <div class="flow-arrow">&darr;</div>
+      <div class="flow-box final">Draft Reply<small>sounds like you</small></div>
+
+      <div class="flow-loop">
+        <div class="flow-loop-title">&#8635; Self-improving loop · nightly</div>
+        <div class="flow-loop-row">
+          <div class="flow-box">Your feedback<small>Review Queue: ratings + edits</small></div>
+          <div class="flow-loop-arrow">&rarr;</div>
+          <div class="flow-box">LoRA fine-tuning<small>nightly, on your edits</small></div>
+          <div class="flow-loop-arrow">&rarr;</div>
+          <div class="flow-box">Autoresearch<small>rotating benchmarks</small></div>
+        </div>
+        <div class="flow-loop-note">&#8617; feeds back into <strong>retrieval</strong> &amp; <strong>draft generation</strong> — every reply you touch sharpens the next</div>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -269,6 +332,42 @@
         <h3><code>native</code></h3>
         <p>Direct Google API via the <code>youos[google]</code> extra and OAuth — no external CLI at all.</p>
       </div>
+    </div>
+  </div>
+</section>
+
+<!-- Tech stack -->
+<section class="block">
+  <div class="container">
+    <div class="section-head">
+      <h2>Under the hood</h2>
+      <p>Small, local, and inspectable — no black box, no cloud dependency for the core loop.</p>
+    </div>
+    <div class="tech">
+      <div class="card"><b>Local model</b><span>Qwen2.5-1.5B-Instruct + your LoRA adapter, on Apple Silicon via MLX — loaded once and <em>served warm</em> for fast drafts.</span></div>
+      <div class="card"><b>Fine-tuning</b><span>LoRA via <code>mlx-lm</code> — trained nightly on your sent mail and your Review-Queue edits. Curriculum-ordered, auto-scaled.</span></div>
+      <div class="card"><b>Retrieval</b><span>BM25 + semantic search + quality-score boosting over your reply history, with per-account isolation and intent matching.</span></div>
+      <div class="card"><b>Storage</b><span>SQLite + FTS5 — a single local file. No database server, no external storage.</span></div>
+      <div class="card"><b>Backend</b><span>Python + FastAPI, running on your machine. A pluggable Google backend (<code>gog</code> / <code>gws</code> / <code>native</code>) fetches Gmail &amp; Docs.</span></div>
+      <div class="card"><b>Gmail</b><span>A Chrome/Edge/Brave (MV3) extension drafts right inside Gmail — generate, insert, rate. Bookmarklet fallback included.</span></div>
+      <div class="card"><b>Evaluation</b><span>A voice-match metric + <code>youos compare-models</code> score drafts against your real replies, plus a nightly golden benchmark.</span></div>
+      <div class="card"><b>Cloud (optional)</b><span>Claude is used only as a cold-start before your model is trained, or a fallback — never required once your adapter exists.</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="block">
+  <div class="container">
+    <div class="section-head"><h2>FAQ</h2></div>
+    <div class="faq">
+      <details><summary>Is my email data private?</summary><p>Yes. Your corpus, model, fine-tuning, and drafts all stay on your Mac — nothing is uploaded. The only exception is the optional Claude cold-start/fallback before your local model is trained, which you can turn off in Settings.</p></details>
+      <details><summary>Which model writes my drafts?</summary><p>By default, your fine-tuned local model (Qwen + your LoRA) once you've trained an adapter — fully on-device. Claude is only a cold-start or fallback. A per-draft badge always shows which model actually wrote a draft.</p></details>
+      <details><summary>How does it learn my style?</summary><p>It ingests your sent Gmail (and optionally Google Docs / WhatsApp exports), retrieves your most relevant past replies as few-shot examples, and fine-tunes a LoRA adapter on your real replies + your edits — so drafts sound like you, not a generic AI.</p></details>
+      <details><summary>How do I know it actually sounds like me?</summary><p>Run <code>youos compare-models</code> — it drafts your held-out replies under each model and scores them against what you actually wrote (voice-match). On the maintainer's corpus, the fine-tuned local model beats Claude on voice.</p></details>
+      <details><summary>Can I use it inside Gmail?</summary><p>Yes — install the YouOS browser extension (Chrome / Edge / Brave). It adds a panel to Gmail that drafts a reply in your voice, inserts it, and lets you rate it without leaving your inbox.</p></details>
+      <details><summary>Do I need an Apple Silicon Mac?</summary><p>For the local model, yes (M1–M4) — it runs on MLX. Retrieval and the Claude fallback work on any Mac, but the fine-tuned-on-you experience needs Apple Silicon.</p></details>
+      <details><summary>Is it free / open source?</summary><p>Yes — it's MIT-licensed and runs locally with no subscription. You only pay for Claude usage if you opt into the cloud fallback.</p></details>
     </div>
   </div>
 </section>
