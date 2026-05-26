@@ -35,14 +35,18 @@ echo "  output : $OUT_DIR"
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-# Strict allowlist (minimal bundle that passed ClawHub checks)
+# Strict allowlist (minimal bundle that passed ClawHub checks).
+# extension/ is required — SKILL.md tells users to "Load unpacked" that folder.
+# screenshots/ provides the images clawhub.json references for the listing.
 ALLOWED=(
   "app"
   "clawhub.json"
   "configs"
+  "extension"
   "PRIVACY.md"
   "pyproject.toml"
   "README.md"
+  "screenshots"
   "scripts"
   "SKILL.md"
 )
@@ -59,6 +63,10 @@ done
 find "$OUT_DIR" -name '.DS_Store' -delete || true
 find "$OUT_DIR" -name '__pycache__' -type d -prune -exec rm -rf {} + || true
 find "$OUT_DIR" -name '*.pyc' -delete || true
+# Drop the generated Firefox build (regenerated on demand by build-firefox.sh)
+# and the dev-only screenshot-capture note.
+rm -rf "$OUT_DIR/extension/firefox-build" || true
+rm -f "$OUT_DIR/screenshots/CAPTURE.md" || true
 
 # Final strict check: only allowlisted top-level entries remain.
 for entry in $(cd "$OUT_DIR" && ls -1A); do
