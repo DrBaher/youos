@@ -140,8 +140,10 @@ youos teardown
 
 ## Drafting inside Gmail
 
-Install the **YouOS browser extension** (Chrome/Edge/Brave) from the Gmail page in the
-web UI — it has one-click steps. The extension adds a panel to Gmail:
+Install the **YouOS browser extension** (Chrome/Edge/Brave) — it lives in the repo's
+`extension/` folder ([homepage](https://github.com/DrBaher/youos/tree/main/extension)),
+and the web UI's Gmail page has one-click "Load unpacked" steps. The extension adds a
+panel to Gmail:
 - Open an email → click the teal ✉ launcher → the panel opens
 - Sender + message auto-detected; add an instruction or pick a tone
 - Click **Generate** → drafted in your voice; **Insert into Gmail** drops it in the reply box
