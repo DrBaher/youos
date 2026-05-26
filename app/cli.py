@@ -773,6 +773,50 @@ def model_show():
     typer.echo(f"Adapter:     {'✅ trained' if adapter.exists() else '❌ not trained yet'}")
 
 
+server_app = typer.Typer(help="Manage the warm local-model server (loads the model once for fast drafting).")
+model_app.add_typer(server_app, name="server")
+
+
+@server_app.command(name="status")
+def model_server_status():
+    """Show whether the warm model server is running."""
+    from app.core import model_server
+
+    cfg = model_server.get_server_config()
+    state = "running" if model_server.is_healthy() else "not running"
+    typer.echo(f"Model server: {state} (port {cfg['port']}, enabled={cfg['enabled']}, serving {model_server.model_label()})")
+
+
+@server_app.command(name="start")
+def model_server_start():
+    """Start the warm model server (loads the base model + global adapter once)."""
+    from app.core import model_server
+
+    typer.echo("Starting model server (loading the model may take a few seconds)…")
+    if model_server.ensure_running():
+        typer.echo(f"✓ Model server running on port {model_server.get_server_config()['port']} ({model_server.model_label()})")
+    else:
+        typer.echo("✗ Model server failed to start — check that mlx_lm is installed.")
+        raise typer.Exit(1)
+
+
+@server_app.command(name="stop")
+def model_server_stop():
+    """Stop the warm model server."""
+    from app.core import model_server
+
+    model_server.stop()
+    typer.echo("Model server stopped.")
+
+
+@server_app.command(name="restart")
+def model_server_restart():
+    """Restart the server (e.g. to pick up a newly trained adapter)."""
+    from app.core import model_server
+
+    typer.echo("✓ restarted" if model_server.restart() else "✗ failed to restart")
+
+
 ollama_app = typer.Typer(help="Manage Ollama integration.")
 model_app.add_typer(ollama_app, name="ollama")
 
