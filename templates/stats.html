@@ -211,6 +211,7 @@ body {
         <div class="stat-row"><span class="stat-label">Last ingestion</span><span class="stat-value" id="shLastIngestion">-</span></div>
         <div class="stat-row"><span class="stat-label">Embedding coverage</span><span class="stat-value" id="shEmbeddingCov">-</span></div>
         <div class="stat-row"><span class="stat-label">LoRA adapter</span><span class="stat-value" id="shAdapter">-</span></div>
+        <div class="stat-row"><span class="stat-label">Drafting with</span><span class="stat-value" id="shDrafting" title="">-</span></div>
       </div>
 
       <!-- Draft quality by condition (from the draft_events log) -->
@@ -353,6 +354,19 @@ body {
       document.getElementById('loraTrained').textContent = d.model.lora_trained_at || 'N/A';
       document.getElementById('loraPairs').textContent = (d.model.lora_pairs_used || 0).toLocaleString();
       document.getElementById('lastFinetune').textContent = d.model.last_finetune_run || 'N/A';
+
+      // "Drafting with" — what recent drafts ACTUALLY used (reality, not file
+      // existence), so a silent base/cloud fallback is visible. Amber when the
+      // LoRA isn't the thing drafting.
+      if (d.model.drafting) {
+        var dr = d.model.drafting;
+        var drEl = document.getElementById('shDrafting');
+        if (drEl) {
+          drEl.textContent = dr.label;
+          drEl.title = dr.detail || '';
+          drEl.style.color = dr.healthy ? '#00c4a7' : '#f0ad4e';
+        }
+      }
 
       // Style drift
       if (d.style_drift) {

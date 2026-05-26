@@ -114,6 +114,21 @@ def run_doctor_checks_full() -> tuple[bool, list[str], list[str]]:
     if not models_dir.exists() or not any(models_dir.iterdir()):
         warnings.append(f"{models_dir} is empty")
 
+    # Warning: drafts are silently NOT using a LoRA adapter. The most common
+    # silent failure — a user believes drafts are personalized while they run on
+    # the base model (no adapter trained) or can't run locally at all (mlx_lm
+    # missing → cloud fallback). Reuses the same reality-based signal the stats
+    # dashboard shows. Healthy (LoRA actually in use) → no warning.
+    try:
+        from app.core.settings import get_settings
+        from app.core.stats import get_drafting_model_status
+
+        drafting = get_drafting_model_status(get_settings().database_url)
+        if not drafting.get("healthy", True):
+            warnings.append(f"Drafting: {drafting.get('label')} — {drafting.get('detail')}")
+    except Exception:
+        pass
+
     # Warning: personas.routing_enabled in config but no per-persona
     # adapters are trained yet — every draft will silently fall through
     # to the global, defeating the point of flipping the routing flag.
