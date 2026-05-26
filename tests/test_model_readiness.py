@@ -92,3 +92,6 @@ def test_drafting_page_has_wait_banner():
     assert 'id="modelReadyBanner"' in content
     assert "/api/model/readiness" in content
     assert "Draft anyway" in content  # soft gate — can proceed
+    # Refresh gives visible progress, and the gate is actionable: run the benchmark.
+    assert "Checking…" in content
+    assert 'id="mrbBenchmark"' in content and "/api/benchmark" in content

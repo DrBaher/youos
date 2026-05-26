@@ -417,7 +417,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
     <div id="modelReadyBanner" class="model-ready-banner" style="display:none;">
       <div class="mrb-text"><span id="mrbMsg"></span></div>
       <div class="mrb-actions">
-        <button type="button" class="mrb-btn" id="mrbDismiss">Draft anyway</button>
+        <button type="button" class="mrb-btn" id="mrbBenchmark" style="display:none;">Run benchmark now</button>
+        <button type="button" class="mrb-btn mrb-btn--ghost" id="mrbDismiss">Draft anyway</button>
         <button type="button" class="mrb-btn mrb-btn--ghost" id="mrbRefresh">Refresh</button>
       </div>
     </div>
@@ -717,22 +718,55 @@ function showFactsToast(facts) {
   (function modelReadinessGate() {
     const banner = document.getElementById('modelReadyBanner');
     const msgEl = document.getElementById('mrbMsg');
+    const benchBtn = document.getElementById('mrbBenchmark');
+    const refreshBtn = document.getElementById('mrbRefresh');
     if (!banner || !msgEl) return;
     let dismissed = false;
-    function check() {
-      fetch('/api/model/readiness').then(r => r.json()).then(s => {
-        if (dismissed || !s || s.ready) { banner.style.display = 'none'; return; }
-        const phaseLabel = { training: 'training', benchmarking: 'benchmarking',
-          benchmark_pending: 'benchmarking pending', not_started: 'not started' }[s.phase] || s.phase;
-        msgEl.textContent = '⏳ Preparing your voice model — ' + phaseLabel + '. ' + (s.message || '');
-        banner.style.display = 'flex';
-        // Keep polling while it's actively training/benchmarking.
-        if (s.phase === 'training' || s.phase === 'benchmarking') setTimeout(check, 8000);
-      }).catch(() => {});
+    let polling = false;
+
+    function render(s) {
+      if (dismissed || !s || s.ready) { banner.style.display = 'none'; return; }
+      const phaseLabel = { training: 'training', benchmarking: 'benchmarking',
+        benchmark_pending: 'benchmarking pending', not_started: 'not started' }[s.phase] || s.phase;
+      msgEl.textContent = '⏳ Preparing your voice model — ' + phaseLabel + '. ' + (s.message || '');
+      banner.style.display = 'flex';
+      // "Run benchmark now" is only the actionable next step when the adapter is
+      // trained but unbenchmarked. Reset it (it may have been left "Benchmarking…").
+      if (s.phase === 'benchmark_pending') {
+        benchBtn.style.display = ''; benchBtn.disabled = false; benchBtn.textContent = 'Run benchmark now';
+      } else {
+        benchBtn.style.display = 'none';
+      }
+      // Auto-poll while something is actively running.
+      if ((s.phase === 'training' || s.phase === 'benchmarking') && !polling) {
+        polling = true;
+        setTimeout(() => { polling = false; poll(); }, 6000);
+      }
     }
+    function poll() {
+      return fetch('/api/model/readiness').then(r => r.json()).then(render).catch(() => {});
+    }
+    // Refresh: visible progress so it never feels dead, even when nothing changed.
+    refreshBtn.addEventListener('click', () => {
+      refreshBtn.disabled = true; refreshBtn.textContent = 'Checking…';
+      Promise.all([poll(), new Promise(r => setTimeout(r, 500))]).then(() => {
+        if (banner.style.display !== 'none') {
+          refreshBtn.textContent = '✓ Checked';
+          setTimeout(() => { refreshBtn.disabled = false; refreshBtn.textContent = 'Refresh'; }, 900);
+        }
+      });
+    });
+    // Run the benchmark from the banner so the gate can actually clear.
+    benchBtn.addEventListener('click', () => {
+      benchBtn.disabled = true; benchBtn.textContent = 'Benchmarking…';
+      msgEl.textContent = '⏳ Benchmarking your voice model… runs in the background; this updates when it finishes.';
+      fetch('/api/benchmark', { method: 'POST' })
+        .then(r => (r.ok ? r.json() : r.json().then(e => Promise.reject(e.detail || 'error'))))
+        .then(() => { if (!polling) { polling = true; setTimeout(() => { polling = false; poll(); }, 4000); } })
+        .catch(err => { benchBtn.disabled = false; benchBtn.textContent = 'Run benchmark now'; msgEl.textContent = '✕ ' + err; });
+    });
     document.getElementById('mrbDismiss').addEventListener('click', () => { dismissed = true; banner.style.display = 'none'; });
-    document.getElementById('mrbRefresh').addEventListener('click', check);
-    check();
+    poll();
   })();
 
   // Tab switching
