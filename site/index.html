@@ -85,6 +85,17 @@
   .privacy { border: 1px solid var(--teal-dim); background: rgba(0,196,167,0.05); border-radius: 14px;
     padding: 32px; margin: 0 auto; text-align: center; font-size: 1.12rem; max-width: 760px; }
 
+  /* Proof / measured comparison */
+  .vs { width: 100%; max-width: 720px; margin: 0 auto; border-collapse: collapse; }
+  .vs th, .vs td { padding: 13px 18px; text-align: center; border-bottom: 1px solid var(--border); }
+  .vs th { font-weight: 700; font-size: 1.05rem; }
+  .vs th span { display: block; color: var(--muted); font-weight: 400; font-size: 0.78rem; margin-top: 3px; }
+  .vs td:first-child, .vs th:first-child { text-align: left; color: var(--muted); }
+  .vs th.win { background: rgba(0,196,167,0.07); border-radius: 10px 10px 0 0; }
+  .vs td.win { color: var(--teal); font-weight: 700; background: rgba(0,196,167,0.04); }
+  .vs-note { text-align: center; color: var(--muted); font-size: 0.86rem; margin-top: 18px; }
+  .vs-note code { color: var(--text); background: var(--surface-2); padding: 2px 7px; border-radius: 5px; }
+
   /* Install */
   .install { text-align: center; }
   .install pre { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
@@ -172,6 +183,29 @@
         <p class="good">&#9989; Standalone or as a skill; Gmail, Docs &amp; WhatsApp exports</p>
       </div>
     </div>
+  </div>
+</section>
+
+<!-- Proof: measured comparison -->
+<section class="block">
+  <div class="container">
+    <div class="section-head">
+      <h2>Does it actually sound like you?</h2>
+      <p>We measured it. On the maintainer&rsquo;s own ~11,700-email corpus, YouOS drafted held-out messages and scored each draft against the reply actually sent (&ldquo;voice-match&rdquo;). A small model fine-tuned on your mail beats a frontier cloud model at sounding like <em>you</em> &mdash; faster, and fully private.</p>
+    </div>
+    <table class="vs">
+      <thead>
+        <tr><th></th><th class="win">YouOS<span>local Qwen + your LoRA</span></th><th>Claude<span>frontier cloud</span></th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Sounds like you <span class="muted">(voice-match)</span></td><td class="win">0.80</td><td>0.70</td></tr>
+        <tr><td>Reuses your phrasing <span class="muted">(lexical overlap)</span></td><td class="win">0.40</td><td>0.13</td></tr>
+        <tr><td>Matches your length</td><td class="win">37 words</td><td>81 words</td></tr>
+        <tr><td>Speed per draft</td><td class="win">~10s</td><td>~40s</td></tr>
+        <tr><td>Your email leaves your Mac</td><td class="win">never</td><td>every draft</td></tr>
+      </tbody>
+    </table>
+    <p class="vs-note">The fine-tuning is what wins &mdash; <em>base</em> Qwen scores just 0.43. Reproduce it on your own corpus: <code>youos compare-models --limit 30 --semantic</code>. Numbers are from one corpus and will differ for you.</p>
   </div>
 </section>
 
