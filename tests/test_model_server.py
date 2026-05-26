@@ -151,6 +151,30 @@ def test_ensure_running_passes_adapter_when_present(monkeypatch):
     ms._proc = None  # cleanup module state
 
 
+def test_ensure_running_reloads_when_adapter_changed(monkeypatch):
+    _config(monkeypatch)
+    monkeypatch.setattr(ms, "is_healthy", lambda **k: True)  # already running
+    monkeypatch.setattr(ms, "_adapter_sig", lambda: 999.0)   # adapter retrained since load
+    ms._started_adapter_sig = 111.0
+    called = {"restart": False}
+    monkeypatch.setattr(ms, "restart", lambda: called.__setitem__("restart", True) or True)
+    assert ms.ensure_running() is True
+    assert called["restart"] is True
+
+
+def test_ensure_running_no_reload_when_adapter_unchanged(monkeypatch):
+    _config(monkeypatch)
+    monkeypatch.setattr(ms, "is_healthy", lambda **k: True)
+    monkeypatch.setattr(ms, "_adapter_sig", lambda: 111.0)
+    ms._started_adapter_sig = 111.0
+
+    def no_restart():
+        raise AssertionError("should not restart when the adapter is unchanged")
+
+    monkeypatch.setattr(ms, "restart", no_restart)
+    assert ms.ensure_running() is True
+
+
 def test_cli_model_server_group_registered():
     from app.cli import app
 

@@ -172,6 +172,39 @@ def _stream_generate(body: StreamBody, settings):
     from app.core.settings import get_adapter_path
 
     stream_local = _local_model_available() and _adapter_available()
+
+    # Fastest path: stream from the warm model server (no per-draft reload) when
+    # it's enabled and healthy. Falls through to the per-request subprocess /
+    # Claude paths below on any failure.
+    if stream_local:
+        from app.core import model_server
+
+        if model_server.is_enabled() and model_server.ensure_running():
+            streamed_any = False
+            failed = False
+            try:
+                for piece in model_server.stream(prompt, max_tokens=400):
+                    streamed_any = True
+                    yield f"data: {json.dumps({'token': piece})}\n\n"
+            except Exception:
+                failed = True
+            # Return unless it failed before producing anything — only then is it
+            # safe to fall through and re-stream from the subprocess/Claude path.
+            if streamed_any or not failed:
+                done_payload = {
+                    "done": True,
+                    "confidence": confidence,
+                    "precedent_used": precedent_used,
+                    "exemplar_cache_hit": exemplar_cache_hit,
+                    "exemplar_cache_key": exemplar_cache_key,
+                    "length_flag": length_flag,
+                    "repairs": repairs,
+                    "candidates": candidates,
+                    "model_used": model_server.model_label(),
+                }
+                yield f"data: {json.dumps(done_payload)}\n\n"
+                return
+
     proc = None
     try:
         if stream_local:

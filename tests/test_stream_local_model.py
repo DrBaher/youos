@@ -131,6 +131,26 @@ def test_stream_uses_local_lora_when_adapter_ready(monkeypatch):
     assert done["model_used"] == "qwen2.5-1.5b-lora"
 
 
+def test_stream_uses_warm_server_when_enabled(monkeypatch):
+    _stub_pipeline(monkeypatch)
+    monkeypatch.setattr(sr, "_local_model_available", lambda: True)
+    monkeypatch.setattr(sr, "_adapter_available", lambda: True)
+    # Warm server enabled + healthy → stream from it, no subprocess.
+    monkeypatch.setattr("app.core.model_server.is_enabled", lambda: True)
+    monkeypatch.setattr("app.core.model_server.ensure_running", lambda **k: True)
+    monkeypatch.setattr("app.core.model_server.stream", lambda *a, **k: iter(["Hi ", "Sam."]))
+    monkeypatch.setattr("app.core.model_server.model_label", lambda: "qwen2.5-1.5b-lora")
+
+    def no_popen(*a, **k):
+        raise AssertionError("subprocess must not be spawned when the warm server serves")
+
+    monkeypatch.setattr(sr.subprocess, "Popen", no_popen)
+
+    tokens, done = _collect(_stream_generate(StreamBody(inbound_text="hi"), MagicMock()))
+    assert "".join(tokens) == "Hi Sam."
+    assert done["model_used"] == "qwen2.5-1.5b-lora"
+
+
 def test_stream_falls_back_to_claude_without_adapter(monkeypatch):
     _stub_pipeline(monkeypatch)
     monkeypatch.setattr(sr, "_local_model_available", lambda: True)
