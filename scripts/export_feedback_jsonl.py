@@ -251,7 +251,16 @@ def export(args: argparse.Namespace) -> None:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        query = "SELECT inbound_text, edited_reply, rating, edit_distance_pct, created_at, COALESCE(rating, 3) as quality_score FROM feedback_pairs WHERE 1=1"
+        # `organic` pairs are real sent replies with no YouOS draft (see
+        # extract_auto_feedback.py). Detect the column so older DBs that predate
+        # it still export; absent → treated as non-organic (0).
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(feedback_pairs)")}
+        organic_select = "COALESCE(organic, 0) as organic" if "organic" in cols else "0 as organic"
+        query = (
+            "SELECT inbound_text, edited_reply, rating, edit_distance_pct, created_at, "
+            f"{organic_select}, COALESCE(rating, 3) as quality_score "
+            "FROM feedback_pairs WHERE 1=1"
+        )
         params: list = []
 
         # `used_in_finetune` is a global flag — it gates the incremental
@@ -297,6 +306,7 @@ def export(args: argparse.Namespace) -> None:
         rating = row["rating"]
         edit_pct = row["edit_distance_pct"]
         edited_reply = row["edited_reply"] or ""
+        organic = row["organic"]
 
         # Exclude pairs with short edited replies
         if len(edited_reply) < 15:
@@ -315,8 +325,13 @@ def export(args: argparse.Namespace) -> None:
             filtered_count += 1
             continue
 
-        # Exclude pairs with low edit + not 5-star (no signal)
-        if edit_pct is not None and edit_pct < min_edit_pct and (rating is None or rating < 5):
+        # Exclude pairs with low edit + not 5-star (no signal). The edit-distance
+        # floor only makes sense for review-queue pairs, where a YouOS draft
+        # existed to diff against. Organic pairs (real sent replies, no draft)
+        # have edit_distance_pct=0 by construction — applying the floor would
+        # discard the entire historical corpus, so a fresh user's first
+        # fine-tune would see "No qualifying pairs". Exempt them.
+        if not organic and edit_pct is not None and edit_pct < min_edit_pct and (rating is None or rating < 5):
             filtered_count += 1
             continue
 
