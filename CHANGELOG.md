@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.54 — 2026-05-26
+
+### Voice-match metric — measuring whether a draft sounds like *you*
+- **The eval harness scored structure (keyword hit-rate, brevity, intent) but never voice** — the one thing YouOS exists to do. New `app/evaluation/voice_match.py` scores a draft against the user's *real* reply to the same message (`reply_pairs.reply_text` / a curated `reference_reply`): a combined `voice_match` plus sub-scores for lexical overlap, length fit, stylometry (sentence/word length, contraction & question/exclaim rates), greeting/closing-habit match, and an **optional semantic** cosine (uses `app.core.embeddings.get_embedding` when injected, degrades gracefully without it). The core is deterministic + dependency-free so it runs in CI. Wired into `evaluate_case`/`run_eval_suite` **additively** — it only computes when a case carries a reference reply and never changes the existing pass/fail. This is the foundation for the upcoming cross-model comparison (does a fine-tuned local Qwen sound more like you than a frontier cloud model?). Golden seeding now stores `reference_reply`/`expected_reply` when present. Tests pin identical→~1, unrelated→low, semantic lift when an embedder is injected, graceful degradation, and the additive wiring.
+
 ## v0.1.53 — 2026-05-26
 
 ### Installer sets up the MLX local model (no more manual step)
