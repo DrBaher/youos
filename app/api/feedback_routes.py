@@ -241,6 +241,7 @@ def feedback_generate(body: GenerateBody, request: Request) -> dict:
         "suggested_subject": response.suggested_subject,
         "exemplar_cache_hit": response.exemplar_cache_hit,
         "exemplar_cache_key": response.exemplar_cache_key,
+        "model_used": response.model_used,
         "draft_id": draft_id,
     }
 

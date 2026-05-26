@@ -94,6 +94,9 @@ def _stream_generate(body: StreamBody, settings):
     length_flag: str | None = None
     repairs: list[str] = []
     candidates: list[dict] = []
+    # Which model actually produced this draft — the streaming path uses the
+    # Claude CLI directly; the non-streaming fallback reports its own model_used.
+    model_used: str | None = None
 
     prompts = _load_prompts(settings.configs_dir)
     persona = _load_persona(settings.configs_dir)
@@ -136,6 +139,7 @@ def _stream_generate(body: StreamBody, settings):
         proc.wait(timeout=120)
         if proc.returncode != 0:
             raise RuntimeError("claude CLI failed")
+        model_used = "claude"  # streamed via the Claude CLI
     except Exception:
         # Fallback: generate full draft non-streaming
         try:
@@ -155,6 +159,7 @@ def _stream_generate(body: StreamBody, settings):
             length_flag = response.length_flag
             repairs = response.repairs
             candidates = response.candidates
+            model_used = response.model_used
         except Exception as exc:
             yield f"data: {json.dumps({'token': f'[generation failed: {exc}]'})}\n\n"
     finally:
@@ -175,6 +180,7 @@ def _stream_generate(body: StreamBody, settings):
         "length_flag": length_flag,
         "repairs": repairs,
         "candidates": candidates,
+        "model_used": model_used,
     }
     yield f"data: {json.dumps(done_payload)}\n\n"
 
