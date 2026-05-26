@@ -26,6 +26,9 @@ def test_list_flags_defaults_on_empty_config():
     assert by_key["generation.multi_candidate.enabled"]["value"] is False
     assert by_key["generation.log_drafts"]["value"] is True  # default-on flag
     assert by_key["ingestion.google_backend"]["value"] == "gog"
+    # Drafting controls surfaced in Settings (local-by-default + warm server).
+    assert by_key["review.draft_model"]["value"] == "auto"
+    assert by_key["model.server.enabled"]["value"] is True
 
 
 def test_get_flag_from_config_and_default():
