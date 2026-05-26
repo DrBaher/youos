@@ -30,9 +30,20 @@ from app.core.config import get_base_model
 from app.core.settings import get_adapter_path
 
 # Module-global handle to the managed server process + a lock so concurrent
-# requests don't race to start (or kill) it.
+# requests don't race to start (or kill) it. _started_adapter_sig records the
+# adapter the running server loaded, so we can detect a retrain and reload.
 _proc: subprocess.Popen | None = None
 _lock = threading.Lock()
+_started_adapter_sig: float | None = None
+
+
+def _adapter_sig() -> float | None:
+    """A signature (mtime) of the global adapter, or None if untrained."""
+    a = get_adapter_path() / "adapters.safetensors"
+    try:
+        return a.stat().st_mtime if a.exists() else None
+    except OSError:
+        return None
 
 
 def get_server_config() -> dict:
@@ -86,8 +97,12 @@ def ensure_running(*, startup_timeout: float = 40.0) -> bool:
     failure returns False so the caller can fall back to the subprocess/cloud
     path rather than erroring.
     """
-    global _proc
+    global _proc, _started_adapter_sig
     if is_healthy():
+        # Running, but if the adapter was retrained since it loaded, reload it so
+        # drafts use the new voice model rather than the stale one.
+        if _adapter_sig() != _started_adapter_sig:
+            return restart()
         return True
     with _lock:
         # Re-check under the lock — another thread may have started it.
@@ -118,6 +133,7 @@ def ensure_running(*, startup_timeout: float = 40.0) -> bool:
                 _proc = None  # died during startup
                 return False
             if is_healthy(timeout=1.0):
+                _started_adapter_sig = _adapter_sig()  # remember what it loaded
                 return True
             time.sleep(0.5)
     return False
