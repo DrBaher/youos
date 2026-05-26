@@ -2,7 +2,9 @@
 
 > **Your email. Your model. Your style.**
 
-YouOS is a local-first AI email copilot that learns from your sent Gmail history and drafts replies that sound like *you* — not a generic AI. It runs entirely on your Mac. No cloud. No subscriptions. Your data never leaves your machine.
+> 🧪 **Public beta — [v0.2.0-beta.1](https://github.com/DrBaher/youos/releases/latest)**
+
+YouOS is a local-first AI email copilot that learns from your sent Gmail history and drafts replies that sound like *you* — not a generic AI. It runs entirely on your Mac. No cloud. No subscriptions. Your data never leaves your machine. **During setup it becomes _your_ OS** — YouOS → BaherOS.
 
 ```
 Gmail (sent mail)          Your feedback
@@ -48,7 +50,8 @@ Gmail (sent mail)          Your feedback
 - Handles full email threads — paste the whole thread, YouOS focuses on the latest message
 - Optional reply instructions — steer a specific draft with explicit guidance even when replying to inbound emails
 - Warns you when confidence is low; explain any draft inline via "How was this generated?"
-- Local model empty or signature-only output → automatic Claude fallback
+- **Drafts in your voice by default** — your fine-tuned local model is the default drafter (Draft Reply tab + Review Queue), served *warm* (loaded once) so it's fast and fully on-device; Claude is only the cold-start/fallback
+- **No silent failures** — see which model actually wrote each draft (your LoRA / base / cloud) in stats, `youos doctor`, and a per-draft badge; a readiness gate holds you back until your model is **trained _and_ benchmarked**
 - Subject line generated via smart content analysis — skips greeting/filler lines, extracts the actual topic
 - Improves from your feedback via LoRA fine-tuning — quality-filtered, deduplicated, curriculum-ordered, DPO preference pairs supported
 - Training export deduplicated by inbound similarity (≥0.95 → keep higher-rated pair)
@@ -204,6 +207,9 @@ youos eval --golden
 # Compare backends (MLX+LoRA / Ollama / Claude) on YOUR mail, ranked by
 # how closely each sounds like your real replies (voice-match)
 youos compare-models --limit 30          # add --semantic for embedding similarity
+
+# Warm local-model server (loads the model once for fast, on-device drafting)
+youos model server status                # start / stop / restart also available
 
 # Start the web server
 youos serve
