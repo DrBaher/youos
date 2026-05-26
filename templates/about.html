@@ -233,10 +233,11 @@ body {
       <div class="tech-card">
         <strong>&#x1F6E0;&#xFE0F; Tools &amp; UI</strong>
         <ul class="card-bullets">
-          <li>Gmail bookmarklet — draft, insert, and rate without leaving Gmail</li>
+          <li>Gmail extension — draft, insert, and rate without leaving Gmail (bookmarklet fallback)</li>
           <li>Review Queue optimized for fast sequential review (submit/skip, rating, keyboard shortcuts)</li>
+          <li>Per-draft model badge + a "Drafting with" health row — always see whether your LoRA, the base model, or the cloud wrote a draft</li>
           <li>History tab with intent and confidence badges</li>
-          <li>CLI: <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">youos doctor</code>, <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">youos corpus</code>, <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">youos eval --golden</code></li>
+          <li>CLI: <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">youos doctor</code>, <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">youos corpus</code>, <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">youos eval --golden</code>, <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">youos compare-models</code></li>
           <li>Mobile-friendly and rate-limited</li>
         </ul>
       </div>
@@ -412,7 +413,7 @@ body {
     </div>
     <div class="faq-item">
       <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Can I tell YouOS exactly how to reply?</div>
-      <div class="faq-a">Yes. Use the optional <strong>Reply instruction</strong> field in the Draft tab (and in the Gmail bookmarklet popup) to steer the reply, e.g. “decline politely and propose next Tuesday 14:00”.</div>
+      <div class="faq-a">Yes. Use the optional <strong>Reply instruction</strong> field in the Draft tab (and in the Gmail extension panel) to steer the reply, e.g. “decline politely and propose next Tuesday 14:00”.</div>
     </div>
     <div class="faq-item">
       <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">How do I check if everything is set up correctly?</div>
