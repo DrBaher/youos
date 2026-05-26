@@ -110,6 +110,9 @@ def evaluate_case(
     detected_mode: str,
     confidence: str,
     precedent_count: int,
+    *,
+    reference_reply: str | None = None,
+    embed_fn: Any = None,
 ) -> CaseResult:
     expected = case.get("expected_properties", {})
     if isinstance(expected, str):
@@ -135,6 +138,14 @@ def evaluate_case(
         "word_count": word_count,
         "max_words": max_words,
     }
+
+    # Voice-match (additive, never affects pass/fail): only when the case carries
+    # the user's real reply as a reference. This is what makes a cross-model
+    # comparison meaningful — see app/evaluation/voice_match.py.
+    if reference_reply:
+        from app.evaluation.voice_match import voice_match_score
+
+        scores["voice_match"] = voice_match_score(draft, reference_reply, embed_fn=embed_fn)
 
     return CaseResult(
         case_key=case["case_key"],
@@ -231,11 +242,22 @@ def seed_benchmark_cases_from_golden(conn: sqlite3.Connection, golden_path: Path
             "max_words": case.get("max_words"),
             "mode": case.get("expected_mode", ""),
         }
+        # A golden case may carry the user's real reply (or a curated ideal one)
+        # as a voice-match reference; `reference_reply` and `expected_reply` are
+        # both accepted. Absent → NULL, and voice-match is simply skipped.
+        reference_reply = case.get("reference_reply") or case.get("expected_reply")
         cur = conn.execute(
             """INSERT OR IGNORE INTO benchmark_cases
-               (case_key, category, prompt_text, expected_properties_json, notes)
-               VALUES (?, ?, ?, ?, ?)""",
-            (key, case.get("expected_mode") or "general", prompt, json.dumps(expected), case.get("notes", "")),
+               (case_key, category, prompt_text, expected_properties_json, reference_reply, notes)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                key,
+                case.get("expected_mode") or "general",
+                prompt,
+                json.dumps(expected),
+                reference_reply,
+                case.get("notes", ""),
+            ),
         )
         inserted += cur.rowcount
     conn.commit()
@@ -266,6 +288,7 @@ def run_eval_suite(
     database_url: str,
     configs_dir: Path,
     persist: bool = True,
+    embed_fn: Any = None,
 ) -> EvalSuiteResult:
     from app.db.bootstrap import connect, resolve_sqlite_path
 
@@ -315,6 +338,8 @@ def run_eval_suite(
                 detected_mode=draft_response["detected_mode"],
                 confidence=draft_response["confidence"],
                 precedent_count=draft_response["precedent_count"],
+                reference_reply=case.get("reference_reply"),
+                embed_fn=embed_fn,
             )
             case_results.append(cr)
 
