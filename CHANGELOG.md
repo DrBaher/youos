@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.2.0-beta.15 — 2026-05-26
+
+### Documentation revision (docs/ was stale; README config gaps; cruft removed)
+The `docs/` guides predated the standalone decoupling **and** the recent local-by-default work, so they were misleading:
+- **Wrong port everywhere.** Docs used `8765`; the server defaults to **`8901`** (`config.py`). Fixed in `docs/USAGE.md`, `docs/OPERATIONS.md`, `docs/demo-script.md`, and the README's "Running a Personal Instance" example.
+- **`docs/USAGE.md`** rewritten: first-run is `./scripts/install.sh` (not `pip install -e .`); added `youos doctor`, the extension install path, the readiness gate, `compare-models`, and a full command table (`serve`, `service`, `model server`, `config`, `corpus`, …).
+- **`docs/ARCHITECTURE.md`** rewritten: generation now drafts on the **fine-tuned local model by default** (was "local Qwen or Claude CLI fallback"); ingestion documents the `gog`/`gws`/`native` backends; added the warm `mlx_lm.server`, voice-match evaluation, and the readiness gate.
+- **`docs/OPERATIONS.md`**: corrected port; added `ingestion.google_backend`, `review.draft_model`, and `model.server` config keys + `youos config`/`youos service`.
+- **README Configuration**: documented `review.draft_model` (auto/local/claude), the warm `model.server`, and `ingestion.google_backend`; added a troubleshooting pointer (`youos doctor` + in-UI "How to fix"); stale beta-version label → "latest release".
+- **`PUBLISHING.md`**: corrected `clawhub.com` → `clawhub.ai`; documented that the dashboard is the working upload path (the `clawhub publish` CLI times out ~49s server-side).
+- **Removed cruft**: `CHANGELOG_FOR_CLAWHUB_0.1.14.md` and `CHANGELOG_SINCE_YESTERDAY.md` — one-off working notes from the v0.1.x era, superseded by this canonical changelog.
+
+`SKILL.md` and `clawhub.json` were already current (updated in beta.12/beta.14) and unchanged here.
+
 ## v0.2.0-beta.14 — 2026-05-26
 
 ### ClawHub pack is text-only again (fixes upload rejection)

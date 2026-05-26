@@ -4,8 +4,10 @@
 
 ```bash
 youos serve
-# or
-uvicorn app.main:app --host 127.0.0.1 --port 8765
+# or run it as a background service (starts at login, restarts on crash):
+youos service install
+# or directly:
+uvicorn app.main:app --host 127.0.0.1 --port 8901
 ```
 
 ## Nightly pipeline
@@ -70,10 +72,20 @@ python3 scripts/bootstrap_db.py
 
 All settings in `youos_config.yaml`. Key sections:
 
-- `user`: name, emails, display name
-- `server`: host, port
-- `model`: base model, adapter path, fallback
+- `user`: name, emails, display name (drives the personalized `<First>OS` name)
+- `server`: host, port (default `127.0.0.1:8901`)
+- `ingestion`: `google_backend` — `gog` (default), `gws`, or `native`
+- `model`: `base` model, adapter path, `fallback` (`claude` / `none`), and `server` (warm `mlx_lm.server`, default enabled)
+- `review`: `draft_model` — `auto` (default), `local`, or `claude`
 - `autoresearch`: enabled, iterations, schedule
+
+For strict local-only operation: set `review.draft_model: local` and `model.fallback: none`.
+
+Feature flags can also be viewed/changed without editing YAML:
+```bash
+youos config list
+youos config set review.draft_model local
+```
 
 Retrieval tuning: `configs/retrieval/defaults.yaml`
 Persona: `configs/persona.yaml`
