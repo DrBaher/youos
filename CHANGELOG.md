@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.1.61 — 2026-05-26
+
+### Ask users to wait until the voice model is trained AND benchmarked
+A new user shouldn't rely on drafts from a half-baked model. New **model-readiness gate** with a phase signal — `not_started → training → benchmarking → benchmark_pending → ready` — where "ready" means the LoRA is **both trained and benchmarked** (a golden eval ran at or after the adapter was trained).
+- **The wizard's fine-tune now chains the benchmark**: `/api/finetune` runs export → fine-tune → **golden eval**, so "benchmarked" is reachable during onboarding instead of only via the nightly.
+- **Soft "please wait" banner on the drafting page** (`/feedback`): until ready, a dismissible banner shows the current phase and explains drafts use the base model and won't sound like you yet. Drafting still works if you proceed ("Draft anyway").
+- **Onboarding's final step** now reports the same phase and asks you to wait before relying on drafts.
+- New `GET /api/model/readiness` and `get_model_readiness()` are the shared source of truth.
+
+Tests (8) pin the phase machine (including stale-benchmark = not ready), the wizard chaining the eval, and the banner wiring.
+
 ## v0.1.60 — 2026-05-26
 
 ### Per-draft model badge — see which model wrote each draft
