@@ -14,10 +14,13 @@
    - Optional custom output: `./scripts/prepare_clawhub_release.sh ~/Documents/youos-release-X.Y.Z`
    - This script includes only: `app/`, `clawhub.json`, `configs/`, `PRIVACY.md`, `pyproject.toml`, `README.md`, `scripts/`, `SKILL.md`
    - **Text-only**: ClawHub rejects binary files, so `screenshots/` (resolved from the homepage repo) and `extension/` (ships PNG icons) are excluded; the script aborts if any binary slips in
-5. Publish from that folder (not repo root):
-   - `cd ~/Documents/youos-release-X.Y.Z`
-   - `clawhub publish ./`
-6. Verify on https://clawhub.com/skills/youos
+5. Upload via the **dashboard** at https://clawhub.ai/dashboard (drag the release folder
+   or a zip of it). This is the reliable path.
+   - The `clawhub publish ./` CLI currently times out (~49s, stuck in "Preparing") regardless
+     of pack size/content — a registry-side issue, not your bundle. Use the dashboard instead.
+   - The dashboard accepts the semver form of the version (e.g. `0.2.0-beta.14`); the repo's
+     `0.2.0b14` is the PEP 440 equivalent.
+6. Verify on https://clawhub.ai/skills/youos
 
 ## What clawhub publish does
 - Reads SKILL.md and clawhub.json
