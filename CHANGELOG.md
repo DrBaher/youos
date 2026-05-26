@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.1.58 — 2026-05-26
+
+### Surface what's *actually* drafting — no more silent LoRA failures
+You can now tell, honestly, whether drafts are using your fine-tuned LoRA or silently running on the base model / falling back to the cloud:
+- **Stats dashboard** gains a **"Drafting with"** row (System Health) — computed from what *recent drafts actually used* (`draft_events.model_used`), not from whether an adapter file happens to exist. Green when your LoRA is in use; amber with a tooltip when it isn't (base model, cloud fallback, or a mix).
+- **`youos doctor`** now warns when drafts will silently run the base model (mlx_lm present but no adapter trained) or can't run locally at all (mlx_lm missing → cloud fallback) — reusing the same reality-based signal.
+- **Fixed a false-confidence bug** in the model-status label: it reported `qwen2.5-1.5b-lora` whenever an adapter file existed, even if `mlx_lm` was missing (so the local model couldn't actually run). It's now capability-aware: `lora` / `base` / `claude` reflect adapter + `mlx_lm` reality, and a new `local_available` field is exposed.
+- `summarize_draft_events` now includes a **`by_model`** breakdown.
+- **Benchmark drafts no longer pollute the signal:** drafts generated with a forced `backend_override` (e.g. `youos compare-models`) are no longer written to `draft_events` — they're not real user drafts and were skewing both the training signal and the new "drafting with" status.
+
+New helper `get_drafting_model_status()` is the shared source of truth (reality first, capability as fallback). Tests (12 new + updated stats tests) pin the classifier, the `by_model` aggregate, the capability-aware label, the doctor warning, and the benchmark-draft logging skip.
+
 ## v0.1.57 — 2026-05-26
 
 ### Docs: the "does it sound like you?" proof point
