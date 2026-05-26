@@ -67,6 +67,16 @@ def test_welcome_page_has_all_steps_and_wiring():
     assert "youos ingest" in body                 # terminal fallback still offered
 
 
+def test_welcome_auto_starts_and_reports_finetune():
+    """Fine-tuning must be processed as part of onboarding, not silently skipped:
+    it auto-starts on reaching the step, and the final step reports its status."""
+    body = client.get("/welcome").text
+    assert "autoStartFinetune" in body          # kicks off automatically
+    assert "finetuneStepIdx" in body            # wired to the step's entry
+    assert 'id="doneAdapter"' in body           # final step reports voice-model status
+    assert "Re-run fine-tuning" in body         # manual re-trigger still available
+
+
 def test_welcome_links_shared_assets():
     body = client.get("/welcome").text
     assert "/static/youos.css" in body and "/static/youos.js" in body

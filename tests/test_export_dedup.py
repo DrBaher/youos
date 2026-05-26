@@ -2,7 +2,19 @@
 
 from __future__ import annotations
 
-from scripts.export_feedback_jsonl import deduplicate_pairs
+from scripts.export_feedback_jsonl import DEDUP_MAX_PAIRS, deduplicate_pairs
+
+
+def test_dedup_skipped_above_cap_does_not_hang():
+    """A large organic corpus must NOT trigger the O(n^2) dedup (it stalls the
+    wizard/nightly fine-tune). Above the cap, return everything untouched, fast."""
+    n = DEDUP_MAX_PAIRS + 50
+    # All-identical inbound: without the cap this would dedup to 1 (and crawl);
+    # with the cap it returns unchanged, immediately.
+    pairs = [(f"2024-{i:05d}", "Same inbound text for everyone here.", "reply", 3.0) for i in range(n)]
+    result, removed = deduplicate_pairs(pairs)
+    assert removed == 0
+    assert len(result) == n
 
 
 def test_dedup_removes_near_duplicates():
