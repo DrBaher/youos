@@ -63,19 +63,31 @@ body {
 /* Prose */
 .prose { color: #bbb; line-height: 1.7; font-size: 0.92rem; }
 .prose p { margin-bottom: 1rem; }
-/* Flow diagram */
+/* Flow diagram — a clean vertical pipeline + a separated self-improving loop */
 .flow-chain { display: flex; flex-direction: column; align-items: center; gap: 0; }
 .flow-box {
-  border: 1px solid #00c4a7; border-radius: 8px; padding: 0.6rem 1rem;
-  background: #0d1b2a; text-align: center; font-size: 0.88rem; color: #e0e0e0;
-  min-width: 220px;
+  border: 1px solid #2a3a4a; border-radius: 10px; padding: 0.7rem 1.1rem;
+  background: #0d1b2a; text-align: center; font-size: 0.9rem; color: #e0e0e0;
+  width: 320px; max-width: 90vw;
 }
-.flow-box small { display: block; color: #888; font-size: 0.78rem; margin-top: 0.2rem; }
-.flow-arrow { color: #00c4a7; font-size: 1.3rem; line-height: 1; padding: 0.2rem 0; }
-.flow-row {
-  display: flex; gap: 1.5rem; align-items: center; justify-content: center; flex-wrap: wrap;
+.flow-box.accent { border-color: #00c4a7; }
+.flow-box.final { border-color: #2ecc71; background: #0e2417; font-weight: 600; }
+.flow-box small { display: block; color: #8b98a9; font-size: 0.76rem; margin-top: 0.25rem; font-weight: 400; }
+.flow-arrow { color: #00c4a7; font-size: 1.2rem; line-height: 1; padding: 0.35rem 0; }
+/* Self-improving loop strip */
+.flow-loop {
+  margin-top: 1.6rem; padding: 1.2rem 1rem 1rem; width: 100%; max-width: 760px;
+  border: 1px dashed #2a3a4a; border-radius: 12px; background: rgba(0,196,167,0.035);
 }
-.flow-side-arrow { color: #00c4a7; font-size: 1.2rem; }
+.flow-loop-title {
+  text-align: center; color: #00c4a7; font-size: 0.82rem; font-weight: 600;
+  letter-spacing: 0.03em; text-transform: uppercase; margin-bottom: 1rem;
+}
+.flow-loop-row { display: flex; align-items: stretch; justify-content: center; gap: 0.6rem; flex-wrap: wrap; }
+.flow-loop-row .flow-box { width: 210px; }
+.flow-loop-arrow { display: flex; align-items: center; color: #00c4a7; font-size: 1.1rem; }
+.flow-loop-note { text-align: center; color: #8b98a9; font-size: 0.78rem; line-height: 1.5; margin-top: 1rem; }
+.flow-loop-note strong { color: #00c4a7; }
 /* Privacy table */
 .privacy-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
 .privacy-table th {
@@ -235,31 +247,29 @@ body {
   <div class="section">
     <h2 class="section-title">How it works</h2>
     <div class="flow-chain">
-      <div class="flow-box">Gmail · Google Docs · WhatsApp<small>your communication corpus</small></div>
+      <div class="flow-box accent">Gmail · Google Docs · WhatsApp<small>your communication corpus</small></div>
       <div class="flow-arrow">&darr;</div>
-      <div class="flow-box">Ingestion<small>gog CLI + export parser</small></div>
+      <div class="flow-box">Ingestion<small>gog / gws / native backend + parser</small></div>
       <div class="flow-arrow">&darr;</div>
       <div class="flow-box">Reply Pairs DB<small>SQLite + FTS5</small></div>
       <div class="flow-arrow">&darr;</div>
-      <div class="flow-row">
-        <div class="flow-box">Retrieval Engine<small>BM25 + semantic + quality-score boosting</small></div>
-        <div class="flow-side-arrow">&larr;</div>
-        <div class="flow-box">Your feedback<small>Review Queue</small></div>
-      </div>
+      <div class="flow-box">Retrieval Engine<small>BM25 + semantic + quality-score boosting</small></div>
       <div class="flow-arrow">&darr;</div>
-      <div class="flow-row">
-        <div class="flow-box">Draft Generation<small>Qwen 1.5B local</small></div>
-        <div class="flow-side-arrow">&larr;</div>
-        <div class="flow-box">LoRA Fine-tuning<small>nightly</small></div>
-      </div>
+      <div class="flow-box accent">Draft Generation<small>your local Qwen + LoRA, served warm · Claude fallback</small></div>
       <div class="flow-arrow">&darr;</div>
-      <div class="flow-row">
-        <div style="width:220px"></div>
-        <div class="flow-side-arrow" style="visibility:hidden">&larr;</div>
-        <div class="flow-box">Autoresearch<small>80 iterations</small></div>
+      <div class="flow-box final">Draft Reply<small>sounds like you</small></div>
+
+      <div class="flow-loop">
+        <div class="flow-loop-title">&#8635; Self-improving loop &middot; nightly</div>
+        <div class="flow-loop-row">
+          <div class="flow-box">Your feedback<small>Review Queue: ratings + edits</small></div>
+          <div class="flow-loop-arrow">&rarr;</div>
+          <div class="flow-box">LoRA fine-tuning<small>nightly, on your edits</small></div>
+          <div class="flow-loop-arrow">&rarr;</div>
+          <div class="flow-box">Autoresearch<small>rotating benchmarks</small></div>
+        </div>
+        <div class="flow-loop-note">&#8617; feeds back into <strong>retrieval</strong> &amp; <strong>draft generation</strong> — every reply you touch sharpens the next</div>
       </div>
-      <div class="flow-arrow">&darr;</div>
-      <div class="flow-box" style="border-color:#2ecc71;">Draft Reply</div>
     </div>
   </div>
 
