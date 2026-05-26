@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.57 — 2026-05-26
+
+### Docs: the "does it sound like you?" proof point
+Surfaced the measured cross-model result (from v0.1.55's `youos compare-models`, run on the maintainer's ~11,700-email corpus) as a proof point in the **README** and the **landing page** (`site/index.html`): a fine-tuned local Qwen beats Claude on voice-match (**0.80 vs 0.70**), reuses the user's phrasing ~3× more (lexical 0.40 vs 0.13), matches their length (37 vs 81 words), is ~4× faster, and stays on-device — while *base* Qwen with no adapter scores just 0.43, so the personalization is what wins. Both note the numbers are from one corpus and reproducible via `youos compare-models --limit 30 --semantic`.
+
 ## v0.1.56 — 2026-05-26
 
 ### Fix: the wizard's "Start fine-tuning" silently did nothing for a history-only corpus
