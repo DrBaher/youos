@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0-beta.12 — 2026-05-26
+
+### OpenClaw skill (clawhub.json + SKILL.md) brought up to date
+The skill manifest and instructions had drifted from the standalone app:
+- **Install now sets up the local model.** Both `clawhub.json` and `SKILL.md` install steps changed from `pip install -e .` (which never installed MLX) to **`./scripts/install.sh`** — so a skill install gets a working on-device model, then `youos setup`.
+- **Local-by-default framing.** Descriptions / "How it works" updated from "falls back to Claude automatically" to drafting on your **fine-tuned local model by default** (served warm); the cloud is only a cold-start/fallback. Strict local-only now documented as `review.draft_model: local` + `model.fallback: none`.
+- **Gmail = extension.** The "Gmail Bookmarklet" section is now "Drafting inside Gmail" (the browser extension, bookmarklet as fallback).
+- **Fixed stale bits.** Wrong `cd ~/Projects/youos` path; `youos ui` → `youos serve`; golden "8 cases" → 10; ingestion backend is now gog **/ gws / native**, not gog-only.
+- **New capabilities added** to the command list + How-it-works: `youos compare-models` (voice-match), `youos model server`, `youos service install`, the readiness gate, and `<your>OS` personalization. Refreshed the manifest description/tags.
+
 ## v0.2.0-beta.11 — 2026-05-26
 
 ### Public landing page: pipeline diagram, tech stack, and FAQ
