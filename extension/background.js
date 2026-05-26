@@ -9,7 +9,7 @@
 // uses `chrome` (also promise-based under MV3). This keeps one shared codebase.
 const api = globalThis.browser ?? globalThis.chrome;
 
-const DEFAULT_BASE = "http://127.0.0.1:8765";
+const DEFAULT_BASE = "http://127.0.0.1:8901";
 
 async function getConfig() {
   const { youosBaseUrl, youosToken } = await api.storage.sync.get(["youosBaseUrl", "youosToken"]);
