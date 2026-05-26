@@ -17,6 +17,7 @@ from app.core.stats import (
     get_corpus_stats,
     get_drafting_model_status,
     get_latest_ingest_status,
+    get_model_readiness,
     get_model_status,
     get_pipeline_status,
     summarize_draft_events,
@@ -166,17 +167,23 @@ _finetune_proc: Any = None
 
 @router.post("/api/finetune")
 def trigger_finetune() -> dict:
-    """Run export + LoRA fine-tune in the background (same as `youos finetune`)."""
+    """Run export -> LoRA fine-tune -> golden benchmark in the background.
+
+    Chaining the golden eval means the adapter is *validated* before we call the
+    model "ready" — so the wizard's readiness gate can actually clear without
+    waiting for the nightly. Same single detached process (one running handle).
+    """
     global _finetune_proc
     if _finetune_proc is not None and _finetune_proc.poll() is None:
         raise HTTPException(status_code=409, detail="Fine-tuning is already running.")
     scripts = ROOT_DIR / "scripts"
-    # Sequential export -> finetune in one detached process; paths are constants
-    # (no user input), invoked as an arg list (no shell).
+    # Sequential export -> finetune -> benchmark in one detached process; paths
+    # are constants (no user input), invoked as an arg list (no shell).
     code = (
         "import subprocess,sys;"
         f"subprocess.run([sys.executable, {str(scripts / 'export_feedback_jsonl.py')!r}], check=False);"
-        f"subprocess.run([sys.executable, {str(scripts / 'finetune_lora.py')!r}], check=False)"
+        f"subprocess.run([sys.executable, {str(scripts / 'finetune_lora.py')!r}], check=False);"
+        f"subprocess.run([sys.executable, {str(scripts / 'run_golden_eval.py')!r}], check=False)"
     )
     _finetune_proc = subprocess.Popen(  # noqa: S603
         [sys.executable, "-c", code],
@@ -193,6 +200,16 @@ def finetune_status() -> dict:
     running = _finetune_proc is not None and _finetune_proc.poll() is None
     adapter_ready = (get_adapter_path() / "adapters.safetensors").exists()
     return {"status": "running" if running else ("done" if adapter_ready else "idle"), "adapter_ready": adapter_ready}
+
+
+@router.get("/api/model/readiness")
+def model_readiness(request: Request) -> dict:
+    """Is the personalized model trained AND benchmarked — i.e. safe to rely on?
+
+    Drives the soft "please wait" gate on the drafting page and onboarding.
+    """
+    running = _finetune_proc is not None and _finetune_proc.poll() is None
+    return get_model_readiness(request.app.state.settings.database_url, finetune_running=running)
 
 
 @router.post("/api/token")
