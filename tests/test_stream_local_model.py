@@ -33,6 +33,19 @@ class _FakeProc:
         pass
 
 
+def test_feedback_has_cold_start_loading_overlay():
+    """The draft area shows a loading overlay until the first token streams in,
+    masking the local model's ~3s cold start."""
+    from pathlib import Path
+
+    content = (Path(__file__).resolve().parents[1] / "templates" / "feedback.html").read_text()
+    assert 'id="draftLoading"' in content                 # overlay element
+    assert "showDraftLoading()" in content and "hideDraftLoading()" in content
+    assert "Warming up your local model" in content       # cold-start explainer
+    # Hidden as soon as a token arrives.
+    assert "hideDraftLoading();" in content
+
+
 def test_iter_mlx_body_strips_framing_and_streams():
     # Prelude + opening delim + body (multi-chunk) + closing delim + stats.
     raw = (
