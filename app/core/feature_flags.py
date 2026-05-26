@@ -143,27 +143,60 @@ def set_flag(key: str, raw_value: Any, *, config_path: Path | None = None) -> An
     return value
 
 
+def derive_os_name(name: str | None) -> str:
+    """Personalize the product name from the user's name: ``Baher`` → ``BaherOS``.
+
+    The idea behind YouOS: during setup it becomes *your* OS. Uses the first name
+    token, preserving its internal casing (so ``McAvoy`` → ``McAvoyOS``); empty
+    input falls back to the generic ``YouOS``.
+    """
+    raw = (name or "").strip()
+    if not raw:
+        return "YouOS"
+    first = raw.split()[0]
+    return f"{first[0].upper()}{first[1:]}OS"
+
+
 def set_identity(
     name: str | None = None,
     emails: list[str] | None = None,
     *,
+    display_name: str | None = None,
     config_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Persist the user's identity (``user.name`` / ``user.emails``).
+    """Persist the user's identity (``user.name`` / ``user.emails`` / ``display_name``).
 
     Used by the onboarding wizard / settings. Not a feature flag, but the same
-    controlled, validated write path. Returns the stored identity.
+    controlled, validated write path. When a name is set, the display name is
+    auto-derived as ``<First>OS`` (e.g. ``BaherOS``) — unless an explicit
+    ``display_name`` is given, or the user has already chosen a custom one (we
+    only update display names that still track the previous derived value).
+    Returns the stored identity.
     """
     cfg = copy.deepcopy(load_config(config_path))
     user = cfg.setdefault("user", {})
     if not isinstance(user, dict):
         user = {}
         cfg["user"] = user
+    old_name = user.get("name", "")
     if name is not None:
         user["name"] = str(name).strip()
     if emails is not None:
         if not isinstance(emails, list):
             raise ValueError("emails must be a list")
         user["emails"] = [str(e).strip() for e in emails if str(e).strip()]
+    if display_name is not None:
+        user["display_name"] = str(display_name).strip()
+    elif name is not None:
+        # Auto-derive <First>OS, but don't clobber a custom brand: only set it
+        # when there's no display name yet or the current one still tracks the
+        # old name's derived value.
+        current = str(user.get("display_name", "")).strip()
+        if not current or current == derive_os_name(old_name):
+            user["display_name"] = derive_os_name(name)
     save_config(cfg, config_path)
-    return {"name": user.get("name", ""), "emails": user.get("emails", [])}
+    return {
+        "name": user.get("name", ""),
+        "emails": user.get("emails", []),
+        "display_name": user.get("display_name", ""),
+    }
