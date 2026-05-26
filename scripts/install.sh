@@ -62,6 +62,21 @@ echo "==> Upgrading pip"
 echo "==> Installing YouOS ($TARGET)"
 "$VENV_PY" -m pip install -e "$TARGET"
 
+# --- 3b. Local model engine (MLX) on Apple Silicon -------------------------
+# MLX powers on-device generation/fine-tuning but is Apple-Silicon-only, so
+# it's a separate extra. Install it automatically on arm64 macOS (best-effort:
+# a failure here shouldn't abort the whole install — YouOS still runs with a
+# cloud/Ollama fallback).
+if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
+  echo "==> Installing the local model engine (MLX, Apple Silicon)"
+  if ! "$VENV_PY" -m pip install -e ".[mlx]"; then
+    echo "  WARN: MLX install failed — local model unavailable until you run:"
+    echo "        $VENV_PY -m pip install -e \".[mlx]\""
+  fi
+else
+  echo "==> Skipping MLX (not Apple Silicon) — local model needs a cloud/Ollama fallback."
+fi
+
 # --- 4. Health check (informational; never fails the install) -------------
 echo
 echo "==> Running \`youos doctor\` (initial setup is expected to show TODOs)"

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.53 — 2026-05-26
+
+### Installer sets up the MLX local model (no more manual step)
+- **MLX — the on-device model engine — isn't bundled with macOS and YouOS wasn't installing it.** It was only a keyword in `pyproject.toml` (not a dep or extra), so after `./scripts/install.sh` the doctor's *required* `mlx_lm` check failed and local drafting silently fell back to cloud/none until the user found `pip install mlx-lm` themselves. Now: a **`youos[mlx]` extra** (`mlx-lm`), and **`install.sh` installs it automatically on Apple Silicon** (gated to arm64 macOS; best-effort so a failure doesn't abort the install; skipped with a note on non-AS). The doctor's hint now points at `pip install -e ".[mlx]"`, and the README notes the installer handles MLX. A fresh Apple-Silicon install now yields a working local model out of the box. Tests pin the extra + the installer's arm64-gated MLX step.
+
 ## v0.1.52 — 2026-05-26
 
 ### Docs: new-user quick start points to the web wizard + service
