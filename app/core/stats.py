@@ -435,6 +435,57 @@ def _classify_drafting(by_model: dict[str, int], adapter_trained: bool, local_av
             "No adapter trained yet — drafts will use the base model (not personalized) until you fine-tune.", False)
 
 
+_READINESS_MESSAGES = {
+    "not_started": "Your voice model hasn't been trained yet — drafts use the base model and won't sound like you. "
+                   "Start fine-tuning from the setup wizard or Settings.",
+    "training": "Training your voice model on your sent mail… drafts use the base model until it's ready.",
+    "benchmarking": "Benchmarking your newly trained voice model… almost there.",
+    "benchmark_pending": "Your voice model is trained but not yet benchmarked — it'll be validated by tonight's run "
+                         "(or run `youos eval --golden`). Drafts may not reflect the validated model yet.",
+    "ready": "Your voice model is trained and benchmarked — drafts now sound like you.",
+}
+
+
+def get_model_readiness(database_url: str, *, finetune_running: bool = False) -> dict:
+    """Is the personalized model ready to rely on — i.e. trained AND benchmarked?
+
+    Used to ask a user to wait before drafting on a half-baked model. Phases:
+    ``not_started`` → ``training`` → ``benchmarking`` → ``benchmark_pending`` →
+    ``ready``. "Benchmarked" means a golden eval ran at or after the adapter was
+    trained (the wizard's fine-tune now chains the eval, so this is reachable
+    without waiting for the nightly). ``finetune_running`` is supplied by the
+    route layer since the in-progress handle lives there.
+    """
+    adapter_file = _resolve_adapter_path() / "adapters.safetensors"
+    adapter_trained = adapter_file.exists()
+
+    benchmarked = False
+    if adapter_trained:
+        golden = _get_var_path("golden_results.json")
+        try:
+            benchmarked = golden.exists() and golden.stat().st_mtime >= adapter_file.stat().st_mtime
+        except OSError:
+            benchmarked = False
+
+    if finetune_running:
+        phase = "benchmarking" if adapter_trained else "training"
+    elif not adapter_trained:
+        phase = "not_started"
+    elif not benchmarked:
+        phase = "benchmark_pending"
+    else:
+        phase = "ready"
+
+    return {
+        "phase": phase,
+        "ready": phase == "ready",
+        "message": _READINESS_MESSAGES[phase],
+        "adapter_trained": adapter_trained,
+        "benchmarked": benchmarked,
+        "running": finetune_running,
+    }
+
+
 def get_drafting_model_status(database_url: str) -> dict:
     """What model is *actually* drafting — to prevent the silent-failure where a
     user believes drafts are personalized while they run on the base model or
