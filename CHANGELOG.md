@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.1.66 — 2026-05-26
+
+### Local, in-your-voice drafting is now the default (warm server on)
+PR 3 of 3 — the warm model server is now enabled by default, making fast local drafting the default everywhere:
+- **`model.server.enabled` defaults on.** The server is **pre-warmed on startup** (a background thread in the app lifespan loads the model off the request path, so the first draft isn't slow) and **stopped on shutdown** (no orphaned process). A no-op when mlx_lm is unavailable — generation falls back to the subprocess/Claude.
+- **`review.draft_model` now defaults to `auto`** (was `claude`): the batch Review Queue uses your local LoRA when an adapter is trained, else Claude — and with the warm server, batch-on-local is finally fast. Claude's role narrows to cold-start (no adapter yet) and fallback, exactly as intended.
+- **Test safety:** `ensure_running()` never spawns the ~3GB server inside the test suite (guarded on `PYTEST_CURRENT_TEST`) — generation falls back as if the server were down.
+
+Net across PRs #70–#72: a trained user drafts in their own voice, on-device, fast, on both the Draft Reply tab and the Review Queue; Claude is only the bootstrap/fallback. Tests (4): enabled-by-default, `auto` default, pre-warm/shutdown wiring, and the pytest spawn-guard.
+
 ## v0.1.65 — 2026-05-26
 
 ### Generation uses the warm model server (when enabled), with graceful fallback
