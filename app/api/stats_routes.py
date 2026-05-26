@@ -73,6 +73,7 @@ class ConfigSetRequest(BaseModel):
 class IdentityRequest(BaseModel):
     name: str | None = None
     emails: list[str] | None = None
+    display_name: str | None = None  # explicit override; otherwise derived as <First>OS
 
 
 # Lookback → Gmail `newer_than:` filter. Whitelisted so nothing the user types
@@ -121,7 +122,7 @@ def set_config_identity(body: IdentityRequest) -> dict:
     from app.core.feature_flags import set_identity
 
     try:
-        result = set_identity(body.name, body.emails)
+        result = set_identity(body.name, body.emails, display_name=body.display_name)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     return {"ok": True, **result}
