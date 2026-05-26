@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0-beta.11 — 2026-05-26
+
+### Public landing page: pipeline diagram, tech stack, and FAQ
+Brought the in-app About content to the public site (`site/index.html`, youos.you.com), styled to match the landing:
+- **Pipeline diagram** added to "How it works" — the clean vertical flow (Corpus → Ingestion → Reply Pairs DB → Retrieval → Draft Generation → Draft Reply) plus the separated "Self-improving loop · nightly" strip.
+- **"Under the hood" tech stack** — eight cards (local model + warm serving, fine-tuning, retrieval, storage, backend/backends, Gmail extension, evaluation/voice-match, optional cloud).
+- **FAQ** — a seven-question accordion tuned for visitors (privacy, which model drafts, how it learns your style, how to verify it sounds like you, Gmail extension, Apple-Silicon requirement, free/open-source).
+
+Verified the rendering via Peekaboo. Pages redeploys `site/` on merge.
+
 ## v0.2.0-beta.10 — 2026-05-26
 
 ### About page: refreshed tech stack + new FAQs
