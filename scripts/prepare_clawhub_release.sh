@@ -35,18 +35,17 @@ echo "  output : $OUT_DIR"
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-# Strict allowlist (minimal bundle that passed ClawHub checks).
-# extension/ is required — SKILL.md tells users to "Load unpacked" that folder.
-# screenshots/ provides the images clawhub.json references for the listing.
+# Strict allowlist. ClawHub bundles must be TEXT-ONLY (binaries are rejected at
+# upload), so this excludes screenshots/ (the registry resolves clawhub.json's
+# screenshot paths from the homepage repo) and extension/ (it ships PNG icons —
+# users get the extension from the GitHub repo / Gmail page, per SKILL.md).
 ALLOWED=(
   "app"
   "clawhub.json"
   "configs"
-  "extension"
   "PRIVACY.md"
   "pyproject.toml"
   "README.md"
-  "screenshots"
   "scripts"
   "SKILL.md"
 )
@@ -63,10 +62,15 @@ done
 find "$OUT_DIR" -name '.DS_Store' -delete || true
 find "$OUT_DIR" -name '__pycache__' -type d -prune -exec rm -rf {} + || true
 find "$OUT_DIR" -name '*.pyc' -delete || true
-# Drop the generated Firefox build (regenerated on demand by build-firefox.sh)
-# and the dev-only screenshot-capture note.
-rm -rf "$OUT_DIR/extension/firefox-build" || true
-rm -f "$OUT_DIR/screenshots/CAPTURE.md" || true
+
+# Text-only guard: ClawHub rejects binary files at upload. Flag any that slipped
+# in (e.g. images, archives) so we catch them before publishing, not on rejection.
+BINARIES="$(find "$OUT_DIR" -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.gif' -o -iname '*.ico' -o -iname '*.zip' -o -iname '*.gz' -o -iname '*.safetensors' -o -iname '*.pdf' \))"
+if [[ -n "$BINARIES" ]]; then
+  echo "ERROR: non-text files in the bundle (ClawHub rejects these). Remove them:" >&2
+  echo "$BINARIES" >&2
+  exit 1
+fi
 
 # Final strict check: only allowlisted top-level entries remain.
 for entry in $(cd "$OUT_DIR" && ls -1A); do
