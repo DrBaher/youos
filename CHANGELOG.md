@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.2.0-beta.1 — 2026-05-26
+
+**First public beta.** A milestone tag over the 0.1.x line — highlights since the project became standalone:
+
+- **Runs standalone** (no OpenClaw required) with a one-command `./scripts/install.sh`, plus **three Google ingestion backends** (`gog` / `gws` / `native`).
+- **Local model out of the box** — `install.sh` sets up MLX on Apple Silicon; a fresh install yields a working on-device model.
+- **Drafts in your voice, by default** — the local Qwen fine-tuned on your sent mail is now the default drafter on both the Draft Reply tab and the Review Queue, served by a **warm model server** (loaded once, fast), fully on-device. Claude is only the cold-start/fallback.
+- **Proven, not assumed** — `youos compare-models` + the voice-match metric measured the fine-tuned local model beating Claude on *sounding like you* (0.80 vs 0.70 on the maintainer's corpus).
+- **No silent failures** — the actual drafting model is surfaced in stats, `youos doctor`, and a per-draft badge; a readiness gate asks you to wait until your model is **trained _and_ benchmarked**.
+- **Guided onboarding** — the `/welcome` wizard does identity → ingest → **auto-trains your LoRA** → secures → installs the background service, with plain-language explanations throughout.
+- **It becomes _your_ OS** — setup personalizes the name to `<First>OS` (e.g. BaherOS).
+- Landing page, settings UI, feature-flag CLI, and a launchd background service.
+
+See the 0.1.x entries below for the full per-change history.
+
 ## v0.1.67 — 2026-05-26
 
 ### YouOS becomes *your* OS — personalized name at setup (BaherOS)
