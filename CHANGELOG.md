@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.1.65 — 2026-05-26
+
+### Generation uses the warm model server (when enabled), with graceful fallback
+PR 2 of 3. Both local generation paths now prefer the warm server (v0.1.64) so they skip the ~3s per-draft model reload:
+- **`_call_local_model`** routes the common case (global adapter / base) to the server's `complete()`; on any failure it falls back to the `mlx_lm generate` subprocess. It deliberately keeps the subprocess for a per-persona `adapter_path` and for explicit base requests (`use_adapter=False`), since the server loads a single adapter at startup.
+- **`/draft/stream`** streams from the server when it's enabled and healthy, and only falls through to the subprocess/Claude paths if it fails *before producing any tokens* (so a mid-stream hiccup never double-streams).
+- **Adapter reload:** the server records the adapter it loaded and `ensure_running()` restarts it automatically when the adapter file changes — so a freshly fine-tuned voice model is picked up without a manual restart.
+
+Still gated by `model.server.enabled` (default off) — PR 3 enables it and flips the drafting default to `auto`. Tests (8): server-vs-subprocess routing (used / fallback-on-error / skipped for base + persona + disabled), warm-server streaming, and adapter-change reload.
+
 ## v0.1.64 — 2026-05-26
 
 ### Warm local-model server (foundation) — load the model once, not per draft

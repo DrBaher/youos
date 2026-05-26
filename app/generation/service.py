@@ -1334,6 +1334,19 @@ def _call_local_model(
     ADAPTER_PATH when `use_adapter=True` and `adapter_path` is None
     (preserves the historical behavior).
     """
+    # Prefer the warm server (no per-draft model reload) for the common case: the
+    # global adapter (or base). It serves a single adapter loaded at startup, so a
+    # per-persona adapter_path, or an explicit base request (use_adapter=False
+    # while an adapter is loaded), must use the per-request subprocess below.
+    if adapter_path is None and use_adapter:
+        from app.core import model_server
+
+        if model_server.is_enabled() and model_server.ensure_running():
+            try:
+                return model_server.complete(prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
+            except Exception:
+                logger.warning("warm model server call failed; falling back to subprocess", exc_info=True)
+
     cmd = [
         "mlx_lm",
         "generate",
