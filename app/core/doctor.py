@@ -64,7 +64,7 @@ def run_doctor_checks() -> tuple[bool, list[str]]:
     try:
         importlib.import_module("mlx_lm")
     except ImportError:
-        failures.append("mlx_lm not importable (pip install mlx-lm)")
+        failures.append('mlx_lm not importable — install the local model engine: pip install -e ".[mlx]"')
 
     # Required: youos_config.yaml exists (in the active instance, not the repo)
     config_path = get_instance_root() / "youos_config.yaml"
