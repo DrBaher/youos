@@ -946,6 +946,17 @@ function showFactsToast(facts) {
   function renderDraftMeta(data) {
     clearDraftMeta();
     if (!data || !draftBadgesEl) return;
+    // Which model actually wrote this draft — so a base-model or cloud-fallback
+    // draft is visible, not silently mistaken for your fine-tuned voice.
+    if (data.model_used) {
+      const m = String(data.model_used).toLowerCase();
+      let label, cls;
+      if (m.indexOf('lora') !== -1) { label = '✍️ your fine-tuned model'; cls = 'yos-badge--ok'; }
+      else if (m.indexOf('-base') !== -1) { label = '⚠️ base model (not personalized)'; cls = 'yos-badge--warn'; }
+      else if (m === 'claude' || m.indexOf('ollama') === 0) { label = '☁️ cloud fallback (not your local model)'; cls = 'yos-badge--warn'; }
+      else { label = 'model: ' + data.model_used; cls = 'yos-badge--accent'; }
+      draftBadgesEl.insertAdjacentHTML('beforeend', '<span class="yos-badge ' + cls + '">' + YouOS.esc(label) + '</span>');
+    }
     if (data.length_flag) {
       const lf = data.length_flag;
       const cls = lf === 'ok' ? 'yos-badge--ok' : 'yos-badge--warn';

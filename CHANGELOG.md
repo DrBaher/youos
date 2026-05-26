@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.60 — 2026-05-26
+
+### Per-draft model badge — see which model wrote each draft
+The review queue now shows a badge on every draft for the model that actually produced it: **✍️ your fine-tuned model** (green), **⚠️ base model (not personalized)** (amber), or **☁️ cloud fallback (not your local model)** (amber). So a draft that ran on the base model or fell back to the cloud is visible at a glance, not silently mistaken for your fine-tuned voice. `model_used` is now returned by both `/feedback/generate` and the `/draft/stream` done-payload (the streaming path uses the Claude CLI, so streamed drafts are correctly labelled `claude`; the non-streaming fallback reports its own model). Completes the three surfaces (stats indicator, doctor warning, per-draft badge) for confirming the LoRA is really in use.
+
 ## v0.1.59 — 2026-05-26
 
 ### Onboarding now reliably processes your LoRA (and the export can't hang)
