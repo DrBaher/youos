@@ -369,18 +369,21 @@ body {
   <div class="section">
     <h2 class="section-title">Tech stack</h2>
     <div class="tech-grid">
-      <div class="tech-card"><strong>Model</strong><br><span>Qwen2.5-1.5B-Instruct (Apple Silicon, MLX)</span></div>
+      <div class="tech-card"><strong>Model</strong><br><span>Qwen2.5-1.5B-Instruct + your LoRA, served warm via <code>mlx_lm.server</code> (Apple Silicon, MLX). Claude only as cold-start / fallback.</span></div>
+      <div class="tech-card"><strong>Model serving</strong><br><span>Warm local server (load once, fast drafts) with per-draft backend pinning; <code>review.draft_model</code> auto / local / claude; readiness gate = trained <em>and</em> benchmarked</span></div>
       <div class="tech-card"><strong>Fine-tuning</strong><br><span>LoRA via mlx-lm — curriculum-ordered, DPO pairs, export deduplication, organic capture, auto-scaled hyperparams, skip gates, nightly golden eval</span></div>
+      <div class="tech-card"><strong>Evaluation</strong><br><span>Voice-match metric (vs your real replies) + <code>youos compare-models</code> (rank backends on your mail) + golden benchmark + autoresearch</span></div>
       <div class="tech-card"><strong>Database</strong><br><span>SQLite + FTS5 (local, no server)</span></div>
       <div class="tech-card"><strong>Retrieval</strong><br><span>BM25 + query expansion + semantic (LRU-cached) + intent + per-account isolation + same-thread 2× + subject + topic + sender-type boosts + quality-score + relative confidence + optional cross-encoder</span></div>
       <div class="tech-card"><strong>Backend</strong><br><span>Python + FastAPI</span></div>
-      <div class="tech-card"><strong>Email access</strong><br><span>gog CLI (Google Workspace)</span></div>
+      <div class="tech-card"><strong>Email access</strong><br><span>Pluggable Google backend — <code>gog</code> / <code>gws</code> / native API (<code>ingestion.google_backend</code>)</span></div>
+      <div class="tech-card"><strong>Gmail integration</strong><br><span>Chrome/Edge/Brave MV3 extension (panel in Gmail) + bookmarklet fallback</span></div>
       <div class="tech-card"><strong>Networking</strong><br><span>Tailscale (private HTTPS)</span></div>
       <div class="tech-card"><strong>WhatsApp</strong><br><span>Export file parser (no app access needed)</span></div>
       <div class="tech-card"><strong>Rate limiting</strong><br><span>Per-IP sliding window (stdlib, no extra deps)</span></div>
       <div class="tech-card"><strong>Benchmarking</strong><br><span>Golden suite (10 cases) + weekly rotating sample + configurable composite weights + nightly pipeline integration + JSONL run log + style drift</span></div>
       <div class="tech-card"><strong>Sender intelligence</strong><br><span>Per-mode persona + first-name injection + reply-time + topics + multi-intent + confidence intervals (p25/p75) + notes rebuild immediately</span></div>
-      <div class="tech-card"><strong>Draft transparency</strong><br><span>"How was this generated?" + History tab with intent/confidence badges + `youos feedback` CLI</span></div>
+      <div class="tech-card"><strong>Draft transparency</strong><br><span>Per-draft model badge + "Drafting with" health row + doctor warning + "How was this generated?" + History tab</span></div>
     </div>
   </div>
 
@@ -469,7 +472,7 @@ body {
     </div>
     <div class="faq-item">
       <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">How do I know if my LoRA adapter is actually helping?</div>
-      <div class="faq-a">Use <code>youos eval --golden</code> and the Stats dashboard trends. Watch pass rate, confidence, and edit-distance trend over time after nightly runs.</div>
+      <div class="faq-a">Run <code>youos compare-models</code> — it drafts your real held-out replies under each backend and scores how closely each matches what you actually wrote (<strong>voice-match</strong>), so you can see your fine-tuned model vs. the base model vs. Claude <em>on your own mail</em>. Also watch <code>youos eval --golden</code>, the Stats dashboard trends (pass rate, confidence, edit-distance), and the "Drafting with" health row.</div>
     </div>
     <div class="faq-item">
       <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Does YouOS keep separate drafting history for work vs personal emails?</div>
@@ -478,6 +481,26 @@ body {
     <div class="faq-item">
       <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Can I submit feedback without using the web UI?</div>
       <div class="faq-a">Yes. Run <code>youos feedback --inbound "email text" --reply "your reply" --rating 4</code>. It inserts directly into the feedback database, same as the web UI. Add <code>--sender</code> for sender context and <code>--note</code> for an optional note. Supports <code>--stdin</code> to pipe text from the terminal.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Which model writes my drafts — local or the cloud?</div>
+      <div class="faq-a">By default, your <strong>fine-tuned local model</strong> (Qwen + your LoRA) once you've trained an adapter — entirely on your Mac. Claude is used only as a cold-start (before your model is trained) or a fallback. Change it in <strong>Settings → Drafting model</strong> (auto / local / claude). The per-draft <strong>model badge</strong> and the Stats <strong>"Drafting with"</strong> row always show which model actually wrote a draft, so a silent cloud fallback is never hidden.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Why does the first draft take a few seconds?</div>
+      <div class="faq-a">The local model is loaded once and kept <strong>warm</strong>, then reused — so the first draft after starting YouOS warms it up (a few seconds) and the rest are fast. The Draft tab shows a loading indicator while it warms. You can disable the warm server in Settings if you prefer.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Why is YouOS asking me to wait before relying on drafts?</div>
+      <div class="faq-a">When your voice model is trained but not yet <strong>benchmarked</strong>, the Draft tab shows a soft "preparing your voice model" banner — drafts still work (on the base model) but may not yet reflect the validated model. Click <strong>"Run benchmark now"</strong> to validate it (or it runs in the nightly), and the banner clears once it's trained <em>and</em> benchmarked.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">How do I draft inside Gmail?</div>
+      <div class="faq-a">Install the <strong>YouOS browser extension</strong> (Chrome / Edge / Brave) — the <a href="/bookmarklet" style="color:#00c4a7;">Gmail page</a> has one-click install steps. It adds a panel to Gmail that auto-detects the message, drafts a reply in your voice, inserts it into the reply box, and lets you rate it. A bookmarklet fallback is also available.</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Why is it called BaherOS / what's "&lt;your&gt;OS"?</div>
+      <div class="faq-a">During setup YouOS personalizes its name from your first name — "Baher" becomes <strong>BaherOS</strong> — because it's <em>your</em> model, trained on you. It's a display name (cosmetic); it's set from your name in the onboarding wizard.</div>
     </div>
   </div>
 
