@@ -79,31 +79,40 @@ Gmail (sent mail)          Your feedback
 YouOS installs and runs standalone — no OpenClaw / clawhub required.
 
 ```bash
-# Clone, then from the repo root:
-./scripts/install.sh          # creates .venv, installs YouOS, runs the doctor
-
+# 1. Clone + install (creates .venv, installs YouOS, runs the doctor)
+git clone https://github.com/DrBaher/youos && cd youos
+./scripts/install.sh
 source .venv/bin/activate
-youos setup                   # guided first-run
+
+# 2. Run the server reliably (starts at login, restarts on crash)
+youos service install          # or `youos serve` to run in the foreground
+
+# 3. Open the setup wizard in your browser
+open http://127.0.0.1:8901/welcome
 ```
+
+The web wizard walks you through everything:
+
+1. **Who you are** — your name + email addresses
+2. **Connect Gmail & Docs** — pick a backend (`gog` / `gws` / `native`) and authenticate
+3. **Build your corpus** — pull your sent history (choose how far back; default 1 year)
+4. **Learn your voice** — optional local fine-tune
+5. **Secure it** — optional API token for the browser extension
+6. **Keep it running** — install the background service
+
+Then **draft** in the web UI (`/feedback`) or via the [Gmail extension](extension/).
 
 <details>
-<summary>Manual install (instead of the script)</summary>
+<summary>Prefer the terminal? / Manual install</summary>
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .              # add extras like: pip install -e ".[reranker]"
-youos setup                   # or: python3 scripts/setup_wizard.py
+youos setup        # the same guided flow, fully in the terminal
+
+# manual install instead of ./scripts/install.sh:
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .   # extras: pip install -e ".[reranker]"  or  ".[google]"
 ```
 </details>
-
-The setup wizard walks you through:
-1. Dependency check
-2. Gmail account configuration
-3. Email corpus ingestion
-4. Writing style analysis
-5. Optional initial fine-tuning
-6. Server setup
 
 ## Google ingestion backend
 
