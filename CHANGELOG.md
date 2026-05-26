@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.0-beta.10 — 2026-05-26
+
+### About page: refreshed tech stack + new FAQs
+- **Tech stack** updated to the current architecture: Model now notes "+ your LoRA, served warm via `mlx_lm.server`; Claude only cold-start/fallback"; **Email access** fixed from "gog CLI" to the pluggable **gog / gws / native** backends; new cards for **Model serving** (warm server, `review.draft_model`, readiness gate), **Evaluation** (voice-match + `youos compare-models`), and **Gmail integration** (MV3 extension + bookmarklet); Draft transparency now lists the per-draft model badge + "Drafting with" row.
+- **FAQ** (now 28): updated "is my LoRA helping?" to point at `youos compare-models` / voice-match + the "Drafting with" row, and added five questions for the recent work — which model writes my drafts (local-by-default), why the first draft warms up, why it asks me to wait (readiness gate), how to draft inside Gmail (extension), and what "&lt;your&gt;OS" / BaherOS means.
+
 ## v0.2.0-beta.9 — 2026-05-26
 
 ### Fix: Activity-card "How to fix" layout + auto-collapse
