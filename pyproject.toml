@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "youos"
-version = "0.1.52"
+version = "0.1.53"
 description = "Your personal AI email copilot — learns your writing style from Gmail and drafts replies that sound like you."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -58,6 +58,13 @@ google = [
   "google-api-python-client>=2.100,<3.0",
   "google-auth-oauthlib>=1.2,<2.0",
   "google-auth>=2.30,<3.0"
+]
+# Local model on Apple Silicon. MLX is the on-device generation/fine-tuning
+# engine — required for the local model, but Apple-Silicon-only, so it's an
+# extra rather than a base dep. `scripts/install.sh` installs it automatically
+# on Apple Silicon; without it, generation falls back to the cloud/Ollama model.
+mlx = [
+  "mlx-lm>=0.18,<1.0"
 ]
 
 [project.urls]
