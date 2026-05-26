@@ -54,7 +54,7 @@ def get_server_config() -> dict:
     model = cfg.get("model", {}) if isinstance(cfg, dict) else {}
     srv = model.get("server", {}) if isinstance(model, dict) else {}
     srv = srv if isinstance(srv, dict) else {}
-    return {"enabled": bool(srv.get("enabled", False)), "port": int(srv.get("port", 8088))}
+    return {"enabled": bool(srv.get("enabled", True)), "port": int(srv.get("port", 8088))}
 
 
 def is_enabled() -> bool:
@@ -98,6 +98,11 @@ def ensure_running(*, startup_timeout: float = 40.0) -> bool:
     path rather than erroring.
     """
     global _proc, _started_adapter_sig
+    # Never auto-spawn the heavy (~3GB) model server inside the test suite — many
+    # tests exercise the generation path via TestClient and must not start a real
+    # server. The server's own spawn tests clear this env var to test the logic.
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return is_healthy()
     if is_healthy():
         # Running, but if the adapter was retrained since it loaded, reload it so
         # drafts use the new voice model rather than the stale one.
