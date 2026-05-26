@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.0-beta.2 — 2026-05-26
+
+### Docs/landing polished for the beta narrative
+Brought the public-facing surfaces up to date with the latest work (the model comparison was already surfaced; this adds the rest):
+- **README**: beta badge + "during setup it becomes _your_ OS (→ BaherOS)" in the intro; replaced the stale "empty output → Claude fallback" line with **drafts-on-your-local-model-by-default** (warm-served, on-device; Claude only cold-start/fallback) and a **no-silent-failures** bullet (model shown in stats/doctor/per-draft badge + the trained-and-benchmarked readiness gate); added `youos model server` to Usage.
+- **Landing page**: hero badge now reads "Public beta", the tagline notes it "becomes _your_ OS", and two new problem/solution cards — "Becomes _your_ OS (BaherOS)" and "Drafts on your local model by default; see which model wrote each draft."
+
 ## v0.2.0-beta.1 — 2026-05-26
 
 **First public beta.** A milestone tag over the 0.1.x line — highlights since the project became standalone:
