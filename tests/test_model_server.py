@@ -7,11 +7,16 @@ lazy start with graceful failure, and the model_used label.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import app.core.model_server as ms
 
 
 def _config(monkeypatch, *, enabled=True, port=8088):
     monkeypatch.setattr(ms, "get_server_config", lambda: {"enabled": enabled, "port": port})
+    # These tests mock Popen/health to exercise the real ensure_running logic, so
+    # bypass the "never spawn under pytest" guard.
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
 
 
 def test_is_enabled_reads_config(monkeypatch):
@@ -182,3 +187,33 @@ def test_cli_model_server_group_registered():
     assert model_group is not None
     subgroups = {g.name for g in model_group.typer_instance.registered_groups}
     assert "server" in subgroups  # `youos model server …`
+
+
+def test_server_enabled_by_default(monkeypatch):
+    monkeypatch.setattr("app.core.config.load_config", lambda *a, **k: {})
+    cfg = ms.get_server_config()
+    assert cfg["enabled"] is True and cfg["port"] == 8088
+
+
+def test_review_draft_model_defaults_to_auto():
+    from app.core.config import get_review_draft_model
+
+    assert get_review_draft_model({}) == "auto"  # local-when-ready, else Claude
+
+
+def test_lifespan_prewarms_and_stops_server():
+    # The server is pre-warmed on startup and stopped on shutdown (source-level —
+    # the async lifespan is awkward to drive in a unit test).
+    src = (Path(__file__).resolve().parents[1] / "app" / "main.py").read_text()
+    assert "model_server.ensure_running" in src  # pre-warm
+    assert "model_server.stop()" in src          # clean shutdown
+
+
+def test_ensure_running_skipped_under_pytest():
+    # The guard: inside the test suite, ensure_running must never spawn — it just
+    # reports health. (PYTEST_CURRENT_TEST is set by the running pytest.)
+    import os
+
+    assert os.environ.get("PYTEST_CURRENT_TEST")  # sanity: we're under pytest
+    # is_healthy is real here → False (nothing on the port), and no spawn happens.
+    assert ms.ensure_running() is False
