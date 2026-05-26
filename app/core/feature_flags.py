@@ -59,6 +59,21 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "help": "Use a per-sender-type LoRA adapter when one is trained.",
     },
     {
+        "key": "review.draft_model",
+        "label": "Drafting model",
+        "type": "choice",
+        "default": "auto",
+        "choices": ["auto", "local", "claude"],
+        "help": "Which model drafts: 'auto' = local fine-tuned model when trained (else Claude); 'local' = always local; 'claude' = always cloud.",
+    },
+    {
+        "key": "model.server.enabled",
+        "label": "Warm local-model server",
+        "type": "bool",
+        "default": True,
+        "help": "Keep the local model loaded once (served warm) so drafts are fast. Apple Silicon only; falls back to cloud if unavailable.",
+    },
+    {
         "key": "ingestion.google_backend",
         "label": "Google ingestion backend",
         "type": "choice",

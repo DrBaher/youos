@@ -491,6 +491,7 @@ body {
             '</span><span class="stat-value" style="font-weight:400;color:#aaa;font-size:0.82rem;">' + parts + '</span></div>';
         };
         document.getElementById('deBreakdown').innerHTML =
+          deDist('By model', de.by_model) +
           deDist('By length', de.by_length_flag) + deDist('By confidence', de.by_confidence) +
           deDist('By sender type', de.by_sender_type) + deDist('By intent', de.by_intent);
       }
