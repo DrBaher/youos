@@ -114,6 +114,7 @@ body {
       <div class="card full-width" id="activityCard">
         <h2>Activity</h2>
         <div class="stat-row"><span class="stat-label">Ingestion</span><span class="stat-value" id="actIngest">—</span></div>
+        <div id="actIngestFix"></div>
         <div class="stat-row"><span class="stat-label">Fine-tuning</span><span class="stat-value" id="actFinetune">—</span></div>
       </div>
 
@@ -555,15 +556,18 @@ body {
     el.textContent = text;
     el.style.color = kind === 'ok' ? '#2ecc71' : kind === 'run' ? '#f0ad4e' : kind === 'err' ? '#e74c3c' : '#888';
   }
+  // Set the full-width "How to fix" slot only when its content changes, so a
+  // 5s poll never collapses a <details> the user has expanded.
+  function setIngestFix(html) {
+    var el = document.getElementById('actIngestFix');
+    if (el && el.getAttribute('data-k') !== html) { el.setAttribute('data-k', html); el.innerHTML = html; }
+  }
   function pollActivity() {
     fetch('/api/ingest/status').then(function (r) { return r.json(); }).then(function (s) {
-      if (s.status === 'running') setAct('actIngest', '⏳ Ingesting… ' + (s.discovered || 0) + ' found, ' + (s.reply_pairs || 0) + ' stored', 'run');
-      else if (s.status === 'completed') setAct('actIngest', '✓ Last ingest: ' + (s.reply_pairs || 0) + ' reply pairs', 'ok');
-      else if (s.status === 'failed') {
-        var ai = document.getElementById('actIngest');
-        if (ai) { ai.style.color = '#e74c3c'; ai.innerHTML = '✕ Failed: ' + YouOS.esc(s.error || 'see logs') + troubleshootHtml(s.error); }
-      }
-      else setAct('actIngest', 'Idle', '');
+      if (s.status === 'running') { setAct('actIngest', '⏳ Ingesting… ' + (s.discovered || 0) + ' found, ' + (s.reply_pairs || 0) + ' stored', 'run'); setIngestFix(''); }
+      else if (s.status === 'completed') { setAct('actIngest', '✓ Last ingest: ' + (s.reply_pairs || 0) + ' reply pairs', 'ok'); setIngestFix(''); }
+      else if (s.status === 'failed') { setAct('actIngest', '✕ Failed: ' + (s.error || 'see logs'), 'err'); setIngestFix(troubleshootHtml(s.error)); }
+      else { setAct('actIngest', 'Idle', ''); setIngestFix(''); }
     }).catch(function () {});
     fetch('/api/finetune/status').then(function (r) { return r.json(); }).then(function (s) {
       if (s.status === 'running') setAct('actFinetune', '⏳ Fine-tuning…', 'run');

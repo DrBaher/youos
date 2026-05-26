@@ -61,6 +61,9 @@ def test_stats_failures_link_troubleshooting():
     # Wired into both the Activity ingestion failure and the Pipeline error list.
     assert "troubleshootHtml(s.error)" in body
     assert "troubleshootHtml(d.pipeline_last_run.errors[ei])" in body
+    # Activity fix lives in its own full-width row (not the cramped flex value
+    # cell) and only re-renders on change so a 5s poll can't collapse it.
+    assert 'id="actIngestFix"' in body and "setIngestFix" in body
 
 
 def test_gmail_page_promotes_extension_with_install_steps():
