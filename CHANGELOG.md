@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.0-beta.9 — 2026-05-26
+
+### Fix: Activity-card "How to fix" layout + auto-collapse
+Two bugs in the v0.2.0-beta.8 troubleshooting on the Activity card: putting the `<details>` inside the flex value cell broke the row's `space-between` (so "Ingestion" and "✕ Failed…" crammed together), and the 5-second activity poll re-rendered the cell, collapsing an expanded tip on its own. Fixed: the failure text stays in the right-aligned value cell, the "How to fix" expander moved to its own full-width row, and it only re-renders when the error actually changes — so an expanded tip stays open across polls.
+
 ## v0.2.0-beta.8 — 2026-05-26
 
 ### Failures now link how to fix them
