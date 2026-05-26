@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.64 — 2026-05-26
+
+### Warm local-model server (foundation) — load the model once, not per draft
+First of three steps toward fast, private, in-your-voice drafting everywhere. New `app/core/model_server.py` wraps `mlx_lm.server` (OpenAI-compatible HTTP): it loads Qwen + the global LoRA adapter **once** and serves generation, so a draft becomes a fast HTTP call instead of a ~3s model reload — which is what makes batch-on-local viable. Provides lifecycle (`ensure_running` with health-polled lazy start, `stop`, `restart` for picking up a freshly trained adapter), a client (`complete` + streaming `stream` parsing the server's `choices[0].text` deltas), and `youos model server {status,start,stop,restart}`.
+
+**Inert for now** — `model.server.enabled` defaults off and nothing auto-starts; the next steps wire the generation paths to prefer it (with graceful fallback to the subprocess/Claude) and flip the drafting default to `auto`. Tests (10) mock all HTTP/subprocess (no real model load): health checks, completion/stream parsing, lazy start + graceful spawn-failure, adapter-arg passing, and the CLI wiring.
+
 ## v0.1.63 — 2026-05-26
 
 ### Loading animation masks the local model's cold start
