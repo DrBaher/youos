@@ -1805,23 +1805,27 @@ def generate_draft(
 
     # Capture the draft event (exemplars/intent/sender_type/confidence the
     # draft was produced with) for the nightly's training signal. Fault-
-    # isolated: never affects the returned draft.
-    _log_draft_event(
-        database_url,
-        inbound_text=request.inbound_message,
-        draft=draft,
-        account_email=request.account_email,
-        sender=request.sender,
-        sender_type=sender_type_hint,
-        detected_mode=detected_mode,
-        intent=detected_intent,
-        confidence=confidence,
-        confidence_reason=confidence_reason,
-        model_used=model_used,
-        retrieval_method=retrieval_response.retrieval_method,
-        exemplar_ids=selected_ids,
-        length_flag=length_flag,
-    )
+    # isolated: never affects the returned draft. Skipped for forced-backend
+    # (benchmark/comparison) drafts — they're not real user drafts and would
+    # pollute both the training signal and the "drafting with" status derived
+    # from draft_events.model_used.
+    if request.backend_override is None:
+        _log_draft_event(
+            database_url,
+            inbound_text=request.inbound_message,
+            draft=draft,
+            account_email=request.account_email,
+            sender=request.sender,
+            sender_type=sender_type_hint,
+            detected_mode=detected_mode,
+            intent=detected_intent,
+            confidence=confidence,
+            confidence_reason=confidence_reason,
+            model_used=model_used,
+            retrieval_method=retrieval_response.retrieval_method,
+            exemplar_ids=selected_ids,
+            length_flag=length_flag,
+        )
 
     return DraftResponse(
         draft=draft,

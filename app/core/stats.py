@@ -66,6 +66,7 @@ def summarize_draft_events(database_url: str) -> dict:
         "by_sender_type": {},
         "by_confidence": {},
         "by_length_flag": {},
+        "by_model": {},
         "off_target_pct": None,
         "outcome": {"matched": 0, "avg_edit_distance_by_sender_type": {}, "avg_edit_distance_by_confidence": {}},
     }
@@ -87,6 +88,10 @@ def summarize_draft_events(database_url: str) -> dict:
             "by_sender_type": _group_counts(conn, "sender_type", default="unknown"),
             "by_confidence": _group_counts(conn, "confidence", default="unknown"),
             "by_length_flag": _group_counts(conn, "length_flag", default="none"),
+            # Which model actually produced each draft — the source of truth for
+            # whether the LoRA adapter is really in use vs. a silent base/cloud
+            # fallback. See get_drafting_model_status().
+            "by_model": _group_counts(conn, "model_used", default="unknown"),
             "off_target_pct": None,
             "outcome": {"matched": 0, "avg_edit_distance_by_sender_type": {}, "avg_edit_distance_by_confidence": {}},
         }
@@ -300,7 +305,18 @@ def get_model_status(configs_dir: Path) -> dict:
         except Exception:
             pass
 
-    gen_model = "qwen2.5-1.5b-lora" if adapter_exists else "claude"
+    # Capability-aware (not just "does the adapter file exist"): without mlx_lm
+    # the local model can't run at all, so drafting falls to the cloud — claiming
+    # "lora" there is the false-confidence we're trying to avoid.
+    import shutil
+
+    local_available = shutil.which("mlx_lm") is not None
+    if not local_available:
+        gen_model = "claude"
+    elif adapter_exists:
+        gen_model = "qwen2.5-1.5b-lora"
+    else:
+        gen_model = "qwen2.5-1.5b-base"
 
     # Benchmark trend
     benchmark_trend: list[dict] = []
@@ -339,10 +355,120 @@ def get_model_status(configs_dir: Path) -> dict:
 
     return {
         "generation_model": gen_model,
+        "local_available": local_available,
         "lora_adapter_exists": adapter_exists,
         "lora_trained_at": lora_trained_at,
         "last_finetune_run": lora_trained_at,
         "benchmark_trend": benchmark_trend,
+    }
+
+
+def _recent_model_counts(conn: sqlite3.Connection, limit: int = 50) -> dict[str, int]:
+    """``{model_used: count}`` over the most recent *limit* drafts.
+
+    Recent-only because an adapter trained today shouldn't be judged by drafts
+    produced weeks ago on the base model.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT COALESCE(model_used, 'unknown') AS k, COUNT(*) AS n FROM "
+            "(SELECT model_used FROM draft_events ORDER BY id DESC LIMIT ?) GROUP BY k",
+            (limit,),
+        ).fetchall()
+        return {str(r["k"]): int(r["n"]) for r in rows}
+    except sqlite3.OperationalError:
+        return {}
+
+
+def _classify_model_used(model_used: str) -> str:
+    """Bucket a raw ``model_used`` label into lora | base | cloud | other."""
+    m = (model_used or "").lower()
+    if "lora" in m:  # qwen2.5-1.5b-lora and per-persona qwen2.5-1.5b-lora-<type>
+        return "lora"
+    if m.endswith("-base"):
+        return "base"
+    if m == "claude" or m.startswith("ollama"):
+        return "cloud"
+    return "other"
+
+
+def _classify_drafting(by_model: dict[str, int], adapter_trained: bool, local_available: bool) -> tuple[str, str, str, bool]:
+    """Decide what's *actually* drafting → (state, label, detail, healthy).
+
+    Prefers reality (what recent drafts used); falls back to capability (adapter
+    on disk + mlx_lm) when there are no drafts yet. ``healthy`` is False whenever
+    the LoRA isn't the thing drafting — that's the signal a surface should warn on.
+    """
+    totals = {"lora": 0, "base": 0, "cloud": 0, "other": 0}
+    for model, n in by_model.items():
+        totals[_classify_model_used(model)] += n
+    n = sum(totals.values())
+
+    if n:
+        lora, base, cloud = totals["lora"], totals["base"], totals["cloud"]
+        if lora and not base and not cloud:
+            return ("personalized", "Your fine-tuned model (LoRA)",
+                    f"All of the last {n} drafts used your trained LoRA adapter.", True)
+        if lora and (base or cloud):
+            return ("mixed", "Mostly your LoRA — some fell back",
+                    f"{base} base-model and {cloud} cloud-fallback draft(s) in the last {n}. "
+                    "Check that mlx_lm is installed and the adapter is trained.", False)
+        if base and not lora:
+            return ("base", "Base model — your LoRA is NOT in use",
+                    "Recent drafts ran on the base model. Train an adapter with `youos finetune` "
+                    "(or via the wizard) so drafts sound like you.", False)
+        if cloud and not lora:
+            return ("cloud", "Cloud fallback — not your local LoRA",
+                    "Recent drafts used the cloud/Ollama fallback, not your local model. "
+                    "Is mlx_lm installed and an adapter trained?", False)
+        return ("unknown", "Unknown", f"The last {n} drafts have no recognizable model label.", False)
+
+    # No drafts yet — infer from capability.
+    if not local_available:
+        return ("cloud", "Cloud fallback (local model unavailable)",
+                'mlx_lm is not installed, so the local model can\'t run — drafts will use the cloud '
+                'fallback. Install it: pip install -e ".[mlx]".', False)
+    if adapter_trained:
+        return ("personalized", "Your fine-tuned model (LoRA) — ready",
+                "Adapter trained and the local model is available; drafts will use your LoRA. No drafts yet.", True)
+    return ("base", "Base model — no LoRA trained yet",
+            "No adapter trained yet — drafts will use the base model (not personalized) until you fine-tune.", False)
+
+
+def get_drafting_model_status(database_url: str) -> dict:
+    """What model is *actually* drafting — to prevent the silent-failure where a
+    user believes drafts are personalized while they run on the base model or
+    fall back to the cloud.
+
+    Reality first (recent ``draft_events.model_used``), capability as the fallback
+    (adapter on disk + ``mlx_lm`` available).
+    """
+    import shutil
+
+    from app.db.bootstrap import resolve_sqlite_path
+
+    adapter_trained = (_resolve_adapter_path() / "adapters.safetensors").exists()
+    local_available = shutil.which("mlx_lm") is not None
+
+    by_model: dict[str, int] = {}
+    db_path = resolve_sqlite_path(database_url)
+    if db_path.exists():
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            by_model = _recent_model_counts(conn)
+        finally:
+            conn.close()
+
+    state, label, detail, healthy = _classify_drafting(by_model, adapter_trained, local_available)
+    return {
+        "state": state,
+        "label": label,
+        "detail": detail,
+        "healthy": healthy,
+        "adapter_trained": adapter_trained,
+        "local_available": local_available,
+        "recent_by_model": by_model,
     }
 
 
