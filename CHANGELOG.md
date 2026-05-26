@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.67 — 2026-05-26
+
+### YouOS becomes *your* OS — personalized name at setup (BaherOS)
+The idea behind YouOS is that it's *yours*. Setup now personalizes the product name from your name: **`set_identity` auto-derives `display_name` as `<First>OS`** (e.g. "Baher Al Hakim" → **BaherOS**, "jane" → "JaneOS", internal casing preserved → "McAvoyOS"). New `derive_os_name()` helper. The onboarding identity step shows a **live preview** ("YouOS becomes BaherOS") as you type and confirms it on save ("welcome to BaherOS"). The derived name flows through the existing `display_name` plumbing, so the app title and UI wordmark show *your* OS everywhere.
+
+Respects custom brands: an explicit `display_name` (via the identity API) always wins, and a later name change only updates a display name that still tracks the old derived value — a custom brand is never clobbered. Empty name falls back to the generic "YouOS". Tests (7) cover the derivation, auto/explicit/clobber/rename cases, and the live-preview wiring.
+
 ## v0.1.66 — 2026-05-26
 
 ### Local, in-your-voice drafting is now the default (warm server on)

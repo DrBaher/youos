@@ -58,8 +58,8 @@
     <!-- 2. Identity -->
     <section class="step" data-step="1">
       <h1>Who are you?</h1>
-      <p class="lead">So YouOS knows which messages in a thread are <em>yours</em>.</p>
-      <div class="explain"><b>Why this matters:</b> an email thread is a back-and-forth between people. YouOS uses your name and email addresses to pick out <em>your</em> replies (the ones it should learn your style from) versus everyone else's. Add every address you send from — work and personal.</div>
+      <p class="lead">So YouOS knows which messages in a thread are <em>yours</em> — and so it can become <em>your</em> OS.</p>
+      <div class="explain"><b>Why this matters:</b> an email thread is a back-and-forth between people. YouOS uses your name and email addresses to pick out <em>your</em> replies (the ones it should learn your style from) versus everyone else's. Add every address you send from — work and personal. Your name also personalizes the app — <b>YouOS becomes <span id="osNamePreview">YourOS</span></b>.</div>
       <label class="field">Your name</label>
       <input id="idName" placeholder="Jane Doe" />
       <label class="field">Your email addresses (comma-separated)</label>
@@ -206,9 +206,24 @@
   nextBtn.addEventListener("click", () => show(i + 1));
   show(0);
 
+  // Personalize the product name from the user's name: "Baher" → "BaherOS".
+  // Mirrors app/core/feature_flags.derive_os_name for a live preview.
+  function deriveOsName(name) {
+    const raw = (name || "").trim();
+    if (!raw) return "YourOS";
+    const first = raw.split(/\s+/)[0];
+    return first.charAt(0).toUpperCase() + first.slice(1) + "OS";
+  }
+  function updateOsPreview() {
+    const el = document.getElementById("osNamePreview");
+    if (el) el.textContent = deriveOsName(document.getElementById("idName").value);
+  }
+  document.getElementById("idName").addEventListener("input", updateOsPreview);
+
   // Prefill identity + backend from current config.
   fetch("/api/config").then((r) => r.json()).then((d) => {
     if (d.user_name) document.getElementById("idName").value = d.user_name;
+    updateOsPreview();
   }).catch(() => {});
   fetch("/api/config/flags").then((r) => r.json()).then((d) => {
     const b = (d.flags || []).find((f) => f.key === "ingestion.google_backend");
@@ -224,8 +239,11 @@
     fetch("/api/config/identity", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: name, emails: emails }),
-    }).then((r) => (r.ok ? r.json() : Promise.reject())).then(() => {
-      note.textContent = "saved ✓"; note.style.color = "#2ecc71";
+    }).then((r) => (r.ok ? r.json() : Promise.reject())).then((res) => {
+      note.textContent = "saved ✓ — welcome to " + (res.display_name || deriveOsName(name));
+      note.style.color = "#2ecc71";
+      const el = document.getElementById("osNamePreview");
+      if (el && res.display_name) el.textContent = res.display_name;
     }).catch(() => { note.textContent = "couldn't save"; note.style.color = "#e74c3c"; });
   });
 

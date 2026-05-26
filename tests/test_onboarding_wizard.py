@@ -24,10 +24,43 @@ client = TestClient(app)
 def test_set_identity_roundtrip(tmp_path):
     cfg = tmp_path / "c.yaml"
     out = ff.set_identity("Jane Doe", ["jane@work.com", "jane@home.com"], config_path=cfg)
-    assert out == {"name": "Jane Doe", "emails": ["jane@work.com", "jane@home.com"]}
+    # Display name is auto-derived as <First>OS during setup.
+    assert out == {"name": "Jane Doe", "emails": ["jane@work.com", "jane@home.com"], "display_name": "JaneOS"}
     data = load_config(cfg)
     assert data["user"]["name"] == "Jane Doe"
     assert data["user"]["emails"] == ["jane@work.com", "jane@home.com"]
+    assert data["user"]["display_name"] == "JaneOS"
+
+
+def test_derive_os_name():
+    assert ff.derive_os_name("Baher") == "BaherOS"
+    assert ff.derive_os_name("Baher Al Hakim") == "BaherOS"   # first token only
+    assert ff.derive_os_name("jane") == "JaneOS"               # capitalized
+    assert ff.derive_os_name("McAvoy") == "McAvoyOS"           # internal casing kept
+    assert ff.derive_os_name("") == "YouOS"                    # generic fallback
+    assert ff.derive_os_name(None) == "YouOS"
+
+
+def test_set_identity_explicit_display_name_wins(tmp_path):
+    cfg = tmp_path / "c.yaml"
+    out = ff.set_identity("Baher", ["b@x.com"], display_name="Custom Brand", config_path=cfg)
+    assert out["display_name"] == "Custom Brand"
+
+
+def test_set_identity_does_not_clobber_custom_display_name(tmp_path):
+    cfg = tmp_path / "c.yaml"
+    ff.set_identity("Baher", ["b@x.com"], display_name="Custom Brand", config_path=cfg)
+    # A later name change must not overwrite the custom brand…
+    out = ff.set_identity("Bob", ["b@x.com"], config_path=cfg)
+    assert out["display_name"] == "Custom Brand"
+
+
+def test_set_identity_updates_auto_display_name_on_rename(tmp_path):
+    cfg = tmp_path / "c.yaml"
+    ff.set_identity("Baher", ["b@x.com"], config_path=cfg)  # → BaherOS (auto)
+    # …but an auto-derived one tracks the new name.
+    out = ff.set_identity("Bob", ["b@x.com"], config_path=cfg)
+    assert out["display_name"] == "BobOS"
 
 
 def test_set_identity_emails_must_be_list(tmp_path):
@@ -46,7 +79,11 @@ def test_set_identity_preserves_other_config(tmp_path):
 
 def test_identity_endpoint(monkeypatch):
     captured = {}
-    monkeypatch.setattr(ff, "set_identity", lambda name=None, emails=None: captured.update(n=name, e=emails) or {"name": name, "emails": emails})
+    def fake_set_identity(name=None, emails=None, display_name=None):
+        captured.update(n=name, e=emails)
+        return {"name": name, "emails": emails}
+
+    monkeypatch.setattr(ff, "set_identity", fake_set_identity)
     r = client.post("/api/config/identity", json={"name": "Jane", "emails": ["a@x.com"]})
     assert r.status_code == 200
     assert r.json() == {"ok": True, "name": "Jane", "emails": ["a@x.com"]}
@@ -75,6 +112,13 @@ def test_welcome_auto_starts_and_reports_finetune():
     assert "finetuneStepIdx" in body            # wired to the step's entry
     assert 'id="doneAdapter"' in body           # final step reports voice-model status
     assert "Re-run fine-tuning" in body         # manual re-trigger still available
+
+
+def test_welcome_personalizes_to_user_os():
+    """Setup brands the app as <First>OS (BaherOS) — the idea behind YouOS."""
+    body = client.get("/welcome").text
+    assert 'id="osNamePreview"' in body   # live preview element
+    assert "deriveOsName" in body          # client-side derivation for the preview
 
 
 def test_welcome_links_shared_assets():
