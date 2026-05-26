@@ -66,6 +66,24 @@ Gmail (sent mail)          Your feedback
 - Run a golden benchmark anytime (10 curated cases): `youos eval --golden`
 - Runs entirely locally on Apple Silicon
 
+## Does it actually sound like you? (measured)
+
+The whole bet behind YouOS is that a small model fine-tuned on *your* mail beats a frontier model that isn't — at sounding like you. So we measured it. `youos compare-models` drafts your held-out messages under each backend and scores every draft against the reply you actually sent — **voice-match**: a blend of semantic similarity, stylometry, phrasing overlap, and length fit.
+
+On the maintainer's ~11,700-email corpus (15 held-out replies):
+
+| | YouOS — local Qwen + your LoRA | Claude — frontier cloud |
+|---|---|---|
+| **Sounds like you** (voice-match) | **0.80** | 0.70 |
+| Reuses your phrasing (lexical overlap) | **0.40** | 0.13 |
+| Matches your length | **37 words** | 81 words |
+| Speed per draft | **~10s** | ~40s |
+| Your email leaves your Mac | **never** | every draft |
+
+The fine-tuning is what wins: the *base* Qwen with no adapter scores just **0.43** — training on your sent mail takes it to **0.80**, past Claude, while staying private and ~4× faster. Reproduce it on your own corpus with `youos compare-models --limit 30 --semantic`.
+
+*(Numbers are from one corpus and will differ for you — the point is the method and the direction, both reproducible.)*
+
 ## Requirements
 
 - Apple Silicon Mac (M1/M2/M3/M4) — the local model runs on **MLX**, which `./scripts/install.sh` installs for you (it's the `youos[mlx]` extra; not bundled with macOS)
