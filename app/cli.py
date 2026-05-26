@@ -554,6 +554,21 @@ def run_eval(
         _run([sys.executable, str(ROOT_DIR / "scripts" / "run_eval.py")])
 
 
+@app.command(name="compare-models")
+def compare_models(
+    limit: int = typer.Option(20, "--limit", help="Number of your real reply pairs to compare on"),
+    backends: str = typer.Option(None, "--backends", help="Comma-separated subset (mlx,ollama,claude); default auto-detect"),
+    semantic: bool = typer.Option(False, "--semantic", help="Include the embedding-based semantic score"),
+):
+    """Compare generation backends (MLX/Ollama/Claude) on your own mail by voice-match."""
+    cmd = [sys.executable, str(ROOT_DIR / "scripts" / "compare_models.py"), "--limit", str(limit)]
+    if backends:
+        cmd += ["--backends", backends]
+    if semantic:
+        cmd += ["--semantic"]
+    _run(cmd)
+
+
 @app.command()
 def serve():
     """Start the YouOS web server."""
