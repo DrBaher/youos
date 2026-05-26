@@ -15,6 +15,7 @@ from app.core.config import load_config
 from app.core.settings import get_adapter_path, get_var_dir
 from app.core.stats import (
     get_corpus_stats,
+    get_drafting_model_status,
     get_latest_ingest_status,
     get_model_status,
     get_pipeline_status,
@@ -251,6 +252,9 @@ def stats_data(request: Request) -> dict[str, Any]:
     settings = request.app.state.settings
     corpus = get_corpus_stats(settings.database_url)
     model = get_model_status(Path(settings.configs_dir))
+    # The real "what's drafting" signal (from recent draft_events), so the UI can
+    # warn when the LoRA silently isn't in use. Merged into the model payload.
+    model["drafting"] = get_drafting_model_status(settings.database_url)
     pipeline_last_run = get_pipeline_status(get_var_dir().parent)
     draft_events = summarize_draft_events(settings.database_url)
 
