@@ -168,6 +168,12 @@ class DraftRequest:
     use_adapter: bool = True
     subject: str | None = None
     user_prompt: str | None = None
+    # Pin the generation backend regardless of config/use_local_model. Used by
+    # the cross-model comparison (app/evaluation/model_compare.py) to draft the
+    # same case under each engine. One of "mlx" | "ollama" | "claude" | "none";
+    # None (default) = normal selection. Pinning "mlx" still requires the local
+    # model to be available — otherwise it falls through the usual chain.
+    backend_override: str | None = None
 
 
 @dataclass(slots=True)
@@ -1690,9 +1696,17 @@ def generate_draft(
     repair_closing = _resolve_closing(persona, sender_type_hint)
 
     fallback_model = get_model_fallback()
+    # An explicit backend_override pins the engine for this draft (used by the
+    # cross-model comparison). "mlx" routes to the local path; anything else
+    # forces that fallback model and disables the local path.
+    use_local = request.use_local_model
+    if request.backend_override:
+        use_local = request.backend_override == "mlx"
+        if request.backend_override != "mlx":
+            fallback_model = request.backend_override
     candidates: list[dict[str, Any]] = []
     try:
-        if request.use_local_model and _local_model_available():
+        if use_local and _local_model_available():
             # Phase 3 routing precedence is encapsulated in _local_draft_once:
             #   1. per-persona adapter (routing on + caller wants it + trained)
             #   2. global "latest" adapter when one is trained

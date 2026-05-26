@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.55 — 2026-05-26
+
+### Compare the LLM backends on *your own* mail (`youos compare-models`)
+- **Answers "how do the models compare?" with data instead of vibes.** New `youos compare-models` (→ `scripts/compare_models.py`, `app/evaluation/model_compare.py`) samples real `(inbound → your reply)` pairs from your corpus, drafts each one under **every available backend** (local MLX+LoRA, Ollama, Claude), and scores each draft against the reply you actually sent — using the v0.1.54 voice-match metric — then prints a side-by-side scorecard **ranked by voice-match** (the metric that decides whether a cloud model's privacy/cost trade is worth it). Reports voice/semantic/lexical/style/length-fit, avg words, and latency per backend.
+- **Backend pinning:** `DraftRequest.backend_override` ("mlx"|"ollama"|"claude") forces the engine for a draft regardless of `use_local_model`/config, so each backend is measured as itself.
+- **Honesty guard:** generation silently retries empty/failed local drafts on Claude — the comparison detects this via `model_used` and reports a per-backend **`fellbk` count**, so a fallback can't be scored as the pinned model's own output.
+- Auto-detects which backends can actually run (mlx_lm on PATH, a reachable Ollama server, the `claude` CLI); `--backends mlx,claude` to subset, `--semantic` to add embedding similarity, `--limit`/`--seed` for sample size/reproducibility, `--json` for raw output. Deterministic sampling so re-runs compare the same messages.
+- Tests (12) pin `backend_override` selection (mlx/ollama/claude/default), fell-back detection, voice-ranked aggregation, error counting, the semantic flag, deterministic+filtered reply-pair sampling, and the empty-DB/empty-result paths.
+
 ## v0.1.54 — 2026-05-26
 
 ### Voice-match metric — measuring whether a draft sounds like *you*
