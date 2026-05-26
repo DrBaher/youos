@@ -390,7 +390,8 @@ body {
         if (d.pipeline_last_run.errors && d.pipeline_last_run.errors.length > 0) {
           var errHtml = '<div style="margin-top:0.5rem;">';
           for (var ei = 0; ei < d.pipeline_last_run.errors.length; ei++) {
-            errHtml += '<div style="color:#d9534f; font-size:0.8rem;">\u2022 ' + d.pipeline_last_run.errors[ei] + '</div>';
+            errHtml += '<div style="color:#d9534f; font-size:0.8rem;">\u2022 ' + YouOS.esc(d.pipeline_last_run.errors[ei]) + '</div>';
+            errHtml += troubleshootHtml(d.pipeline_last_run.errors[ei]);
           }
           errHtml += '</div>';
           errDiv.innerHTML = errHtml;
@@ -522,6 +523,32 @@ body {
   // Live activity: poll ingestion + fine-tune status (independent of the
   // one-shot stats load), so long-running jobs are visible here no matter
   // which page launched them.
+  // Map a failure message to an actionable fix, rendered as an inline
+  // "How to fix" expander next to the failure.
+  var TROUBLESHOOT = [
+    { re: /gmail|ingest|thread/i,
+      tip: "Confirm your Google backend (gog / gws / native) is installed and authenticated, then re-run ingestion from the Gmail page. If there's simply no new sent mail since the last run, this is safe to ignore.",
+      cmd: "youos doctor" },
+    { re: /autoresearch/i,
+      tip: "Autoresearch tunes retrieval nightly (it needs benchmark cases + a trained adapter). It doesn't affect drafting and retries on the next nightly — only worry if it keeps failing.",
+      cmd: "" },
+    { re: /fine-?tun|qualifying pairs|adapter/i,
+      tip: "Fine-tuning needs training pairs and Apple-Silicon MLX. Ingest your sent mail (or give Review-Queue feedback), then run it from the wizard.",
+      cmd: "youos finetune" },
+    { re: /embedding|mlx|no module named/i,
+      tip: "The local model and embeddings need MLX. Install it, then re-run.",
+      cmd: "pip install -e \".[mlx]\"" },
+  ];
+  function troubleshootHtml(msg) {
+    var m = String(msg || ''), t = null;
+    for (var i = 0; i < TROUBLESHOOT.length; i++) { if (TROUBLESHOOT[i].re.test(m)) { t = TROUBLESHOOT[i]; break; } }
+    if (!t) t = { tip: "Run a health check, then review the logs in var/.", cmd: "youos doctor" };
+    var run = t.cmd ? '<div style="margin-top:4px;color:#888;">Run: <code style="background:#0d1b2a;padding:1px 5px;border-radius:4px;color:#00c4a7;">' + YouOS.esc(t.cmd) + '</code></div>' : '';
+    return '<details style="margin:3px 0 6px;text-align:left;"><summary style="cursor:pointer;color:#f0ad4e;font-size:0.75rem;">How to fix</summary>' +
+      '<div style="color:#aaa;font-size:0.78rem;line-height:1.55;margin-top:4px;">' + YouOS.esc(t.tip) + run +
+      '<div style="margin-top:4px;"><a href="/about" style="color:#00c4a7;">More help &rarr;</a></div></div></details>';
+  }
+
   function setAct(id, text, kind) {
     var el = document.getElementById(id);
     if (!el) return;
@@ -532,7 +559,10 @@ body {
     fetch('/api/ingest/status').then(function (r) { return r.json(); }).then(function (s) {
       if (s.status === 'running') setAct('actIngest', '⏳ Ingesting… ' + (s.discovered || 0) + ' found, ' + (s.reply_pairs || 0) + ' stored', 'run');
       else if (s.status === 'completed') setAct('actIngest', '✓ Last ingest: ' + (s.reply_pairs || 0) + ' reply pairs', 'ok');
-      else if (s.status === 'failed') setAct('actIngest', '✕ Failed: ' + (s.error || 'see logs'), 'err');
+      else if (s.status === 'failed') {
+        var ai = document.getElementById('actIngest');
+        if (ai) { ai.style.color = '#e74c3c'; ai.innerHTML = '✕ Failed: ' + YouOS.esc(s.error || 'see logs') + troubleshootHtml(s.error); }
+      }
       else setAct('actIngest', 'Idle', '');
     }).catch(function () {});
     fetch('/api/finetune/status').then(function (r) { return r.json(); }).then(function (s) {
