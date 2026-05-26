@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0-beta.6 — 2026-05-26
+
+### Backend-UI sweep — surface the recent work everywhere
+Audited the web UI against everything shipped this cycle and closed the gaps:
+- **Settings now exposes the drafting controls.** Two flags that governed core behavior weren't in the whitelist (so they were invisible in `/settings` and `youos config`): **`review.draft_model`** (auto / local / claude — which model drafts) and **`model.server.enabled`** (the warm local-model server). Both are now toggleable from Settings and the CLI.
+- **Stats: per-model breakdown.** The "Draft Quality by Condition" card now includes a **By model** row (e.g. `qwen2.5-1.5b-lora: 32 · claude: 18`), surfacing the `draft_events.by_model` data alongside the existing "Drafting with" health row — so silent base/cloud drafting is visible in detail.
+- **About page refreshed.** The Tools card now leads with the **Gmail extension** (bookmarklet as fallback), mentions the **per-draft model badge / "Drafting with"** row, and adds **`youos compare-models`** to the CLI list; the reply-instruction FAQ points at the extension panel.
+
+(The `/feedback` readiness banner + per-draft badge + loading overlay, the redesigned About diagram, and the extension-first Gmail page were already shipped earlier this cycle.)
+
 ## v0.2.0-beta.5 — 2026-05-26
 
 ### Cleaner "How it works" diagram on the About page
