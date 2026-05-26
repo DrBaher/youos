@@ -12,7 +12,7 @@
 4. Build a **minimal allowlist release folder** (default):
    - `./scripts/prepare_clawhub_release.sh`
    - Optional custom output: `./scripts/prepare_clawhub_release.sh ~/Documents/youos-release-X.Y.Z`
-   - This script includes only: `app/`, `clawhub.json`, `configs/`, `PRIVACY.md`, `pyproject.toml`, `README.md`, `scripts/`, `SKILL.md`
+   - This script includes only: `app/`, `clawhub.json`, `configs/`, `extension/`, `PRIVACY.md`, `pyproject.toml`, `README.md`, `screenshots/`, `scripts/`, `SKILL.md` (and drops the generated `extension/firefox-build/`)
 5. Publish from that folder (not repo root):
    - `cd ~/Documents/youos-release-X.Y.Z`
    - `clawhub publish ./`
