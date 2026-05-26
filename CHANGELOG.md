@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.59 — 2026-05-26
+
+### Onboarding now reliably processes your LoRA (and the export can't hang)
+Two fixes so a new user actually ends up with a trained voice model instead of silently skipping it:
+- **The wizard auto-starts fine-tuning** when you reach the "Learn your voice" step (unless one is already trained or running) — it's no longer a button that's easy to skip. It runs in the background; you keep going through setup. The **final "You're set" step now reports the voice-model status** ("training in progress" / "trained ✓" / "uses base model for now, retrains tonight"), so you can't finish onboarding unaware that drafts aren't yet personalized.
+- **The training export no longer hangs on a large corpus.** Near-duplicate dedup is O(n²) over `hybrid_similarity` — fine for a review-queue-sized set, but on a big organic corpus (tens of thousands of pairs) it ran for many minutes and stalled both the wizard's and the nightly's fine-tune. Above a 2,000-pair cap it's now skipped with a note (the cleanup is marginal there; the stall was not). This is what made the manual workaround necessary when training baheros.
+
+Tests: dedup cap returns a large set untouched (no hang), and the wizard markup wires auto-start + the done-step status.
+
 ## v0.1.58 — 2026-05-26
 
 ### Surface what's *actually* drafting — no more silent LoRA failures

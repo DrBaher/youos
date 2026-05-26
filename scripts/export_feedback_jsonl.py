@@ -16,6 +16,10 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_DIR = ROOT_DIR / "data" / "feedback"
 CONFIGS_DIR = ROOT_DIR / "configs"
 
+# Above this many qualified pairs, skip the O(n^2) near-duplicate dedup — it
+# would otherwise stall fine-tuning for many minutes on a large organic corpus.
+DEDUP_MAX_PAIRS = 2000
+
 
 def parse_args() -> argparse.Namespace:
     # Same shape as scripts/finetune_lora.py: defaults resolved at call time
@@ -179,6 +183,13 @@ def deduplicate_pairs(
     from app.core.diff import hybrid_similarity
 
     if len(qualified) <= 1:
+        return qualified, 0
+
+    # O(n^2) hybrid_similarity over every pair — fine for a review-queue-sized
+    # set, pathological for a large organic corpus (tens of thousands of pairs),
+    # where it runs for many minutes and stalls the wizard's / nightly's
+    # fine-tune. Above the cap the marginal cleanup isn't worth the cost.
+    if len(qualified) > DEDUP_MAX_PAIRS:
         return qualified, 0
 
     keep = list(qualified)
@@ -368,9 +379,12 @@ def export(args: argparse.Namespace) -> None:
 
     # Deduplication by inbound similarity (before temporal split)
     if not getattr(args, "no_dedup", False):
-        qualified, dedup_count = deduplicate_pairs(qualified)
-        if dedup_count:
-            print(f"Deduped {dedup_count} near-duplicate training pairs")
+        if len(qualified) > DEDUP_MAX_PAIRS:
+            print(f"Skipping near-duplicate dedup ({len(qualified)} pairs > {DEDUP_MAX_PAIRS} cap — O(n^2) too slow)")
+        else:
+            qualified, dedup_count = deduplicate_pairs(qualified)
+            if dedup_count:
+                print(f"Deduped {dedup_count} near-duplicate training pairs")
 
     # Temporal split: sort by created_at ASC, most recent 15% as validation
     qualified.sort(key=lambda x: x[0])
