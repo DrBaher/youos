@@ -123,11 +123,11 @@
     <!-- 5. Train -->
     <section class="step" data-step="4">
       <h1>Learn your voice</h1>
-      <p class="lead">YouOS analyzes your persona and fine-tunes a local LoRA adapter — automatically each night once you have enough feedback, or on demand.</p>
-      <div class="explain"><b>"Fine-tuning" teaches a small AI model, running on your Mac, to imitate your writing</b> — using your corpus plus the edits you make to its drafts. (A "LoRA adapter" is just the small file that holds what it learned.) This is <b>optional</b>: YouOS already drafts well from your examples, and it retrains itself each night as you give feedback. Run it now only if you want a head start. Nothing is sent to the cloud.</div>
-      <div style="margin-top:6px;"><button class="btn" id="runFinetune">Start fine-tuning</button></div>
-      <div class="status pending" id="adapterStatus" style="margin-top:14px;">No adapter trained yet — drafts use the base model + your exemplars until you train one.</div>
-      <p class="hint" style="margin-top:12px;">Needs Apple-Silicon MLX and a handful of feedback pairs; runs in the background (several minutes). Terminal equivalent: <code>youos finetune</code>.</p>
+      <p class="lead">YouOS fine-tunes a local LoRA adapter on your sent mail so drafts sound like <em>you</em> — we start it automatically here so it's never silently skipped.</p>
+      <div class="explain"><b>"Fine-tuning" teaches a small AI model, running on your Mac, to imitate your writing</b> — using your corpus plus the edits you make to its drafts. (A "LoRA adapter" is just the small file that holds what it learned.) <b>We kick this off automatically in the background when you reach this step</b> — you can keep going through setup; your drafts switch to your fine-tuned voice the moment it finishes. Until then they use the base model + your examples. Nothing is sent to the cloud, and it retrains itself each night as you give feedback.</div>
+      <div class="status pending" id="adapterStatus" style="margin-top:14px;">Checking your voice model…</div>
+      <div style="margin-top:10px;"><button class="btn secondary" id="runFinetune">Re-run fine-tuning</button></div>
+      <p class="hint" style="margin-top:12px;">Needs Apple-Silicon MLX and a handful of pairs; runs in the background (several minutes). Terminal equivalent: <code>youos finetune</code>.</p>
     </section>
 
     <!-- 6. Secure -->
@@ -158,7 +158,8 @@
     <section class="step" data-step="7">
       <h1>You're set 🎉</h1>
       <p class="lead">Start drafting — and fine-tune behavior (multi-candidate, repairs, persona routing, …) anytime in Settings.</p>
-      <div style="display:flex; gap:10px; margin-top:8px;">
+      <div class="status pending" id="doneAdapter" style="margin-top:14px;">Checking your voice model…</div>
+      <div style="display:flex; gap:10px; margin-top:14px;">
         <a class="btn" href="/feedback">Start drafting</a>
         <a class="btn link" href="/settings">Open Settings</a>
       </div>
@@ -186,12 +187,20 @@
   });
   const dots = Array.from(dotsWrap.children);
 
+  // Indices we hook (computed, not hardcoded): the fine-tune step auto-starts
+  // training so LoRA is never silently skipped; the final step reports its status.
+  const finetuneStepIdx = steps.findIndex((s) => s.querySelector("#runFinetune"));
+  const doneStepIdx = steps.length - 1;
+  let autoFinetuneTried = false;
+
   function show(n) {
     i = Math.max(0, Math.min(steps.length - 1, n));
     steps.forEach((s, k) => s.classList.toggle("active", k === i));
     dots.forEach((d, k) => { d.className = "step-dot" + (k < i ? " done" : k === i ? " active" : ""); });
     prevBtn.style.visibility = i === 0 ? "hidden" : "visible";
     nextBtn.style.visibility = i === steps.length - 1 ? "hidden" : "visible";
+    if (i === finetuneStepIdx && !autoFinetuneTried) { autoFinetuneTried = true; autoStartFinetune(); }
+    if (i === doneStepIdx) { refreshDoneStatus(); }
   }
   prevBtn.addEventListener("click", () => show(i - 1));
   nextBtn.addEventListener("click", () => show(i + 1));
@@ -268,17 +277,45 @@
       else if (ftTimer) { clearTimeout(ftTimer); ftTimer = null; }
     }).catch(() => {});
   }
-  runFinetuneBtn.addEventListener("click", () => {
+  function startFinetune(auto) {
     runFinetuneBtn.disabled = true;
-    adapterStatusEl.className = "status pending"; adapterStatusEl.textContent = "Starting…";
-    fetch("/api/finetune", { method: "POST" })
+    adapterStatusEl.className = "status pending";
+    adapterStatusEl.textContent = auto ? "Starting your voice model automatically…" : "Starting…";
+    return fetch("/api/finetune", { method: "POST" })
       .then((r) => (r.ok ? r.json() : r.json().then((e) => Promise.reject(e.detail || "error"))))
       .then(() => pollFinetune())
       .catch((err) => {
-        runFinetuneBtn.disabled = false; runFinetuneBtn.textContent = "Start fine-tuning";
-        adapterStatusEl.className = "status err"; adapterStatusEl.textContent = "✕ " + err;
+        runFinetuneBtn.disabled = false; runFinetuneBtn.textContent = "Re-run fine-tuning";
+        adapterStatusEl.className = "status err";
+        adapterStatusEl.textContent = "✕ " + err + " — you can train later from Settings or `youos finetune`.";
       });
-  });
+  }
+  // Auto-start when the user reaches the step, unless one's already trained or
+  // running — so fine-tuning is never silently skipped during onboarding.
+  function autoStartFinetune() {
+    fetch("/api/finetune/status").then((r) => r.json()).then((s) => {
+      if (s.status === "running") { pollFinetune(); return; }
+      if (s.adapter_ready) { renderFinetune(s); return; }
+      startFinetune(true);
+    }).catch(() => {});
+  }
+  function refreshDoneStatus() {
+    const el = document.getElementById("doneAdapter");
+    if (!el) return;
+    fetch("/api/finetune/status").then((r) => r.json()).then((s) => {
+      if (s.status === "running") {
+        el.className = "status pending";
+        el.textContent = "🧠 Your voice model is still training in the background — drafts switch to it automatically when it's ready.";
+      } else if (s.adapter_ready) {
+        el.className = "status ok";
+        el.textContent = "✓ Your voice model is trained — drafts now sound like you.";
+      } else {
+        el.className = "status pending";
+        el.textContent = "Drafts use the base model + your examples for now; your voice model retrains tonight (or run it from Settings).";
+      }
+    }).catch(() => {});
+  }
+  runFinetuneBtn.addEventListener("click", () => startFinetune(false));
   pollFinetune(); // reflect current adapter / in-progress training
 
   // Secure: create an API token from the wizard.
