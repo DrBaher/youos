@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.63 — 2026-05-26
+
+### Loading animation masks the local model's cold start
+Streaming from the local model (v0.1.62) reloads it per draft (~3s before the first token). The Draft Reply tab now shows a **loading overlay** (spinner) over the draft area the moment you hit Generate, and clears it the instant the first token streams in. If the wait runs past ~1.5s it explains itself — "Warming up your local model — the first draft is the slowest, then it stays fast." Covers the streaming, fallback, and error paths.
+
 ## v0.1.62 — 2026-05-26
 
 ### The Draft Reply tab now streams from your local fine-tuned model
