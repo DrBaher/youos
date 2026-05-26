@@ -51,6 +51,20 @@ def test_chrome_pages_link_shared_assets_and_version_target():
         assert "YouOS v0.1.10" not in body, f"{path} still has hardcoded version"
 
 
+def test_about_tech_stack_and_faq_are_current():
+    """The About page's tech stack + FAQ reflect the current feature set."""
+    body = TestClient(app).get("/about").text
+    # Tech stack refreshed (warm server, 3 backends, extension, eval).
+    assert "mlx_lm.server" in body          # warm-served model
+    assert "gws" in body and "native API" in body  # 3 ingestion backends, not just gog
+    assert "MV3 extension" in body          # Gmail extension in the stack
+    assert "compare-models" in body         # voice-match evaluation
+    # New FAQs for the recent work.
+    assert "Which model writes my drafts" in body
+    assert "Why does the first draft take a few seconds" in body
+    assert "Run benchmark now" in body      # readiness-gate FAQ
+
+
 def test_stats_failures_link_troubleshooting():
     """Failures (Activity ingestion + Pipeline errors) get an actionable
     'How to fix' with a mapped command, not just a red error string."""
