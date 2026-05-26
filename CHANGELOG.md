@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.0-beta.3 — 2026-05-26
+
+### About page corrected + a screenshot capture guide
+- **`/about`**: fixed stale file paths (`~/Projects/youos/…` → the real `~/YouOS-Instances/<you>/…` instance paths); reframed the privacy table so **local (your trained Qwen+LoRA, served warm) is the default** drafting path and Claude is the cold-start; added a "becomes _your_ OS" line.
+- **`screenshots/CAPTURE.md`**: a recipe for re-shooting the three landing assets (`demo.gif`, `01-draft-reply.png`, `02-stats.png`) so they show the current UI — the per-draft model badge, the "Drafting with" row, and the personalized wordmark. (The existing screenshots predate that UI; they need a manual re-capture on a Mac.)
+
 ## v0.2.0-beta.2 — 2026-05-26
 
 ### Docs/landing polished for the beta narrative

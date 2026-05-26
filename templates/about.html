@@ -165,6 +165,7 @@ body {
     <div class="prose">
       <p>YouOS is not a generic AI email writer. It learns from YOUR sent emails &mdash; how you phrase things, how long you write, how you sign off &mdash; and drafts replies that actually sound like you.</p>
       <p>It runs entirely on your Mac. No cloud. No subscriptions. Your data never leaves your machine.</p>
+      <p>During setup it becomes <em>your</em> OS &mdash; YouOS &rarr; BaherOS &mdash; and once your model is trained, every draft is generated on-device, in your voice, by default.</p>
     </div>
     <div class="tech-grid" style="margin-top:1rem;">
       <div class="tech-card">
@@ -270,12 +271,12 @@ body {
         <tr><th>What</th><th>Where it lives</th><th>Leaves your machine?</th></tr>
       </thead>
       <tbody>
-        <tr><td>Your sent emails</td><td>~/Projects/youos/var/youos.db</td><td>&#x274C; Never</td></tr>
-        <tr><td>Raw email cache</td><td>~/Projects/youos/data/raw/</td><td>&#x274C; Never</td></tr>
-        <tr><td>LoRA model adapter</td><td>~/Projects/youos/models/</td><td>&#x274C; Never</td></tr>
+        <tr><td>Your sent emails</td><td>~/YouOS-Instances/&lt;you&gt;/var/youos.db</td><td>&#x274C; Never</td></tr>
+        <tr><td>Raw email cache</td><td>~/YouOS-Instances/&lt;you&gt;/data/raw/</td><td>&#x274C; Never</td></tr>
+        <tr><td>LoRA model adapter</td><td>~/YouOS-Instances/&lt;you&gt;/models/</td><td>&#x274C; Never</td></tr>
         <tr><td>Feedback pairs</td><td>SQLite (local)</td><td>&#x274C; Never</td></tr>
-        <tr><td>Draft generation (before local model)</td><td>Claude API call</td><td>&#x26A0;&#xFE0F; Email text sent to Anthropic</td></tr>
-        <tr><td>Draft generation (after local model trained)</td><td>Local Qwen (MLX)</td><td>&#x274C; Never</td></tr>
+        <tr><td>Draft generation &mdash; <strong>default</strong> (your trained model)</td><td>Local Qwen + LoRA (MLX), served warm</td><td>&#x274C; Never</td></tr>
+        <tr><td>Draft generation &mdash; cold start (before your model is trained)</td><td>Claude API call</td><td>&#x26A0;&#xFE0F; Email text sent to Anthropic</td></tr>
       </tbody>
     </table>
     <div class="privacy-note">
