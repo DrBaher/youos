@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.0-beta.5 — 2026-05-26
+
+### Cleaner "How it works" diagram on the About page
+The flow diagram's side-branches broke the main column's alignment and muddled the feedback loop into the downward flow. Redesigned as a **clean, aligned vertical pipeline** (Corpus → Ingestion → Reply Pairs DB → Retrieval → Draft Generation → Draft Reply, all boxes the same width, with the corpus + generation steps accented and Draft Reply highlighted) plus a visually-separated **"Self-improving loop · nightly"** strip (Your feedback → LoRA fine-tuning → Autoresearch) that clearly notes it feeds back into retrieval & generation. Also refreshed stale content: Ingestion now reads "gog / gws / native backend", and Draft Generation reads "your local Qwen + LoRA, served warm · Claude fallback".
+
 ## v0.2.0-beta.4 — 2026-05-26
 
 ### Promote the Gmail extension + fix its out-of-box port
