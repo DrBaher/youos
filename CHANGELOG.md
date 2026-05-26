@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.62 — 2026-05-26
+
+### The Draft Reply tab now streams from your local fine-tuned model
+The single-draft streaming path (`/draft/stream`) used the **Claude CLI** directly — so the main "Generate Draft" experience drafted with Claude, not your LoRA, even after the comparison showed the local model wins on voice. Now: **when the local model is ready (mlx_lm on PATH + a trained adapter), streaming runs `mlx_lm generate` with your adapter**, on-device, reporting `model_used: qwen2.5-1.5b-lora`. It falls back to the Claude CLI only when there's no adapter yet (and to non-streaming `generate_draft` on any error).
+- Real token streaming preserved: a chunk-based parser reads mlx_lm's stdout (not line-buffered — a short reply is one line and would otherwise arrive all at once) and strips its `=====` framing, withholding only a trailing run that could begin the closing delimiter.
+- Trade-off: the local path reloads the model per draft (~3s cold start before the first token) since generation runs as a fresh subprocess; the Claude path had none. A future optimization could keep the model warm.
+
+Tests (4) pin the mlx framing parser (incl. body text containing `=`), local-vs-Claude selection by adapter readiness, and the streamed `model_used`.
+
 ## v0.1.61 — 2026-05-26
 
 ### Ask users to wait until the voice model is trained AND benchmarked
