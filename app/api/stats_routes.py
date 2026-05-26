@@ -203,14 +203,46 @@ def finetune_status() -> dict:
     return {"status": "running" if running else ("done" if adapter_ready else "idle"), "adapter_ready": adapter_ready}
 
 
+_benchmark_proc: Any = None
+
+
+@router.post("/api/benchmark")
+def trigger_benchmark() -> dict:
+    """Run the golden benchmark on the *current* adapter in the background.
+
+    Lets the readiness gate clear (trained → benchmarked → ready) without
+    retraining or waiting for the nightly — the action behind the banner's
+    "Run benchmark now".
+    """
+    global _benchmark_proc
+    if _benchmark_proc is not None and _benchmark_proc.poll() is None:
+        raise HTTPException(status_code=409, detail="A benchmark is already running.")
+    if _finetune_proc is not None and _finetune_proc.poll() is None:
+        raise HTTPException(status_code=409, detail="Fine-tuning (which includes the benchmark) is already running.")
+    _benchmark_proc = subprocess.Popen(  # noqa: S603
+        [sys.executable, str(ROOT_DIR / "scripts" / "run_golden_eval.py")],
+        cwd=str(ROOT_DIR),
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return {"started": True}
+
+
+def _model_work_running() -> bool:
+    """True while a fine-tune or a benchmark is in progress."""
+    return (_finetune_proc is not None and _finetune_proc.poll() is None) or (
+        _benchmark_proc is not None and _benchmark_proc.poll() is None
+    )
+
+
 @router.get("/api/model/readiness")
 def model_readiness(request: Request) -> dict:
     """Is the personalized model trained AND benchmarked — i.e. safe to rely on?
 
     Drives the soft "please wait" gate on the drafting page and onboarding.
     """
-    running = _finetune_proc is not None and _finetune_proc.poll() is None
-    return get_model_readiness(request.app.state.settings.database_url, finetune_running=running)
+    return get_model_readiness(request.app.state.settings.database_url, finetune_running=_model_work_running())
 
 
 @router.post("/api/token")

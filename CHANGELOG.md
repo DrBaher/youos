@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0-beta.7 — 2026-05-26
+
+### Readiness banner: a working "Refresh" + run the benchmark from the UI
+The "preparing your voice model" banner's **Refresh** appeared to do nothing — in the *benchmark-pending* phase nothing is running to refresh toward, so it silently re-rendered the same state. Fixes:
+- **Refresh now shows progress** — "Checking…" → "✓ Checked" (with a brief minimum so it's always visible), so it never feels dead.
+- **New "Run benchmark now" button** (shown in the benchmark-pending phase) actually clears the gate: it triggers a golden eval on the current adapter via the new **`POST /api/benchmark`** (runs in the background; readiness then reports `benchmarking` and the banner auto-polls to `ready`). No more "wait for tonight / run it in the terminal."
+- `/api/model/readiness` now reflects a running benchmark *or* fine-tune.
+
+Tests (5) cover the benchmark endpoint (spawn / 409-when-running / 409-when-fine-tuning), readiness reporting `benchmarking` while it runs, and the banner wiring (Refresh progress + benchmark action).
+
 ## v0.2.0-beta.6 — 2026-05-26
 
 ### Backend-UI sweep — surface the recent work everywhere

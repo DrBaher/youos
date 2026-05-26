@@ -53,6 +53,41 @@ def test_finetune_status_idle_then_done(monkeypatch, tmp_path):
     assert client.get("/api/finetune/status").json() == {"status": "done", "adapter_ready": True}
 
 
+# --- benchmark (validate the adapter so the readiness gate can clear) ------
+
+
+def test_benchmark_spawns_when_idle(monkeypatch):
+    monkeypatch.setattr(sr, "_benchmark_proc", None)
+    monkeypatch.setattr(sr, "_finetune_proc", None)
+    monkeypatch.setattr(sr.subprocess, "Popen", lambda *a, **k: _FakeProc())
+    r = client.post("/api/benchmark")
+    assert r.status_code == 200 and r.json() == {"started": True}
+
+
+def test_benchmark_409_when_running(monkeypatch):
+    monkeypatch.setattr(sr, "_benchmark_proc", _FakeProc(alive=True))
+    monkeypatch.setattr(sr, "_finetune_proc", None)
+    assert client.post("/api/benchmark").status_code == 409
+
+
+def test_benchmark_409_when_finetune_running(monkeypatch):
+    monkeypatch.setattr(sr, "_benchmark_proc", None)
+    monkeypatch.setattr(sr, "_finetune_proc", _FakeProc(alive=True))
+    assert client.post("/api/benchmark").status_code == 409
+
+
+def test_readiness_reports_benchmarking_while_benchmark_runs(monkeypatch, tmp_path):
+    # Adapter trained + a benchmark running → readiness phase "benchmarking".
+    adir = tmp_path / "latest"
+    adir.mkdir()
+    (adir / "adapters.safetensors").write_text("x")
+    monkeypatch.setattr("app.core.stats._resolve_adapter_path", lambda: adir)
+    monkeypatch.setattr(sr, "_finetune_proc", None)
+    monkeypatch.setattr(sr, "_benchmark_proc", _FakeProc(alive=True))
+    body = client.get("/api/model/readiness").json()
+    assert body["phase"] == "benchmarking" and body["ready"] is False
+
+
 # --- token -----------------------------------------------------------------
 
 
