@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.0-beta.13 — 2026-05-26
+
+### ClawHub release pack now includes the extension + screenshots
+`scripts/prepare_clawhub_release.sh` builds the minimal folder you upload with `clawhub publish`, but its allowlist was missing **`extension/`** (the SKILL.md now tells users to "Load unpacked" that folder — it has to be in the pack) and **`screenshots/`** (referenced by `clawhub.json`). Added both, and the script now strips the generated `extension/firefox-build/` and the dev-only `screenshots/CAPTURE.md` from the bundle. `PUBLISHING.md` updated to match. So `./scripts/prepare_clawhub_release.sh` → `clawhub publish ./` ships a complete, working skill.
+
 ## v0.2.0-beta.12 — 2026-05-26
 
 ### OpenClaw skill (clawhub.json + SKILL.md) brought up to date
