@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.52 — 2026-05-26
+
+### Docs: new-user quick start points to the web wizard + service
+- **The README quick start was behind the product** — it sent new users only to the terminal `youos setup`, with no mention of the web onboarding wizard (`/welcome`) or `youos service install` built this cycle. Rewrote it as the real new-user path: clone + `./scripts/install.sh` → `youos service install` (run reliably) → open `/welcome`, with the wizard's 6 steps (identity → connect → corpus → fine-tune → token → keep-it-running) listed. Terminal `youos setup` + manual install moved to a "prefer the terminal?" details block; removed the now-duplicate CLI-steps list.
+
 ## v0.1.51 — 2026-05-25
 
 ### Stats: live Activity panel for ingestion + fine-tuning
