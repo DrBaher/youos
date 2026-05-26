@@ -183,6 +183,10 @@ youos doctor
 # Run golden benchmark evaluation (10 curated cases)
 youos eval --golden
 
+# Compare backends (MLX+LoRA / Ollama / Claude) on YOUR mail, ranked by
+# how closely each sounds like your real replies (voice-match)
+youos compare-models --limit 30          # add --semantic for embedding similarity
+
 # Start the web server
 youos serve
 
