@@ -107,10 +107,13 @@ def about_page() -> HTMLResponse:
 @_BOOKMARKLET_ROUTER.get("/bookmarklet", response_class=HTMLResponse)
 def bookmarklet_page(request: Request) -> HTMLResponse:
     base_url = str(request.base_url).rstrip("/")
+    extension_dir = str((TEMPLATE_DIR.parent / "extension").resolve())
     html = BOOKMARKLET_TEMPLATE.read_text(encoding="utf-8")
     html = html.replace("http://localhost:8765/feedback", f"{base_url}/feedback")
     html = html.replace("http://localhost:8765/draft-popup", f"{base_url}/draft-popup")
     html = html.replace("YOUOS_BASE_URL", base_url)
+    # The exact folder to pick in chrome://extensions → "Load unpacked".
+    html = html.replace("YOUOS_EXTENSION_PATH", extension_dir)
     return HTMLResponse(content=html)
 
 

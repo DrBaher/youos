@@ -25,7 +25,7 @@ passes the result back to the page.
 
 ## Install (unpacked)
 
-1. Start your YouOS server: `youos serve` (defaults to `http://127.0.0.1:8765`).
+1. Start your YouOS server: `youos serve` (defaults to `http://127.0.0.1:8901`).
 2. Open `chrome://extensions` (or `edge://extensions`, `brave://extensions`).
 3. Enable **Developer mode** (top-right).
 4. Click **Load unpacked** and select this `extension/` folder.
