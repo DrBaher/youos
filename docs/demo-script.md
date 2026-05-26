@@ -3,7 +3,7 @@
 ## Setup (before recording)
 1. Clear browser history/localStorage for YouOS
 2. Have a real email ready to paste (a simple business inquiry)
-3. Open your local YouOS URL (e.g., http://localhost:8765/feedback)
+3. Open your local YouOS URL (e.g., http://127.0.0.1:8901/feedback)
 
 ## Recording flow (aim for 45-60 seconds)
 1. [2s] Show the YouOS landing page briefly

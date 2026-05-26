@@ -2,7 +2,7 @@
 
 > **Your email. Your model. Your style.**
 
-> 🧪 **Public beta — [v0.2.0-beta.1](https://github.com/DrBaher/youos/releases/latest)**
+> 🧪 **Public beta — [latest release](https://github.com/DrBaher/youos/releases/latest)**
 
 YouOS is a local-first AI email copilot that learns from your sent Gmail history and drafts replies that sound like *you* — not a generic AI. It runs entirely on your Mac. No cloud. No subscriptions. Your data never leaves your machine. **During setup it becomes _your_ OS** — YouOS → BaherOS.
 
@@ -299,14 +299,31 @@ user:
   name: "Your Name"
   emails: ["you@company.com", "you@gmail.com"]
 
+ingestion:
+  google_backend: "gog"   # gog (default) | gws | native
+
+review:
+  draft_model: "auto"     # auto (default) | local | claude
+
 model:
   base: "Qwen/Qwen2.5-1.5B-Instruct"
-  fallback: "claude"  # or "none" for fully local
+  fallback: "claude"      # or "none" for fully local
+  server:
+    enabled: true         # warm mlx_lm.server — loads the local model once
+    port: 8088
 
 autoresearch:
   enabled: true
   schedule: "0 1 * * *"
 ```
+
+**Drafting backend:** by default (`auto`) YouOS drafts on your fine-tuned local model once it's
+trained, using the cloud only as a cold-start/fallback. Force it with `review.draft_model: local`
+(on-device only — pair with `model.fallback: none` for strict local) or `claude`. You can also
+toggle flags without editing YAML: `youos config set review.draft_model local`.
+
+**Troubleshooting:** run `youos doctor` (Python, Google backend, MLX, disk). The Stats page
+flags failures inline with "How to fix" steps.
 
 ## Running a Personal Instance
 
@@ -328,7 +345,7 @@ instances/myname/
 
 **Start a named instance:**
 ```bash
-YOUOS_DATA_DIR=instances/myname uvicorn app.main:app --host 127.0.0.1 --port 8765
+YOUOS_DATA_DIR=instances/myname uvicorn app.main:app --host 127.0.0.1 --port 8901
 ```
 
 When `YOUOS_DATA_DIR` is set, YouOS derives the canonical DB path as `YOUOS_DATA_DIR/var/youos.db`.
