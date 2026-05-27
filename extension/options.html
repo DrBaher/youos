@@ -4,19 +4,30 @@
 <meta charset="utf-8" />
 <title>YouOS for Gmail — Settings</title>
 <style>
+  :root {
+    --teal:#00c4a7; --teal-dim:#00b398; --bg:#1a1a2e; --surface:#16213e; --surface-2:#0d1b2a;
+    --border:#2a3a4a; --text:#e0e0e0; --muted:#aaa; --muted-2:#888; --on-accent:#1a1a2e; --ok:#9e9;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --teal:#0a8f7c; --teal-dim:#0a8f7c; --bg:#ffffff; --surface:#f4f6f9; --surface-2:#eef1f5;
+      --border:#d8dee6; --text:#1a2230; --muted:#5b6675; --muted-2:#6b7585; --on-accent:#ffffff; --ok:#1a8a4f;
+    }
+  }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-         background: #1a1a2e; color: #e0e0e0; margin: 0; padding: 40px; }
-  .card { max-width: 480px; margin: 0 auto; background: #16213e; border: 1px solid #2a3a4a;
+         background: var(--bg); color: var(--text); margin: 0; padding: 40px; }
+  .card { max-width: 480px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border);
           border-radius: 12px; padding: 28px; }
-  h1 { color: #00c4a7; font-size: 18px; margin: 0 0 4px; }
-  p { color: #888; font-size: 13px; line-height: 1.5; }
-  label { display: block; font-size: 12px; color: #aaa; margin: 18px 0 6px; }
-  input { width: 100%; background: #0d1b2a; color: #e0e0e0; border: 1px solid #2a3a4a;
+  h1 { color: var(--teal); font-size: 18px; margin: 0 0 4px; }
+  p { color: var(--muted-2); font-size: 13px; line-height: 1.5; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 18px 0 6px; }
+  input { width: 100%; background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
           border-radius: 6px; padding: 10px; font-size: 14px; box-sizing: border-box; }
-  button { margin-top: 18px; background: #00c4a7; color: #1a1a2e; border: none; border-radius: 8px;
+  button { margin-top: 18px; background: var(--teal); color: var(--on-accent); border: none; border-radius: 8px;
            padding: 10px 20px; font-size: 14px; font-weight: 700; cursor: pointer; }
-  button:hover { background: #00b398; }
-  .saved { color: #9e9; font-size: 13px; margin-left: 12px; }
+  button:hover { background: var(--teal-dim); }
+  .saved { color: var(--ok); font-size: 13px; margin-left: 12px; }
+  code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
 </style>
 </head>
 <body>
