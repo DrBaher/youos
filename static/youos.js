@@ -33,9 +33,36 @@
     });
   };
 
+  // Light/dark toggle. The no-flash <head> snippet already set data-theme from
+  // localStorage; here we add the floating button and let the user flip it.
+  function effectiveTheme() {
+    var a = document.documentElement.getAttribute("data-theme");
+    return a || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+  }
+  function setupThemeToggle() {
+    if (document.querySelector(".yos-theme-toggle")) return;
+    var btn = document.createElement("button");
+    btn.className = "yos-theme-toggle";
+    btn.type = "button";
+    btn.setAttribute("aria-label", "Toggle light or dark theme");
+    btn.title = "Toggle theme";
+    function icon() { btn.textContent = effectiveTheme() === "dark" ? "☀" : "☾"; }
+    icon();
+    btn.addEventListener("click", function () {
+      var next = effectiveTheme() === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      try { localStorage.setItem("youos-theme", next); } catch (e) {}
+      icon();
+    });
+    try { window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", icon); } catch (e) {}
+    document.body.appendChild(btn);
+  }
+  YouOS.setupThemeToggle = setupThemeToggle;
+
+  function init() { hydrateChrome(); setupThemeToggle(); }
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", hydrateChrome);
+    document.addEventListener("DOMContentLoaded", init);
   } else {
-    hydrateChrome();
+    init();
   }
 })();

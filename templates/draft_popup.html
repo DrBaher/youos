@@ -4,51 +4,52 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>YouOS Draft</title>
+<script>(function(){try{var t=localStorage.getItem('youos-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <link rel="icon" type="image/svg+xml" href="/static/youos-mark.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  background: #1a1a2e; color: #e0e0e0;
+  background: var(--bg); color: var(--text);
   display: flex; flex-direction: column; height: 100vh; overflow: hidden;
 }
 .header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0.6rem 1rem; background: #0d1b2a;
-  border-bottom: 1px solid #2a3a4a; flex-shrink: 0;
+  padding: 0.6rem 1rem; background: var(--surface-2);
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
-.logo { color: #00c4a7; font-weight: 700; font-size: 0.95rem; }
+.logo { color: var(--teal); font-weight: 700; font-size: 0.95rem; }
 .close-btn {
-  background: none; border: none; color: #666; font-size: 1.1rem;
+  background: none; border: none; color: var(--faint); font-size: 1.1rem;
   cursor: pointer; padding: 0.2rem 0.4rem; border-radius: 3px;
 }
-.close-btn:hover { color: #ccc; background: #333; }
+.close-btn:hover { color: var(--muted); background: var(--border-subtle); }
 .body { flex: 1; overflow-y: auto; padding: 0.75rem; display: flex; flex-direction: column; gap: 0.6rem; }
-.label { font-size: 0.75rem; color: #888; font-weight: 600; margin-bottom: 0.2rem; }
+.label { font-size: 0.75rem; color: var(--muted-2); font-weight: 600; margin-bottom: 0.2rem; }
 .inbound-box {
-  background: #0d1b2a; border: 1px solid #2a3a4a; border-radius: 6px;
-  padding: 0.5rem 0.7rem; font-size: 0.82rem; color: #aaa;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.5rem 0.7rem; font-size: 0.82rem; color: var(--muted);
   max-height: 90px; overflow-y: auto; line-height: 1.4; white-space: pre-wrap; word-break: break-word;
 }
 textarea {
-  width: 100%; background: #16213e; border: 1px solid #333; border-radius: 6px;
-  color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  width: 100%; background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 6px;
+  color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   font-size: 0.88rem; resize: none; padding: 0.6rem 0.75rem; line-height: 1.5;
   flex: 1; min-height: 120px;
 }
-textarea:focus { outline: none; border-color: #00c4a7; }
+textarea:focus { outline: none; border-color: var(--teal); }
 .subject-line {
-  font-size: 0.78rem; color: #00c4a7; cursor: pointer; margin-top: 0.2rem;
+  font-size: 0.78rem; color: var(--teal); cursor: pointer; margin-top: 0.2rem;
 }
 .subject-line:hover { text-decoration: underline; }
 .confidence-badge {
   display: inline-block; font-size: 0.68rem; padding: 0.15rem 0.5rem;
   border-radius: 3px; margin-left: 0.4rem; vertical-align: middle;
 }
-.conf-high { background: #1a4a2a; color: #2ecc71; }
-.conf-medium { background: #3a3a1a; color: #f0ad4e; }
-.conf-low { background: #4a1a1a; color: #e74c3c; }
+.conf-high { background: #1a4a2a; color: var(--success); }
+.conf-medium { background: #3a3a1a; color: var(--warn); }
+.conf-low { background: #4a1a1a; color: var(--error); }
 .spinner {
   display: inline-block; width: 12px; height: 12px;
   border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff;
@@ -56,46 +57,46 @@ textarea:focus { outline: none; border-color: #00c4a7; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .footer {
-  padding: 0.6rem 0.75rem; border-top: 1px solid #2a3a4a;
-  display: flex; gap: 0.5rem; flex-shrink: 0; background: #1a1a2e;
+  padding: 0.6rem 0.75rem; border-top: 1px solid var(--border);
+  display: flex; gap: 0.5rem; flex-shrink: 0; background: var(--bg);
 }
 button {
   padding: 0.45rem 0.9rem; border: none; border-radius: 5px;
   font-size: 0.82rem; font-weight: 600; cursor: pointer; transition: background 0.15s;
 }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
-.btn-generate { background: #00c4a7; color: #1a1a2e; flex: 1; }
-.btn-generate:hover:not(:disabled) { background: #00b398; }
-.btn-insert { background: #2ecc71; color: #fff; flex: 1; }
-.btn-insert:hover:not(:disabled) { background: #27ae60; }
-.btn-tone { background: #2a3a4a; color: #aaa; font-size: 0.74rem; padding: 0.35rem 0.65rem; }
-.btn-tone:hover:not(:disabled) { background: #3a4a5a; color: #e0e0e0; }
+.btn-generate { background: var(--teal); color: var(--bg); flex: 1; }
+.btn-generate:hover:not(:disabled) { background: var(--teal-dim); }
+.btn-insert { background: var(--success); color: #fff; flex: 1; }
+.btn-insert:hover:not(:disabled) { background: var(--success); }
+.btn-tone { background: var(--border); color: var(--muted); font-size: 0.74rem; padding: 0.35rem 0.65rem; }
+.btn-tone:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
 .tone-row { display: flex; gap: 0.4rem; flex-wrap: wrap; }
-.warn { font-size: 0.75rem; color: #f0ad4e; padding: 0.3rem 0.5rem; background: #2a2a0a; border-radius: 4px; border-left: 3px solid #f0ad4e; }
-.feedback-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border-top: 1px solid #2a3a4a; background: #0d1b2a; flex-shrink: 0; }
+.warn { font-size: 0.75rem; color: var(--warn); padding: 0.3rem 0.5rem; background: #2a2a0a; border-radius: 4px; border-left: 3px solid var(--warn); }
+.feedback-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border-top: 1px solid var(--border); background: var(--surface-2); flex-shrink: 0; }
 .stars { display: flex; gap: 0.2rem; }
-.star { font-size: 1.2rem; cursor: pointer; color: #444; transition: color 0.1s; line-height: 1; }
-.star.on { color: #ffc107; }
+.star { font-size: 1.2rem; cursor: pointer; color: var(--border); transition: color 0.1s; line-height: 1; }
+.star.on { color: var(--warn); }
 .feedback-note {
-  flex: 1; background: #16213e; border: 1px solid #333; border-radius: 4px;
-  color: #e0e0e0; font-size: 0.78rem; padding: 0.3rem 0.5rem;
+  flex: 1; background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 4px;
+  color: var(--text); font-size: 0.78rem; padding: 0.3rem 0.5rem;
 }
-.feedback-note:focus { outline: none; border-color: #00c4a7; }
-.btn-feedback { background: #2ecc71; color: #fff; font-size: 0.75rem; padding: 0.35rem 0.7rem; white-space: nowrap; }
-.btn-feedback:hover:not(:disabled) { background: #27ae60; }
-.feedback-sent { font-size: 0.75rem; color: #2ecc71; display: none; }
+.feedback-note:focus { outline: none; border-color: var(--teal); }
+.btn-feedback { background: var(--success); color: #fff; font-size: 0.75rem; padding: 0.35rem 0.7rem; white-space: nowrap; }
+.btn-feedback:hover:not(:disabled) { background: var(--success); }
+.feedback-sent { font-size: 0.75rem; color: var(--success); display: none; }
 .feedback-row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
 .stars { display: flex; gap: 0.2rem; }
-.star { font-size: 1.1rem; cursor: pointer; color: #444; transition: color 0.1s; }
-.star.on { color: #ffc107; }
+.star { font-size: 1.1rem; cursor: pointer; color: var(--border); transition: color 0.1s; }
+.star.on { color: var(--warn); }
 .note-input {
-  flex: 1; min-width: 0; background: #16213e; border: 1px solid #333; border-radius: 4px;
-  color: #e0e0e0; font-size: 0.78rem; padding: 0.3rem 0.5rem;
+  flex: 1; min-width: 0; background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 4px;
+  color: var(--text); font-size: 0.78rem; padding: 0.3rem 0.5rem;
 }
-.note-input:focus { outline: none; border-color: #00c4a7; }
-.btn-submit-fb { background: #2a3a4a; color: #aaa; font-size: 0.78rem; padding: 0.35rem 0.7rem; white-space: nowrap; }
-.btn-submit-fb:hover:not(:disabled) { background: #2ecc71; color: #fff; }
-.fb-sent { font-size: 0.75rem; color: #2ecc71; text-align: center; display: none; padding: 0.2rem; }
+.note-input:focus { outline: none; border-color: var(--teal); }
+.btn-submit-fb { background: var(--border); color: var(--muted); font-size: 0.78rem; padding: 0.35rem 0.7rem; white-space: nowrap; }
+.btn-submit-fb:hover:not(:disabled) { background: var(--success); color: #fff; }
+.fb-sent { font-size: 0.75rem; color: var(--success); text-align: center; display: none; padding: 0.2rem; }
 </style>
 </head>
 <body>
@@ -132,7 +133,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   </div>
 </div>
 
-<div id="feedbackRow" style="padding:0.5rem 0.75rem;border-top:1px solid #2a3a4a;display:none;background:#1a1a2e;">
+<div id="feedbackRow" style="padding:0.5rem 0.75rem;border-top:1px solid var(--border);display:none;background:var(--bg);">
   <div class="feedback-row">
     <div class="stars" id="stars">
       <span class="star" data-v="1">★</span><span class="star" data-v="2">★</span>
