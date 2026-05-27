@@ -102,42 +102,53 @@
   // ── Panel UI (Shadow DOM keeps Gmail's CSS out) ───────────────────────
 
   const STYLE = `
-    :host { all: initial; }
+    :host { all: initial;
+      --teal:#00c4a7; --teal-dim:#00b398; --bg:#1a1a2e; --surface:#16213e; --surface-2:#0d1b2a;
+      --border:#2a3a4a; --text:#e0e0e0; --muted:#aaa; --muted-2:#888; --faint:#444;
+      --warn:#f0ad4e; --success:#2ecc71; --on-accent:#1a1a2e; }
+    @media (prefers-color-scheme: light) { :host(:not([data-theme="dark"])) {
+      --teal:#0a8f7c; --teal-dim:#0a8f7c; --bg:#ffffff; --surface:#f4f6f9; --surface-2:#eef1f5;
+      --border:#d8dee6; --text:#1a2230; --muted:#5b6675; --muted-2:#6b7585; --faint:#c2c9d2;
+      --warn:#b7791f; --success:#1a8a4f; --on-accent:#ffffff; } }
+    :host([data-theme="light"]) {
+      --teal:#0a8f7c; --teal-dim:#0a8f7c; --bg:#ffffff; --surface:#f4f6f9; --surface-2:#eef1f5;
+      --border:#d8dee6; --text:#1a2230; --muted:#5b6675; --muted-2:#6b7585; --faint:#c2c9d2;
+      --warn:#b7791f; --success:#1a8a4f; --on-accent:#ffffff; }
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; }
     .fab {
       position: fixed; right: 20px; bottom: 20px; z-index: 2147483646;
       width: 52px; height: 52px; border-radius: 50%; border: none; cursor: pointer;
-      background: #00c4a7; color: #1a1a2e; font-size: 22px; font-weight: 700;
+      background: var(--teal); color: var(--on-accent); font-size: 22px; font-weight: 700;
       box-shadow: 0 4px 14px rgba(0,0,0,0.3);
     }
-    .fab:hover { background: #00b398; }
+    .fab:hover { background: var(--teal-dim); }
     .panel {
       position: fixed; right: 20px; bottom: 84px; z-index: 2147483647;
       width: 380px; max-height: 80vh; overflow-y: auto;
-      background: #1a1a2e; color: #e0e0e0; border: 1px solid #2a3a4a;
+      background: var(--bg); color: var(--text); border: 1px solid var(--border);
       border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.4);
       padding: 16px; display: none;
     }
     .panel.open { display: block; }
     .hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-    .hdr .title { color: #00c4a7; font-weight: 700; font-size: 15px; }
-    .hdr .x { background: none; border: none; color: #888; font-size: 18px; cursor: pointer; }
-    label { display: block; font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .04em; margin: 10px 0 4px; }
+    .hdr .title { color: var(--teal); font-weight: 700; font-size: 15px; }
+    .hdr .x { background: none; border: none; color: var(--muted-2); font-size: 18px; cursor: pointer; }
+    label { display: block; font-size: 11px; color: var(--muted-2); text-transform: uppercase; letter-spacing: .04em; margin: 10px 0 4px; }
     input, textarea {
-      width: 100%; background: #0d1b2a; color: #e0e0e0; border: 1px solid #2a3a4a;
+      width: 100%; background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
       border-radius: 6px; padding: 8px; font-size: 13px; resize: vertical;
     }
     textarea.inbound { min-height: 170px; }
     textarea.draft { min-height: 130px; }
     .tones { display: flex; gap: 6px; margin-top: 6px; }
-    .tone { flex: 1; background: #16213e; color: #aaa; border: 1px solid #2a3a4a; border-radius: 6px; padding: 6px; font-size: 12px; cursor: pointer; }
-    .tone.active { background: #00c4a7; color: #1a1a2e; border-color: #00c4a7; }
+    .tone { flex: 1; background: var(--surface); color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 6px; font-size: 12px; cursor: pointer; }
+    .tone.active { background: var(--teal); color: var(--on-accent); border-color: var(--teal); }
     .btn {
-      width: 100%; background: #00c4a7; color: #1a1a2e; border: none; border-radius: 8px;
+      width: 100%; background: var(--teal); color: var(--on-accent); border: none; border-radius: 8px;
       padding: 10px; font-size: 13px; font-weight: 700; cursor: pointer; margin-top: 12px;
     }
-    .btn:hover { background: #00b398; }
-    .btn.secondary { background: #16213e; color: #e0e0e0; border: 1px solid #2a3a4a; }
+    .btn:hover { background: var(--teal-dim); }
+    .btn.secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
     .btn:disabled { opacity: .5; cursor: default; }
     .row { display: flex; gap: 8px; }
     .row .btn { margin-top: 8px; }
@@ -145,22 +156,22 @@
     .badge.high { background: #0f3; color: #052; }
     .badge.medium { background: #fd6; color: #530; }
     .badge.low { background: #f66; color: #500; }
-    .reason { font-size: 11px; color: #888; margin-top: 6px; line-height: 1.4; }
+    .reason { font-size: 11px; color: var(--muted-2); margin-top: 6px; line-height: 1.4; }
     .subject { font-size: 11px; color: #7b9; margin-top: 6px; }
     .meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-    .mbadge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; border: 1px solid #2a3a4a; color: #aaa; }
-    .mbadge.ok { color: #2ecc71; border-color: #2ecc71; }
-    .mbadge.warn { color: #f0ad4e; border-color: #f0ad4e; }
-    .mbadge.accent { color: #00c4a7; border-color: #00c4a7; }
+    .mbadge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); color: var(--muted); }
+    .mbadge.ok { color: var(--success); border-color: var(--success); }
+    .mbadge.warn { color: var(--warn); border-color: var(--warn); }
+    .mbadge.accent { color: var(--teal); border-color: var(--teal); }
     .cands { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-    .cands .chead { font-size: 11px; color: #888; }
-    .cand { text-align: left; background: #0d1b2a; border: 1px solid #2a3a4a; border-radius: 6px; padding: 8px; color: #e0e0e0; cursor: pointer; font-size: 12px; }
-    .cand:hover { border-color: #00b398; }
-    .cand.sel { border-color: #00c4a7; background: rgba(0,196,167,0.08); }
-    .cand .cm { font-size: 10px; color: #888; margin-bottom: 4px; }
-    .cand .cp { color: #aaa; line-height: 1.4; white-space: pre-wrap; }
+    .cands .chead { font-size: 11px; color: var(--muted-2); }
+    .cand { text-align: left; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 8px; color: var(--text); cursor: pointer; font-size: 12px; }
+    .cand:hover { border-color: var(--teal-dim); }
+    .cand.sel { border-color: var(--teal); background: rgba(0,196,167,0.08); }
+    .cand .cm { font-size: 10px; color: var(--muted-2); margin-bottom: 4px; }
+    .cand .cp { color: var(--muted); line-height: 1.4; white-space: pre-wrap; }
     .stars { font-size: 22px; letter-spacing: 2px; margin-top: 4px; }
-    .star { cursor: pointer; color: #444; }
+    .star { cursor: pointer; color: var(--faint); }
     .star.on { color: #fc4; }
     .msg { font-size: 12px; margin-top: 10px; padding: 8px; border-radius: 6px; line-height: 1.4; display: none; }
     .msg.show { display: block; }
@@ -172,12 +183,12 @@
   const MARKUP = `
     <button class="fab" id="fab" title="YouOS draft">&#x2709;</button>
     <div class="panel" id="panel">
-      <div class="hdr"><span class="title">&#x2709;&#xFE0F; YouOS</span><button class="x" id="close">&times;</button></div>
+      <div class="hdr"><span class="title">&#x2709;&#xFE0F; YouOS</span><span class="actions" style="display:flex;gap:4px;align-items:center;"><button class="thm" id="theme" title="Toggle theme" style="background:none;border:none;color:var(--muted-2);font-size:15px;cursor:pointer;line-height:1;">&#x263E;</button><button class="x" id="close">&times;</button></span></div>
 
       <label>Replying to</label>
       <input id="sender" placeholder="sender@example.com" />
 
-      <label>Their message <span id="redetect" style="color:#00c4a7;cursor:pointer;text-transform:none;letter-spacing:0;">re-detect</span></label>
+      <label>Their message <span id="redetect" style="color:var(--teal);cursor:pointer;text-transform:none;letter-spacing:0;">re-detect</span></label>
       <textarea class="inbound" id="inbound" placeholder="Open an email, or paste the message here."></textarea>
 
       <label>Instruction (optional)</label>
@@ -216,10 +227,11 @@
     wrap.innerHTML = MARKUP;
     shadow.append(style, wrap);
     document.body.appendChild(host);
+    try { var _th = localStorage.getItem("youos-theme"); if (_th === "light" || _th === "dark") host.setAttribute("data-theme", _th); } catch (e) {}
 
     const $ = (id) => shadow.getElementById(id);
     els = {
-      fab: $("fab"), panel: $("panel"), close: $("close"),
+      fab: $("fab"), panel: $("panel"), close: $("close"), theme: $("theme"),
       sender: $("sender"), inbound: $("inbound"), instruction: $("instruction"),
       tones: $("tones"), generate: $("generate"), msg: $("msg"),
       result: $("result"), draft: $("draft"), conf: $("conf"), subject: $("subject"),
@@ -227,6 +239,16 @@
       stars: $("stars"), submit: $("submit"), redetect: $("redetect"),
       meta: $("meta"), candidates: $("candidates"),
     };
+
+    function _effTheme() { var a = host.getAttribute("data-theme"); return a || (window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"); }
+    function _themeIcon() { els.theme.textContent = _effTheme() === "dark" ? "\u2600" : "\u263E"; }
+    _themeIcon();
+    els.theme.addEventListener("click", function () {
+      var n = _effTheme() === "dark" ? "light" : "dark";
+      host.setAttribute("data-theme", n);
+      try { localStorage.setItem("youos-theme", n); } catch (e) {}
+      _themeIcon();
+    });
 
     // Tone buttons
     let activeTone = null;
