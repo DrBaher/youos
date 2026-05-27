@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.0-beta.18 — 2026-05-27
+
+### Light mode for the Gmail extension + bookmarklet (and a regression fix)
+Final surface in the light-mode series. The extension's in-Gmail panel (Shadow DOM, injected by `content.js`) and the options page were dark-only; both now follow the OS via `prefers-color-scheme`, with a ☀/☾ toggle in the panel header (persisted in `localStorage`) — same model as the rest of the app. Verified both themes by mounting the real `STYLE`+`MARKUP` in a Shadow-DOM harness. Extension manifests bumped to 0.1.2.
+
+**Regression fix:** beta.17 tokenized all 8 templates, but `login.html` and `draft_popup.html` (the bookmarklet popup) don't link `youos.css`, so their new `var()` tokens were undefined — leaving both pages unstyled. Added the `youos.css` link (and `youos.js` to draft_popup for the toggle); verified the popup renders correctly in both themes.
+
+That completes light mode across all four surfaces: landing (beta.16-era), backend UI (beta.17), and now the extension + bookmarklet.
+
 ## v0.2.0-beta.17 — 2026-05-27
 
 ### Light mode for the backend UI (system default + persisted toggle)
