@@ -1,4 +1,8 @@
-# YouOS ✉️
+<p align="center">
+  <img src="assets/youos-mark.png" width="96" alt="YouOS logo — an envelope whose flap forms a Y">
+</p>
+
+<h1 align="center">YouOS</h1>
 
 > **Your email. Your model. Your style.**
 
