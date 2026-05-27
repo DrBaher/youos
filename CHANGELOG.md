@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.16 — 2026-05-27
+
+### A real logo for YouOS (envelope-flap "Y")
+YouOS had no logo — the landing header was a bare ✉️ emoji and the extension icons were placeholders. Designed a proper mark: **an envelope whose flap forms the "Y" of YouOS**, in the brand teal (`#00c4a7`) on dark navy. It fuses the email meaning with the "this becomes *your* OS" idea, and reads cleanly from a 16px favicon up to the hero.
+- **SVG source of truth**: `assets/youos-mark.svg` (the mark) + `assets/youos-logo.svg` (horizontal lockup with the wordmark — teal "You" + light "OS").
+- **Landing** (`site/index.html`): added a brand lockup at the top of the hero, plus SVG + PNG favicons (`site/youos-mark.svg`, `site/favicon-32.png`).
+- **App**: favicon wired into all 8 templates via `/static/youos-mark.svg` (served from the existing `/static` mount).
+- **Browser extension**: regenerated `extension/icons/icon{16,48,128}.png` (and the Firefox-build copies) from the mark — real icon instead of the placeholder.
+- **README**: replaced the `# YouOS ✉️` emoji heading with the rendered mark.
+
+Each candidate was rendered in a browser and screenshot-verified at favicon through hero sizes before shipping; the chosen "Y" reads as a letterform (narrow flap + extended stem) rather than a plain envelope chevron.
+
 ## v0.2.0-beta.15 — 2026-05-26
 
 ### Documentation revision (docs/ was stale; README config gaps; cruft removed)

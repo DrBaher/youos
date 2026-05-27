@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 236 64" width="236" height="64" role="img" aria-label="YouOS">
+  <defs>
+    <linearGradient id="lk-tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0d1b2a"/>
+      <stop offset="1" stop-color="#0a1628"/>
+    </linearGradient>
+    <linearGradient id="lk-card" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#00d8b8"/>
+      <stop offset="1" stop-color="#00b398"/>
+    </linearGradient>
+  </defs>
+
+  <!-- mark -->
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#lk-tile)"/>
+  <rect x="2.75" y="2.75" width="58.5" height="58.5" rx="14.25" fill="none" stroke="#00c4a7" stroke-opacity="0.22" stroke-width="1.5"/>
+  <rect x="13" y="19" width="38" height="26" rx="4.5" fill="url(#lk-card)"/>
+  <path d="M19 21.5 L32 31 L45 21.5 M32 31 L32 43.5" fill="none" stroke="#0d1b2a" stroke-width="3.8" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- wordmark (for dark surfaces) -->
+  <text x="76" y="43" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="37" font-weight="800" letter-spacing="-1">
+    <tspan fill="#00c4a7">You</tspan><tspan fill="#e6edf3">OS</tspan>
+  </text>
+</svg>
