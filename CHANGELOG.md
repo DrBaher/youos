@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0-beta.17 — 2026-05-27
+
+### Light mode for the backend UI (system default + persisted toggle)
+The app was dark-only. Added a full light theme across all 8 templates, following the same mechanism as the landing: `static/youos.css` now ships a light palette via `@media (prefers-color-scheme: light)` (follows the OS) plus `:root[data-theme="light"|"dark"]` overrides set by a no-flash `<head>` script from `localStorage`, and `static/youos.js` injects a floating ☀/☾ toggle that persists the choice.
+- The templates carried ~500 hardcoded hex colors and used **zero** CSS variables. Tokenized them to the existing `youos.css` tokens — both inside `<style>` blocks and inline `style="…"` attributes (including the first-run tour modal, which is built from inline styles) — while deliberately **not** touching color strings inside `<script>` (JS keeps literal colors). Dark mode is preserved (tokens default to the original values).
+- `login.html` now loads `youos.js` so it gets the toggle too.
+- Verified both themes in a running server via browser render: Draft/Feedback (+ tour modal), Stats, Settings, About, and the Welcome wizard.
+
+Next in the series: the browser extension + bookmarklet.
+
 ## v0.2.0-beta.16 — 2026-05-27
 
 ### A real logo for YouOS (envelope-flap "Y")

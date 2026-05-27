@@ -4,13 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>YouOS — Gmail extension</title>
+<script>(function(){try{var t=localStorage.getItem('youos-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <link rel="icon" type="image/svg+xml" href="/static/youos-mark.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  background: #1a1a2e; color: #e0e0e0; min-height: 100vh;
+  background: var(--bg); color: var(--text); min-height: 100vh;
   display: flex; flex-direction: column; align-items: center;
   padding: 2rem 1rem;
 }
@@ -20,45 +21,45 @@ body {
   width: 100%; max-width: 1100px;
   display: flex; justify-content: space-between; align-items: center;
   padding: 1rem 0 1.5rem; margin-bottom: 1rem;
-  border-bottom: 1px solid #2a3a4a;
+  border-bottom: 1px solid var(--border);
 }
 .oc-logo { display: flex; align-items: center; gap: 0.5rem; }
 .oc-emoji { font-size: 1.4rem; }
-.oc-wordmark { font-size: 1.3rem; font-weight: 700; color: #00c4a7; letter-spacing: -0.02em; }
+.oc-wordmark { font-size: 1.3rem; font-weight: 700; color: var(--teal); letter-spacing: -0.02em; }
 .oc-nav { display: flex; gap: 1.5rem; }
-.oc-nav-link { color: #888; text-decoration: none; font-size: 0.85rem; font-weight: 500; transition: color 0.2s; }
-.oc-nav-link:hover, .oc-nav-link.active { color: #00c4a7; }
+.oc-nav-link { color: var(--muted-2); text-decoration: none; font-size: 0.85rem; font-weight: 500; transition: color 0.2s; }
+.oc-nav-link:hover, .oc-nav-link.active { color: var(--teal); }
 /* Footer */
 .oc-footer {
   width: 100%; max-width: 1100px;
   margin-top: 3rem; padding: 1rem 0;
-  border-top: 1px solid #1e2a3a;
+  border-top: 1px solid var(--surface);
   display: flex; gap: 0.75rem; align-items: center;
-  font-size: 0.75rem; color: #444;
+  font-size: 0.75rem; color: var(--border);
 }
-.oc-footer a { color: #555; text-decoration: none; }
-.oc-footer a:hover { color: #00c4a7; }
+.oc-footer a { color: var(--faint); text-decoration: none; }
+.oc-footer a:hover { color: var(--teal); }
 /* Hero */
 .hero {
   text-align: center; padding: 2.5rem 1rem 2rem;
 }
-.hero-title { font-size: 1.6rem; color: #00c4a7; margin-bottom: 0.6rem; font-weight: 700; }
-.hero-sub { color: #888; font-size: 1rem; margin-bottom: 2rem; }
+.hero-title { font-size: 1.6rem; color: var(--teal); margin-bottom: 0.6rem; font-weight: 700; }
+.hero-sub { color: var(--muted-2); font-size: 1rem; margin-bottom: 2rem; }
 /* Bookmarklet button */
 .bookmarklet-wrap {
   text-align: center; padding: 2rem;
-  background: #16213e; border: 1px solid #333; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 12px;
   margin-bottom: 2rem;
 }
-.bookmarklet-wrap p { color: #888; margin-bottom: 1.2rem; font-size: 0.9rem; }
+.bookmarklet-wrap p { color: var(--muted-2); margin-bottom: 1.2rem; font-size: 0.9rem; }
 .bookmarklet-link {
   display: inline-block; padding: 1rem 2.5rem;
-  background: #00c4a7; color: #1a1a2e; font-weight: 700; font-size: 1.1rem;
+  background: var(--teal); color: var(--bg); font-weight: 700; font-size: 1.1rem;
   border-radius: 8px; text-decoration: none; cursor: grab;
   transition: background 0.2s, transform 0.1s;
   box-shadow: 0 4px 12px rgba(0,196,167,0.2);
 }
-.bookmarklet-link:hover { background: #00b398; transform: translateY(-1px); }
+.bookmarklet-link:hover { background: var(--teal-dim); transform: translateY(-1px); }
 .bookmarklet-link:active { cursor: grabbing; transform: translateY(0); }
 /* Steps */
 .steps-grid {
@@ -67,46 +68,46 @@ body {
 }
 @media (max-width: 600px) { .steps-grid { grid-template-columns: 1fr; } }
 .step-card {
-  background: #16213e; border: 1px solid #333; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 8px;
   padding: 1.5rem 1.2rem; text-align: center;
 }
 .step-num {
   display: inline-flex; align-items: center; justify-content: center;
   width: 36px; height: 36px; border-radius: 50%;
-  background: #00c4a7; color: #1a1a2e; font-weight: 700; font-size: 1rem;
+  background: var(--teal); color: var(--bg); font-weight: 700; font-size: 1rem;
   margin-bottom: 0.8rem;
 }
-.step-title { font-size: 0.95rem; font-weight: 600; color: #e0e0e0; margin-bottom: 0.4rem; }
-.step-desc { font-size: 0.82rem; color: #888; line-height: 1.5; }
+.step-title { font-size: 0.95rem; font-weight: 600; color: var(--text); margin-bottom: 0.4rem; }
+.step-desc { font-size: 0.82rem; color: var(--muted-2); line-height: 1.5; }
 /* How it works */
 .how-card {
-  background: #16213e; border: 1px solid #333; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 8px;
   padding: 1.5rem 2rem; margin-bottom: 1.5rem;
 }
-.how-card h2 { font-size: 1.1rem; color: #00c4a7; margin-bottom: 1rem; }
+.how-card h2 { font-size: 1.1rem; color: var(--teal); margin-bottom: 1rem; }
 .how-card ol { padding-left: 1.2rem; }
-.how-card li { margin-bottom: 0.8rem; line-height: 1.6; color: #bbb; }
-.how-card li strong { color: #e0e0e0; }
+.how-card li { margin-bottom: 0.8rem; line-height: 1.6; color: var(--muted); }
+.how-card li strong { color: var(--text); }
 /* Note */
 .note {
   padding: 0.75rem 1rem;
-  background: #0d1b2a; border-radius: 6px; border-left: 3px solid #7b61ff;
-  font-size: 0.85rem; color: #aaa; line-height: 1.5;
+  background: var(--surface-2); border-radius: 6px; border-left: 3px solid #7b61ff;
+  font-size: 0.85rem; color: var(--muted); line-height: 1.5;
 }
 /* Mockup */
 .mockup-section {
-  background: #16213e; border: 1px solid #333; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 8px;
   padding: 1.5rem 2rem; margin-bottom: 1.5rem; text-align: center;
 }
-.mockup-section h3 { font-size: 0.9rem; color: #888; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; }
+.mockup-section h3 { font-size: 0.9rem; color: var(--muted-2); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 1rem; }
 .mockup-flow {
   display: flex; align-items: center; justify-content: center; gap: 1rem; flex-wrap: wrap;
 }
 .mockup-box {
-  background: #0d1b2a; border: 1px solid #2a3a4a; border-radius: 6px;
-  padding: 0.8rem 1.2rem; font-size: 0.82rem; color: #888;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.8rem 1.2rem; font-size: 0.82rem; color: var(--muted-2);
 }
-.mockup-arrow { color: #00c4a7; font-size: 1.2rem; }
+.mockup-arrow { color: var(--teal); font-size: 1.2rem; }
 </style>
 <link rel="stylesheet" href="/static/youos.css">
 <script src="/static/youos.js" defer></script>
@@ -132,20 +133,20 @@ body {
     <p class="hero-sub">The YouOS extension adds a draft panel right inside Gmail. Install it once; everything stays on your Mac.</p>
   </div>
 
-  <div class="note" style="border-left-color:#00c4a7;margin-bottom:1.5rem;">
+  <div class="note" style="border-left-color:var(--teal);margin-bottom:1.5rem;">
     <strong>✨ Recommended:</strong> the browser extension is more reliable than the bookmarklet — no Gmail markup fragility, works with PIN-protected instances, and lets you generate, insert, and rate drafts without leaving your inbox.
   </div>
 
   <!-- Extension install (primary path) -->
   <div class="bookmarklet-wrap" style="text-align:left;padding:1.5rem 1.75rem;">
-    <h3 style="margin:0 0 0.25rem;color:#00c4a7;">Install the extension — Chrome, Edge, or Brave</h3>
-    <p style="color:#8b98a9;margin:0 0 1rem;font-size:0.9rem;">~1 minute, no app store needed.</p>
+    <h3 style="margin:0 0 0.25rem;color:var(--teal);">Install the extension — Chrome, Edge, or Brave</h3>
+    <p style="color:var(--muted);margin:0 0 1rem;font-size:0.9rem;">~1 minute, no app store needed.</p>
     <ol style="line-height:1.9;margin:0;padding-left:1.2rem;">
       <li><strong>Keep your YouOS server running.</strong> It already is — this page is served by it.</li>
       <li>Open <code>chrome://extensions</code> &nbsp;(or <code>edge://extensions</code> / <code>brave://extensions</code>).</li>
       <li>Turn on <strong>Developer mode</strong> (toggle, top-right).</li>
       <li>Click <strong>Load unpacked</strong> and select this folder:
-        <div style="margin:0.5rem 0;background:#0d1b2a;border:1px solid #2a3a4a;border-radius:6px;padding:0.6rem 0.8rem;font-family:ui-monospace,Menlo,monospace;font-size:0.85rem;color:#e0e0e0;overflow-x:auto;">YOUOS_EXTENSION_PATH</div>
+        <div style="margin:0.5rem 0;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:0.6rem 0.8rem;font-family:ui-monospace,Menlo,monospace;font-size:0.85rem;color:var(--text);overflow-x:auto;">YOUOS_EXTENSION_PATH</div>
       </li>
       <li>Open Gmail and click the teal <strong>✉</strong> button (bottom-right), or the toolbar icon, to open the draft panel.</li>
     </ol>
@@ -175,9 +176,9 @@ body {
   </div>
 
   <!-- Bookmarklet (no-install fallback) -->
-  <details style="margin-top:1.5rem;border:1px solid #2a3a4a;border-radius:8px;padding:0.5rem 1rem;background:#111a2b;">
-    <summary style="cursor:pointer;color:#8b98a9;font-weight:600;">No-install fallback: the bookmarklet</summary>
-    <p style="color:#8b98a9;font-size:0.9rem;">Prefer not to install an extension? Drag this button to your bookmarks bar, then click it on any open Gmail thread. It can break when Gmail changes its markup — the extension doesn't.</p>
+  <details style="margin-top:1.5rem;border:1px solid var(--border);border-radius:8px;padding:0.5rem 1rem;background:#111a2b;">
+    <summary style="cursor:pointer;color:var(--muted);font-weight:600;">No-install fallback: the bookmarklet</summary>
+    <p style="color:var(--muted);font-size:0.9rem;">Prefer not to install an extension? Drag this button to your bookmarks bar, then click it on any open Gmail thread. It can break when Gmail changes its markup — the extension doesn't.</p>
     <div class="bookmarklet-wrap">
       <a class="bookmarklet-link" href="javascript:void(function(){try{var s=document.title.replace(/ - [^-]+@[^-]+ - Gmail.*$/,'').replace(/^Gmail - /,'');var b='';var els=document.querySelectorAll('.a3s.aiL, .a3s.aXjCH, div[data-message-id] .a3s');if(els.length>0){b=els[els.length-1].innerText.substring(0,2000)}else{var gs=document.querySelectorAll('[role=listitem] .ii.gt');if(gs.length>0){b=gs[gs.length-1].innerText.substring(0,2000)}}if(!b){var all=document.querySelectorAll('.ii.gt');if(all.length>0){b=all[all.length-1].innerText.substring(0,2000)}}var f='';var fromEls=document.querySelectorAll('span[email], .gD');if(fromEls.length>0){var last=fromEls[fromEls.length-1];f=last.getAttribute('email')||last.innerText}var p=prompt('Optional reply instruction (e.g. decline politely, suggest Tue 14:00)','');if(p===null){return}var u='YOUOS_BASE_URL/draft-popup?inbound='+encodeURIComponent(b)+'&sender='+encodeURIComponent(f)+'&subject='+encodeURIComponent(s)+'&user_prompt='+encodeURIComponent(p);window.open(u,'youos_draft','width=440,height=760')}catch(e){alert('YouOS error: '+e.message)}})()">&#x1F4E7; YouOS Draft</a>
     </div>
