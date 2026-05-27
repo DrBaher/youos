@@ -4,13 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>YouOS — About</title>
+<script>(function(){try{var t=localStorage.getItem('youos-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <link rel="icon" type="image/svg+xml" href="/static/youos-mark.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  background: #1a1a2e; color: #e0e0e0; min-height: 100vh;
+  background: var(--bg); color: var(--text); min-height: 100vh;
   display: flex; flex-direction: column; align-items: center;
   padding: 2rem 1rem;
 }
@@ -20,14 +21,14 @@ body {
   width: 100%; max-width: 800px;
   display: flex; justify-content: space-between; align-items: center;
   padding: 1rem 0 1.5rem; margin-bottom: 1rem;
-  border-bottom: 1px solid #2a3a4a;
+  border-bottom: 1px solid var(--border);
 }
 .oc-logo { display: flex; align-items: center; gap: 0.5rem; }
 .oc-emoji { font-size: 1.4rem; }
-.oc-wordmark { font-size: 1.3rem; font-weight: 700; color: #00c4a7; letter-spacing: -0.02em; }
+.oc-wordmark { font-size: 1.3rem; font-weight: 700; color: var(--teal); letter-spacing: -0.02em; }
 .oc-nav { display: flex; gap: 1.5rem; }
-.oc-nav-link { color: #888; text-decoration: none; font-size: 0.85rem; font-weight: 500; transition: color 0.2s; }
-.oc-nav-link:hover, .oc-nav-link.active { color: #00c4a7; }
+.oc-nav-link { color: var(--muted-2); text-decoration: none; font-size: 0.85rem; font-weight: 500; transition: color 0.2s; }
+.oc-nav-link:hover, .oc-nav-link.active { color: var(--teal); }
 @media (max-width: 768px) {
   .oc-header { flex-wrap: wrap; gap: 0.5rem; }
   .oc-nav { gap: 1rem; }
@@ -36,76 +37,76 @@ body {
 .oc-footer {
   width: 100%; max-width: 1100px;
   margin-top: 3rem; padding: 1rem 0;
-  border-top: 1px solid #1e2a3a;
+  border-top: 1px solid var(--surface);
   display: flex; gap: 0.75rem; align-items: center;
-  font-size: 0.75rem; color: #444;
+  font-size: 0.75rem; color: var(--border);
 }
-.oc-footer a { color: #555; text-decoration: none; }
-.oc-footer a:hover { color: #00c4a7; }
+.oc-footer a { color: var(--faint); text-decoration: none; }
+.oc-footer a:hover { color: var(--teal); }
 /* Sections */
 .section { margin-bottom: 2.5rem; }
 .section-title {
-  font-size: 1.1rem; color: #00c4a7; font-weight: 700;
-  border-bottom: 1px solid #1e3a4a; padding-bottom: 0.5rem;
+  font-size: 1.1rem; color: var(--teal); font-weight: 700;
+  border-bottom: 1px solid var(--surface); padding-bottom: 0.5rem;
   margin-bottom: 1rem;
 }
 /* Hero */
 .hero { text-align: center; padding: 2.5rem 0 2rem; }
 .hero-emoji { font-size: 2.5rem; margin-bottom: 0.5rem; }
-.hero-title { font-size: 1.8rem; color: #00c4a7; font-weight: 700; margin-bottom: 0.4rem; }
-.hero-sub { color: #aaa; font-size: 1rem; margin-bottom: 0.3rem; }
-.hero-tagline { color: #888; font-size: 0.9rem; margin-bottom: 1.5rem; }
+.hero-title { font-size: 1.8rem; color: var(--teal); font-weight: 700; margin-bottom: 0.4rem; }
+.hero-sub { color: var(--muted); font-size: 1rem; margin-bottom: 0.3rem; }
+.hero-tagline { color: var(--muted-2); font-size: 0.9rem; margin-bottom: 1.5rem; }
 .hero-link {
   display: inline-block; padding: 0.6rem 1.4rem;
-  background: transparent; border: 1px solid #00c4a7; color: #00c4a7;
+  background: transparent; border: 1px solid var(--teal); color: var(--teal);
   border-radius: 6px; text-decoration: none; font-size: 0.9rem; font-weight: 600;
   transition: background 0.2s, color 0.2s;
 }
-.hero-link:hover { background: #00c4a7; color: #1a1a2e; }
+.hero-link:hover { background: var(--teal); color: var(--bg); }
 /* Prose */
-.prose { color: #bbb; line-height: 1.7; font-size: 0.92rem; }
+.prose { color: var(--muted); line-height: 1.7; font-size: 0.92rem; }
 .prose p { margin-bottom: 1rem; }
 /* Flow diagram — a clean vertical pipeline + a separated self-improving loop */
 .flow-chain { display: flex; flex-direction: column; align-items: center; gap: 0; }
 .flow-box {
-  border: 1px solid #2a3a4a; border-radius: 10px; padding: 0.7rem 1.1rem;
-  background: #0d1b2a; text-align: center; font-size: 0.9rem; color: #e0e0e0;
+  border: 1px solid var(--border); border-radius: 10px; padding: 0.7rem 1.1rem;
+  background: var(--surface-2); text-align: center; font-size: 0.9rem; color: var(--text);
   width: 320px; max-width: 90vw;
 }
-.flow-box.accent { border-color: #00c4a7; }
-.flow-box.final { border-color: #2ecc71; background: #0e2417; font-weight: 600; }
-.flow-box small { display: block; color: #8b98a9; font-size: 0.76rem; margin-top: 0.25rem; font-weight: 400; }
-.flow-arrow { color: #00c4a7; font-size: 1.2rem; line-height: 1; padding: 0.35rem 0; }
+.flow-box.accent { border-color: var(--teal); }
+.flow-box.final { border-color: var(--success); background: #0e2417; font-weight: 600; }
+.flow-box small { display: block; color: var(--muted); font-size: 0.76rem; margin-top: 0.25rem; font-weight: 400; }
+.flow-arrow { color: var(--teal); font-size: 1.2rem; line-height: 1; padding: 0.35rem 0; }
 /* Self-improving loop strip */
 .flow-loop {
   margin-top: 1.6rem; padding: 1.2rem 1rem 1rem; width: 100%; max-width: 760px;
-  border: 1px dashed #2a3a4a; border-radius: 12px; background: rgba(0,196,167,0.035);
+  border: 1px dashed var(--border); border-radius: 12px; background: rgba(0,196,167,0.035);
 }
 .flow-loop-title {
-  text-align: center; color: #00c4a7; font-size: 0.82rem; font-weight: 600;
+  text-align: center; color: var(--teal); font-size: 0.82rem; font-weight: 600;
   letter-spacing: 0.03em; text-transform: uppercase; margin-bottom: 1rem;
 }
 .flow-loop-row { display: flex; align-items: stretch; justify-content: center; gap: 0.6rem; flex-wrap: wrap; }
 .flow-loop-row .flow-box { width: 210px; }
-.flow-loop-arrow { display: flex; align-items: center; color: #00c4a7; font-size: 1.1rem; }
-.flow-loop-note { text-align: center; color: #8b98a9; font-size: 0.78rem; line-height: 1.5; margin-top: 1rem; }
-.flow-loop-note strong { color: #00c4a7; }
+.flow-loop-arrow { display: flex; align-items: center; color: var(--teal); font-size: 1.1rem; }
+.flow-loop-note { text-align: center; color: var(--muted); font-size: 0.78rem; line-height: 1.5; margin-top: 1rem; }
+.flow-loop-note strong { color: var(--teal); }
 /* Privacy table */
 .privacy-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
 .privacy-table th {
-  text-align: left; color: #00c4a7; font-weight: 600; padding: 0.6rem 0.8rem;
-  border-bottom: 1px solid #1e3a4a;
+  text-align: left; color: var(--teal); font-weight: 600; padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid var(--surface);
 }
-.privacy-table td { padding: 0.6rem 0.8rem; color: #bbb; }
-.privacy-table tr:nth-child(even) td { background: #0d1b2a; }
-.privacy-table tr:nth-child(odd) td { background: #16213e; }
+.privacy-table td { padding: 0.6rem 0.8rem; color: var(--muted); }
+.privacy-table tr:nth-child(even) td { background: var(--surface-2); }
+.privacy-table tr:nth-child(odd) td { background: var(--surface); }
 .privacy-note {
   margin-top: 1rem; padding: 0.75rem 1rem;
-  background: #0d1b2a; border-radius: 6px; border-left: 3px solid #00c4a7;
-  font-size: 0.85rem; color: #aaa; line-height: 1.5;
+  background: var(--surface-2); border-radius: 6px; border-left: 3px solid var(--teal);
+  font-size: 0.85rem; color: var(--muted); line-height: 1.5;
 }
 /* Autoresearch list */
-.ar-list { padding-left: 1.2rem; color: #bbb; font-size: 0.92rem; line-height: 1.8; }
+.ar-list { padding-left: 1.2rem; color: var(--muted); font-size: 0.92rem; line-height: 1.8; }
 .ar-list li { margin-bottom: 0.3rem; }
 /* Tech stack grid */
 .tech-grid {
@@ -113,23 +114,23 @@ body {
 }
 @media (max-width: 500px) { .tech-grid { grid-template-columns: 1fr; } }
 .tech-card {
-  background: #16213e; border: 1px solid #333; border-radius: 8px;
+  background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 8px;
   padding: 0.8rem 1rem; font-size: 0.88rem;
 }
-.tech-card strong { color: #00c4a7; }
-.tech-card span { color: #bbb; }
-.card-bullets { margin: 0.5rem 0 0; padding-left: 1.1rem; color: #bbb; font-size: 0.84rem; line-height: 1.7; }
+.tech-card strong { color: var(--teal); }
+.tech-card span { color: var(--muted); }
+.card-bullets { margin: 0.5rem 0 0; padding-left: 1.1rem; color: var(--muted); font-size: 0.84rem; line-height: 1.7; }
 .card-bullets li { margin-bottom: 0.15rem; }
 /* FAQ */
 .faq-item { margin-bottom: 1rem; }
 .faq-q {
-  color: #00c4a7; font-weight: 600; font-size: 0.92rem;
+  color: var(--teal); font-weight: 600; font-size: 0.92rem;
   cursor: pointer; padding: 0.5rem 0; user-select: none;
 }
-.faq-q::before { content: '+ '; color: #555; }
+.faq-q::before { content: '+ '; color: var(--faint); }
 .faq-q.open::before { content: '- '; }
 .faq-a {
-  display: none; color: #bbb; font-size: 0.88rem; line-height: 1.6;
+  display: none; color: var(--muted); font-size: 0.88rem; line-height: 1.6;
   padding: 0.3rem 0 0.5rem 1rem;
 }
 .faq-a.open { display: block; }
@@ -140,10 +141,10 @@ body {
   border-radius: 6px; text-decoration: none; font-size: 0.9rem; font-weight: 600;
   transition: background 0.2s, color 0.2s;
 }
-.cta-primary { background: #00c4a7; color: #1a1a2e; }
-.cta-primary:hover { background: #00b398; }
-.cta-secondary { background: transparent; border: 1px solid #00c4a7; color: #00c4a7; }
-.cta-secondary:hover { background: #00c4a7; color: #1a1a2e; }
+.cta-primary { background: var(--teal); color: var(--bg); }
+.cta-primary:hover { background: var(--teal-dim); }
+.cta-secondary { background: transparent; border: 1px solid var(--teal); color: var(--teal); }
+.cta-secondary:hover { background: var(--teal); color: var(--bg); }
 </style>
 <link rel="stylesheet" href="/static/youos.css">
 <script src="/static/youos.js" defer></script>
@@ -219,7 +220,7 @@ body {
           <li>Confidence scoring (0.4–0.9) with negation awareness; LLM fallback for unstructured notes</li>
           <li>Deduplication and fact merging on save — no duplicate facts accumulate</li>
           <li>Auto-injected into draft prompts for context-aware replies</li>
-          <li>CRUD API at <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">/api/facts</code> — also editable via the Facts tab in the web UI</li>
+          <li>CRUD API at <code style="background:var(--surface-2);padding:0.1rem 0.3rem;border-radius:4px;color:var(--teal);">/api/facts</code> — also editable via the Facts tab in the web UI</li>
         </ul>
       </div>
       <div class="tech-card">
@@ -239,7 +240,7 @@ body {
           <li>Review Queue optimized for fast sequential review (submit/skip, rating, keyboard shortcuts)</li>
           <li>Per-draft model badge + a "Drafting with" health row — always see whether your LoRA, the base model, or the cloud wrote a draft</li>
           <li>History tab with intent and confidence badges</li>
-          <li>CLI: <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">youos doctor</code>, <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">youos corpus</code>, <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">youos eval --golden</code>, <code style="background:#0d1b2a;padding:0.1rem 0.3rem;border-radius:4px;color:#00c4a7;">youos compare-models</code></li>
+          <li>CLI: <code style="background:var(--surface-2);padding:0.1rem 0.3rem;border-radius:4px;color:var(--teal);">youos doctor</code>, <code style="background:var(--surface-2);padding:0.1rem 0.3rem;border-radius:4px;color:var(--teal);">youos corpus</code>, <code style="background:var(--surface-2);padding:0.1rem 0.3rem;border-radius:4px;color:var(--teal);">youos eval --golden</code>, <code style="background:var(--surface-2);padding:0.1rem 0.3rem;border-radius:4px;color:var(--teal);">youos compare-models</code></li>
           <li>Mobile-friendly and rate-limited</li>
         </ul>
       </div>
@@ -309,7 +310,7 @@ body {
       <li>Fine-tunes the local Qwen model if enough new pairs exist</li>
       <li>Runs 80 optimisation experiments &mdash; testing retrieval weights, sender-type boosts, prompt variants, and composite score weights</li>
       <li>Keeps changes that improve your benchmark score, reverts changes that don't</li>
-      <li>Composite score weights are configurable in <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">configs/autoresearch.yaml</code> — tune pass_rate vs keyword vs confidence emphasis</li>
+      <li>Composite score weights are configurable in <code style="background:var(--surface-2);padding:0.1rem 0.4rem;border-radius:4px;color:var(--teal);">configs/autoresearch.yaml</code> — tune pass_rate vs keyword vs confidence emphasis</li>
       <li>Writes a structured JSONL run log — benchmark trends visible in the Stats dashboard</li>
       <li>High-quality feedback pairs (high rating, low edit distance) surface higher in future retrievals automatically</li>
       <li>Auto-feedback lookback window adapts to actual elapsed time — no missed pairs after a gap</li>
@@ -322,10 +323,10 @@ body {
   <!-- Supported models -->
   <div class="section">
     <h2 class="section-title">Supported models</h2>
-    <p style="color:#888;font-size:0.88rem;margin-bottom:1rem;">YouOS uses a local Qwen model fine-tuned on your emails. Choose based on your available RAM.</p>
+    <p style="color:var(--muted-2);font-size:0.88rem;margin-bottom:1rem;">YouOS uses a local Qwen model fine-tuned on your emails. Choose based on your available RAM.</p>
     <table style="width:100%;border-collapse:collapse;font-size:0.85rem;">
       <thead>
-        <tr style="border-bottom:1px solid #2a3a4a;color:#aaa;text-align:left;">
+        <tr style="border-bottom:1px solid var(--border);color:var(--muted);text-align:left;">
           <th style="padding:0.5rem 0.8rem;">Model</th>
           <th style="padding:0.5rem 0.8rem;">RAM</th>
           <th style="padding:0.5rem 0.8rem;">Speed</th>
@@ -334,37 +335,37 @@ body {
         </tr>
       </thead>
       <tbody>
-        <tr style="border-bottom:1px solid #1e2a3a;">
-          <td style="padding:0.5rem 0.8rem;color:#00c4a7;font-weight:600;">Qwen2.5-1.5B-Instruct</td>
-          <td style="padding:0.5rem 0.8rem;color:#bbb;">8GB+</td>
+        <tr style="border-bottom:1px solid var(--surface);">
+          <td style="padding:0.5rem 0.8rem;color:var(--teal);font-weight:600;">Qwen2.5-1.5B-Instruct</td>
+          <td style="padding:0.5rem 0.8rem;color:var(--muted);">8GB+</td>
           <td style="padding:0.5rem 0.8rem;">⚡ Fast</td>
           <td style="padding:0.5rem 0.8rem;">★★★</td>
-          <td style="padding:0.5rem 0.8rem;color:#888;">Default</td>
+          <td style="padding:0.5rem 0.8rem;color:var(--muted-2);">Default</td>
         </tr>
-        <tr style="border-bottom:1px solid #1e2a3a;background:#0a1628;">
-          <td style="padding:0.5rem 0.8rem;color:#00c4a7;font-weight:600;">Qwen2.5-3B-Instruct</td>
-          <td style="padding:0.5rem 0.8rem;color:#bbb;">16GB+</td>
+        <tr style="border-bottom:1px solid var(--surface);background:#0a1628;">
+          <td style="padding:0.5rem 0.8rem;color:var(--teal);font-weight:600;">Qwen2.5-3B-Instruct</td>
+          <td style="padding:0.5rem 0.8rem;color:var(--muted);">16GB+</td>
           <td style="padding:0.5rem 0.8rem;">⚡ Fast</td>
           <td style="padding:0.5rem 0.8rem;">★★★★</td>
-          <td style="padding:0.5rem 0.8rem;color:#00c4a7;">Recommended</td>
+          <td style="padding:0.5rem 0.8rem;color:var(--teal);">Recommended</td>
         </tr>
-        <tr style="border-bottom:1px solid #1e2a3a;">
-          <td style="padding:0.5rem 0.8rem;color:#00c4a7;font-weight:600;">Qwen2.5-7B-Instruct</td>
-          <td style="padding:0.5rem 0.8rem;color:#bbb;">16GB+</td>
+        <tr style="border-bottom:1px solid var(--surface);">
+          <td style="padding:0.5rem 0.8rem;color:var(--teal);font-weight:600;">Qwen2.5-7B-Instruct</td>
+          <td style="padding:0.5rem 0.8rem;color:var(--muted);">16GB+</td>
           <td style="padding:0.5rem 0.8rem;">★ Slower</td>
           <td style="padding:0.5rem 0.8rem;">★★★★★</td>
-          <td style="padding:0.5rem 0.8rem;color:#888;">Best quality</td>
+          <td style="padding:0.5rem 0.8rem;color:var(--muted-2);">Best quality</td>
         </tr>
         <tr style="background:#0a1628;">
-          <td style="padding:0.5rem 0.8rem;color:#00c4a7;font-weight:600;">Ollama (any model)</td>
-          <td style="padding:0.5rem 0.8rem;color:#bbb;">Varies</td>
+          <td style="padding:0.5rem 0.8rem;color:var(--teal);font-weight:600;">Ollama (any model)</td>
+          <td style="padding:0.5rem 0.8rem;color:var(--muted);">Varies</td>
           <td style="padding:0.5rem 0.8rem;">Varies</td>
           <td style="padding:0.5rem 0.8rem;">Varies</td>
-          <td style="padding:0.5rem 0.8rem;color:#00c4a7;">Supported</td>
+          <td style="padding:0.5rem 0.8rem;color:var(--teal);">Supported</td>
         </tr>
       </tbody>
     </table>
-    <p style="color:#666;font-size:0.78rem;margin-top:0.8rem;">Switch models: <code style="background:#0d1b2a;padding:0.1rem 0.4rem;border-radius:4px;color:#00c4a7;">youos model set Qwen/Qwen2.5-3B-Instruct</code></p>
+    <p style="color:var(--faint);font-size:0.78rem;margin-top:0.8rem;">Switch models: <code style="background:var(--surface-2);padding:0.1rem 0.4rem;border-radius:4px;color:var(--teal);">youos model set Qwen/Qwen2.5-3B-Instruct</code></p>
   </div>
 
   <!-- Tech stack -->
@@ -406,7 +407,7 @@ body {
     </div>
     <div class="faq-item">
       <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Is this an OpenClaw skill?</div>
-      <div class="faq-a">Yes. Install via <code>clawhub install youos</code> or from <a href="https://github.com/DrBaher/youos" style="color:#00c4a7;">github.com/DrBaher/youos</a>.</div>
+      <div class="faq-a">Yes. Install via <code>clawhub install youos</code> or from <a href="https://github.com/DrBaher/youos" style="color:var(--teal);">github.com/DrBaher/youos</a>.</div>
     </div>
     <div class="faq-item">
       <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Can I use WhatsApp messages to train my model?</div>
@@ -498,7 +499,7 @@ body {
     </div>
     <div class="faq-item">
       <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">How do I draft inside Gmail?</div>
-      <div class="faq-a">Install the <strong>YouOS browser extension</strong> (Chrome / Edge / Brave) — the <a href="/bookmarklet" style="color:#00c4a7;">Gmail page</a> has one-click install steps. It adds a panel to Gmail that auto-detects the message, drafts a reply in your voice, inserts it into the reply box, and lets you rate it. A bookmarklet fallback is also available.</div>
+      <div class="faq-a">Install the <strong>YouOS browser extension</strong> (Chrome / Edge / Brave) — the <a href="/bookmarklet" style="color:var(--teal);">Gmail page</a> has one-click install steps. It adds a panel to Gmail that auto-detects the message, drafts a reply in your voice, inserts it into the reply box, and lets you rate it. A bookmarklet fallback is also available.</div>
     </div>
     <div class="faq-item">
       <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Why is it called BaherOS / what's "&lt;your&gt;OS"?</div>

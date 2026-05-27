@@ -4,41 +4,42 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>YouOS — Set up</title>
+<script>(function(){try{var t=localStorage.getItem('youos-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <link rel="icon" type="image/svg+xml" href="/static/youos-mark.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; line-height: 1.55; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.55; }
   .wrap { max-width: 640px; margin: 0 auto; padding: 40px 24px 64px; }
-  .brand { color: #00c4a7; font-weight: 700; font-size: 1.15rem; margin-bottom: 24px; }
+  .brand { color: var(--teal); font-weight: 700; font-size: 1.15rem; margin-bottom: 24px; }
   .steps-bar { display: flex; gap: 6px; margin-bottom: 28px; }
-  .step-dot { flex: 1; height: 4px; border-radius: 2px; background: #2a3a4a; }
-  .step-dot.done { background: #0a8f7c; }
-  .step-dot.active { background: #00c4a7; }
-  .card { background: #16213e; border: 1px solid #2a3a4a; border-radius: 14px; padding: 28px; }
+  .step-dot { flex: 1; height: 4px; border-radius: 2px; background: var(--border); }
+  .step-dot.done { background: var(--teal-dim); }
+  .step-dot.active { background: var(--teal); }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px; }
   .step { display: none; }
   .step.active { display: block; }
-  .step h1 { font-size: 1.4rem; color: #00c4a7; margin-bottom: 6px; }
-  .step .lead { color: #aaa; font-size: 0.92rem; margin-bottom: 18px; }
-  label.field { display: block; font-size: 0.8rem; color: #888; text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 5px; }
-  input, select, textarea { width: 100%; background: #0d1b2a; color: #e0e0e0; border: 1px solid #2a3a4a; border-radius: 6px; padding: 9px; font-size: 0.9rem; }
-  .cmd { background: #0d1b2a; border: 1px solid #2a3a4a; border-radius: 6px; padding: 10px 12px; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 0.85rem; color: #00c4a7; margin: 10px 0; overflow-x: auto; }
-  .hint { color: #888; font-size: 0.82rem; margin-top: 8px; }
+  .step h1 { font-size: 1.4rem; color: var(--teal); margin-bottom: 6px; }
+  .step .lead { color: var(--muted); font-size: 0.92rem; margin-bottom: 18px; }
+  label.field { display: block; font-size: 0.8rem; color: var(--muted-2); text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 5px; }
+  input, select, textarea { width: 100%; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 9px; font-size: 0.9rem; }
+  .cmd { background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 0.85rem; color: var(--teal); margin: 10px 0; overflow-x: auto; }
+  .hint { color: var(--muted-2); font-size: 0.82rem; margin-top: 8px; }
   .status { font-size: 0.85rem; margin-top: 12px; }
-  .status.ok { color: #2ecc71; }
-  .status.pending { color: #f0ad4e; }
-  .btn { background: #00c4a7; color: #1a1a2e; border: none; border-radius: 8px; padding: 10px 18px; font-size: 0.9rem; font-weight: 700; cursor: pointer; }
-  .btn:hover { background: #00b398; }
-  .btn.secondary { background: transparent; color: #aaa; border: 1px solid #2a3a4a; }
-  .btn.link { background: transparent; color: #00c4a7; border: 1px solid #0a8f7c; }
+  .status.ok { color: var(--success); }
+  .status.pending { color: var(--warn); }
+  .btn { background: var(--teal); color: var(--bg); border: none; border-radius: 8px; padding: 10px 18px; font-size: 0.9rem; font-weight: 700; cursor: pointer; }
+  .btn:hover { background: var(--teal-dim); }
+  .btn.secondary { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .btn.link { background: transparent; color: var(--teal); border: 1px solid var(--teal-dim); }
   .nav { display: flex; justify-content: space-between; align-items: center; margin-top: 24px; }
-  .save-note { font-size: 0.8rem; color: #2ecc71; min-height: 1em; }
-  .backend-help { display: none; background: #0d1b2a; border-radius: 6px; padding: 12px; margin-top: 12px; font-size: 0.85rem; color: #ccc; }
+  .save-note { font-size: 0.8rem; color: var(--success); min-height: 1em; }
+  .backend-help { display: none; background: var(--surface-2); border-radius: 6px; padding: 12px; margin-top: 12px; font-size: 0.85rem; color: var(--muted); }
   .backend-help.show { display: block; }
-  .explain { background: #0d1b2a; border-left: 3px solid #0a8f7c; border-radius: 0 6px 6px 0; padding: 11px 13px; margin: 14px 0; font-size: 0.84rem; color: #b9c4cf; line-height: 1.5; }
-  .explain b { color: #e0e0e0; }
-  ul { margin: 6px 0 0 18px; color: #aaa; font-size: 0.85rem; }
-  a { color: #00c4a7; }
+  .explain { background: var(--surface-2); border-left: 3px solid var(--teal-dim); border-radius: 0 6px 6px 0; padding: 11px 13px; margin: 14px 0; font-size: 0.84rem; color: var(--muted); line-height: 1.5; }
+  .explain b { color: var(--text); }
+  ul { margin: 6px 0 0 18px; color: var(--muted); font-size: 0.85rem; }
+  a { color: var(--teal); }
 </style>
 <link rel="stylesheet" href="/static/youos.css">
 <script src="/static/youos.js" defer></script>
