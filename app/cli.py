@@ -570,6 +570,69 @@ def compare_models(
 
 
 @app.command()
+def triage(
+    account: str = typer.Option(None, "--account", help="Account email (defaults to the first configured)"),
+    window: str = typer.Option("3d", "--window", help="Gmail search window: '3d', '7d', '24h'"),
+    limit: int = typer.Option(8, "--limit", help="Max unread threads to fetch"),
+    threshold: float = typer.Option(0.6, "--threshold", help="Needs-reply score cutoff [0..1]"),
+    backend: str = typer.Option(None, "--backend", help="Override ingestion backend: gog | gws | native"),
+):
+    """One-shot agent triage: fetch unread → filter → draft (Phase 1, dry-run only).
+
+    Reads your unread inbox via the configured Google backend, filters out
+    newsletters/automation, runs needs-reply scoring on the rest, and drafts
+    replies for the survivors using the same generation pipeline /feedback uses.
+
+    **No persistence, no notifications, no Gmail writes** — Phase 1 is purely
+    "show me what the agent would do." Persistence + UI ship in the next PR.
+    """
+    import textwrap
+
+    from app.agent.triage import run_triage
+    from app.core.config import get_user_emails
+
+    if not account:
+        emails = get_user_emails()
+        if not emails:
+            typer.echo("No account configured. Pass --account <email> or set user.emails in youos_config.yaml.", err=True)
+            raise typer.Exit(2)
+        account = emails[0]
+
+    typer.echo(f"━━ Triage  account={account}  window={window}  limit={limit}  threshold={threshold:.2f} ━━\n")
+    try:
+        result = run_triage(account=account, window=window, limit=limit, threshold=threshold, backend=backend)
+    except Exception as exc:
+        typer.echo(f"triage failed: {type(exc).__name__}: {exc}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(
+        f"fetched={result.fetched}  kept={result.kept}  skipped={len(result.skipped)}\n"
+    )
+
+    for d in result.drafts:
+        m, v = d.message, d.verdict
+        flag = "⚠ cold" if v.cold_outreach else "  "
+        typer.echo(f"━━ [{v.score:.2f}] {flag} {m.subject!r}")
+        typer.echo(f"      from: {m.sender}")
+        typer.echo(f"      reasons: {', '.join(v.reasons) or '(no positive signals)'}")
+        if d.error:
+            typer.echo(f"      ERROR: {d.error}")
+        else:
+            extras = f"  repairs={d.repairs}" if d.repairs else ""
+            typer.echo(f"      model: {d.model_used}{extras}")
+            typer.echo(f"      draft: {textwrap.shorten(d.draft or '', 260, placeholder='…')}")
+        typer.echo("")
+
+    if result.skipped:
+        typer.echo(f"━━ skipped ({len(result.skipped)}) ━━")
+        for m, v in result.skipped:
+            typer.echo(f"  · {m.subject!r}  ←  {', '.join(v.reasons) or '(low score)'}")
+        typer.echo("")
+
+    typer.echo("(dry-run only — no drafts persisted, nothing pushed to Gmail. Phase 1.)")
+
+
+@app.command()
 def serve():
     """Start the YouOS web server."""
     from app.core.config import get_server_host, get_server_port
