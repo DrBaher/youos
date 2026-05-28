@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.2.0-beta.51 — 2026-05-28
+
+### Filter quality: transactional templates no longer false-positive
+
+A real-world QA case from b50 live testing — an "Ali Barber Shop Booking Confirmation" hit score 0.60 (base 0.5 + `imperative verb present` 0.10, exactly at threshold) and got auto-drafted. The drafted reply was a paraphrase of the confirmation itself — wrong response to a transactional acknowledgement, and a waste of the agent's daily budget.
+
+**New detector**: `TRANSACTIONAL_TEMPLATE_PAT` matches confirmation/receipt patterns in subject or body:
+- Subject lines: `booking confirmation` · `order confirmation` · `appointment confirmation` · `reservation confirmation` · `receipt for` · `payment (received|confirmation)` · `delivery scheduled` · `order (placed|received|shipped)`
+- Body openings: `Your (appointment|booking|order|reservation|payment|purchase|delivery|subscription|trip|flight|hotel) (is|has been) (confirmed|booked|scheduled|received|placed|shipped|processed|ready)`
+
+**Effect** (soft penalty, not hard skip — a "could we reschedule?" reply quoting one of these phrases shouldn't be silenced):
+- Subject match: **−0.25**
+- Body match (first 500 chars): **−0.20**
+- Imperative-verb bonus is **suppressed** when the template detector fires (imperative verbs like "looking forward to see you" are template noise, not requests for action)
+
+Re-classified the Ali Barber row after the fix:
+```
+score: 0.35 (was 0.60)
+needs_reply: False
+surface_for_review: True
+reasons:
+  · transactional template (subject)
+  · imperative verb present — suppressed (transactional)
+  · short body (41 words)
+```
+
+Still visible if you want to act on it, but the agent won't draft for it.
+
+**Tests** (`tests/test_agent_needs_reply.py`) — 4 new:
+- Ali Barber row pinned (subject-pattern path, score < 0.6, surface_for_review = True)
+- Body-only template phrase ("Your reservation has been confirmed")
+- False-positive guard — human reply mentioning "booking" without template phrasing keeps full score
+- Order-receipt pattern (Amazon-style)
+
+All 23 needs_reply tests pass.
+
 ## v0.2.0-beta.50 — 2026-05-28
 
 ### Test isolation: 4 model tests now reliable on dev machines with a warm mlx_lm.server
