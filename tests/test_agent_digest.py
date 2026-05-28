@@ -123,6 +123,50 @@ def test_format_html_renders_skeleton_markup(db_url):
     assert "spam@noise.com" in out
 
 
+def test_summary_line_fits_chat_bubble(db_url):
+    """b59: the one-liner the orchestrator paraphrases must be ≤120 chars
+    so it fits a Telegram/WhatsApp bubble cleanly."""
+    _seed(db_url)
+    from app.agent.digest import build_digest, summary_line
+
+    d = build_digest(database_url=db_url, account="you@x.com", days=7)
+    line = summary_line(d)
+    assert len(line) <= 120
+    assert "YouOS" in line
+    assert "pending" in line
+    assert "dismissed" in line
+
+
+def test_chat_format_includes_pending_row_ids_for_action_targeting(db_url):
+    """b59: the chat format must surface row ids so an orchestrator can
+    issue follow-up POSTs (.../pending/{id}/push_to_gmail, etc.).
+    Without ids, 'push #12' has nothing to dispatch to."""
+    _seed(db_url)
+    from app.agent.digest import build_digest, format_digest
+
+    d = build_digest(database_url=db_url, account="you@x.com", days=7)
+    chat = format_digest(d, fmt="chat")
+    # First line is the headline summary.
+    assert chat.startswith("YouOS")
+    # Pending rows are listed with row-id prefix for action handle.
+    assert "#" in chat
+    # The headline contains the counts the orchestrator paraphrases.
+    assert "pending" in chat
+
+
+def test_json_format_includes_summary_field(db_url):
+    """b59: orchestrators read the ``summary`` field first to emit a
+    single-bubble headline; expose it at the top level."""
+    _seed(db_url)
+    from app.agent.digest import build_digest, format_digest
+
+    d = build_digest(database_url=db_url, account="you@x.com", days=7)
+    out = format_digest(d, fmt="json")
+    parsed = json.loads(out)
+    assert "summary" in parsed
+    assert parsed["summary"].startswith("YouOS")
+
+
 def test_empty_state_produces_clean_digest(db_url):
     """No audit rows, no pending — digest should still be valid + parseable."""
     from app.agent.digest import build_digest, format_digest
