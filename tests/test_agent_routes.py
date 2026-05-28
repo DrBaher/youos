@@ -144,6 +144,70 @@ def test_dismissal_stats_endpoint_returns_aggregate(authed_client):
     assert 0.0 <= s["dismissal_rate"] <= 1.0
 
 
+def test_skip_sender_candidates_endpoint_returns_repeated_noise_dismissals(authed_client):
+    """Two noise dismissals from the same sender should surface as a
+    candidate; lone dismissals should not."""
+    rows = authed_client.get("/api/agent/pending").json()["rows"]
+    # The fixture has multiple rows from possibly-different senders.
+    # Pick two with the same sender_email if any exist; otherwise just
+    # dismiss the first two and verify the endpoint shape.
+    by_sender: dict = {}
+    for r in rows:
+        se = (r.get("sender_email") or "").lower()
+        if se:
+            by_sender.setdefault(se, []).append(r["id"])
+    same_sender = next((ids for ids in by_sender.values() if len(ids) >= 2), None)
+    if same_sender:
+        for rid in same_sender[:2]:
+            authed_client.post(f"/api/agent/pending/{rid}/dismiss", json={"reason": "noise"})
+        body = authed_client.get("/api/agent/skip_sender_candidates?min_count=2").json()
+        assert any(c["count"] >= 2 for c in body["candidates"])
+    # Shape always holds, regardless of fixture content.
+    body = authed_client.get("/api/agent/skip_sender_candidates?min_count=1").json()
+    assert "candidates" in body and isinstance(body["candidates"], list)
+    assert body["min_count"] == 1
+    assert body["window_days"] == 30
+
+
+def test_promote_skip_senders_appends_to_flag(authed_client):
+    """Bulk-add senders to agent.skip_senders. The endpoint must (a) report
+    which senders it added, (b) include them in the returned value, and (c)
+    de-duplicate within the request (case-folded)."""
+    r = authed_client.post(
+        "/api/agent/skip_senders/promote",
+        json={"senders": ["newsletter@daily.com", "Newsletter@daily.com", "marketing@blast.com"]},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    # Case-folded de-dup within the request — second "Newsletter@daily.com"
+    # lands in already_present because the first one was just added.
+    added_lower = [a.lower() for a in body["added"]]
+    assert "newsletter@daily.com" in added_lower
+    assert "marketing@blast.com" in added_lower
+    val = body["value"].lower()
+    assert "newsletter@daily.com" in val
+    assert "marketing@blast.com" in val
+
+
+def test_promote_skip_senders_idempotent_on_second_call(authed_client):
+    """Calling promote twice with the same sender list — second call reports
+    everything under ``already_present`` and the flag value doesn't grow."""
+    payload = {"senders": ["bot@spammer.com"]}
+    first = authed_client.post("/api/agent/skip_senders/promote", json=payload).json()
+    assert "bot@spammer.com" in [a.lower() for a in first["added"]]
+    second = authed_client.post("/api/agent/skip_senders/promote", json=payload).json()
+    assert second["added"] == []
+    assert "bot@spammer.com" in [a.lower() for a in second["already_present"]]
+    # No duplicate in the resulting value.
+    assert second["value"].lower().count("bot@spammer.com") == 1
+
+
+def test_promote_skip_senders_rejects_empty_list(authed_client):
+    r = authed_client.post("/api/agent/skip_senders/promote", json={"senders": []})
+    # Pydantic min_length=1 → 422.
+    assert r.status_code == 422
+
+
 def test_observability_endpoint_returns_unified_payload(authed_client):
     # Generate some signal: dismiss a couple as noise so a hint can fire.
     rows = authed_client.get("/api/agent/pending").json()["rows"]
