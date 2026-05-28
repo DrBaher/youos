@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.2.0-beta.25 — 2026-05-28
+
+### Strip trailing-name artifact from exemplars **and** drafts
+QA-driven content-quality fix #1: BaherOS drafts of short technical questions were returning **only the signature block** (`"Baher Al Hakim CEO / Medicus AI w: medicus.ai e: …"`) with no actual answer. Diagnosis confirmed the LoRA was emitting only the signature half because every exemplar in its training + every exemplar in the prompt ended with `… Baher Al Hakim`. `strip_signature` removes the contact-detail block (`CEO / Medicus AI w: …`) but leaves the trailing user-name intact — it's not at line start, so the line-anchored patterns miss it.
+
+**New helpers in `app/generation/service.py`**:
+- `_strip_trailing_user_name(text)` — strips the user's name (and any trailing surname tokens like `"Al Hakim"`) when it sits at end-of-text after a sentence-ending punctuation. Lookbehind on `[.,!?]` + `[^.!?]*$` tail means mid-sentence uses ("Baher mentioned the team…") are left alone.
+- `strip_exemplar_signature(text)` — `strip_signature` + `_strip_trailing_user_name`, used in both exemplar-formatting sites (`_format_exemplars`, the prompt-builder).
+- `_repair_draft` now runs the same two passes on **output**, not just inputs.
+
+### Visible impact on the QA cases
+| Case | Before b25 | After b25 |
+|---|---|---|
+| Friend / Sam | `…Let me know if you want to go. **Baher Al Hakim**` | `…Let me know if you want to go.` |
+| Vendor / Jess | `…Let me know what works best for you. **Baher Al Hakim**` | `…Let me know what works best for you.` |
+| Work / Alex (pricing) | `…I'll share the monthly volume with you and we can discuss the pricing.` | `…We are currently using 1000 users and we plan to grow to 2000 users in the next 12 months.` (the model now gives concrete numbers — the cleaner exemplars left it more room to lean on retrieved content) |
+| Edge / short DB-backup | Local model emits signature-only → Claude fallback (good answer) | Same — the LoRA learned the pattern during training; runtime fixes can't undo that, only retraining can. Falling back to Claude on signature-only is the correct behavior |
+
+### Tests
+Four new regressions in `test_draft_repair`: strip-after-punctuation, leave-mid-sentence, combined-strip-helper for the run-on case, and the `_repair_draft` integration. 21/21 in the suite.
+
+### Still to do in this QA series
+- **#2 sender-history retrieval boost** — same-exact-email > same-domain, to push down recurring-meeting noise.
+- **#3 cold-outbound heuristic + decline nudge** — to stop the LoRA from politely accepting pushy outreach.
+
 ## v0.2.0-beta.24 — 2026-05-28
 
 ### Retrieval tuning: semantic gets equal voice + wider candidate pool
