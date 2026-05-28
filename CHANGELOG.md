@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.2.0-beta.52 — 2026-05-28
+
+### Audit-surfacing for auto-promoted senders
+
+When `agent.auto_promote_skip_senders` is on and the loop adds a sender to `skip_senders`, the action only lived in stdout logs. Trusting an autonomous behavior needs visibility — this PR routes the promotion list onto the audit row and renders it in `/triage` Recent activity.
+
+**Schema** (`app/db/bootstrap.py`): idempotent ALTER adds `auto_promoted_json TEXT NOT NULL DEFAULT '[]'` to `agent_audit`. Existing DBs migrate on next server start.
+
+**DAL** (`app/agent/store.py`):
+- `log_sweep(..., auto_promoted_senders=None)` — new kwarg.
+- `_audit_row_to_dict` rehydrates `auto_promoted_json` → `auto_promoted: list[str]`.
+
+**Orchestrator** (`app/agent/triage.py`): the `_maybe_auto_promote_skip_senders` call moved from *after* `log_sweep` to *before*, capturing the return value and passing it as `auto_promoted_senders=`. Failure-isolated — a raise still returns `[]` and the sweep is logged either way.
+
+**`/triage` UI**: new `Auto-promoted` column in Recent activity. Empty (`—`) when nothing was promoted; numeric count with a hover-tooltip listing the senders when something was.
+
+**Tests** — 3 new: DAL roundtrip, null-safety default, end-to-end through `run_triage`.
+
 ## v0.2.0-beta.51 — 2026-05-28
 
 ### Filter quality: transactional templates no longer false-positive

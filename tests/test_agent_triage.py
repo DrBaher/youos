@@ -465,6 +465,37 @@ def test_auto_promote_adds_qualifying_senders_when_flag_on(mocked_environment, m
     assert "mixed@z.com" in val
 
 
+def test_auto_promote_result_lands_in_audit_row(mocked_environment, monkeypatch):
+    """b52: when _maybe_auto_promote_skip_senders returns senders,
+    log_sweep captures them on the audit row so /triage Recent activity
+    can surface 'the agent auto-skipped 3 senders this sweep'."""
+    env = mocked_environment
+    db_url = env["database_url"]
+
+    from app.agent import store
+    for i in range(3):
+        rid = store.upsert_pending(db_url, **{
+            "message_id": f"m-prom-{i}", "thread_id": "t", "account": "you@example.com",
+            "sender": "Spammer", "sender_email": "spam@noise.com",
+            "subject": f"x{i}", "body": "y", "received_at": None,
+            "needs_reply_score": 0.6, "reasons": [], "cold_outreach": False,
+            "tier": "draft", "draft": "hi", "draft_model": "m",
+            "draft_repairs": [], "standing_instructions_snapshot": None,
+        })
+        store.mark_dismissed(db_url, rid, reason="noise")
+
+    state = {"agent.auto_promote_skip_senders": True, "agent.skip_senders": ""}
+    monkeypatch.setattr("app.core.feature_flags.get_flag", lambda key: state.get(key, ""))
+    monkeypatch.setattr("app.core.feature_flags.set_flag", lambda k, v: (state.update({k: v}) or v))
+
+    from app.agent.triage import run_triage
+    run_triage(account="you@example.com",
+               database_url=db_url, configs_dir=env["configs_dir"])
+
+    sweeps = store.list_recent_sweeps(db_url, account="you@example.com")
+    assert sweeps[0]["auto_promoted"] == ["spam@noise.com"]
+
+
 def test_auto_promote_skips_senders_already_on_skip_list(mocked_environment, monkeypatch):
     """If a candidate is already in agent.skip_senders, the helper doesn't
     re-add — and so doesn't write the flag at all if everyone's already there."""
