@@ -123,8 +123,19 @@ def mark_amended(database_url: str, row_id: int, *, amended_draft: str) -> bool:
     )
 
 
-def mark_sent(database_url: str, row_id: int) -> bool:
-    return _update_status(database_url, row_id, status="sent", sent_at_now=True)
+def mark_sent(
+    database_url: str,
+    row_id: int,
+    *,
+    gmail_draft_id: str | None = None,
+) -> bool:
+    """Mark row as sent. ``gmail_draft_id`` is set by the
+    push-to-Gmail path (Phase 2); the plain "Mark sent manually" UX
+    leaves it None — same status, no Gmail-side draft reference."""
+    return _update_status(
+        database_url, row_id, status="sent", sent_at_now=True,
+        gmail_draft_id=gmail_draft_id,
+    )
 
 
 def mark_dismissed(database_url: str, row_id: int) -> bool:
@@ -139,6 +150,7 @@ def _update_status(
     amended_draft: str | None = None,
     sent_at_now: bool = False,
     dismissed_at_now: bool = False,
+    gmail_draft_id: str | None = None,
 ) -> bool:
     sets = ["status = ?", "updated_at = CURRENT_TIMESTAMP"]
     params: list[Any] = [status]
@@ -149,6 +161,9 @@ def _update_status(
         sets.append("sent_at = CURRENT_TIMESTAMP")
     if dismissed_at_now:
         sets.append("dismissed_at = CURRENT_TIMESTAMP")
+    if gmail_draft_id is not None:
+        sets.append("gmail_draft_id = ?")
+        params.append(gmail_draft_id)
     params.append(row_id)
     sql = f"UPDATE agent_pending_drafts SET {', '.join(sets)} WHERE id = ?"
     with closing(_connect(database_url)) as conn:

@@ -276,6 +276,11 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_agent_pending_drafts_account "
         "ON agent_pending_drafts(account, status)"
     )
+    # Phase 2.1: gmail_draft_id is set when "Push to Gmail Drafts" succeeds.
+    # Added as an ALTER for idempotent upgrades from pre-Phase-2 instances.
+    _cols = {row[1] for row in connection.execute("PRAGMA table_info(agent_pending_drafts)").fetchall()}
+    if "gmail_draft_id" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN gmail_draft_id TEXT")
 
 
 def _migrate_agent_audit(connection: sqlite3.Connection) -> None:
