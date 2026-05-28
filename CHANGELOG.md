@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.2.0-beta.30 — 2026-05-28
+
+### Agent triage — further filter tuning from the 14-day medicus sample
+The 14-day window on `baher@medicus.ai` surfaced 5 false-positives, all transactional notifications that produced hallucinated drafts (wrong names, wrong topics — random Baher-corpus context plugged in). Three root causes, one fix PR each:
+
+1. **Prior-history boost poisoned for transactional senders.** `youos ingest` had captured Wise / Workspace / Calendar notifications into `reply_pairs`, so `count_for(noreply@wise.com)` returned 6 and `+0.20` lifted pure automation past threshold. **Fix**: suppress the history boost when `NOREPLY_LOCAL_PAT` or `NON_HUMAN_MAILBOX_PAT` already fired — those prior pairs are corpus noise, not real correspondence. Reason still recorded (`"prior history (6) — suppressed (sender is automation)"`) so an operator can see history existed.
+2. **Operational-mailbox regex was anchored at `^`.** Google's `workspace-noreply@` / `calendar-notification@` start with `workspace` / `calendar`, so the prefix-anchored regex missed them. **Fix**: match the operational keyword *anywhere* in the local part — `(?:^|[\w-])(?:notifications?|notify|alerts?|automated|billing|support|help|info|hello|admin|team|service|webmaster|postmaster|abuse)(?:[\w-]*)@`. Caught `calendar-notification@` correctly. `workspace-noreply@` lands on `NOREPLY_LOCAL_PAT` instead (the `\bnoreply\b` word boundary catches it after the hyphen) — `noreply` variants were intentionally removed from the operational pattern to avoid double-charging the same case.
+3. **Meeting-bot domains missing.** `fred@fireflies.ai` slipped past — Fireflies is a meeting-recording service. **Fix**: added `fireflies.ai`, `otter.ai`, `loom.com`, `calendly.com`, `doodle.com`, `fathom.video`, `krisp.ai`, `grain.com` to `AUTOMATION_DOMAIN_PAT`.
+
+### Tests
+Four new regressions in `test_agent_needs_reply` pinning each behavior (workspace-noreply penalty, calendar-notification operational match, fireflies hard-skip, history-suppression-for-transactional). 17/17 in agent suites.
+
+### Expected effect on the 14-day medicus sample
+All 5 false-positives from b29 should now skip:
+- Payment failure (`workspace-noreply@google.com`): noreply penalty + history suppressed → below threshold ✓
+- Fireflies recording (`fred@fireflies.ai`): automation-domain hard skip ✓
+- Wise money received (`noreply@wise.com`): noreply + history suppressed → below threshold ✓
+- Calendar "no events today" (`calendar-notification@google.com`): operational-mailbox match → below threshold ✓
+- Workspace transition announcement (`workspace-noreply@google.com`): same as #1 ✓
+
+Net expected on 20-message sample: 0 drafts. Same as b29 but for the *right* reasons. The honest answer for a corpus where the inbound shape is "automation + newsletters" — actual human conversation is what β's "surface for review" tier is going to need to make visible without auto-drafting.
+
 ## v0.2.0-beta.29 — 2026-05-28
 
 ### Agent triage — filter tuning from real-inbox feedback
