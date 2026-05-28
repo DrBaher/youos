@@ -198,4 +198,24 @@ def run_doctor_checks_full() -> tuple[bool, list[str], list[str]]:
     except OSError:
         warnings.append(f"Port {port} is in use")
 
+    # Warning: server.host is non-loopback but no PIN is set. b54 hardening:
+    # binding to 0.0.0.0 (or a Tailscale IP) without a PIN exposes /triage,
+    # /settings, /feedback to anyone on the network. The PIN is the gate.
+    try:
+        from app.core.config import load_config
+
+        cfg = load_config() or {}
+        server_cfg = (cfg.get("server") or {}) if isinstance(cfg, dict) else {}
+        host = (server_cfg.get("host") or "127.0.0.1")
+        pin = (server_cfg.get("pin") or "")
+        if host not in ("127.0.0.1", "localhost", "") and not pin:
+            warnings.append(
+                f"server.host = {host!r} is exposed (non-loopback) but server.pin "
+                "is empty. Anyone on your network can reach /triage. "
+                "Set a PIN: `youos config set server.pin <PIN>`. "
+                "See docs/REMOTE_ACCESS.md."
+            )
+    except Exception:
+        pass
+
     return (passed, failures, warnings)
