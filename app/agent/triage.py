@@ -34,6 +34,8 @@ class TriageResult:
     kept: int
     drafts: list[TriageDraft]
     skipped: list[tuple[InboxMessage, NeedsReplyVerdict]]
+    surfaced: list[tuple[InboxMessage, NeedsReplyVerdict]] = field(default_factory=list)
+    persisted: int = 0      # rows actually inserted (idempotent: 0 on repeat runs)
 
 
 def run_triage(
@@ -45,12 +47,14 @@ def run_triage(
     database_url: str | None = None,
     configs_dir: Any = None,
     backend: str | None = None,
+    persist: bool = True,
 ) -> TriageResult:
-    """Fetch unread, filter, generate drafts for the survivors.
+    """Fetch unread, filter, generate drafts for the survivors, persist to
+    ``agent_pending_drafts``.
 
     ``database_url`` and ``configs_dir`` default to the active instance via
-    ``get_settings()``. Pass them explicitly for tests. Returns a structured
-    result; no persistence (Phase 1).
+    ``get_settings()``. ``persist=False`` runs purely in-memory (dry-run
+    mode used by the CLI's ``--dry-run`` flag).
     """
     # Resolve settings only if the caller didn't pass overrides. Lets tests
     # drop in mocks without touching the global settings cache.
@@ -74,9 +78,12 @@ def run_triage(
 
     drafts: list[TriageDraft] = []
     skipped: list[tuple[InboxMessage, NeedsReplyVerdict]] = []
+    surfaced: list[tuple[InboxMessage, NeedsReplyVerdict]] = []
     for msg, verdict in classified:
         if not verdict.needs_reply:
             skipped.append((msg, verdict))
+            if verdict.surface_for_review:
+                surfaced.append((msg, verdict))
             continue
         try:
             resp = generate_draft(
@@ -107,9 +114,64 @@ def run_triage(
                 )
             )
 
+    persisted = 0
+    if persist:
+        from app.agent.store import upsert_pending
+
+        # Tier 1: real drafts (needs_reply=True, generated successfully or not).
+        for d in drafts:
+            row_id = upsert_pending(
+                database_url=database_url,
+                message_id=d.message.message_id,
+                thread_id=d.message.thread_id,
+                account=d.message.account,
+                sender=d.message.sender,
+                sender_email=d.message.sender_email,
+                subject=d.message.subject,
+                body=d.message.body,
+                received_at=d.message.received_at,
+                needs_reply_score=d.verdict.score,
+                reasons=d.verdict.reasons,
+                cold_outreach=d.verdict.cold_outreach,
+                tier="draft",
+                draft=d.draft,
+                draft_model=d.model_used,
+                draft_repairs=d.repairs,
+                standing_instructions_snapshot=None,  # δ wires this
+            )
+            if row_id is not None:
+                persisted += 1
+
+        # Tier 2: borderline cases (no draft generated; the UI shows them
+        # collapsed so the user can act manually).
+        for msg, verdict in surfaced:
+            row_id = upsert_pending(
+                database_url=database_url,
+                message_id=msg.message_id,
+                thread_id=msg.thread_id,
+                account=msg.account,
+                sender=msg.sender,
+                sender_email=msg.sender_email,
+                subject=msg.subject,
+                body=msg.body,
+                received_at=msg.received_at,
+                needs_reply_score=verdict.score,
+                reasons=verdict.reasons,
+                cold_outreach=verdict.cold_outreach,
+                tier="surface",
+                draft=None,
+                draft_model=None,
+                draft_repairs=[],
+                standing_instructions_snapshot=None,
+            )
+            if row_id is not None:
+                persisted += 1
+
     return TriageResult(
         fetched=len(messages),
         kept=sum(1 for d in drafts if d.error is None),
         drafts=drafts,
         skipped=skipped,
+        surfaced=surfaced,
+        persisted=persisted,
     )

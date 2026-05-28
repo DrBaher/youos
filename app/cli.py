@@ -576,15 +576,20 @@ def triage(
     limit: int = typer.Option(8, "--limit", help="Max unread threads to fetch"),
     threshold: float = typer.Option(0.6, "--threshold", help="Needs-reply score cutoff [0..1]"),
     backend: str = typer.Option(None, "--backend", help="Override ingestion backend: gog | gws | native"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print only; do not persist drafts to the agent_pending_drafts table"),
 ):
-    """One-shot agent triage: fetch unread → filter → draft (Phase 1, dry-run only).
+    """Agent triage: fetch unread → filter → draft → persist (Phase 1, β).
 
     Reads your unread inbox via the configured Google backend, filters out
     newsletters/automation, runs needs-reply scoring on the rest, and drafts
     replies for the survivors using the same generation pipeline /feedback uses.
 
-    **No persistence, no notifications, no Gmail writes** — Phase 1 is purely
-    "show me what the agent would do." Persistence + UI ship in the next PR.
+    Drafts (tier='draft') and borderline cases (tier='surface') are persisted
+    to ``agent_pending_drafts``, viewable at ``/triage``. Idempotent on the
+    Gmail message id — repeated runs don't duplicate. Never auto-sends.
+
+    Use ``--dry-run`` to print only without persisting (useful for filter
+    tuning against real inbox shape).
     """
     import textwrap
 
@@ -598,15 +603,22 @@ def triage(
             raise typer.Exit(2)
         account = emails[0]
 
-    typer.echo(f"━━ Triage  account={account}  window={window}  limit={limit}  threshold={threshold:.2f} ━━\n")
+    mode = "dry-run" if dry_run else "persist"
+    typer.echo(f"━━ Triage  account={account}  window={window}  limit={limit}  threshold={threshold:.2f}  mode={mode} ━━\n")
     try:
-        result = run_triage(account=account, window=window, limit=limit, threshold=threshold, backend=backend)
+        result = run_triage(
+            account=account, window=window, limit=limit,
+            threshold=threshold, backend=backend, persist=not dry_run,
+        )
     except Exception as exc:
         typer.echo(f"triage failed: {type(exc).__name__}: {exc}", err=True)
         raise typer.Exit(1)
 
     typer.echo(
-        f"fetched={result.fetched}  kept={result.kept}  skipped={len(result.skipped)}\n"
+        f"fetched={result.fetched}  kept={result.kept}  "
+        f"surface_for_review={len(result.surfaced)}  "
+        f"skipped={len(result.skipped) - len(result.surfaced)}  "
+        f"persisted={result.persisted}\n"
     )
 
     for d in result.drafts:
@@ -623,13 +635,23 @@ def triage(
             typer.echo(f"      draft: {textwrap.shorten(d.draft or '', 260, placeholder='…')}")
         typer.echo("")
 
-    if result.skipped:
-        typer.echo(f"━━ skipped ({len(result.skipped)}) ━━")
-        for m, v in result.skipped:
+    if result.surfaced:
+        typer.echo(f"━━ surface for review ({len(result.surfaced)}) — borderline; not auto-drafted ━━")
+        for m, v in result.surfaced:
+            typer.echo(f"  · [{v.score:.2f}] {m.subject!r}  ←  {', '.join(v.reasons)}")
+        typer.echo("")
+
+    hard_skipped = [(m, v) for (m, v) in result.skipped if not v.surface_for_review]
+    if hard_skipped:
+        typer.echo(f"━━ hard-skipped ({len(hard_skipped)}) — newsletters / automation / etc. ━━")
+        for m, v in hard_skipped:
             typer.echo(f"  · {m.subject!r}  ←  {', '.join(v.reasons) or '(low score)'}")
         typer.echo("")
 
-    typer.echo("(dry-run only — no drafts persisted, nothing pushed to Gmail. Phase 1.)")
+    if dry_run:
+        typer.echo("(dry-run — nothing persisted. Drop --dry-run to save to agent_pending_drafts.)")
+    else:
+        typer.echo(f"saved to agent_pending_drafts (visit /triage to review). nothing pushed to Gmail.")
 
 
 @app.command()
