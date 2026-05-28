@@ -204,9 +204,10 @@
           </div>
         </div>
         <div class="row-actions">
-          <button class="btn"        data-action="save"    data-id="${row.id}">Save edits</button>
-          <button class="btn secondary" data-action="copy" data-id="${row.id}">Copy draft</button>
-          <button class="btn ok"      data-action="sent"    data-id="${row.id}">Mark sent</button>
+          <button class="btn"        data-action="save"     data-id="${row.id}">Save edits</button>
+          <button class="btn"        data-action="push"     data-id="${row.id}" title="Create a real Gmail Draft on the original thread; then send it yourself from Gmail.">Push to Gmail Drafts</button>
+          <button class="btn secondary" data-action="copy"  data-id="${row.id}">Copy draft</button>
+          <button class="btn ok"      data-action="sent"    data-id="${row.id}" title="I sent it manually outside YouOS — just close this row.">Mark sent manually</button>
           <button class="btn danger"  data-action="dismiss" data-id="${row.id}">Dismiss</button>
         </div>
       </div>`;
@@ -279,6 +280,8 @@
       body = { amended_draft: ta.value };
     } else if (action === 'sent') {
       url = `/api/agent/pending/${id}/mark_sent`;
+    } else if (action === 'push') {
+      url = `/api/agent/pending/${id}/push_to_gmail`;
     } else if (action === 'dismiss') {
       url = `/api/agent/pending/${id}/dismiss`;
     } else if (action === 'copy') {
@@ -302,8 +305,14 @@
     if (action === 'save') {
       status.textContent = 'Saved.';
     } else {
-      card.remove();             // dismissed/sent rows drop off the page
-      status.textContent = action === 'sent' ? 'Marked sent.' : 'Dismissed.';
+      card.remove();             // dismissed/sent/pushed rows drop off the page
+      if (action === 'push') {
+        let gid = '';
+        try { const j = await r.json(); gid = j.gmail_draft_id ? ` (Gmail draft ${j.gmail_draft_id})` : ''; } catch (e) {}
+        status.textContent = `Pushed to Gmail Drafts${gid}. Open Gmail to send.`;
+      } else {
+        status.textContent = action === 'sent' ? 'Marked sent.' : 'Dismissed.';
+      }
     }
   }
 

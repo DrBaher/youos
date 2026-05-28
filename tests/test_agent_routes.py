@@ -162,3 +162,76 @@ def test_sweeps_endpoint_returns_recent_audit_rows(authed_client):
     assert body["count"] >= 1
     assert body["sweeps"][0]["trigger"] == "manual"
     assert body["sweeps"][0]["errors"] == []
+
+
+# --- Phase 2.1: push_to_gmail endpoint -------------------------------------
+
+
+def test_push_to_gmail_success_stores_draft_id_and_marks_sent(authed_client, monkeypatch):
+    """Happy path: gmail_write returns a draft id; the row gets gmail_draft_id
+    set and status flipped to ``sent``."""
+    from app.agent import store
+    from app.core.settings import get_settings
+    db_url = get_settings().database_url
+
+    rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
+    row_id = rows[0]["id"]
+
+    # Mock the gmail-write layer so we don't touch real gog.
+    from app.ingestion import gmail_write
+    monkeypatch.setattr(
+        gmail_write, "create_draft",
+        lambda **kw: gmail_write.GmailDraftResult(
+            draft_id="gd_999",
+            raw_response={"id": "gd_999", "message": {"id": "m_456"}},
+        ),
+    )
+
+    r = authed_client.post(f"/api/agent/pending/{row_id}/push_to_gmail")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["gmail_draft_id"] == "gd_999"
+    row = body["row"]
+    assert row["status"] == "sent"
+    assert row["sent_at"] is not None
+    assert row["gmail_draft_id"] == "gd_999"
+
+
+def test_push_to_gmail_rejects_surface_tier_row(authed_client):
+    """tier='surface' rows have no draft → 400, not pushed."""
+    rows = authed_client.get("/api/agent/pending?tier=surface").json()["rows"]
+    row_id = rows[0]["id"]
+    r = authed_client.post(f"/api/agent/pending/{row_id}/push_to_gmail")
+    assert r.status_code == 400
+    assert "no draft to push" in r.json()["detail"].lower()
+
+
+def test_push_to_gmail_propagates_not_implemented_as_501(authed_client, monkeypatch):
+    """gws/native backends raise NotImplementedError → HTTP 501."""
+    rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
+    row_id = rows[0]["id"]
+
+    from app.ingestion import gmail_write
+    def _raise(**kw):
+        raise NotImplementedError("gws backend doesn't yet support draft creation")
+    monkeypatch.setattr(gmail_write, "create_draft", _raise)
+
+    r = authed_client.post(f"/api/agent/pending/{row_id}/push_to_gmail")
+    assert r.status_code == 501
+    assert "gws" in r.json()["detail"]
+
+
+def test_push_to_gmail_propagates_gmail_write_error_as_502(authed_client, monkeypatch):
+    """A backend-level failure (auth, network, etc.) → HTTP 502 with the
+    underlying error message so the UI can surface it."""
+    rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
+    row_id = rows[0]["id"]
+
+    from app.ingestion import gmail_write
+    def _raise(**kw):
+        raise gmail_write.GmailWriteError("gog returned exit 1: scope not granted")
+    monkeypatch.setattr(gmail_write, "create_draft", _raise)
+
+    r = authed_client.post(f"/api/agent/pending/{row_id}/push_to_gmail")
+    assert r.status_code == 502
+    assert "scope not granted" in r.json()["detail"]
