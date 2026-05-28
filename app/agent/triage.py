@@ -48,6 +48,7 @@ def run_triage(
     configs_dir: Any = None,
     backend: str | None = None,
     persist: bool = True,
+    standing_instructions: str | None = None,
 ) -> TriageResult:
     """Fetch unread, filter, generate drafts for the survivors, persist to
     ``agent_pending_drafts``.
@@ -64,6 +65,18 @@ def run_triage(
         settings = get_settings()
         database_url = database_url or settings.database_url
         configs_dir = configs_dir or settings.configs_dir
+
+    # δ: if the caller didn't pass standing instructions, fall back to the
+    # ``agent.standing_instructions`` config value so a /triage user that
+    # invokes run_triage manually (or via the API trigger) still gets the
+    # current standing instructions applied. ``None`` means "don't inject."
+    if standing_instructions is None:
+        try:
+            from app.agent.scheduler import get_agent_config
+
+            standing_instructions = get_agent_config().get("standing_instructions") or None
+        except Exception:
+            standing_instructions = None
 
     # 1) Fetch unread inbox threads.
     messages = fetch_unread(account, window=window, limit=limit, backend=backend)
@@ -93,6 +106,7 @@ def run_triage(
                     subject=msg.subject,
                     account_email=account,
                     thread_id=msg.thread_id,
+                    standing_instructions=standing_instructions,
                 ),
                 database_url=database_url,
                 configs_dir=configs_dir,
@@ -137,7 +151,7 @@ def run_triage(
                 draft=d.draft,
                 draft_model=d.model_used,
                 draft_repairs=d.repairs,
-                standing_instructions_snapshot=None,  # δ wires this
+                standing_instructions_snapshot=standing_instructions,
             )
             if row_id is not None:
                 persisted += 1
@@ -162,7 +176,7 @@ def run_triage(
                 draft=None,
                 draft_model=None,
                 draft_repairs=[],
-                standing_instructions_snapshot=None,
+                standing_instructions_snapshot=standing_instructions,
             )
             if row_id is not None:
                 persisted += 1
