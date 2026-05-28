@@ -612,7 +612,7 @@ def triage(
         )
     except Exception as exc:
         typer.echo(f"triage failed: {type(exc).__name__}: {exc}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
 
     typer.echo(
         f"fetched={result.fetched}  kept={result.kept}  "
@@ -651,7 +651,7 @@ def triage(
     if dry_run:
         typer.echo("(dry-run — nothing persisted. Drop --dry-run to save to agent_pending_drafts.)")
     else:
-        typer.echo(f"saved to agent_pending_drafts (visit /triage to review). nothing pushed to Gmail.")
+        typer.echo("saved to agent_pending_drafts (visit /triage to review). nothing pushed to Gmail.")
 
 
 @app.command()

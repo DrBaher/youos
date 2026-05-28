@@ -7,8 +7,6 @@ the routes after a triage run.
 
 from __future__ import annotations
 
-import sqlite3
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -23,7 +21,8 @@ def authed_client(monkeypatch, tmp_path):
     monkeypatch.setenv("YOUOS_DATABASE_URL", f"sqlite:///{tmp_path}/var/youos.db")
     (tmp_path / "var").mkdir(exist_ok=True)
     (tmp_path / "configs").mkdir(exist_ok=True)
-    docs = tmp_path / "docs"; docs.mkdir(exist_ok=True)
+    docs = tmp_path / "docs"
+    docs.mkdir(exist_ok=True)
     from pathlib import Path
     repo_schema = Path(__file__).resolve().parents[1] / "docs" / "schema.sql"
     (docs / "schema.sql").write_text(repo_schema.read_text())
@@ -338,8 +337,8 @@ def test_triage_page_includes_ux_upgrades(authed_client):
 def test_sweeps_endpoint_returns_recent_audit_rows(authed_client):
     """``/api/agent/sweeps`` returns the audit log (newest first), with
     rehydrated ``errors`` arrays."""
-    from app.core.settings import get_settings
     from app.agent import store
+    from app.core.settings import get_settings
 
     db_url = get_settings().database_url
     store.log_sweep(
@@ -365,10 +364,6 @@ def test_sweeps_endpoint_returns_recent_audit_rows(authed_client):
 def test_push_to_gmail_success_stores_draft_id_and_marks_sent(authed_client, monkeypatch):
     """Happy path: gmail_write returns a draft id; the row gets gmail_draft_id
     set and status flipped to ``sent``."""
-    from app.agent import store
-    from app.core.settings import get_settings
-    db_url = get_settings().database_url
-
     rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
     row_id = rows[0]["id"]
 
