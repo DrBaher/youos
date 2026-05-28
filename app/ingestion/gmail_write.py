@@ -68,9 +68,9 @@ def create_draft(
             to_email=to_email, subject=subject, body=body,
         )
     if name == "gws":
-        raise NotImplementedError(
-            "gws backend doesn't yet support draft creation — "
-            "implementation in Phase 2.2. Use the gog backend for now."
+        return _gws_create_draft(
+            account=account, thread_id=thread_id,
+            to_email=to_email, subject=subject, body=body,
         )
     if name == "native":
         raise NotImplementedError(
@@ -150,4 +150,70 @@ def _gog_create_draft(
         raise GmailWriteError(f"gog returned no draft id; payload={payload!r}")
 
     logger.info("created gmail draft %s for account=%s thread=%s", draft_id, account, thread_id)
+    return GmailDraftResult(draft_id=str(draft_id), raw_response=payload)
+
+
+# --- gws backend -----------------------------------------------------------
+
+
+def _gws_create_draft(
+    *,
+    account: str,
+    thread_id: str | None,
+    to_email: str,
+    subject: str,
+    body: str,
+) -> GmailDraftResult:
+    """Best-effort ``gws gmail drafts create`` invocation.
+
+    Mirrors the gog path: build an RFC 822 message, base64url-encode it,
+    pass via ``--raw``. The gws CLI is Google's first-party tool so it
+    tends to track the Gmail REST API shape (drafts.create accepts
+    ``raw`` + ``threadId``). Like ``_gog_create_draft``, if your installed
+    gws uses different flag names, this single function is the one to fix.
+
+    Verification path: ``gws gmail drafts create --help`` on the target
+    machine. The tests below pin the call shape so any drift surfaces in
+    one place.
+    """
+    rfc = _build_rfc822(to_email=to_email, subject=subject, body=body)
+    raw_b64 = base64.urlsafe_b64encode(rfc).decode("ascii")
+
+    # gws conventionally uses ``--user`` instead of ``--account`` (matches
+    # Google's API where ``userId`` identifies the mailbox owner) and
+    # ``--threadId`` (Google's camelCase) where gog uses ``--thread-id``.
+    # Tests pin the call shape — if gws on your machine uses different
+    # flags, you'll see exactly which assertion to flip.
+    cmd: list[str] = [
+        "gws", "gmail", "drafts", "create",
+        "--user", account,
+        "--format", "json",
+        "--raw", raw_b64,
+    ]
+    if thread_id:
+        cmd += ["--threadId", thread_id]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except FileNotFoundError as exc:
+        raise GmailWriteError(
+            "gws CLI not on PATH — switch ingestion.google_backend to gog or install gws"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise GmailWriteError("gws gmail drafts create timed out (30s)") from exc
+
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        raise GmailWriteError(f"gws returned exit {result.returncode}: {stderr or 'no stderr'}")
+
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise GmailWriteError(f"gws returned non-JSON stdout: {result.stdout[:200]!r}") from exc
+
+    draft_id = payload.get("id") or payload.get("draftId") or ""
+    if not draft_id:
+        raise GmailWriteError(f"gws returned no draft id; payload={payload!r}")
+
+    logger.info("created gmail draft %s via gws (account=%s thread=%s)", draft_id, account, thread_id)
     return GmailDraftResult(draft_id=str(draft_id), raw_response=payload)
