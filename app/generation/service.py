@@ -175,6 +175,12 @@ class DraftRequest:
     # additively with the auto-detected cold-outreach DECLINE_NUDGE so both
     # can apply to the same draft.
     standing_instructions: str | None = None
+    # ζ: refuse cloud fallback for this specific draft. The agent triage
+    # path sets this so background sweeps can't silently send inbound text
+    # to Claude — if the local model is unavailable, generate_draft returns
+    # an error placeholder rather than falling back. Interactive /feedback
+    # is unaffected; this is strictly per-request.
+    strict_local: bool = False
     # Pin the generation backend regardless of config/use_local_model. Used by
     # the cross-model comparison (app/evaluation/model_compare.py) to draft the
     # same case under each engine. One of "mlx" | "ollama" | "claude" | "none";
@@ -1886,6 +1892,12 @@ def generate_draft(
         use_local = request.backend_override == "mlx"
         if request.backend_override != "mlx":
             fallback_model = request.backend_override
+    # ζ: strict-local — per-request refusal to fall back to cloud. The agent
+    # triage path opts in via DraftRequest; interactive /feedback is unaffected.
+    # Acts BELOW the backend_override (the cross-model comparison takes
+    # precedence — that one explicitly wants to compare each backend).
+    if getattr(request, "strict_local", False) and not request.backend_override:
+        fallback_model = "none"
     candidates: list[dict[str, Any]] = []
     try:
         if use_local and _local_model_available():
