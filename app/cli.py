@@ -727,8 +727,8 @@ def digest_cmd(
     from app.agent.digest import build_digest, format_digest
     from app.core.config import get_user_emails
 
-    if fmt not in ("text", "html", "json"):
-        typer.echo(f"unknown --format {fmt!r} (allowed: text, html, json)", err=True)
+    if fmt not in ("text", "html", "json", "chat"):
+        typer.echo(f"unknown --format {fmt!r} (allowed: text, html, json, chat)", err=True)
         raise typer.Exit(2)
     if not account:
         emails = get_user_emails()
