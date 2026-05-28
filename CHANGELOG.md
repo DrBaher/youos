@@ -1,5 +1,56 @@
 # Changelog
 
+## v0.2.0-beta.62 — 2026-05-28
+
+### `GET /api/agent/resolve?q=...` — orchestrator NLU helper
+
+The orchestrator vision: user says "push the Q3 pricing email to Gmail" in Telegram → Hermes calls YouOS to figure out which row that refers to → dispatches the action. This PR adds the row-lookup helper that closes the gap between the user's natural-language reference and the agent's row IDs.
+
+**`GET /api/agent/resolve?q=<substring>&account=&status=pending&limit=5`**
+
+Returns matching rows ranked by:
+1. Subject substring (earlier match = higher score)
+2. Sender / sender_email substring
+
+Each result has `id`, `tier`, `subject`, `sender`, `sender_email`, `needs_reply_score`, `match_field`, `match_score`. The orchestrator picks the top result automatically, or disambiguates in the chat bubble ("I found two matches; which one?") when multiple come back.
+
+**Why substring not fuzzy/embedding**: chat instructions are short and the user typically mentions a real word from the subject or sender. Substring covers the dominant case. Fuzzy / embedding-based resolution is a future feature behind this clean interface.
+
+**Live-verified** on baheros:
+
+```
+$ curl /api/agent/resolve?q=random
+count: 1
+  #13  [subject=72]  'Would you be interested in "Random Coffee" in Vienna?'
+
+$ curl /api/agent/resolve?q=eon.health
+count: 1
+  #14  [sender]  sender: 'agent@eon.health'  subject: 'The Science Behind...'
+```
+
+The match scores show what's working — `random` hit subject at offset 72 chars in; `eon.health` matched sender_email.
+
+**Tests** — 4 new:
+- `test_resolve_finds_pending_row_by_subject_substring`
+- `test_resolve_finds_row_by_sender_substring`
+- `test_resolve_returns_empty_count_when_no_match`
+- `test_resolve_requires_q_param`
+
+30 route tests pass; `ruff check` clean.
+
+**Orchestrator usage**:
+
+```python
+# User: "Push the Q3 pricing email to Gmail"
+hits = http.get(f"{YOUOS}/api/agent/resolve?q=Q3+pricing").json()["rows"]
+if len(hits) == 1:
+    http.post(f"{YOUOS}/api/agent/pending/{hits[0]['id']}/push_to_gmail")
+elif len(hits) > 1:
+    bot.send("Found multiple: " + ", ".join(f"#{h['id']} {h['subject']}" for h in hits))
+else:
+    bot.send("No match — try a different phrase.")
+```
+
 ## v0.2.0-beta.61 — 2026-05-28
 
 ### Multi-label categorical Gmail-label dismissal
