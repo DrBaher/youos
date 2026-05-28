@@ -17,6 +17,10 @@ def test_call_local_model_builds_cmd_with_adapter(monkeypatch):
     """When use_adapter=True, --adapter-path should be in the command."""
     import app.generation.service as svc
 
+    # Force the cold-subprocess path; on a dev machine where mlx_lm.server is
+    # already running, the warm-server short-circuit would skip _run_subprocess.
+    monkeypatch.setattr("app.core.model_server.is_enabled", lambda: False)
+
     captured_cmd = []
 
     def fake_run(cmd, **kwargs):
