@@ -95,6 +95,11 @@ class NeedsReplyVerdict:
     score: float                    # 0.0 – 1.0
     reasons: list[str] = field(default_factory=list)
     cold_outreach: bool = False
+    # True when ``needs_reply=False`` but the message wasn't hard-skipped and
+    # the score is in the borderline band (≥ 0.3) — i.e. "the agent isn't
+    # confident enough to auto-draft, but the message shouldn't be silently
+    # buried either." β surfaces these collapsed under "Review skipped."
+    surface_for_review: bool = False
 
 
 # --- Sender history (count of prior reply pairs to a sender) ---------------
@@ -255,11 +260,17 @@ def classify(
         reasons.append(f"cold-outreach (heuristic score {cold.score})")
 
     score = max(0.0, min(1.0, score))
+    needs_reply = score >= threshold
+    # Surface-for-review tier: didn't pass, but wasn't junk either — score is
+    # in the borderline band and no hard-skip ran (hard skips return early
+    # with score=0.0, never reach this).
+    surface_for_review = (not needs_reply) and score >= 0.30
     return NeedsReplyVerdict(
-        needs_reply=score >= threshold,
+        needs_reply=needs_reply,
         score=score,
         reasons=reasons,
         cold_outreach=cold.is_cold,
+        surface_for_review=surface_for_review,
     )
 
 
