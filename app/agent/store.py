@@ -342,6 +342,103 @@ def list_recent_sweeps(
     return [_audit_row_to_dict(r) for r in rows]
 
 
+def sweep_aggregate(
+    database_url: str,
+    *,
+    account: str | None = None,
+    days: int = 30,
+) -> dict[str, Any]:
+    """Roll up the audit log over a window — drives the observability card.
+
+    Returns sweep totals (count, success_count, success_rate, fetched, kept,
+    surfaced, persisted) over the last ``days`` days. ``hard_skipped`` is
+    derived (``fetched - kept``) since rows that don't survive the hard-skip
+    filter aren't persisted — the audit counters are the only place we
+    record them.
+
+    A sweep is "successful" iff its ``errors_json`` is empty. A sweep that
+    fetched 0 mail (idle inbox) still counts as successful.
+    """
+    where = "started_at >= datetime('now', ?)"
+    params: list[Any] = [f"-{int(days)} days"]
+    if account:
+        where += " AND account = ?"
+        params.append(account)
+
+    with closing(_connect(database_url)) as conn:
+        row = conn.execute(
+            f"""
+            SELECT
+                COUNT(*) AS sweeps,
+                SUM(CASE WHEN errors_json IN ('[]','') OR errors_json IS NULL THEN 1 ELSE 0 END) AS ok,
+                COALESCE(SUM(fetched), 0)   AS fetched,
+                COALESCE(SUM(kept), 0)      AS kept,
+                COALESCE(SUM(surfaced), 0)  AS surfaced,
+                COALESCE(SUM(persisted), 0) AS persisted,
+                COALESCE(AVG(duration_ms), 0) AS avg_ms
+            FROM agent_audit WHERE {where}
+            """,
+            params,
+        ).fetchone()
+
+    sweeps = int(row["sweeps"] or 0)
+    ok = int(row["ok"] or 0)
+    fetched = int(row["fetched"] or 0)
+    kept = int(row["kept"] or 0)
+    return {
+        "sweeps": sweeps,
+        "successful": ok,
+        "success_rate": round(ok / sweeps, 4) if sweeps else 0.0,
+        "fetched": fetched,
+        "hard_skipped": max(fetched - kept, 0),
+        "kept": kept,
+        "surfaced": int(row["surfaced"] or 0),
+        "persisted": int(row["persisted"] or 0),
+        "avg_duration_ms": int(row["avg_ms"] or 0),
+        "window_days": int(days),
+        "account": account,
+    }
+
+
+def score_histogram(
+    database_url: str,
+    *,
+    account: str | None = None,
+    days: int = 30,
+) -> dict[str, Any]:
+    """Distribution of needs_reply scores across persisted rows.
+
+    Buckets the score column into 0.0-0.3 / 0.3-0.5 / 0.5-0.7 / 0.7-0.9 /
+    0.9-1.0 so the observability card can show "your filter mostly draws
+    rows from the 0.7-0.9 range — looks healthy" or "everything's clustering
+    at 0.6 — your threshold is right on the boundary." The boundary choices
+    line up with the surface-for-review band (0.30–0.59).
+    """
+    where = "date(created_at) >= date('now', ?)"
+    params: list[Any] = [f"-{int(days)} days"]
+    if account:
+        where += " AND account = ?"
+        params.append(account)
+
+    buckets = [
+        ("0.0-0.3", 0.0, 0.3),
+        ("0.3-0.5", 0.3, 0.5),
+        ("0.5-0.7", 0.5, 0.7),
+        ("0.7-0.9", 0.7, 0.9),
+        ("0.9-1.0", 0.9, 1.01),    # 1.01 so a row at exactly 1.0 lands here
+    ]
+    with closing(_connect(database_url)) as conn:
+        out: dict[str, int] = {}
+        for label, lo, hi in buckets:
+            cnt = conn.execute(
+                f"""SELECT COUNT(*) FROM agent_pending_drafts
+                    WHERE {where} AND needs_reply_score >= ? AND needs_reply_score < ?""",
+                params + [lo, hi],
+            ).fetchone()[0]
+            out[label] = int(cnt)
+    return {"buckets": out, "window_days": int(days), "account": account}
+
+
 def _audit_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     d = dict(row)
     v = d.get("errors_json")
