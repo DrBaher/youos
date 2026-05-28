@@ -81,6 +81,27 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "choices": ["gog", "gws", "native"],
         "help": "Which tool fetches Gmail/Docs: the OpenClaw gog CLI, Google's gws CLI, or the native API.",
     },
+    {
+        "key": "agent.enabled",
+        "label": "Autonomous triage",
+        "type": "bool",
+        "default": False,
+        "help": "Sweep your unread inbox in the background and draft replies into /triage. Never auto-sends. Off by default — opt-in.",
+    },
+    {
+        "key": "agent.interval_minutes",
+        "label": "Triage interval (minutes)",
+        "type": "int",
+        "default": 15,
+        "help": "How often the background loop sweeps unread mail. Minimum 1; the loop enforces a 60-second floor for safety.",
+    },
+    {
+        "key": "agent.notify_macos",
+        "label": "macOS notification on new drafts",
+        "type": "bool",
+        "default": True,
+        "help": "Fire a desktop notification when a triage sweep persists new drafts. Silently no-ops on non-Darwin.",
+    },
 ]
 
 _BY_KEY: dict[str, dict[str, Any]] = {f["key"]: f for f in KNOWN_FLAGS}
