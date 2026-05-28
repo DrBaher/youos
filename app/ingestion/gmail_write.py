@@ -324,16 +324,16 @@ def _native_gmail_service(*, account: str) -> Any:
     refresh_token — that's a re-auth case.
     """
     try:
-        from google.oauth2.credentials import Credentials
         from google.auth.transport.requests import Request as GoogleAuthRequest
+        from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
     except ImportError as exc:
         raise RuntimeError(
             "Native backend needs the google extra: pip install youos[google]"
         ) from exc
 
-    from app.ingestion.adapters import _native_config
     from app.core.settings import get_instance_root
+    from app.ingestion.adapters import _native_config
 
     token_dir_cfg = (_native_config().get("google_token_dir") or "").strip()
     token_dir = (
