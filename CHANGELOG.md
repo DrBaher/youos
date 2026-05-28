@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.2.0-beta.43 — 2026-05-28
+
+### Skip-sender promotion — closing the feedback loop
+
+The observability card in b42 *told* the user to extend `agent.skip_senders`; this PR makes it a one-click action. When the user dismisses the same sender as `noise` 2+ times, that sender shows up in the Agent health card with a checkbox — tick the ones to promote, click **Promote selected to skip_senders**, and they're added to the flag. Effective on the next sweep.
+
+This is the natural follow-on to the b39 dismissal-feedback substrate: signal → aggregation → suggestion → one-click action. The user stays in control (no auto-promotion without explicit click) but doesn't have to hand-edit `/settings` anymore.
+
+**New aggregation helper** (`app/agent/store.py`)
+
+`noise_dismissal_candidates(account=None, days=30, min_count=2)` — groups dismissed-as-noise rows by `LOWER(sender_email)`, returns `[{sender_email, count, most_recent, last_subject}]` for any sender meeting the count threshold. Ordered by count DESC then most-recent. Excludes NULL / empty `sender_email` (can't promote what has no address).
+
+**New endpoints**
+
+- `GET /api/agent/skip_sender_candidates?account=&days=30&min_count=2` — the promotion candidates.
+- `POST /api/agent/skip_senders/promote` with `{senders: [list]}` — appends to `agent.skip_senders` via the same feature-flag whitelist `/settings` uses. Preserves separator (comma or newline). Idempotent — already-present senders go into `already_present`, not `added`; the return value never duplicates within a single request.
+
+**`/triage` Agent health card**
+
+When candidates exist, a new "Promote to skip-list" section renders after the dismissal-reason breakdown:
+
+```
+☑ daily.com/newsletter@daily.com  (3×)  — last: "Q3 roundup"
+☑ marketing@blast.com             (2×)  — last: "Special offer!"
+☐ events@conference.io            (2×)  — last: "Reminder: tomorrow"
+
+[ Promote selected to skip_senders ]  [ Uncheck all ]
+```
+
+Selecting senders and clicking the button calls the promotion endpoint, reports `added N, already on list M`, and reloads the card so promoted entries drop off the candidates list (they'll be hard-skipped on the next sweep, so future dismissals won't accumulate).
+
+**Tests**
+
+- `tests/test_agent_store.py` — 3 new: grouping + min_count filter (different reasons / counts), case-insensitive sender dedup, NULL/empty sender exclusion.
+- `tests/test_agent_routes.py` — 3 new: candidates endpoint shape, promote appends + idempotency, empty list rejected.
+
+Test pollution check: the test fixture isolates config writes to `tmp_path` — the user's `youos_config.yaml` is untouched.
+
 ## v0.2.0-beta.42 — 2026-05-28
 
 ### Agent observability — health card on /triage

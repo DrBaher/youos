@@ -288,3 +288,74 @@ def test_score_histogram_buckets_by_score(db_url):
     assert h["0.5-0.7"] == 1
     assert h["0.7-0.9"] == 2
     assert h["0.9-1.0"] == 2
+
+
+# --- b43: skip-sender promotion candidates -----------------------------
+
+
+def test_noise_candidates_groups_by_sender_and_filters_by_min_count(db_url):
+    from app.agent import store
+
+    # alice: 3 noise dismissals — should appear
+    # bob:   1 noise dismissal  — below min_count
+    # carol: 2 noise dismissals — should appear
+    # dan:   2 wrong_content dismissals — wrong reason, should NOT appear
+    for sender, reason, n in [
+        ("alice@x.com", "noise", 3),
+        ("bob@x.com",   "noise", 1),
+        ("carol@x.com", "noise", 2),
+        ("dan@x.com",   "wrong_content", 2),
+    ]:
+        for i in range(n):
+            rid = store.upsert_pending(db_url, **{
+                **_DEFAULTS,
+                "message_id": f"{sender}-{i}",
+                "sender_email": sender,
+                "subject": f"Marketing blast {i}",
+            })
+            store.mark_dismissed(db_url, rid, reason=reason)
+
+    cands = store.noise_dismissal_candidates(db_url, min_count=2)
+    senders = {c["sender_email"] for c in cands}
+    assert senders == {"alice@x.com", "carol@x.com"}
+    # Ordered by count DESC.
+    assert cands[0]["sender_email"] == "alice@x.com"
+    assert cands[0]["count"] == 3
+    assert cands[0]["last_subject"]  # populated, not None
+
+
+def test_noise_candidates_lowercases_sender_for_grouping(db_url):
+    from app.agent import store
+
+    # Same sender, different casing — should group as one.
+    for i, email in enumerate(["Alice@X.COM", "alice@x.com", "ALICE@x.com"]):
+        rid = store.upsert_pending(db_url, **{
+            **_DEFAULTS,
+            "message_id": f"m-{i}",
+            "sender_email": email,
+        })
+        store.mark_dismissed(db_url, rid, reason="noise")
+
+    cands = store.noise_dismissal_candidates(db_url, min_count=2)
+    assert len(cands) == 1
+    assert cands[0]["sender_email"] == "alice@x.com"
+    assert cands[0]["count"] == 3
+
+
+def test_noise_candidates_skips_null_or_empty_sender_email(db_url):
+    """Rows without a sender_email can't be added to skip_senders, so they
+    have to be excluded from the candidates list (defence against a noisy
+    fixture that drafted from anonymous senders)."""
+    from app.agent import store
+
+    for i, email in enumerate([None, "", "valid@x.com", "valid@x.com"]):
+        rid = store.upsert_pending(db_url, **{
+            **_DEFAULTS,
+            "message_id": f"m-{i}",
+            "sender_email": email,
+        })
+        store.mark_dismissed(db_url, rid, reason="noise")
+
+    cands = store.noise_dismissal_candidates(db_url, min_count=2)
+    assert len(cands) == 1
+    assert cands[0]["sender_email"] == "valid@x.com"
