@@ -1,0 +1,266 @@
+"""Daily-digest generator for the agent loop.
+
+A YouOS-local way to get *remote* visibility into what the agent has been doing
+while you're away. Reads the audit log + pending queue + dismissal stats and
+formats them into a human-readable summary that can be:
+
+  * printed to stdout (``youos agent digest``)
+  * piped to ``mail``/``sendmail`` via cron for an actual email
+  * served as JSON (``--format json``) for whatever post-processor you want
+
+Designed for the case where ``/triage`` isn't reachable (no Tailscale, on a
+plane, etc.) but Gmail-on-phone is — the digest gives you the agent's
+behavior at a glance without needing the full UI.
+
+The data sources are all already in the DB (audit log, pending drafts,
+dismissal stats from b39/b42/b52). No new tables — pure formatting layer.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Literal
+
+DigestFormat = Literal["text", "html", "json"]
+
+
+@dataclass
+class DigestData:
+    """The raw payload behind a digest — what gets formatted into text/html/json.
+
+    Single struct so ``build_digest`` can be tested without parsing the output.
+    """
+
+    account: str
+    days: int
+    generated_at: str
+    sweeps: int
+    sweeps_successful: int
+    fetched: int
+    hard_skipped: int
+    drafted: int
+    surfaced: int
+    persisted: int
+    pending_count: int           # rows still status='pending' (await user action)
+    pushed_count: int            # rows status='sent' with a gmail_draft_id
+    dismissed_count: int
+    dismissal_rate: float
+    dismissal_by_reason: dict[str, int]
+    auto_promoted: list[str]     # cumulative across the window
+    top_noise_senders: list[dict[str, Any]]  # [{sender_email, count}, ...]
+    triage_url: str | None       # configured Tailscale URL if any
+
+
+def build_digest(
+    *,
+    database_url: str,
+    account: str,
+    days: int = 1,
+) -> DigestData:
+    """Pull the data behind a digest for ``account`` over the last ``days``.
+
+    Uses the existing store helpers — no new SQL paths so any DB-schema
+    change shows up in one place. Errors propagate; the caller decides
+    whether to wrap.
+    """
+    from app.agent.store import (
+        dismissal_stats,
+        list_pending,
+        list_recent_sweeps,
+        noise_dismissal_candidates,
+        sweep_aggregate,
+    )
+
+    sweep_agg = sweep_aggregate(database_url, account=account, days=days)
+    dism = dismissal_stats(database_url, account=account, days=days)
+    sweeps = list_recent_sweeps(database_url, account=account, limit=200)
+
+    # Auto-promotions across the window — union from each audit row in scope.
+    cutoff = _utcnow().timestamp() - days * 86400
+    auto_promoted: list[str] = []
+    for s in sweeps:
+        try:
+            t = datetime.fromisoformat(s.get("started_at", "").replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            t = 0.0
+        if t >= cutoff:
+            for sender in (s.get("auto_promoted") or []):
+                if sender and sender not in auto_promoted:
+                    auto_promoted.append(sender)
+
+    # Pending-vs-pushed split from the queue itself (not from audit, which
+    # records sweep-level totals not lifecycle outcomes).
+    pending_rows = list_pending(database_url, account=account, status="pending", limit=500)
+    sent_rows = list_pending(database_url, account=account, status="sent", limit=500)
+    pushed_count = sum(1 for r in sent_rows if r.get("gmail_draft_id"))
+
+    # Top noise senders — pull candidates at min_count=1 so even single
+    # noise dismissals show up; the digest is informational.
+    top = noise_dismissal_candidates(
+        database_url, account=account, days=days, min_count=1,
+    )[:5]
+
+    # Construct the Tailscale-aware triage URL if configured. Falls back to None.
+    triage_url = _resolve_triage_url()
+
+    return DigestData(
+        account=account,
+        days=days,
+        generated_at=_utcnow().isoformat(),
+        sweeps=sweep_agg["sweeps"],
+        sweeps_successful=sweep_agg["successful"],
+        fetched=sweep_agg["fetched"],
+        hard_skipped=sweep_agg["hard_skipped"],
+        drafted=max(sweep_agg["persisted"] - sweep_agg["surfaced"], 0),
+        surfaced=sweep_agg["surfaced"],
+        persisted=sweep_agg["persisted"],
+        pending_count=len(pending_rows),
+        pushed_count=pushed_count,
+        dismissed_count=dism["dismissed"],
+        dismissal_rate=dism["dismissal_rate"],
+        dismissal_by_reason={k: v for k, v in dism["by_reason"].items() if v},
+        auto_promoted=auto_promoted,
+        top_noise_senders=top,
+        triage_url=triage_url,
+    )
+
+
+def format_digest(data: DigestData, *, fmt: DigestFormat = "text") -> str:
+    """Render ``DigestData`` into one of the supported output formats."""
+    if fmt == "json":
+        return json.dumps(_data_to_dict(data), indent=2, default=str)
+    if fmt == "html":
+        return _format_html(data)
+    return _format_text(data)
+
+
+# --- formatters ------------------------------------------------------------
+
+
+def _format_text(d: DigestData) -> str:
+    lines: list[str] = []
+    span = "today" if d.days == 1 else f"last {d.days} days"
+    lines.append(f"YouOS — Agent digest for {d.account} ({span})")
+    lines.append("=" * 60)
+    lines.append("")
+    lines.append(f"Sweeps:      {d.sweeps} ({d.sweeps_successful} successful)")
+    lines.append(f"Fetched:     {d.fetched}")
+    lines.append(f"Hard-skipped:{d.hard_skipped} (newsletters / automation / CI)")
+    lines.append(f"Drafted:     {d.drafted}")
+    lines.append(f"Surfaced:    {d.surfaced} (borderline, not auto-drafted)")
+    lines.append("")
+    lines.append(f"Pending review: {d.pending_count}")
+    lines.append(f"Pushed to Gmail Drafts: {d.pushed_count}")
+    lines.append(f"Dismissed: {d.dismissed_count} ({d.dismissal_rate:.0%} of persisted)")
+    if d.dismissal_by_reason:
+        lines.append("  by reason:")
+        for k, v in d.dismissal_by_reason.items():
+            lines.append(f"    {k}: {v}")
+    lines.append("")
+    if d.auto_promoted:
+        lines.append(f"Auto-promoted to skip_senders ({len(d.auto_promoted)}):")
+        for s in d.auto_promoted:
+            lines.append(f"  • {s}")
+        lines.append("")
+    if d.top_noise_senders:
+        lines.append("Top dismissed-as-noise senders:")
+        for entry in d.top_noise_senders:
+            lines.append(f"  • {entry['sender_email']}  ({entry['count']}×)")
+        lines.append("")
+    if d.triage_url:
+        lines.append(f"Review the queue: {d.triage_url}/triage")
+    else:
+        lines.append("Review the queue at /triage (configure tailscale.hostname for a remote URL)")
+    return "\n".join(lines) + "\n"
+
+
+def _format_html(d: DigestData) -> str:
+    span = "today" if d.days == 1 else f"last {d.days} days"
+    triage_link = (
+        f'<p><a href="{d.triage_url}/triage">Review the queue</a></p>'
+        if d.triage_url else
+        '<p>Review the queue at <code>/triage</code> (configure <code>tailscale.hostname</code> for a remote URL)</p>'
+    )
+    by_reason_html = ""
+    if d.dismissal_by_reason:
+        items = "".join(f"<li><code>{k}</code>: {v}</li>" for k, v in d.dismissal_by_reason.items())
+        by_reason_html = f"<p>By reason:</p><ul>{items}</ul>"
+    auto_promoted_html = ""
+    if d.auto_promoted:
+        items = "".join(f"<li><code>{s}</code></li>" for s in d.auto_promoted)
+        auto_promoted_html = f"<p><strong>Auto-promoted to skip_senders</strong> ({len(d.auto_promoted)}):</p><ul>{items}</ul>"
+    top_noise_html = ""
+    if d.top_noise_senders:
+        items = "".join(
+            f"<li><code>{e['sender_email']}</code> ({e['count']}×)</li>"
+            for e in d.top_noise_senders
+        )
+        top_noise_html = f"<p>Top dismissed-as-noise senders:</p><ul>{items}</ul>"
+    return f"""<!doctype html>
+<html><body style="font-family:-apple-system,Segoe UI,sans-serif;max-width:640px;margin:24px auto;line-height:1.5">
+<h2>YouOS — Agent digest for {d.account}</h2>
+<p style="color:#666">{span}</p>
+<table style="border-collapse:collapse;width:100%">
+  <tr><td>Sweeps</td><td>{d.sweeps} ({d.sweeps_successful} successful)</td></tr>
+  <tr><td>Fetched</td><td>{d.fetched}</td></tr>
+  <tr><td>Hard-skipped</td><td>{d.hard_skipped}</td></tr>
+  <tr><td>Drafted</td><td>{d.drafted}</td></tr>
+  <tr><td>Surfaced</td><td>{d.surfaced}</td></tr>
+  <tr><td>Pending review</td><td>{d.pending_count}</td></tr>
+  <tr><td>Pushed to Gmail Drafts</td><td>{d.pushed_count}</td></tr>
+  <tr><td>Dismissed</td><td>{d.dismissed_count} ({d.dismissal_rate:.0%})</td></tr>
+</table>
+{by_reason_html}
+{auto_promoted_html}
+{top_noise_html}
+{triage_link}
+</body></html>"""
+
+
+def _data_to_dict(d: DigestData) -> dict[str, Any]:
+    return {
+        "account": d.account,
+        "days": d.days,
+        "generated_at": d.generated_at,
+        "sweeps": d.sweeps,
+        "sweeps_successful": d.sweeps_successful,
+        "fetched": d.fetched,
+        "hard_skipped": d.hard_skipped,
+        "drafted": d.drafted,
+        "surfaced": d.surfaced,
+        "persisted": d.persisted,
+        "pending_count": d.pending_count,
+        "pushed_count": d.pushed_count,
+        "dismissed_count": d.dismissed_count,
+        "dismissal_rate": d.dismissal_rate,
+        "dismissal_by_reason": d.dismissal_by_reason,
+        "auto_promoted": d.auto_promoted,
+        "top_noise_senders": d.top_noise_senders,
+        "triage_url": d.triage_url,
+    }
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _resolve_triage_url() -> str | None:
+    """Build the user-visible URL where /triage lives — Tailscale form if
+    configured, otherwise None (the caller falls back to docs guidance)."""
+    try:
+        from app.core.config import get_server_port, get_tailscale_hostname, load_config
+
+        cfg = load_config() or {}
+        host = (cfg.get("server") or {}).get("host") or "127.0.0.1"
+        port = get_server_port(cfg)
+        ts = get_tailscale_hostname(cfg)
+        if ts:
+            return f"http://{ts}:{port}"
+        # Exposed non-loopback bind — return the configured host directly.
+        if host not in ("127.0.0.1", "localhost", ""):
+            return f"http://{host}:{port}"
+    except Exception:
+        pass
+    return None
