@@ -36,6 +36,18 @@ metadata:
 
 YouOS is a full local Python app (not an instruction-only snippet). It drafts email replies in your style, grounded in your real past replies.
 
+**Naming:** *YouOS* is the shared app/package. During setup it personalizes its name to *<First>OS* (e.g. **BaherOS**) for **your local instance** at `YOUOS_DATA_DIR=~/YouOS-Instances/<you>/` — that's a local config/data directory, not a fork of the project.
+
+## Safety & impact
+
+Read these before installing:
+
+- **Sensitive data ingested locally.** YouOS reads your Gmail (sent + threads), Google Docs, and optional WhatsApp exports into a local SQLite DB. This stays on your machine, but it *is* sensitive content — protect the data directory (`YOUOS_DATA_DIR/var/youos.db`) accordingly.
+- **Installation runs local package code.** `./scripts/install.sh` builds a `.venv` and installs this repository — review the source (especially `scripts/install.sh`, `pyproject.toml`, `app/`) before running.
+- **Background persistence is opt-in.** YouOS only runs as a launchd LaunchAgent if you explicitly run `youos service install`. Foreground `youos serve` does not persist.
+- **Scheduled/nightly runs are opt-in.** Ingestion, fine-tuning, and autoresearch only run automatically if you've enabled the nightly pipeline; `youos improve` is the manual equivalent.
+- **External model fallback is optional.** Drafting is on-device by default. Cloud fallback only fires if `review.draft_model` or `model.fallback` is set to a cloud model — set `model.fallback: none` and `review.draft_model: local` for strict local-only operation.
+
 ## Install and runtime model
 
 - Install is **manual**: run `./scripts/install.sh` (Python 3.11+) — it creates a `.venv`, installs YouOS, sets up the on-device model (**MLX**) on Apple Silicon, and runs the doctor

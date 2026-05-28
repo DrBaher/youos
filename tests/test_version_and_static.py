@@ -34,6 +34,21 @@ def test_api_config_uses_dynamic_version():
     assert body["version"] != "0.1.10"  # the old hardcoded value
 
 
+def test_version_parity_healthz_readyz_apiconfig():
+    """All runtime version surfaces must agree. /healthz, /readyz, and
+    /api/config used to drift independently — this pins them to the single
+    source-of-truth from app.core.version.get_version()."""
+    c = TestClient(app)
+    v = get_version()
+    health = c.get("/healthz").json()
+    ready = c.get("/readyz").json()
+    config = c.get("/api/config").json()
+    assert health["version"] == v, f"/healthz version drifted: {health}"
+    assert ready["version"] == v, f"/readyz version drifted: {ready}"
+    assert config["version"] == v, f"/api/config version drifted: {config}"
+    assert health.get("status") == "ok"
+
+
 def test_static_assets_served():
     c = TestClient(app)
     css = c.get("/static/youos.css")
