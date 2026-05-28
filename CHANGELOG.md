@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.2.0-beta.50 — 2026-05-28
+
+### Test isolation: 4 model tests now reliable on dev machines with a warm mlx_lm.server
+
+The 4 "pre-existing" model-test failures I'd been carrying as "not my problem" (`test_model_compare`, `test_model_server`, `test_persona_adapters_phase_3`, `test_stream_local_model`) turned out to share one root cause: each test exercises the **cold subprocess path** of model generation but doesn't disable the **warm-server short-circuit**. On a dev machine with `mlx_lm.server` actually running (which is the normal state — that's the whole point of the warm server), the production code skips the Popen / `_run_subprocess` call, so the test fixtures' captured `cmd` is empty and assertions fail.
+
+The bug is in the **tests**, not the production code: each test should explicitly pin "warm server unavailable" as a precondition. Fixed by adding one line per test:
+
+```python
+monkeypatch.setattr("app.core.model_server.is_enabled", lambda: False)
+```
+
+(For `test_ensure_running_skipped_under_pytest`, the equivalent is `monkeypatch.setattr(ms, "is_healthy", lambda: False)` — same idea, different surface.)
+
+**Result**: `python -m pytest tests/` now runs **1262 passed, 1 skipped, 0 failed** end-to-end on a dev machine with an active `mlx_lm.server`. CI was already green because GitHub Actions runners don't have a warm server running.
+
+### What this completes
+
+Continues the test-hygiene work from b46 + b49. Three classes of test-fragility caught and fixed this session:
+
+| Class | Where | Fix |
+|---|---|---|
+| `monkeypatch.setenv` not enough for module-level globals | b46 (`test_agent_routes.py` writing real config) | `monkeypatch.setattr` on the module global + `cache_clear()` |
+| `urllib.parse.urlparse` always absolutizes paths | b49 (`youos triage` couldn't open DB) | `removeprefix("sqlite:///")` matches bootstrap |
+| **Warm-server short-circuit invalidates Popen tests** | **b50 (this PR)** | **Stub `model_server.is_enabled` per test** |
+
 ## v0.2.0-beta.49 — 2026-05-28
 
 ### Fix: `youos triage` DB path resolution + CI lint cleanup
