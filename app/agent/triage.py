@@ -89,6 +89,24 @@ def run_triage(
         except Exception:
             standing_instructions = None
 
+    # b57: Sync Gmail-label dismissals BEFORE fetching unread, so any rows
+    # the user labelled YouOS/skip from their phone get dismissed in this
+    # sweep (and so the next-step skip_senders / counters reflect them).
+    # Failure-isolated: a label-sync error here logs and continues.
+    try:
+        from app.agent.gmail_label_sync import sync_gmail_label_dismissals
+
+        _label_result = sync_gmail_label_dismissals(
+            account=account, database_url=database_url,
+        )
+        if _label_result.dismissed:
+            logger.info(
+                "gmail-label sync: dismissed %d row(s) from labelled threads before triage",
+                len(_label_result.dismissed),
+            )
+    except Exception as exc:
+        logger.warning("gmail-label sync failed: %s", exc)
+
     # 1) Fetch unread inbox threads.
     messages = fetch_unread(account, window=window, limit=limit, backend=backend)
 
