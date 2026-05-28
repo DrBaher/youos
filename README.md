@@ -73,6 +73,19 @@ Gmail (sent mail)          Your feedback
 - Run a golden benchmark anytime (10 curated cases): `youos eval --golden`
 - Runs entirely locally on Apple Silicon
 
+## Autonomous triage (opt-in)
+
+YouOS can sweep your unread inbox on a schedule, filter newsletters/automation/CI noise, and pre-draft replies for what actually wants a reply. Drafts land in **`/triage`** — never auto-sent. Click **Push to Gmail Drafts** to put a real Gmail Draft on the original thread; you finish-and-send from Gmail.
+
+```bash
+youos config set agent.enabled true
+youos config set agent.interval_minutes 15
+youos config set agent.standing_instructions "today I'm OOO; politely decline meetings"
+youos serve     # then visit /triage
+```
+
+Features: **standing instructions** threaded into every draft prompt, **cold-outreach detection** with an automatic decline-nudge, **prior-history boost** that prioritises senders you've actually corresponded with, **audit log** of every sweep visible in the `/triage` Recent activity panel, and three safety guardrails — per-sender skip list, daily draft cap, and strict-local mode (refuses cloud fallback during background sweeps). Manual one-shot: `youos triage --window 3d --limit 8 [--dry-run]`.
+
 ## Does it actually sound like you? (measured)
 
 The whole bet behind YouOS is that a small model fine-tuned on *your* mail beats a frontier model that isn't — at sounding like you. So we measured it. `youos compare-models` drafts your held-out messages under each backend and scores every draft against the reply you actually sent — **voice-match**: a blend of semantic similarity, stylometry, phrasing overlap, and length fit.
