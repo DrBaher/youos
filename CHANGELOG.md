@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.19 — 2026-05-28
+
+### Review-driven hardening (OpenClaw review)
+- **`/readyz` added; `/healthz` now returns the version.** `/readyz` reports DB resolvability for launchd/health probes. New test pins `/healthz`, `/readyz`, and `/api/config` to the same `get_version()` value — version drift across runtime surfaces is the recurring bug the canonical-version refactor was meant to kill, and now it has a regression test.
+- **SKILL.md gains a Safety & impact section near the top** (sensitive Gmail/Docs/WhatsApp ingestion, install runs local code, opt-in launchd/nightly, optional cloud fallback with strict-local instructions). Also a **Naming** line spelling out that `<First>OS` is the user's local instance at `YOUOS_DATA_DIR=~/YouOS-Instances/<you>/`, **not a fork**.
+- **`clawhub.json` metadata hygiene**: removed `screenshots` and `demo` fields — they referenced files not in the text-only bundle; the homepage repo already resolves them. New test pins this.
+- **Bundle now has a tested launchd installer guarantee.** The plist is built programmatically by `app/core/service.py:build_plist()` (no `deploy/` directory dependency), and a new test runs `prepare_clawhub_release.sh` and asserts the bundle contains `app/core/service.py` with `build_plist`, `launchctl`, `RunAtLoad`, and `KeepAlive`.
+- **Two safety regressions tests**: missing DB auto-bootstraps cleanly with the required tables, and an unsafe DB path (Trash) fails fast with a clear `RuntimeError`.
+
+Status of the reviewer's other items: `var/` was already in `.gitignore` (line 26); the canonical version refactor already wired `app.core.version.get_version()` through `settings.py`, `/api/config`, and all UI footers (the cited `0.1.11` / `0.1.10` drift was an earlier snapshot); no `scripts/run_youos.sh` / `scripts/install_youos_launchd.sh` exist because the install path is `youos service install` → `app/core/service.py`, which generates the plist in Python and points `ProgramArguments` directly at `uvicorn` — no shell launcher needed.
+
 ## v0.2.0-beta.18 — 2026-05-27
 
 ### Light mode for the Gmail extension + bookmarklet (and a regression fix)
