@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.2.0-beta.48 — 2026-05-28
+
+### CRITICAL: fix gws `drafts create` call shape — verified against gws schema
+
+Companion fix to b47. The b40 `_gws_create_draft` was a guess. Live-checked `gws schema gmail.users.drafts.create` — the actual interface is fundamentally different.
+
+| What we shipped (broken) | What actually works |
+|---|---|
+| `gws gmail drafts create` (4 args) | `gws gmail users drafts create` (5 args; "users" subresource) |
+| `--user <email>` | `--params '{"userId": "<email>"}'` |
+| `--threadId <tid>` (top-level) | `"threadId"` inside the message dict in `--json` body |
+| `--format json` | default; flag unnecessary |
+| `--raw <b64>` (top-level) | `"raw"` inside the message dict |
+
+`gws` is the official Google Workspace CLI. Its argv convention is `<service> <resource> [<subresource>] <method>` with URL params via `--params` and request body via `--json`. Any user on `ingestion.google_backend=gws` would have hit "unrecognized subcommand" errors on every Push to Gmail Drafts click.
+
+**Live verification path**: `gws schema gmail.users.drafts.create` returns the full schema. A live create wasn't possible on this machine — `gws` isn't authed here (the user's primary backend is gog) — but the schema is now the source of truth.
+
+**Tests** (`tests/test_gmail_write.py`): 2 gws tests rewritten to pin the actual call shape — verify `--params` JSON contains `userId`, `--json` body contains `message.raw` and (optionally) `message.threadId`. Error-path tests unchanged.
+
+---
+
+Push to Gmail Drafts backend matrix is now end-to-end correct:
+
+| Backend | Status | Verified |
+|---|---|---|
+| **gog** (b47) | Live-verified | 2 real drafts created + deleted on drbaher@gmail.com |
+| **gws** (b48) | Schema-verified | Live create deferred until gws auth available |
+| **native** (b46) | Schema-verified | googleapiclient call shape matches REST API |
+
 ## v0.2.0-beta.47 — 2026-05-28
 
 ### CRITICAL: fix gog `drafts create` call shape — Push to Gmail Drafts was broken since b37

@@ -177,34 +177,35 @@ def _gws_create_draft(
     subject: str,
     body: str,
 ) -> GmailDraftResult:
-    """Best-effort ``gws gmail drafts create`` invocation.
+    """Verified ``gws gmail users drafts create`` invocation (gws Google
+    Workspace CLI, current as of 2026-05).
 
-    Mirrors the gog path: build an RFC 822 message, base64url-encode it,
-    pass via ``--raw``. The gws CLI is Google's first-party tool so it
-    tends to track the Gmail REST API shape (drafts.create accepts
-    ``raw`` + ``threadId``). Like ``_gog_create_draft``, if your installed
-    gws uses different flag names, this single function is the one to fix.
+    gws is the official Google Workspace CLI; its argv convention is
+    ``<service> <resource> [<subresource>] <method>`` with URL/query
+    params as JSON via ``--params`` and request body as JSON via
+    ``--json``. The full path here is ``gmail.users.drafts.create``:
+    ``userId`` goes in ``--params``, and the Draft resource (``{"message":
+    {"raw": ..., "threadId": ...}}``) goes in ``--json``.
 
-    Verification path: ``gws gmail drafts create --help`` on the target
-    machine. The tests below pin the call shape so any drift surfaces in
-    one place.
+    Schema source-of-truth: ``gws schema gmail.users.drafts.create``.
+
+    Note: the ``account`` arg is passed as ``userId`` (the Gmail API
+    accepts the actual email or ``"me"``). The credentials file gws uses
+    determines which mailbox it actually writes to — for a multi-account
+    setup, ``ingestion.gws_credentials`` should map account → file.
     """
     rfc = _build_rfc822(to_email=to_email, subject=subject, body=body)
     raw_b64 = base64.urlsafe_b64encode(rfc).decode("ascii")
 
-    # gws conventionally uses ``--user`` instead of ``--account`` (matches
-    # Google's API where ``userId`` identifies the mailbox owner) and
-    # ``--threadId`` (Google's camelCase) where gog uses ``--thread-id``.
-    # Tests pin the call shape — if gws on your machine uses different
-    # flags, you'll see exactly which assertion to flip.
-    cmd: list[str] = [
-        "gws", "gmail", "drafts", "create",
-        "--user", account,
-        "--format", "json",
-        "--raw", raw_b64,
-    ]
+    request_body: dict[str, Any] = {"message": {"raw": raw_b64}}
     if thread_id:
-        cmd += ["--threadId", thread_id]
+        request_body["message"]["threadId"] = thread_id
+
+    cmd: list[str] = [
+        "gws", "gmail", "users", "drafts", "create",
+        "--params", json.dumps({"userId": account}),
+        "--json", json.dumps(request_body),
+    ]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -224,6 +225,8 @@ def _gws_create_draft(
     except json.JSONDecodeError as exc:
         raise GmailWriteError(f"gws returned non-JSON stdout: {result.stdout[:200]!r}") from exc
 
+    # gws returns the bare Draft resource (matches the REST API exactly):
+    # {"id": "...", "message": {"id": "...", "threadId": "..."}}
     draft_id = payload.get("id") or payload.get("draftId") or ""
     if not draft_id:
         raise GmailWriteError(f"gws returned no draft id; payload={payload!r}")
