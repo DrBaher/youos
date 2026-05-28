@@ -194,6 +194,8 @@ Every N minutes (default 15) the loop:
 - `agent.strict_local` — refuses cloud fallback during background triage (interactive `/feedback` unaffected)
 - Manual one-shot: `youos triage [--account] [--window 3d] [--limit 8] [--dry-run]`
 
+**Self-tuning** (opt-in): Dismiss with a categorical reason (`noise` / `wrong_sender` / `wrong_content` / `already_handled` / `other`) — these aggregate into a dismissal-rate metric and a "promote to skip-list" candidate list on `/triage`'s Agent health card. When `agent.auto_promote_skip_senders` is on, senders dismissed as `noise` 3+ times in 30d are auto-added to `agent.skip_senders` at the end of each sweep — fully self-tuning loop. Default off; the candidates also appear with checkboxes for one-click manual promotion.
+
 ## How it works
 
 1. Ingests Gmail, Google Docs, WhatsApp exports — plus organic pairs from emails you sent without YouOS
