@@ -87,6 +87,12 @@ Read these before installing:
 - "email assistant"
 - "my writing style"
 - "train on my emails"
+- "anything important in my inbox"
+- "triage my email"
+- "what did the agent do"
+- "push to gmail drafts"
+- "dismiss as noise"
+- "save as a training pair"
 
 ## Requirements
 
@@ -195,6 +201,33 @@ Every N minutes (default 15) the loop:
 - Manual one-shot: `youos triage [--account] [--window 3d] [--limit 8] [--dry-run]`
 
 **Self-tuning** (opt-in): Dismiss with a categorical reason (`noise` / `wrong_sender` / `wrong_content` / `already_handled` / `other`) — these aggregate into a dismissal-rate metric and a "promote to skip-list" candidate list on `/triage`'s Agent health card. When `agent.auto_promote_skip_senders` is on, senders dismissed as `noise` 3+ times in 30d are auto-added to `agent.skip_senders` at the end of each sweep — fully self-tuning loop. Default off; the candidates also appear with checkboxes for one-click manual promotion.
+
+**Remote dismissal**: apply the Gmail label `YouOS/skip` to a thread from any Gmail client (phone, web, work laptop) → next sweep marks the matching pending row dismissed-as-noise + removes the label. Full setup in `docs/REMOTE_ACCESS.md`.
+
+## Integrations (orchestrator backend)
+
+YouOS is also a backend that **orchestrators** can drive — Hermes, OpenClaw, a Telegram/WhatsApp/Slack bot, or any HTTP client. The end-user lives in their existing chat app; the orchestrator handles the email category by calling YouOS:
+
+```
+You (Telegram) → "Anything important?" → Hermes → GET /api/agent/digest → paraphrases summary
+You (Telegram) → "Push #12 to Gmail" → Hermes → POST /api/agent/pending/12/push_to_gmail
+```
+
+**Surface area** (zero added config — works out of the box):
+- `GET /openapi.json` — auto-generated OpenAPI 3.x for tool-discovery
+- `GET /docs` — Swagger UI
+- `GET /api/agent/digest?account=&days=1` — `summary` headline + counts + top-5 pending rows with action handles
+- `GET /api/agent/pending` — full queue
+- `POST /api/agent/pending/{id}/{push_to_gmail,dismiss,amend,mark_sent,save_as_feedback_pair}` — actions
+- `GET /api/agent/observability` / `dismissal_stats` / `sweeps` — drill-downs
+- `POST /api/agent/triage` — trigger sweep
+- `POST /api/agent/skip_senders/promote` — bulk-add to skip list
+
+**Auth**: `X-YouOS-Token: <token>` header. Mint with `youos token-create` (stored hashed; shown once). Per-account isolation via `?account=...` on every endpoint.
+
+**Network**: bind to `0.0.0.0` and put YouOS behind Tailscale; the orchestrator runs on the same Tailnet (`docs/REMOTE_ACCESS.md` covers the setup).
+
+Full recipe + ~30-line Telegram bot example in `docs/INTEGRATIONS.md`. **YouOS already ships an OpenClaw bundle** (this file + `clawhub.json`) and is published on ClawHub; Hermes-style orchestrators discover the surface via `/openapi.json`.
 
 ## How it works
 
