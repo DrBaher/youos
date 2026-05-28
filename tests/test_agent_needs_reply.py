@@ -170,3 +170,78 @@ def test_prior_history_boost_uses_sender_history(monkeypatch):
     assert v_known.score >= v_new.score + 0.15
     assert any("prior history" in r for r in v_known.reasons)
     assert not any("prior history" in r for r in v_new.reasons)
+
+
+# --- b30 regressions (14-day work QA) ----------------------------------
+# QA found three false-positives in the 14-day work inbox that all came
+# down to (a) operational keywords mid-local-part, (b) automation-domain
+# meeting bots not in the list, (c) prior-history boost wrongly applied to
+# noreply senders.
+
+
+def test_workspace_noreply_gets_a_penalty():
+    """`workspace-noreply@google.com` starts with 'workspace' but the
+    `\\bnoreply\\b` word boundary inside NOREPLY_LOCAL_PAT catches it after
+    the hyphen. The operational-mailbox pattern no longer double-charges
+    noreply variants, so the penalty lands once via the noreply path."""
+    v = classify(
+        _msg(
+            sender="The Google Workspace Team <workspace-noreply@google.com>",
+            sender_email="workspace-noreply@google.com",
+            body="Your subscription requires action. Please review.",
+        )
+    )
+    # Some kind of automation-penalty fired (currently via the noreply path).
+    assert any("noreply" in r for r in v.reasons), v.reasons
+
+
+def test_calendar_notification_caught_by_substring_match():
+    """`calendar-notification@google.com` — same: 'notification' substring."""
+    v = classify(
+        _msg(
+            sender="Google Calendar <calendar-notification@google.com>",
+            sender_email="calendar-notification@google.com",
+            body="You have no events scheduled today.",
+        )
+    )
+    assert any("operational mailbox" in r for r in v.reasons)
+
+
+def test_fireflies_meeting_bot_hard_skipped_by_domain():
+    """Fireflies / Otter / Loom / Calendly / Doodle are meeting-bot services
+    whose mail is always automation. Added to the automation-domain list."""
+    v = classify(
+        _msg(
+            sender="Fred from Fireflies.ai <fred@fireflies.ai>",
+            sender_email="fred@fireflies.ai",
+            body="Your recording for Weekly Check-in is ready. Click here to view.",
+        )
+    )
+    assert not v.needs_reply
+    assert any("automation" in r for r in v.reasons)
+
+
+def test_prior_history_boost_suppressed_for_transactional_sender():
+    """Real-inbox b30: `count_for(noreply@wise.com)` returned 6 (Wise
+    notifications captured by ingest), so the +0.20 history boost lifted
+    a pure transactional notification past threshold. Suppress when the
+    sender already matched noreply / operational-mailbox."""
+
+    class FakeHistory:
+        def count_for(self, _email):
+            return 6
+
+    body = "Money received from Work AI FlexCo. Please review."
+    v = classify(
+        _msg(
+            sender="Wise <noreply@wise.com>",
+            sender_email="noreply@wise.com",
+            body=body,
+        ),
+        history=FakeHistory(),
+    )
+    # Reason is *recorded* so the operator can see history existed; boost is
+    # *not* applied.
+    assert any("suppressed" in r for r in v.reasons), v.reasons
+    # And without the boost, this should fall below threshold.
+    assert not v.needs_reply, f"transactional + history boost should not pass: {v}"
