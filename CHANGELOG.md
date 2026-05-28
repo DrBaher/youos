@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.2.0-beta.40 — 2026-05-28
+
+### Phase 2.2: gws backend for Push to Gmail Drafts
+
+The Phase 2.1 push-to-Gmail-Drafts path (b37) only supported the `gog` backend; calling it on a `gws`-backed account raised `NotImplementedError`. This PR adds the gws path so `/triage`'s **Push to Gmail Drafts** works on both backends.
+
+Implementation mirrors the gog path — RFC 822 message, base64url-encoded `--raw`, isolated to a single `_gws_create_draft` function so if your installed `gws` uses different flag names it's a one-line fix. Tests pin the call shape (`--user`, `--threadId`, `--format json`, `--raw`) so any drift surfaces in one place. Verification path: `gws gmail drafts create --help` on the target machine.
+
+Error translation matches gog: nonzero exit → `GmailWriteError` with stderr; `FileNotFoundError` → "gws CLI not on PATH" message; malformed JSON or missing `id` → distinct errors with payload context.
+
+`native` backend still raises NotImplementedError — needs `gmail.compose` OAuth scope + one-time re-auth; deferred to Phase 2.3.
+
+**Tests** (`tests/test_gmail_write.py`) — 6 new: success + thread-id elision + 3 error paths, identical structure to the gog suite.
+
 ## v0.2.0-beta.39 — 2026-05-28
 
 ### Agent triage — dismissal-as-feedback loop
