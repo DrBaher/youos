@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.2.0-beta.41 — 2026-05-28
+
+### `/triage` UX upgrades
+
+The triage queue is fine for 3 drafts; it's painful for 15. This PR threads four ergonomic upgrades into the page without changing any backend behavior.
+
+**Keyboard shortcuts** — `j` / `k` move between draft cards (visible focus ring); `p` pushes the focused draft to Gmail Drafts; `d` dismisses it; `e` jumps into the draft editor; `m` marks sent manually; `r` refreshes; `?` opens a help overlay; `Esc` closes the overlay or unblurs a focused textarea. Disabled while an input or textarea has focus — typing `d` into the draft editor won't dismiss the row.
+
+**Bulk actions** — two toolbar buttons:
+- **Push all visible** — pushes every visible draft to Gmail Drafts sequentially (confirmation prompt; reports `ok/failed` count when done).
+- **Dismiss all surface as noise** — bulk-dismisses every surface-for-review row with `reason='noise'`, feeding the dismissal-feedback aggregate. The single best move when the agent surfaced obvious newsletters or CI mail you don't want to keep seeing.
+
+Both bulk actions operate on the *currently visible* rows, so the new filter bar is your safety control — narrow the filter before bulking.
+
+**Filter bar** — substring filter by sender (matches name + email) and a min-score selector (any / 0.50 / 0.60 / 0.70 / 0.80). Purely visual; doesn't refetch. Status line shows "N drafts · M for review (filtered from total)" so you always see what's hidden.
+
+**Add-to-skip-senders on dismiss** — checkbox next to every Dismiss button: "also skip sender". When ticked, the row's `sender_email` is appended to `agent.skip_senders` via the existing `/api/config/set` endpoint *before* the dismissal POST, so the maintenance lands even if the dismissal itself fails. Idempotent — already-present senders trigger "(already in skip-senders)" feedback. Preserves the existing separator (comma or newline) so you can keep your skip list however you've been formatting it in `/settings`.
+
+**Tests** — `tests/test_agent_routes.py::test_triage_page_includes_ux_upgrades` pins the IDs / sentinel strings so the new HTML elements can't silently vanish.
+
+No schema changes, no API changes — everything client-side on top of existing endpoints (`/api/agent/pending/{id}/{push_to_gmail,dismiss}`, `/api/config/{flags,set}`).
+
 ## v0.2.0-beta.40 — 2026-05-28
 
 ### Phase 2.2: gws backend for Push to Gmail Drafts
