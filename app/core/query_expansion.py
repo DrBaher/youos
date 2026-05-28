@@ -35,7 +35,7 @@ EMAIL_STOPWORDS: frozenset[str] = frozenset({
     "some", "many", "much", "no", "not", "nor", "so", "than", "too", "yet",
     "very", "really", "quite", "just", "only", "even", "also", "however",
     "therefore", "thus", "hence", "still", "ever", "never", "always",
-    "now", "then", "here", "there", "when", "where", "why", "how", "who",
+    "now", "here", "there", "when", "where", "why", "how", "who",
     "what", "which", "whom", "whose",
     # Greeting / closing / pleasantry — the email-specific noise.
     "hi", "hello", "hey", "dear", "thanks", "thank", "regards", "best",

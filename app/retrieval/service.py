@@ -13,7 +13,8 @@ from typing import Any, Literal
 import yaml
 
 from app.core.embeddings import cosine_similarity, deserialize_embedding, get_embedding, get_embedding_model_id
-from app.core.sender import classify_sender, extract_domain, extract_email as _extract_email
+from app.core.sender import classify_sender, extract_domain
+from app.core.sender import extract_email as _extract_email
 from app.db.bootstrap import connect, resolve_sqlite_path
 
 ResultType = Literal["document", "chunk", "reply_pair"]

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import re
 import sqlite3
-import urllib.parse
 from dataclasses import dataclass, field
 from typing import Iterable
 
@@ -142,8 +141,14 @@ class SenderHistory:
 
     @classmethod
     def from_database_url(cls, database_url: str) -> "SenderHistory":
-        path = urllib.parse.urlparse(database_url).path
-        return cls(path)
+        # urlparse turns ``sqlite:///var/youos.db`` into the absolute
+        # ``/var/youos.db``, breaking the relative-path default Settings
+        # emits. Use removeprefix to mirror app/db/bootstrap.py + the
+        # rest of the codebase.
+        prefix = "sqlite:///"
+        if not database_url.startswith(prefix):
+            raise ValueError(f"Only sqlite:/// URLs are supported (got {database_url!r})")
+        return cls(database_url.removeprefix(prefix))
 
 
 # --- Classifier -------------------------------------------------------------

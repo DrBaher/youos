@@ -6,12 +6,9 @@ later phases (UI, scheduling, OAuth) can build on a known-good orchestrator.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from app.agent.inbox_fetch import InboxMessage
-from app.agent.needs_reply import NeedsReplyVerdict
 
 
 @pytest.fixture
@@ -140,8 +137,8 @@ def test_triage_persists_drafts_and_is_idempotent_on_repeat_run(mocked_environme
     """``run_triage`` persists drafts into agent_pending_drafts and is
     idempotent on the Gmail message_id — a second run with the same inbound
     must not create duplicates."""
-    from app.agent.triage import run_triage
     from app.agent.store import list_pending
+    from app.agent.triage import run_triage
 
     env = mocked_environment
 
@@ -162,8 +159,8 @@ def test_triage_persists_drafts_and_is_idempotent_on_repeat_run(mocked_environme
 
 
 def test_triage_dry_run_does_not_persist(mocked_environment):
-    from app.agent.triage import run_triage
     from app.agent.store import list_pending
+    from app.agent.triage import run_triage
 
     env = mocked_environment
     result = run_triage(
@@ -186,7 +183,9 @@ def test_standing_instructions_threaded_into_draft_request(mocked_environment, m
     def _spy(req, **kw):
         seen["standing_instructions"] = getattr(req, "standing_instructions", None)
         class _Resp:
-            draft = "ok"; model_used = "stub"; repairs: list[str] = []
+            draft = "ok"
+            model_used = "stub"
+            repairs: list[str] = []
         return _Resp()
     monkeypatch.setattr("app.generation.service.generate_draft", _spy)
 
@@ -205,8 +204,8 @@ def test_standing_instructions_snapshotted_per_row(mocked_environment):
     """Each persisted row records the standing instructions that were active
     when the draft was generated — auditability after the user changes them."""
     env = mocked_environment
-    from app.agent.triage import run_triage
     from app.agent.store import list_pending
+    from app.agent.triage import run_triage
 
     run_triage(
         account="you@example.com",
@@ -231,8 +230,8 @@ def test_standing_instructions_falls_back_to_config(mocked_environment, monkeypa
         },
     )
     env = mocked_environment
-    from app.agent.triage import run_triage
     from app.agent.store import list_pending
+    from app.agent.triage import run_triage
 
     run_triage(
         account="you@example.com",
@@ -247,8 +246,8 @@ def test_standing_instructions_falls_back_to_config(mocked_environment, monkeypa
 
 
 def test_run_triage_writes_an_audit_row_with_counts_and_trigger(mocked_environment):
-    from app.agent.triage import run_triage
     from app.agent import store
+    from app.agent.triage import run_triage
 
     env = mocked_environment
     run_triage(
@@ -271,8 +270,8 @@ def test_run_triage_writes_an_audit_row_with_counts_and_trigger(mocked_environme
 def test_run_triage_audit_row_written_even_when_persist_false(mocked_environment):
     """``--dry-run`` (persist=False) doesn't write to agent_pending_drafts,
     but it DOES leave an audit trail of what was swept and why."""
-    from app.agent.triage import run_triage
     from app.agent import store
+    from app.agent.triage import run_triage
 
     env = mocked_environment
     run_triage(
@@ -289,8 +288,8 @@ def test_run_triage_audit_row_written_even_when_persist_false(mocked_environment
 def test_run_triage_captures_per_message_errors_in_audit(mocked_environment, monkeypatch):
     """Per-message generation errors land in ``errors_json`` so a transient
     failure shows up in /triage's recent-activity panel."""
-    from app.agent.triage import run_triage
     from app.agent import store
+    from app.agent.triage import run_triage
 
     def _boom(req, **kw): raise RuntimeError("warm server down")
     monkeypatch.setattr("app.generation.service.generate_draft", _boom)
@@ -385,7 +384,9 @@ def test_strict_local_passes_through_to_draft_request(mocked_environment, monkey
     def _spy(req, **kw):
         seen["strict_local"] = getattr(req, "strict_local", None)
         class _Resp:
-            draft = "ok"; model_used = "stub"; repairs: list[str] = []
+            draft = "ok"
+            model_used = "stub"
+            repairs: list[str] = []
         return _Resp()
     monkeypatch.setattr("app.generation.service.generate_draft", _spy)
 

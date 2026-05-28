@@ -193,7 +193,7 @@ def promote_skip_senders(body: PromoteSkipSendersBody) -> dict:
     try:
         saved = set_flag("agent.skip_senders", new_value)
     except (KeyError, ValueError) as exc:
-        raise HTTPException(400, f"could not update agent.skip_senders: {exc}")
+        raise HTTPException(400, f"could not update agent.skip_senders: {exc}") from exc
 
     return {
         "ok": True,
@@ -318,7 +318,7 @@ def save_as_feedback_pair(row_id: int, body: SaveAsTrainingPairBody, request: Re
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(502, f"feedback_pairs insert failed: {exc}")
+        raise HTTPException(502, f"feedback_pairs insert failed: {exc}") from exc
 
     # The interactive /feedback/submit response returns ``total_pairs``
     # (running count of feedback_pairs rows) but not the inserted id —
@@ -374,9 +374,9 @@ def push_to_gmail(row_id: int, request: Request) -> dict:
             body=body,
         )
     except NotImplementedError as exc:
-        raise HTTPException(501, str(exc))
+        raise HTTPException(501, str(exc)) from exc
     except GmailWriteError as exc:
-        raise HTTPException(502, f"Gmail write failed: {exc}")
+        raise HTTPException(502, f"Gmail write failed: {exc}") from exc
 
     # Persist the draft id alongside the sent timestamp.
     store.mark_sent(db_url, row_id, gmail_draft_id=result.draft_id)
