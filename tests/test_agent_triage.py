@@ -172,3 +172,71 @@ def test_triage_dry_run_does_not_persist(mocked_environment):
     )
     assert result.persisted == 0
     assert list_pending(env["database_url"]) == []
+
+
+# --- δ: standing instructions threaded into the prompt + snapshotted -------
+
+
+def test_standing_instructions_threaded_into_draft_request(mocked_environment, monkeypatch):
+    """The triage orchestrator passes ``standing_instructions`` into the
+    ``DraftRequest`` so generation can inject it via the same ``extra_constraint``
+    hook the cold-outreach nudge uses."""
+    seen: dict = {}
+    def _spy(req, **kw):
+        seen["standing_instructions"] = getattr(req, "standing_instructions", None)
+        class _Resp:
+            draft = "ok"; model_used = "stub"; repairs: list[str] = []
+        return _Resp()
+    monkeypatch.setattr("app.generation.service.generate_draft", _spy)
+
+    env = mocked_environment
+    from app.agent.triage import run_triage
+    run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+        standing_instructions="today I'm OOO; politely decline meetings",
+        persist=False,
+    )
+    assert seen["standing_instructions"] == "today I'm OOO; politely decline meetings"
+
+
+def test_standing_instructions_snapshotted_per_row(mocked_environment):
+    """Each persisted row records the standing instructions that were active
+    when the draft was generated — auditability after the user changes them."""
+    env = mocked_environment
+    from app.agent.triage import run_triage
+    from app.agent.store import list_pending
+
+    run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+        standing_instructions="be brief",
+    )
+    rows = list_pending(env["database_url"])
+    assert len(rows) == 1
+    assert rows[0]["standing_instructions_snapshot"] == "be brief"
+
+
+def test_standing_instructions_falls_back_to_config(mocked_environment, monkeypatch):
+    """When the caller doesn't pass ``standing_instructions``, the
+    orchestrator reads it from ``agent.standing_instructions`` config so the
+    background scheduler + manual ``youos triage`` both pick it up."""
+    monkeypatch.setattr(
+        "app.agent.scheduler.get_agent_config",
+        lambda: {
+            "enabled": True, "interval_minutes": 15, "accounts": [],
+            "window": "24h", "limit": 25, "threshold": 0.6, "notify_macos": True,
+            "standing_instructions": "from config",
+        },
+    )
+    env = mocked_environment
+    from app.agent.triage import run_triage
+    from app.agent.store import list_pending
+
+    run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    rows = list_pending(env["database_url"])
+    assert len(rows) == 1
+    assert rows[0]["standing_instructions_snapshot"] == "from config"

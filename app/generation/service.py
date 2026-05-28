@@ -168,6 +168,13 @@ class DraftRequest:
     use_adapter: bool = True
     subject: str | None = None
     user_prompt: str | None = None
+    # Caller-provided guidance threaded into the prompt as an extra persona
+    # constraint. Used by the autonomous agent loop to inject standing
+    # instructions ("today I'm OOO; politely decline meetings") into every
+    # triage draft without changing the user's stored persona. Combines
+    # additively with the auto-detected cold-outreach DECLINE_NUDGE so both
+    # can apply to the same draft.
+    standing_instructions: str | None = None
     # Pin the generation backend regardless of config/use_local_model. Used by
     # the cross-model comparison (app/evaluation/model_compare.py) to draft the
     # same case under each engine. One of "mlx" | "ollama" | "claude" | "none";
@@ -1669,6 +1676,13 @@ def generate_draft(
         )
         cold_outbound_nudge = DECLINE_NUDGE if _cold_verdict.is_cold else None
 
+        # Combine caller-provided standing instructions (e.g. the agent's
+        # "today I'm OOO" string) with the auto-detected cold-outreach nudge.
+        # Both land in the prompt's persona-constraints block via the
+        # ``extra_constraint`` kwarg on ``assemble_prompt``.
+        _extras = [s for s in (cold_outbound_nudge, request.standing_instructions) if s]
+        extra_constraint = "\n".join(_extras) if _extras else None
+
         # Classify intent (multi-intent support)
         from app.core.intent import classify_intents_multi
 
@@ -1781,7 +1795,7 @@ def generate_draft(
         score_stats=score_stats,
         subject=request.subject,
         user_prompt=request.user_prompt,
-        extra_constraint=cold_outbound_nudge,
+        extra_constraint=extra_constraint,
     )
 
     # Token budget check — greedy knapsack: calculate each exemplar cost once (P5)
@@ -1805,7 +1819,7 @@ def generate_draft(
             score_stats=score_stats,
             subject=request.subject,
             user_prompt=request.user_prompt,
-            extra_constraint=cold_outbound_nudge,
+            extra_constraint=extra_constraint,
         )
         budget = PROMPT_TOKEN_BUDGET - _estimate_tokens(base_prompt)
         used = 0
@@ -1842,7 +1856,7 @@ def generate_draft(
                 score_stats=score_stats,
                 subject=request.subject,
                 user_prompt=request.user_prompt,
-                extra_constraint=cold_outbound_nudge,
+                extra_constraint=extra_constraint,
             )
         token_estimate = _estimate_tokens(prompt)
 

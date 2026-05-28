@@ -47,6 +47,11 @@ def get_agent_config() -> dict[str, Any]:
         "limit": int(a.get("limit", 25)),
         "threshold": float(a.get("threshold", 0.6)),
         "notify_macos": bool(a.get("notify_macos", True)),
+        # δ: free-form text prepended to every triage draft's prompt — e.g.
+        # "today I'm out of office; politely decline meetings." Stored as
+        # ``agent.standing_instructions`` so it's editable from /settings,
+        # /triage, or a single ``youos config set`` line.
+        "standing_instructions": str(a.get("standing_instructions") or "").strip(),
     }
 
 
