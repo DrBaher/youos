@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.2.0-beta.39 — 2026-05-28
+
+### Agent triage — dismissal-as-feedback loop
+
+When you dismiss a queued draft, the agent now asks why and remembers — so the filter can learn which inboxes/senders to skip without needing you to maintain `agent.skip_senders` by hand. Until now `Dismiss` was a black hole: the row vanished and the filter learned nothing. With this PR every dismissal carries a categorical reason that aggregates into a dismissal-rate metric per account, ready to drive the upcoming observability surface.
+
+**Schema**
+
+- New `dismissal_reason TEXT` column on `agent_pending_drafts` (idempotent ALTER; legacy rows stay NULL and aggregate into the `no_reason` bucket).
+- Bounded set of reasons: `noise` (filter shouldn't have drafted) · `wrong_sender` (right kind of mail, wrong person to reply now) · `wrong_content` (draft missed the point — a *drafting* quality signal, not a filter one) · `already_handled` (replied outside YouOS) · `other`.
+
+**DAL** (`app/agent/store.py`)
+
+- `mark_dismissed(row_id, *, reason=None)` — accepts the new reason; unknown values coerced to `'other'` as defence-in-depth.
+- New `dismissal_stats(account=None, days=30)` aggregates over a rolling window, returning `{total_persisted, dismissed, dismissal_rate, by_reason}` with the categorical breakdown zero-filled.
+
+**API**
+
+- `POST /api/agent/pending/{id}/dismiss` accepts an optional `{"reason": "..."}` body. Unknown reasons → 400 with the allowed-list. Empty body keeps working (legacy).
+- New `GET /api/agent/dismissal_stats?account=&days=30` — returns the aggregate.
+
+**`/triage` UI**
+
+- Each Dismiss button is now flanked by an optional reason selector ("Why? (optional)" → noise / wrong_sender / wrong_content / already_handled / other). Click Dismiss with no selection and behavior is unchanged. Pick one and it's logged alongside the dismissal.
+
+**Tests**
+
+- `tests/test_agent_store.py`: dismissal records reason, coerces unknowns, stats aggregate correctly and filter by account.
+- `tests/test_agent_routes.py`: API accepts/rejects reasons, `dismissal_stats` endpoint returns the expected shape.
+
+This PR doesn't yet *use* the dismissal signal anywhere — that's the planned observability + tuning work. It ships the substrate so dismissal data starts accumulating immediately, making downstream PRs meaningfully more useful as soon as you have a few days of data.
+
 ## v0.2.0-beta.38 — 2026-05-28
 
 ### Documentation refresh — agent triage feature

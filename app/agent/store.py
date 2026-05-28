@@ -138,8 +138,39 @@ def mark_sent(
     )
 
 
-def mark_dismissed(database_url: str, row_id: int) -> bool:
-    return _update_status(database_url, row_id, status="dismissed", dismissed_at_now=True)
+# Recognised dismissal-reason buckets — kept here (not in the DB) so the API
+# can validate and so the tuning code can iterate them without re-querying.
+# 'noise' is the only one that's a direct filter-quality signal; the others
+# are kept distinct so we don't conflate "we shouldn't have drafted" (filter
+# bug) with "right idea, wrong wording" (drafting bug) or "I already replied
+# outside YouOS" (orthogonal to both).
+DISMISSAL_REASONS: tuple[str, ...] = (
+    "noise",
+    "wrong_sender",
+    "wrong_content",
+    "already_handled",
+    "other",
+)
+
+
+def mark_dismissed(
+    database_url: str,
+    row_id: int,
+    *,
+    reason: str | None = None,
+) -> bool:
+    """Mark a pending row as dismissed. ``reason`` is one of ``DISMISSAL_REASONS``
+    (or ``None`` if the user didn't supply one — legacy callers / older UI).
+    Unknown reasons are coerced to ``'other'`` so the column stays bounded —
+    the API layer validates and rejects upstream, this is just defence in depth.
+    """
+    if reason is not None and reason not in DISMISSAL_REASONS:
+        reason = "other"
+    return _update_status(
+        database_url, row_id,
+        status="dismissed", dismissed_at_now=True,
+        dismissal_reason=reason,
+    )
 
 
 def _update_status(
@@ -151,6 +182,7 @@ def _update_status(
     sent_at_now: bool = False,
     dismissed_at_now: bool = False,
     gmail_draft_id: str | None = None,
+    dismissal_reason: str | None = None,
 ) -> bool:
     sets = ["status = ?", "updated_at = CURRENT_TIMESTAMP"]
     params: list[Any] = [status]
@@ -164,12 +196,72 @@ def _update_status(
     if gmail_draft_id is not None:
         sets.append("gmail_draft_id = ?")
         params.append(gmail_draft_id)
+    if dismissal_reason is not None:
+        sets.append("dismissal_reason = ?")
+        params.append(dismissal_reason)
     params.append(row_id)
     sql = f"UPDATE agent_pending_drafts SET {', '.join(sets)} WHERE id = ?"
     with closing(_connect(database_url)) as conn:
         cur = conn.execute(sql, params)
         conn.commit()
         return cur.rowcount > 0
+
+
+def dismissal_stats(
+    database_url: str,
+    *,
+    account: str | None = None,
+    days: int = 30,
+) -> dict[str, Any]:
+    """Aggregate dismissal signal over a rolling window.
+
+    Returns ``{total_persisted, dismissed, dismissal_rate, by_reason}``
+    over the last ``days`` days (UTC). ``by_reason`` is a dict mapping each
+    bucket in ``DISMISSAL_REASONS`` to a count (zero-filled), plus a
+    ``'no_reason'`` slot for legacy dismissals predating this PR. Used by
+    the upcoming agent-observability surface to tell the user "you dismiss
+    23% of drafted items, mostly as 'noise' — consider raising the
+    threshold or extending skip_senders."
+    """
+    where = "date(created_at) >= date('now', ?)"
+    params: list[Any] = [f"-{int(days)} days"]
+    if account:
+        where += " AND account = ?"
+        params.append(account)
+
+    with closing(_connect(database_url)) as conn:
+        total = int(conn.execute(
+            f"SELECT COUNT(*) FROM agent_pending_drafts WHERE {where}",
+            params,
+        ).fetchone()[0])
+        dismissed = int(conn.execute(
+            f"SELECT COUNT(*) FROM agent_pending_drafts WHERE {where} AND status = 'dismissed'",
+            params,
+        ).fetchone()[0])
+        rows = conn.execute(
+            f"""
+            SELECT COALESCE(dismissal_reason, 'no_reason') AS r, COUNT(*) AS c
+            FROM agent_pending_drafts
+            WHERE {where} AND status = 'dismissed'
+            GROUP BY r
+            """,
+            params,
+        ).fetchall()
+
+    by_reason: dict[str, int] = {r: 0 for r in DISMISSAL_REASONS}
+    by_reason["no_reason"] = 0
+    for row in rows:
+        by_reason[row["r"]] = int(row["c"])
+
+    rate = (dismissed / total) if total else 0.0
+    return {
+        "total_persisted": total,
+        "dismissed": dismissed,
+        "dismissal_rate": round(rate, 4),
+        "by_reason": by_reason,
+        "window_days": int(days),
+        "account": account,
+    }
 
 
 def count_persisted_today(database_url: str, *, account: str) -> int:

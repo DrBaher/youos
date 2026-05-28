@@ -281,6 +281,15 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
     _cols = {row[1] for row in connection.execute("PRAGMA table_info(agent_pending_drafts)").fetchall()}
     if "gmail_draft_id" not in _cols:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN gmail_draft_id TEXT")
+    # Phase 2.2 (dismissal-as-feedback): why the user dismissed a queued row.
+    # Categorical hint we use to tune the needs_reply scorer over time —
+    # 'noise' (filter let through what we shouldn't have drafted),
+    # 'wrong_sender' (right type of mail but the wrong person to reply now),
+    # 'wrong_content' (draft missed the point — drafting-quality signal),
+    # 'already_handled' (we replied outside YouOS — orthogonal to the filter),
+    # 'other' (free-text in a separate column if we ever add one).
+    if "dismissal_reason" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN dismissal_reason TEXT")
 
 
 def _migrate_agent_audit(connection: sqlite3.Connection) -> None:
