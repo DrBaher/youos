@@ -73,11 +73,42 @@ def amend(row_id: int, body: AmendBody, request: Request) -> dict:
     return {"ok": True, "row": store.get(_db_url(request), row_id)}
 
 
+class DismissBody(BaseModel):
+    """Optional dismissal reason — categorical so we can aggregate.
+
+    The body itself is optional on the wire (legacy UI sends an empty POST);
+    when present, ``reason`` must be one of ``store.DISMISSAL_REASONS``.
+    """
+
+    reason: str | None = Field(default=None)
+
+
 @router.post("/api/agent/pending/{row_id}/dismiss")
-def dismiss(row_id: int, request: Request) -> dict:
-    if not store.mark_dismissed(_db_url(request), row_id):
+def dismiss(row_id: int, request: Request, body: DismissBody | None = None) -> dict:
+    reason = body.reason if body else None
+    if reason is not None and reason not in store.DISMISSAL_REASONS:
+        raise HTTPException(
+            400,
+            f"unknown dismissal reason: {reason!r} "
+            f"(allowed: {', '.join(store.DISMISSAL_REASONS)})",
+        )
+    if not store.mark_dismissed(_db_url(request), row_id, reason=reason):
         raise HTTPException(404, "pending row not found")
     return {"ok": True, "row": store.get(_db_url(request), row_id)}
+
+
+@router.get("/api/agent/dismissal_stats")
+def dismissal_stats(
+    request: Request,
+    account: str | None = Query(None),
+    days: int = Query(30, ge=1, le=365),
+) -> dict:
+    """Rolling-window dismissal aggregate — drives the observability surface.
+
+    Returns total persisted vs dismissed, the dismissal rate, and a
+    by-reason breakdown over the last ``days`` days.
+    """
+    return store.dismissal_stats(_db_url(request), account=account, days=days)
 
 
 @router.post("/api/agent/pending/{row_id}/mark_sent")

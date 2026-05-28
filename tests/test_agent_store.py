@@ -99,6 +99,68 @@ def test_dismiss_marks_dismissed(db_url):
     r = store.get(db_url, row_id)
     assert r["status"] == "dismissed"
     assert r["dismissed_at"] is not None
+    # No reason supplied — column stays NULL ("no_reason" bucket in stats).
+    assert r["dismissal_reason"] is None
+
+
+def test_dismiss_records_categorical_reason(db_url):
+    from app.agent import store
+
+    row_id = store.upsert_pending(db_url, **_DEFAULTS)
+    assert store.mark_dismissed(db_url, row_id, reason="noise")
+    r = store.get(db_url, row_id)
+    assert r["dismissal_reason"] == "noise"
+
+
+def test_dismiss_coerces_unknown_reason_to_other(db_url):
+    """Defence in depth — API rejects unknown reasons upstream, but if a
+    legacy caller passes something we don't recognise the DAL keeps the
+    column bounded by mapping it to 'other'."""
+    from app.agent import store
+
+    row_id = store.upsert_pending(db_url, **_DEFAULTS)
+    assert store.mark_dismissed(db_url, row_id, reason="some_random_bucket")
+    r = store.get(db_url, row_id)
+    assert r["dismissal_reason"] == "other"
+
+
+def test_dismissal_stats_aggregates_by_reason(db_url):
+    from app.agent import store
+
+    # 4 rows: 2 dismissed (noise + wrong_sender), 1 dismissed no-reason, 1 pending.
+    for i, (reason, dismiss) in enumerate([
+        ("noise", True),
+        ("wrong_sender", True),
+        (None, True),
+        (None, False),
+    ]):
+        rid = store.upsert_pending(db_url, **{**_DEFAULTS, "message_id": f"m-{i}"})
+        if dismiss:
+            store.mark_dismissed(db_url, rid, reason=reason)
+
+    stats = store.dismissal_stats(db_url)
+    assert stats["total_persisted"] == 4
+    assert stats["dismissed"] == 3
+    assert stats["dismissal_rate"] == 0.75
+    assert stats["by_reason"]["noise"] == 1
+    assert stats["by_reason"]["wrong_sender"] == 1
+    assert stats["by_reason"]["no_reason"] == 1
+    assert stats["by_reason"]["wrong_content"] == 0  # zero-filled
+
+
+def test_dismissal_stats_filters_by_account(db_url):
+    from app.agent import store
+
+    a = store.upsert_pending(db_url, **{**_DEFAULTS, "message_id": "m-a", "account": "a@x.com"})
+    b = store.upsert_pending(db_url, **{**_DEFAULTS, "message_id": "m-b", "account": "b@x.com"})
+    store.mark_dismissed(db_url, a, reason="noise")
+    store.mark_dismissed(db_url, b, reason="wrong_content")
+
+    only_a = store.dismissal_stats(db_url, account="a@x.com")
+    assert only_a["total_persisted"] == 1
+    assert only_a["dismissed"] == 1
+    assert only_a["by_reason"]["noise"] == 1
+    assert only_a["by_reason"]["wrong_content"] == 0
 
 
 def test_list_pending_default_excludes_non_pending(db_url):
