@@ -1,13 +1,13 @@
 {
   "name": "youos",
-  "version": "0.2.0b59",
+  "version": "0.2.0b60",
   "displayName": "YouOS \u2014 Personal Email Copilot",
-  "description": "Learns your writing style from Gmail/Docs/WhatsApp and drafts replies in your voice — by default on a local model fine-tuned on you (LoRA, served warm on Apple Silicon), self-improving nightly. Draft from the web UI or inside Gmail via the browser extension. The cloud is only a cold-start/fallback and can be disabled for strict local-only mode.",
+  "description": "Learns your writing style from Gmail/Docs/WhatsApp and drafts replies in your voice — by default on a local model fine-tuned on you (LoRA, served warm on Apple Silicon), self-improving nightly. Background agent sweeps unread inbox, drafts replies, queues for review (opt-in; never auto-sends). Exposes a REST + OpenAPI surface (`/api/agent/*`) so orchestrators like Hermes / OpenClaw / a Telegram/Slack bot can drive email triage from your existing chat app. The cloud is only a cold-start/fallback and can be disabled for strict local-only mode.",
   "author": "DrBaher",
   "homepage": "https://github.com/DrBaher/youos",
   "repository": "https://github.com/DrBaher/youos",
   "category": "productivity",
-  "tags": ["email", "drafting", "personal-ai", "local-model", "lora", "self-improving", "privacy", "apple-silicon", "gmail"],
+  "tags": ["email", "drafting", "personal-ai", "local-model", "lora", "self-improving", "privacy", "apple-silicon", "gmail", "agent", "orchestrator-backend", "openapi", "telegram", "tailscale"],
   "requires": {
     "bins": ["gog", "python3"],
     "platform": "darwin",
