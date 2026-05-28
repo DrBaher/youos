@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.2.0-beta.29 — 2026-05-28
+
+### Agent triage — filter tuning from real-inbox feedback
+Running ``youos triage`` against the live BaherOS inboxes (work.example + you@gmail.com, 3-day window, 10 messages) surfaced filter quality issues in both directions:
+
+- **Too strict**: `noreply@` was a hard skip, so a genuine demo-form lead from `noreply@work.example` (which is *transactional*, not marketing) got dropped.
+- **Too loose**: GitHub `notifications@github.com` mails, Supabase `billing-support@supabase.com` notifications, and CI subjects like `[DrBaher/youos] PR run failed` passed and got bad drafts.
+
+### Changes to `app/agent/needs_reply.py`
+
+**Hard skips tightened** (sender CANNOT be replied-to personally):
+- Split `NOREPLY_PAT` → `MAILER_DAEMON_PAT` (bounces / mailer-daemon — never repliable, kept as hard skip).
+- `AUTOMATION_DOMAIN_PAT` widened: now matches `@github.com`, `@gitlab.com`, `@bitbucket.org`, `@*.atlassian.net`, `@*.circleci.com`, `@*.travis-ci.{com,org}` on top of the existing `notifications.*` / `*.bounces.*` / `amazonses` / `mailgun` / `sendgrid` / `mailchimp`.
+- New `SERVICE_SUBJECT_PAT`: hard-skips subjects starting with `[Org/Repo]` (GitHub/GitLab convention) or matching `(Build|Run|Pipeline|CI|PR) (failed|succeeded|completed|cancelled|started)`.
+
+**Soft penalties added** (transactional content can still surface):
+- `noreply@` / `donotreply@` → `−0.20`. Pure marketing `noreply@` is still hard-skipped by the existing List-Unsubscribe rule; this lets a transactional lead-form `noreply@` with strong positive signals (question, imperative, short body) cross the threshold.
+- Non-human mailbox prefixes (`billing|support|help|info|hello|alerts|notifications|admin|team|service|webmaster|postmaster|abuse`, including hyphenated variants like `billing-support@`) → `−0.20`. Same logic: usually automation, but a human-tended `support@vendor.com` real conversation can still cross with strong signals.
+
+### Expected effect on the 10 real-inbox samples
+- Work demo lead (`noreply@work.example`, transactional): score lands just under threshold (no question/imperative) — **acceptable skip**, will be caught by β's "surface for review" tier later. Better than silently false-positiving.
+- 4 work newsletters: still List-Unsubscribe-skipped ✓
+- Supabase `billing-support@`: penalty + low signals → correctly skipped ✓
+- 2× GitHub PR/CI emails (`notifications@github.com` + `[DrBaher/youos]` subject): hard-skipped both by domain *and* subject ✓
+- 2 gmail newsletters: List-Unsubscribe ✓
+
+Net on a 10-message sample: 0 drafts on a span dominated by automation — the honest answer.
+
+### Tests
+Five new in `test_agent_needs_reply` pinning the refined behavior (mailer-daemon hard skip, noreply soft penalty, github.com automation domain, repo-tagged service subject, operational-mailbox penalty). 13/13 in the agent suites.
+
 ## v0.2.0-beta.28 — 2026-05-28
 
 ### Agent triage — Phase 1 (α): fetch + filter + dry-run CLI
