@@ -110,6 +110,40 @@ def test_dismiss_marks_dismissed_and_drops_from_default_list(authed_client):
     assert all(row["id"] != row_id for row in after_listing), "dismissed row should leave the default listing"
 
 
+def test_dismiss_accepts_categorical_reason(authed_client):
+    rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
+    row_id = rows[0]["id"]
+    r = authed_client.post(
+        f"/api/agent/pending/{row_id}/dismiss",
+        json={"reason": "noise"},
+    )
+    assert r.status_code == 200
+    assert r.json()["row"]["dismissal_reason"] == "noise"
+
+
+def test_dismiss_rejects_unknown_reason(authed_client):
+    rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
+    row_id = rows[0]["id"]
+    r = authed_client.post(
+        f"/api/agent/pending/{row_id}/dismiss",
+        json={"reason": "not_a_bucket"},
+    )
+    assert r.status_code == 400
+    assert "unknown dismissal reason" in r.text
+
+
+def test_dismissal_stats_endpoint_returns_aggregate(authed_client):
+    rows = authed_client.get("/api/agent/pending").json()["rows"]
+    # Dismiss one with reason, one without.
+    authed_client.post(f"/api/agent/pending/{rows[0]['id']}/dismiss", json={"reason": "noise"})
+    authed_client.post(f"/api/agent/pending/{rows[1]['id']}/dismiss")
+    s = authed_client.get("/api/agent/dismissal_stats").json()
+    assert s["dismissed"] >= 2
+    assert s["by_reason"]["noise"] >= 1
+    assert s["by_reason"]["no_reason"] >= 1
+    assert 0.0 <= s["dismissal_rate"] <= 1.0
+
+
 def test_mark_sent_records_timestamp(authed_client):
     rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
     row_id = rows[0]["id"]
