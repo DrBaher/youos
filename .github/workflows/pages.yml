@@ -10,6 +10,7 @@ on:
     paths:
       - "site/**"
       - "screenshots/**"
+      - "docs/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -31,12 +32,19 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install docs-builder dependencies
+        run: pip install --quiet "markdown>=3.5"
       - name: Assemble site (page + screenshots)
         run: |
           mkdir -p _site
           cp -R site/. _site/
           mkdir -p _site/screenshots
           cp -R screenshots/. _site/screenshots/
+      - name: Render docs (markdown → HTML + raw .md mirror + llms.txt)
+        run: python scripts/build_docs.py
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
