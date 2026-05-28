@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.2.0-beta.23 — 2026-05-28
+
+### Retrieval: topic-keyword filter + user-name stripping
+The QA inspection found the misread-direction bug class came from retrieval, not the LoRA: a 200-word inbound about Q3 pricing had its BM25 query drowned by "Hi", "Thanks", "happy to", "could you", and the user's own name "Baher" appearing in every line. The top-5 precedents came back as 4 *intro emails* and zero pricing exemplars, so the LoRA had nothing relevant to draft from.
+
+**Fixes**:
+- `app/core/query_expansion.py` gains `extract_topic_keywords()` — for inbounds ≥ 25 words, strips English stopwords + email-template idioms (greeting/closing/"happy to"/"looking forward"/"let me know"/etc.) so BM25 ranks against the words that carry the topic. Defensive: a filler-only inbound falls back to the original text, never empty.
+- New `extra_stopwords=` lets callers drop additional terms — the retriever now passes the user's own name tokens from `get_user_names()`. Every inbound has "Hi Baher"; that's pure BM25 noise pulling intros to the top.
+- The original `query` is preserved for the semantic re-ranker — only the FTS path is shaped.
+
+### Live impact (BaherOS, Alex/Stripe pricing query)
+Top-5 precedents before A:
+1. RE: Intro Baher <> Maxime (Otium Venture) — intro
+2. Tuesday Meeting — reschedule
+3. Re: Intro Baher / Johannes — intro
+4. Intro Jeremias / Baher — intro
+5. Re: Intro Fabian / Baher — intro
+
+After A (with user-name strip):
+1. "15 mins" — meeting reschedule
+2. **"Follow-up on HomeWell Demo"** — *"pricing tiers based on volume"*
+3. **"RE: Work Smart Wellbeing"** — *"Our pricing model is based on monthly active users… volume"*
+4. "RE: Work AI / ARCHIMED"
+5. **"Re: fatsecret Developer Contact"** — *"pricing tiers"*
+
+**Three of the top five are now pricing-relevant** (was 0). The synthetic-inbound drafts didn't dramatically change because the persona refresh (beta.22) already fixed the visible Alex/Jess content, but the structural improvement helps more in cases where the LoRA genuinely leans on precedents.
+
+### Tests
+Four new in `test_query_expansion`: short-query passthrough, stopword stripping on long inbound, defensive empty-fallback, and the `extra_stopwords` user-name strip. 14/14 in the suite.
+
 ## v0.2.0-beta.22 — 2026-05-28
 
 ### Persona pipeline: instance-aware paths + category translation
