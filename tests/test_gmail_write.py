@@ -32,15 +32,7 @@ def test_unknown_backend_raises_value_error(monkeypatch):
 # gws backend is implemented in Phase 2.2 — its dedicated suite lives below.
 
 
-def test_native_backend_raises_not_implemented(monkeypatch):
-    monkeypatch.setattr("app.core.config.get_ingestion_google_backend", lambda: "native")
-    from app.ingestion.gmail_write import create_draft
-
-    with pytest.raises(NotImplementedError, match="gmail.compose"):
-        create_draft(
-            account="me@x.com", thread_id="t", to_email="them@y.com",
-            subject="hi", body="b",
-        )
+# native backend implemented in Phase 2.3 — dedicated suite at the tail of the file.
 
 
 # --- gog: call shape + success --------------------------------------------
@@ -248,4 +240,144 @@ def test_gws_translates_missing_id_to_gmail_write_error(monkeypatch):
     from app.ingestion.gmail_write import GmailWriteError, create_draft
 
     with pytest.raises(GmailWriteError, match="no draft id"):
+        create_draft(account="me@x.com", thread_id="t", to_email="them@y.com", subject="s", body="b")
+
+
+# --- native: call shape + success -----------------------------------------
+
+
+class _FakeDraftsResource:
+    """Mimics google-api-python-client's chain: service.users().drafts().create(...).execute()."""
+
+    def __init__(self, capture: dict, result: dict | None = None, raise_exc: Exception | None = None):
+        self._capture = capture
+        self._result = result if result is not None else {"id": "draft_native_77", "message": {"id": "m77"}}
+        self._raise_exc = raise_exc
+
+    def create(self, userId, body):
+        self._capture["userId"] = userId
+        self._capture["body"] = body
+        return self
+
+    def execute(self):
+        if self._raise_exc is not None:
+            raise self._raise_exc
+        return self._result
+
+
+def _install_fake_native_service(monkeypatch, *, capture=None, result=None, raise_exc=None):
+    """Replace _native_gmail_service so tests don't hit OAuth / network."""
+    capture = capture if capture is not None else {}
+
+    class _FakeUsers:
+        def drafts(self):
+            return _FakeDraftsResource(capture, result=result, raise_exc=raise_exc)
+
+    class _FakeService:
+        def users(self):
+            return _FakeUsers()
+
+    monkeypatch.setattr(
+        "app.ingestion.gmail_write._native_gmail_service",
+        lambda *, account: _FakeService(),
+    )
+    monkeypatch.setattr("app.core.config.get_ingestion_google_backend", lambda: "native")
+    return capture
+
+
+def test_native_creates_draft_and_extracts_id(monkeypatch):
+    capture = _install_fake_native_service(monkeypatch)
+    from app.ingestion.gmail_write import create_draft
+
+    result = create_draft(
+        account="me@work.example", thread_id="thr_native_42",
+        to_email="ops@partner.com", subject="Re: outage post-mortem",
+        body="Acknowledged — post-mortem attached.",
+    )
+
+    assert result.draft_id == "draft_native_77"
+    # Call-shape contract for the Gmail REST API.
+    assert capture["userId"] == "me"
+    msg = capture["body"]["message"]
+    assert msg["threadId"] == "thr_native_42"
+    rfc = base64.urlsafe_b64decode(msg["raw"]).decode("utf-8")
+    assert "To: ops@partner.com" in rfc
+    assert "Subject: Re: outage post-mortem" in rfc
+    assert "Acknowledged — post-mortem attached." in rfc
+
+
+def test_native_skips_thread_id_field_when_none(monkeypatch):
+    capture = _install_fake_native_service(monkeypatch)
+    from app.ingestion.gmail_write import create_draft
+
+    create_draft(account="me@x.com", thread_id=None, to_email="t@y.com", subject="s", body="b")
+    msg = capture["body"]["message"]
+    assert "threadId" not in msg
+
+
+# --- native: error paths ---------------------------------------------------
+
+
+def test_native_translates_403_to_reauth_hint(monkeypatch):
+    """Missing gmail.compose scope is the most common failure mode for
+    users who only authorized for read-only ingestion; the error must
+    point at the re-auth flow."""
+
+    class _Resp:
+        status = 403
+
+    exc = type("HttpError", (Exception,), {})()
+    exc.resp = _Resp()
+
+    _install_fake_native_service(monkeypatch, raise_exc=exc)
+    from app.ingestion.gmail_write import GmailWriteError, create_draft
+
+    with pytest.raises(GmailWriteError, match="gmail.compose OAuth scope"):
+        create_draft(account="me@x.com", thread_id="t", to_email="them@y.com", subject="s", body="b")
+
+
+def test_native_translates_401_to_reauth_hint(monkeypatch):
+    class _Resp:
+        status = 401
+
+    exc = type("HttpError", (Exception,), {})()
+    exc.resp = _Resp()
+
+    _install_fake_native_service(monkeypatch, raise_exc=exc)
+    from app.ingestion.gmail_write import GmailWriteError, create_draft
+
+    with pytest.raises(GmailWriteError, match="gmail.compose OAuth scope"):
+        create_draft(account="me@x.com", thread_id="t", to_email="them@y.com", subject="s", body="b")
+
+
+def test_native_translates_generic_exception_with_context(monkeypatch):
+    _install_fake_native_service(monkeypatch, raise_exc=RuntimeError("network unreachable"))
+    from app.ingestion.gmail_write import GmailWriteError, create_draft
+
+    with pytest.raises(GmailWriteError, match="network unreachable"):
+        create_draft(account="me@x.com", thread_id="t", to_email="them@y.com", subject="s", body="b")
+
+
+def test_native_translates_missing_id_to_gmail_write_error(monkeypatch):
+    _install_fake_native_service(monkeypatch, result={"message": {"id": "x"}})  # no top-level id
+    from app.ingestion.gmail_write import GmailWriteError, create_draft
+
+    with pytest.raises(GmailWriteError, match="no id"):
+        create_draft(account="me@x.com", thread_id="t", to_email="them@y.com", subject="s", body="b")
+
+
+def test_native_translates_credentials_runtime_error_to_gmail_write_error(monkeypatch):
+    """If credentials are missing / can't load, the helper raises RuntimeError;
+    we surface it as a GmailWriteError so the agent route returns 502 instead
+    of crashing into a 500."""
+
+    def _raise(*, account):
+        raise RuntimeError("No stored Google credentials for me@x.com at /var/google_tokens/me@x.com.json. Authorize first via `youos setup`.")
+
+    monkeypatch.setattr("app.ingestion.gmail_write._native_gmail_service", _raise)
+    monkeypatch.setattr("app.core.config.get_ingestion_google_backend", lambda: "native")
+
+    from app.ingestion.gmail_write import GmailWriteError, create_draft
+
+    with pytest.raises(GmailWriteError, match="No stored Google credentials"):
         create_draft(account="me@x.com", thread_id="t", to_email="them@y.com", subject="s", body="b")
