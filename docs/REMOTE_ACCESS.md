@@ -97,32 +97,42 @@ In Safari: tap the Share button → "Add to Home Screen". Names it whatever you 
 
 - **Push notifications to your phone** — the agent loop only fires `display notification` on the Mac. No iOS/Android push integration. **Workaround**: pipe the daily digest (below) to your phone via email.
 
-## Remote dismissal via Gmail label
+## Remote dismissal via Gmail labels
 
-If `/triage` isn't reachable but Gmail is (the universal case — phone, friend's laptop, work web client), you can still dismiss a queued draft by applying a Gmail label to the original thread.
+If `/triage` isn't reachable but Gmail is (the universal case — phone, friend's laptop, work web client), you can still dismiss a queued draft by applying a Gmail label to the original thread. You can also pick the **dismissal reason** by choosing which label you apply — `YouOS/skip-wrong-content` records the same categorical signal as the `/triage` dismiss selector's "Wrong content" choice.
 
 ### Setup (once)
 
-1. In Gmail web (or any client), create a label called **`YouOS/skip`** (the slash creates a nested label under a YouOS folder for tidiness).
-2. That's it — `run_triage` checks for this label at the start of every sweep.
+In Gmail web (or any client), create these labels (slashes nest them under a `YouOS` folder for tidiness):
+
+| Label | Dismissal reason | When to use |
+|---|---|---|
+| `YouOS/skip` | `noise` | Generic "the agent shouldn't have drafted this" (b57 default) |
+| `YouOS/skip-noise` | `noise` | Same as above — explicit form |
+| `YouOS/skip-wrong-sender` | `wrong_sender` | Right kind of mail, but the wrong person to reply to right now |
+| `YouOS/skip-wrong-content` | `wrong_content` | The agent drafted but missed the point — drafting-quality signal, NOT a filter signal |
+| `YouOS/skip-handled` | `already_handled` | I replied outside YouOS already |
+| `YouOS/skip-other` | `other` | Catch-all when none of the above fit |
+
+You don't need to create all of them — only the ones you'll actually use. The agent only processes labels that exist; unknown labels are silently no-ops.
 
 ### Usage
 
 When you see one of the agent's drafts in **Gmail Drafts** that shouldn't have been drafted:
 
 1. Open the **original inbound thread** the draft replies to (not the Draft itself).
-2. Apply the **`YouOS/skip`** label (sidebar → Labels → YouOS/skip).
-3. Next sweep (within `agent.interval_minutes`), the matching `agent_pending_drafts` row is marked **dismissed with reason='noise'**, and the label is removed from the thread so it isn't reprocessed.
+2. Apply one of the labels above based on why you're dismissing.
+3. Next sweep (within `agent.interval_minutes`), the matching `agent_pending_drafts` row is marked dismissed with the corresponding reason, and the label is removed from the thread so it isn't reprocessed.
 
 You can also run the sync immediately:
 
 ```bash
-youos sync-labels                              # default account, default label
+youos sync-labels                              # iterate ALL known categorical labels
 youos sync-labels --account other@x.com       # specific account
-youos sync-labels --label "Custom/skip-tag"   # custom label name
+youos sync-labels --label "YouOS/skip-noise"  # restrict to one label
 ```
 
-The dismissal goes through the same path as `/triage`'s dismiss button, so it counts in the dismissal-feedback aggregate, contributes to `agent.auto_promote_skip_senders` once you hit 3+ dismissals from the same sender, and shows up on the next digest email.
+The dismissal goes through the same path as `/triage`'s dismiss button — counted in the dismissal-feedback aggregate, contributes to `agent.auto_promote_skip_senders` after 3 dismissals from the same sender (for `noise`-class), and surfaces on the next digest. The categorical reason flows through too: `wrong_content` dismissals from labels route to the LoRA training signal exactly like the `/triage` button.
 
 ### What if I label something not in the queue?
 
