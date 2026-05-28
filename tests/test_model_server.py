@@ -209,11 +209,17 @@ def test_lifespan_prewarms_and_stops_server():
     assert "model_server.stop()" in src          # clean shutdown
 
 
-def test_ensure_running_skipped_under_pytest():
+def test_ensure_running_skipped_under_pytest(monkeypatch):
     # The guard: inside the test suite, ensure_running must never spawn — it just
     # reports health. (PYTEST_CURRENT_TEST is set by the running pytest.)
     import os
 
     assert os.environ.get("PYTEST_CURRENT_TEST")  # sanity: we're under pytest
-    # is_healthy is real here → False (nothing on the port), and no spawn happens.
+    # Force the unhealthy-server view so this test doesn't flake when the dev
+    # machine has an actual mlx_lm.server running on the configured port (which
+    # makes is_healthy() return True and ensure_running() return True without
+    # spawning — the intent of the test is still satisfied, but the return-value
+    # assertion would fail). Pin the precondition explicitly.
+    monkeypatch.setattr(ms, "is_healthy", lambda: False)
+    # No spawn happens (PYTEST_CURRENT_TEST guard) → returns False.
     assert ms.ensure_running() is False
