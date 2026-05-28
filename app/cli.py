@@ -670,15 +670,24 @@ def triage(
 @app.command(name="sync-labels")
 def sync_labels_cmd(
     account: str = typer.Option(None, "--account", help="Account email (defaults to first configured)"),
-    label: str = typer.Option("YouOS/skip", "--label", help="Gmail label to treat as a dismissal signal"),
+    label: str = typer.Option(None, "--label", help="Gmail label to process; default = all categorical dismissal labels"),
 ):
-    """Process Gmail-label dismissals — `YouOS/skip` → dismiss pending rows.
+    """Process Gmail-label dismissals — `YouOS/skip*` → dismiss pending rows.
 
-    The remote-dismissal counterpart to /triage. Apply the configured
-    label to a Gmail thread from any client (phone, web, work laptop)
-    and run this command (or wait for the next sweep — `run_triage` does
-    a label sync at the start). Matching pending rows get marked
-    dismissed-as-noise; the label is removed after processing.
+    Default behavior (no ``--label``): iterates every label in the
+    categorical mapping, so applying any of these in Gmail dismisses with
+    the appropriate reason on the next sync:
+
+    \b
+      YouOS/skip                → noise (b57 default; backwards compat)
+      YouOS/skip-noise          → noise
+      YouOS/skip-wrong-sender   → wrong_sender
+      YouOS/skip-wrong-content  → wrong_content
+      YouOS/skip-handled        → already_handled
+      YouOS/skip-other          → other
+
+    Pass ``--label X`` to restrict to a single label (useful for tests
+    or per-label sweeps). Labels are removed after processing.
 
     See docs/REMOTE_ACCESS.md for the full setup.
     """
@@ -696,8 +705,9 @@ def sync_labels_cmd(
     result = sync_gmail_label_dismissals(
         account=account, database_url=settings.database_url, label=label,
     )
+    scope = f"label={label!r}" if label else "all categorical labels"
     typer.echo(
-        f"Label sync (account={account}, label={label}): "
+        f"Label sync (account={account}, {scope}): "
         f"dismissed={len(result.dismissed)}, "
         f"skipped={len(result.skipped)}, errors={len(result.errors)}"
     )

@@ -35,10 +35,24 @@ from app.agent import store
 
 logger = logging.getLogger(__name__)
 
-# The default label users apply to a thread to signal "stop drafting for
-# this — it's noise." Configurable via agent.gmail_label_prefix.
+# Single default label (preserved for b57 backwards compat). Maps to
+# reason='noise' — the dominant case for label-based dismissal.
 DEFAULT_LABEL = "YouOS/skip"
 GOG_TIMEOUT_SECONDS = 30
+
+# b61: Label → dismissal-reason mapping. The b57 default ``YouOS/skip``
+# stays mapped to ``noise`` so existing setups don't break. The
+# additional labels let the user signal *why* they dismissed from any
+# Gmail client, with the same granularity as the /triage dismiss
+# selector. Keys are case-sensitive (Gmail labels are case-sensitive).
+LABEL_TO_REASON: dict[str, str] = {
+    "YouOS/skip": "noise",
+    "YouOS/skip-noise": "noise",
+    "YouOS/skip-wrong-sender": "wrong_sender",
+    "YouOS/skip-wrong-content": "wrong_content",
+    "YouOS/skip-handled": "already_handled",
+    "YouOS/skip-other": "other",
+}
 
 
 @dataclass
@@ -61,53 +75,74 @@ def sync_gmail_label_dismissals(
     *,
     account: str,
     database_url: str,
-    label: str = DEFAULT_LABEL,
+    label: str | None = None,
 ) -> LabelSyncResult:
-    """Find Gmail threads tagged with ``label`` and dismiss their pending rows.
+    """Find Gmail threads tagged with categorical dismissal labels and
+    dismiss the matching pending rows with the mapped reason.
 
-    Approach:
+    Default (``label=None``): iterate every entry in
+    :data:`LABEL_TO_REASON` so all of ``YouOS/skip``,
+    ``YouOS/skip-noise``, ``YouOS/skip-wrong-sender``,
+    ``YouOS/skip-wrong-content``, ``YouOS/skip-handled``,
+    ``YouOS/skip-other`` get processed in one call. Pass an explicit
+    ``label="X"`` to restrict to a single label (b57 backwards compat,
+    also useful for tests / per-label sweeps).
+
+    Approach per label:
       1. Search Gmail for ``label:<label>`` via gog.
       2. For each thread, look up the matching ``agent_pending_drafts.thread_id``.
-      3. If a pending/amended row exists, mark it dismissed with reason='noise'.
+      3. If a pending/amended row exists, mark it dismissed with the
+         mapped reason from :data:`LABEL_TO_REASON`.
       4. Remove the label from the thread so we don't reprocess.
 
-    Failures are isolated per-thread — one auth error doesn't abort the
-    rest. Returns counts the caller (run_triage or the CLI) can log.
+    Failures are isolated per-thread — one auth error doesn't abort the rest.
     """
-    matched = _gog_search_labelled(account=account, label=label)
+    labels_to_process: list[str]
+    if label is not None:
+        labels_to_process = [label]
+    else:
+        labels_to_process = list(LABEL_TO_REASON.keys())
+
     dismissed_ids: list[int] = []
     skipped: list[str] = []
     errors: list[str] = []
 
-    for entry in matched:
-        thread_id = entry.get("threadId")
-        message_id = entry.get("id")
-        if not thread_id or not message_id:
-            continue
-        try:
-            row = _find_pending_row_for_thread(database_url, account=account, thread_id=thread_id)
-            if row is None:
-                skipped.append(thread_id)
+    for lbl in labels_to_process:
+        reason = LABEL_TO_REASON.get(lbl, "noise")  # unknown label → noise (defensive)
+        matched = _gog_search_labelled(account=account, label=lbl)
+
+        for entry in matched:
+            thread_id = entry.get("threadId")
+            message_id = entry.get("id")
+            if not thread_id or not message_id:
                 continue
-            store.mark_dismissed(database_url, row["id"], reason="noise")
-            dismissed_ids.append(row["id"])
-            # Remove the label so the next sync doesn't re-fire.
             try:
-                _gog_modify_remove_label(account=account, message_id=message_id, label=label)
-            except Exception as exc:
-                # Don't roll back the dismissal — the user signalled intent.
-                # Just log the cleanup failure so they can investigate.
-                logger.warning(
-                    "label-sync: dismissed row %s but failed to remove %r from thread %s: %s",
-                    row["id"], label, thread_id, exc,
+                row = _find_pending_row_for_thread(
+                    database_url, account=account, thread_id=thread_id,
                 )
-        except Exception as exc:
-            errors.append(f"thread {thread_id}: {exc}")
+                if row is None:
+                    skipped.append(thread_id)
+                    continue
+                store.mark_dismissed(database_url, row["id"], reason=reason)
+                dismissed_ids.append(row["id"])
+                # Remove the label so the next sync doesn't re-fire.
+                try:
+                    _gog_modify_remove_label(
+                        account=account, message_id=message_id, label=lbl,
+                    )
+                except Exception as exc:
+                    # Don't roll back the dismissal — user signalled intent.
+                    logger.warning(
+                        "label-sync: dismissed row %s but failed to remove %r from thread %s: %s",
+                        row["id"], lbl, thread_id, exc,
+                    )
+            except Exception as exc:
+                errors.append(f"thread {thread_id} (label {lbl!r}): {exc}")
 
     if dismissed_ids:
         logger.info(
-            "gmail-label sync (account=%s, label=%r): dismissed %d row(s) %s",
-            account, label, len(dismissed_ids), dismissed_ids,
+            "gmail-label sync (account=%s): dismissed %d row(s) across %d label(s) %s",
+            account, len(dismissed_ids), len(labels_to_process), dismissed_ids,
         )
     return LabelSyncResult(
         dismissed=dismissed_ids,
