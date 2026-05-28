@@ -4,6 +4,8 @@ YouOS is a **local-first email backend** with a clean REST surface. The whole ag
 
 This doc covers the wiring.
 
+> **If you're an LLM agent operating YouOS at runtime** (Hermes, OpenClaw, a chat bot, Claude in a tool-use loop) — read [`AGENT_OPERATIONS.md`](AGENT_OPERATIONS.md). This doc covers the wiring; that doc covers the runtime contract (decision tree, idempotency, error handling, paraphrasing, trust boundaries, worked conversation).
+
 ## The vision
 
 ```
