@@ -47,6 +47,7 @@ def bootstrap_database() -> Path:
         _migrate_exemplar_cache(connection)
         _migrate_draft_events(connection)
         _migrate_agent_pending_drafts(connection)
+        _migrate_agent_audit(connection)
         _populate_fts(connection)
         connection.commit()
     finally:
@@ -274,4 +275,44 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_agent_pending_drafts_account "
         "ON agent_pending_drafts(account, status)"
+    )
+
+
+def _migrate_agent_audit(connection: sqlite3.Connection) -> None:
+    """Audit log for the autonomous-agent loop (ε).
+
+    One row per triage *sweep* — not per draft. Records what was attempted,
+    by whom (``trigger``), against which account, with what timing and what
+    failed. Drives the "what did the agent do" panel on /triage so the user
+    can trust an autonomous process running on their inbox.
+
+    Append-only; nothing here is ever rewritten. ``errors_json`` is a list
+    of per-message error strings so a transient gog auth failure on one
+    inbound is visible without polluting the sweep-level counters.
+    """
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS agent_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account TEXT NOT NULL,
+            trigger TEXT NOT NULL,             -- 'scheduled' | 'manual' | 'api'
+            window TEXT,
+            threshold REAL,
+            fetched INTEGER NOT NULL DEFAULT 0,
+            kept INTEGER NOT NULL DEFAULT 0,
+            surfaced INTEGER NOT NULL DEFAULT 0,
+            persisted INTEGER NOT NULL DEFAULT 0,
+            errors_json TEXT NOT NULL DEFAULT '[]',
+            standing_instructions_snapshot TEXT,
+            started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            finished_at TEXT,
+            duration_ms INTEGER
+        )
+    """)
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_audit_started "
+        "ON agent_audit(started_at DESC)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_audit_account "
+        "ON agent_audit(account, started_at DESC)"
     )

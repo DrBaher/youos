@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.2.0-beta.35 — 2026-05-28
+
+### Agent triage — ε (audit log + "Recent activity")
+Every triage sweep — whether triggered by the background scheduler, the API, or the CLI — now writes one row to a new ``agent_audit`` table. The ``/triage`` page surfaces the last 15 sweeps in a collapsible **Recent activity** panel: when, account, trigger, fetched/kept/surfaced/persisted counts, duration, and any per-message errors (hover for details). Trust-building: now that the agent runs autonomously, "what did it do while I was asleep" has a real answer.
+
+**Schema** (``_migrate_agent_audit`` in ``app/db/bootstrap.py``):
+- one row per sweep with ``account``, ``trigger`` (``scheduled`` / ``manual`` / ``api``), ``window``, ``threshold``
+- counts: ``fetched``, ``kept``, ``surfaced``, ``persisted``
+- ``errors_json``: per-message error strings from the sweep
+- ``standing_instructions_snapshot`` captured at sweep time (separate from per-draft snapshot already in β.1)
+- ``started_at`` / ``finished_at`` / ``duration_ms``
+- indexes on ``started_at DESC`` and ``account, started_at DESC``
+
+**DAL** (``app/agent/store.py``):
+- ``log_sweep(...)`` — insert one row per sweep (called once at the end of ``run_triage``).
+- ``list_recent_sweeps(account=None, limit=20)`` — newest first; rehydrates ``errors_json``.
+
+**Orchestrator** — ``run_triage`` now takes ``trigger="manual"`` (default), brackets the sweep with timing, and writes the audit row on the way out. Audit-log failure is caught + logged at ``warning`` — the agent loop has higher priorities than its own observability, never crash the sweep over a logging glitch. The scheduler passes ``trigger="scheduled"``; ``/api/agent/triage`` passes ``trigger="api"``.
+
+**Audit row written even when ``persist=False``** — ``--dry-run`` doesn't leak inbound data into ``agent_pending_drafts``, but it *does* leave a trace of what was attempted (with ``persisted=0``). So filter-tuning runs are still visible in the activity panel.
+
+**`GET /api/agent/sweeps?account=…&limit=…`** — new endpoint returning the audit rows.
+
+**`/triage` page** — new **Recent activity** ``<details>`` panel:
+- Table: When (relative time), Account, Trigger, counts, duration, Errors (count; hover-title shows the messages).
+- Rows with errors get a faint red tint so they stand out.
+- Refreshes every time the pending list refreshes (after Run triage now, after row actions).
+
+### Tests
+- ``test_agent_store.py``: ``log_sweep`` insert + ``list_recent_sweeps`` ordering & rehydration, account filter (2 new).
+- ``test_agent_triage.py``: audit row written with counts + trigger on every run; written even on ``persist=False``; per-message errors captured (3 new).
+- ``test_agent_routes.py``: ``GET /api/agent/sweeps`` returns the rows with rehydrated ``errors`` (1 new).
+- Two fixtures updated to also call ``_migrate_agent_audit``.
+- 37/37 across agent suites; 1199/1203 full sweep (was 1193 in δ; +6 here). Same 4 pre-existing MLX failures.
+
+### Remaining
+- **ζ** — per-sender opt-out, daily cap, strict-local switch (refuse cloud fallback during triage).
+- **Phase 2** — ``gmail.compose`` OAuth → real Gmail Drafts on **Mark sent**.
+
 ## v0.2.0-beta.34 — 2026-05-28
 
 ### Agent triage — δ (standing instructions)
