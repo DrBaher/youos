@@ -1,5 +1,52 @@
 # Changelog
 
+## v0.2.0-beta.37 — 2026-05-28
+
+### Agent triage — Phase 2.1 (Push to Gmail Drafts)
+The **Mark sent** button used to just stamp a timestamp; you still had to copy-paste the draft into Gmail. Phase 2.1 adds a **Push to Gmail Drafts** button that creates a real Gmail Draft on the original thread via the configured ingestion backend — you open Gmail and finish-and-send from there. The agent never sends; Phase 2 only writes drafts, never ``messages.send``.
+
+### New `app/ingestion/gmail_write.py`
+- ``create_draft(account, thread_id, to_email, subject, body, backend=None)`` — backend dispatch on ``ingestion.google_backend``.
+- ``GmailDraftResult(draft_id, raw_response)`` — happy-path payload.
+- ``GmailWriteError`` — surfaced to the route as HTTP 502 with the underlying message (e.g. "gog returned exit 1: scope not granted").
+
+**`gog` backend implemented** (best-effort): builds an RFC 822 message via ``email.message.EmailMessage``, base64url-encodes it, passes via ``--raw`` to ``gog gmail drafts create --account … --thread-id … --json --no-input``. The exact subcommand and flag names are isolated to ``_gog_create_draft`` so swapping them is a one-line change if your local gog uses a different shape. (When you're back at the terminal, run ``gog gmail drafts --help`` to verify; the tests pin the call shape so any mismatch is caught in one place.)
+
+**`gws` and `native` backends** raise ``NotImplementedError`` with a clear message pointing at Phase 2.2 — native specifically needs ``gmail.compose`` OAuth scope and a one-time re-auth.
+
+### Schema + DAL
+- New ``gmail_draft_id TEXT`` column on ``agent_pending_drafts`` (idempotent ALTER for upgrades from pre-Phase-2 instances).
+- ``store.mark_sent(...)`` gains an optional ``gmail_draft_id=`` kwarg.
+
+### Endpoint
+- New ``POST /api/agent/pending/{id}/push_to_gmail`` — pulls the row, validates it has a draft (tier='draft' + non-empty), reconstructs the reply (uses ``amended_draft`` if user edited, else ``draft``; prepends ``Re:`` to the subject if missing), calls ``gmail_write.create_draft``, and on success marks the row sent + stores the Gmail draft id.
+- 501 for unsupported backends, 502 for backend-side failures (so the UI can show the actual error), 400 if the row is surface-tier or has no draft.
+- Existing ``mark_sent`` endpoint unchanged — kept as the "I sent it manually outside YouOS" signal.
+
+### `/triage` UI
+- New **Push to Gmail Drafts** button (primary) on each draft card; tooltip explains "create a real Gmail Draft on the original thread; then send it yourself from Gmail."
+- **Mark sent** rephrased to **Mark sent manually** with a tooltip explaining when to use it.
+- Success message shows the Gmail draft id ("Pushed to Gmail Drafts (Gmail draft <id>). Open Gmail to send.") so you can verify what landed.
+
+### Tests
+- ``test_gmail_write.py`` (9 new) — backend dispatch (unknown/gws/native), gog happy path with call-shape contract (verifies the exact argv + decodes the RFC822 payload + checks ``To:`` / ``Subject:`` / body landed), thread-id flag omitted when None, error translation for non-zero exit / FileNotFoundError / non-JSON stdout / missing id.
+- ``test_agent_routes.py`` (4 new) — push success stores draft id + flips to sent, surface-tier row rejected with 400, NotImplementedError → 501, GmailWriteError → 502 with message preserved.
+- 75/75 across agent + gmail-write suites; 1222/1226 full sweep (was 1209 in ζ; +13 here). Same 4 pre-existing MLX failures unrelated.
+
+### Out of scope for 2.1 (deferred to 2.2)
+- ``gws`` backend implementation (CLI shape unknown).
+- ``native`` backend implementation (needs the ``gmail.compose`` OAuth scope + a one-time re-auth flow).
+- Auto-push (never; the user always clicks).
+
+### Verification path when you're back at the terminal
+```bash
+# Confirm the gog subcommand shape (the only thing I had to guess at):
+gog gmail drafts --help
+# Then try a single push from /triage. If gog uses different flags (e.g.
+# `drafts.create` vs `drafts create`, or different `--raw` semantics),
+# the fix is in one function: app/ingestion/gmail_write.py:_gog_create_draft.
+```
+
 ## v0.2.0-beta.36 — 2026-05-28
 
 ### Agent triage — ζ (safety guardrails) — closes Phase 1
