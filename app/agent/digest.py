@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-DigestFormat = Literal["text", "html", "json"]
+DigestFormat = Literal["text", "html", "json", "chat"]
 
 
 @dataclass
@@ -51,6 +51,10 @@ class DigestData:
     auto_promoted: list[str]     # cumulative across the window
     top_noise_senders: list[dict[str, Any]]  # [{sender_email, count}, ...]
     triage_url: str | None       # configured Tailscale URL if any
+    # b59: chat-format and orchestrators need a short row preview without
+    # the formatter re-querying the DB. Up to 5 pending rows, each with
+    # just the fields a chat bubble surfaces. Keeps the formatter pure.
+    pending_preview: list[dict[str, Any]]
 
 
 def build_digest(
@@ -95,6 +99,20 @@ def build_digest(
     pending_rows = list_pending(database_url, account=account, status="pending", limit=500)
     sent_rows = list_pending(database_url, account=account, status="sent", limit=500)
     pushed_count = sum(1 for r in sent_rows if r.get("gmail_draft_id"))
+    # b59: top-5 pending rows captured here so the chat formatter doesn't
+    # need to re-query (which would also fight test isolation — the
+    # formatter ran against get_settings().database_url not the caller's).
+    pending_preview = [
+        {
+            "id": r["id"],
+            "tier": r.get("tier"),
+            "needs_reply_score": r.get("needs_reply_score") or 0.0,
+            "sender": r.get("sender") or r.get("sender_email"),
+            "sender_email": r.get("sender_email"),
+            "subject": (r.get("subject") or "")[:80],
+        }
+        for r in pending_rows[:5]
+    ]
 
     # Top noise senders — pull candidates at min_count=1 so even single
     # noise dismissals show up; the digest is informational.
@@ -124,6 +142,7 @@ def build_digest(
         auto_promoted=auto_promoted,
         top_noise_senders=top,
         triage_url=triage_url,
+        pending_preview=pending_preview,
     )
 
 
@@ -133,7 +152,25 @@ def format_digest(data: DigestData, *, fmt: DigestFormat = "text") -> str:
         return json.dumps(_data_to_dict(data), indent=2, default=str)
     if fmt == "html":
         return _format_html(data)
+    if fmt == "chat":
+        return _format_chat(data)
     return _format_text(data)
+
+
+def summary_line(d: DigestData) -> str:
+    """One-line headline suitable for a chat bubble / push notification.
+
+    Designed for orchestrators (Hermes / OpenClaw / Telegram bot) that
+    want a single-line first message — they can request the structured
+    JSON afterwards if the user drills in. Always ≤120 chars.
+    """
+    span = "today" if d.days == 1 else f"last {d.days}d"
+    headline = (
+        f"YouOS ({span}): {d.pending_count} pending · "
+        f"{d.pushed_count} pushed · {d.dismissed_count} dismissed "
+        f"({d.sweeps} sweeps)"
+    )
+    return headline[:120]
 
 
 # --- formatters ------------------------------------------------------------
@@ -174,6 +211,47 @@ def _format_text(d: DigestData) -> str:
     else:
         lines.append("Review the queue at /triage (configure tailscale.hostname for a remote URL)")
     return "\n".join(lines) + "\n"
+
+
+def _format_chat(d: DigestData) -> str:
+    """Compact summary suitable for a Telegram / Slack / WhatsApp bubble.
+
+    First line is the ``summary_line`` headline. Following lines list the
+    top pending drafts with their ids so an orchestrator can render
+    inline "Push" / "Dismiss" actions targeting those ids. Keeps under
+    ~1500 chars (well under Telegram's 4096 limit, comfortable in WhatsApp).
+
+    Designed for the user's vision of "Hermes/OpenClaw calls YouOS,
+    summarises in Telegram" — the orchestrator paraphrases the headline,
+    then the user can ask "push #12" and the orchestrator hits
+    ``POST /api/agent/pending/12/push_to_gmail``. Reads from
+    ``d.pending_preview`` (populated by ``build_digest``) so the
+    formatter is pure — no DB re-query at render time.
+    """
+    lines: list[str] = [summary_line(d)]
+
+    if d.pending_preview:
+        lines.append("")
+        lines.append("Top pending:")
+        for r in d.pending_preview:
+            tier = r.get("tier", "?")
+            score = r.get("needs_reply_score") or 0.0
+            sender = (r.get("sender") or r.get("sender_email") or "(unknown)")
+            subject = (r.get("subject") or "(no subject)")[:60]
+            # Row id = orchestrator's action handle:
+            # POST /api/agent/pending/<id>/{push_to_gmail,dismiss,save_as_feedback_pair}
+            lines.append(f"  #{r['id']} [{tier} {score:.2f}] {subject}  ←  {sender[:40]}")
+
+    if d.auto_promoted:
+        lines.append("")
+        more = "..." if len(d.auto_promoted) > 3 else ""
+        lines.append(f"Auto-skipped {len(d.auto_promoted)} sender(s): {', '.join(d.auto_promoted[:3])}{more}")
+
+    if d.triage_url:
+        lines.append("")
+        lines.append(f"Review: {d.triage_url}/triage")
+
+    return "\n".join(lines)
 
 
 def _format_html(d: DigestData) -> str:
@@ -221,6 +299,10 @@ def _format_html(d: DigestData) -> str:
 
 def _data_to_dict(d: DigestData) -> dict[str, Any]:
     return {
+        # Chat-friendly one-liner — orchestrators read this first to emit a
+        # single-bubble summary, then drill into the structured fields if
+        # the user asks for more.
+        "summary": summary_line(d),
         "account": d.account,
         "days": d.days,
         "generated_at": d.generated_at,
@@ -239,6 +321,9 @@ def _data_to_dict(d: DigestData) -> dict[str, Any]:
         "auto_promoted": d.auto_promoted,
         "top_noise_senders": d.top_noise_senders,
         "triage_url": d.triage_url,
+        # b59: chat / orchestrator surface — top-5 pending rows with
+        # action handles. Mirrors what `_format_chat` would render.
+        "pending_preview": d.pending_preview,
     }
 
 
