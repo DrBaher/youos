@@ -751,18 +751,28 @@
 
   async function loadHealth() {
     try {
-      const url = new URL('/api/agent/observability', window.location.origin);
-      if (acct.value) url.searchParams.set('account', acct.value);
-      url.searchParams.set('days', '30');
-      const data = await fetch(url).then(r => r.json());
-      renderHealth(data);
+      const obsUrl = new URL('/api/agent/observability', window.location.origin);
+      const candUrl = new URL('/api/agent/skip_sender_candidates', window.location.origin);
+      if (acct.value) {
+        obsUrl.searchParams.set('account', acct.value);
+        candUrl.searchParams.set('account', acct.value);
+      }
+      obsUrl.searchParams.set('days', '30');
+      candUrl.searchParams.set('days', '30');
+      candUrl.searchParams.set('min_count', '2');
+      const [obs, cand] = await Promise.all([
+        fetch(obsUrl).then(r => r.json()),
+        fetch(candUrl).then(r => r.json()),
+      ]);
+      renderHealth(obs, cand);
     } catch (e) {
       healthSummary.textContent = 'Agent health — load failed';
     }
   }
 
-  function renderHealth(d) {
+  function renderHealth(d, candPayload) {
     const sw = d.sweep || {}, dm = d.dismissals || {}, hist = (d.score_histogram || {}).buckets || {};
+    const candidates = (candPayload && candPayload.candidates) || [];
     const sweeps = sw.sweeps || 0;
     const rate = sweeps ? Math.round((sw.success_rate || 0) * 100) : 0;
     const persisted = dm.total_persisted || 0;
@@ -820,7 +830,68 @@
       }
     }
 
+    // Skip-sender promotion candidates — senders dismissed as 'noise' >=2x.
+    // Empty list is the healthy steady state, so render nothing then.
+    if (candidates.length > 0) {
+      html += `<h4>Promote to skip-list <small style="color:var(--muted-2);font-weight:normal;text-transform:none">
+        — senders you've dismissed as noise 2+ times in 30d
+      </small></h4>`;
+      html += '<div id="candidatesList" style="margin:4px 0 10px">';
+      candidates.forEach((c, i) => {
+        const last = c.last_subject ? ` <small style="color:var(--muted-2)">— last: ${esc(c.last_subject.slice(0, 60))}</small>` : '';
+        html += `<label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:0.88rem;cursor:pointer">
+          <input type="checkbox" class="cand-cb" data-sender="${esc(c.sender_email)}" checked>
+          <span><strong>${esc(c.sender_email)}</strong> <small style="color:var(--muted-2)">(${c.count}×)</small>${last}</span>
+        </label>`;
+      });
+      html += '</div>';
+      html += `<div class="row-actions" style="gap:8px">
+        <button class="btn" id="promoteSelectedBtn">Promote selected to skip_senders</button>
+        <button class="btn secondary" id="promoteNoneBtn">Uncheck all</button>
+        <span class="status-line" id="promoteStatus"></span>
+      </div>`;
+    }
+
     healthBody.innerHTML = html;
+
+    // Wire up promotion buttons if they were rendered (querySelector returns
+    // null when no candidates, so the no-op fall-through is fine).
+    const promoteBtn = document.getElementById('promoteSelectedBtn');
+    const noneBtn = document.getElementById('promoteNoneBtn');
+    if (promoteBtn) promoteBtn.addEventListener('click', promoteSelected);
+    if (noneBtn) noneBtn.addEventListener('click', () => {
+      document.querySelectorAll('input.cand-cb').forEach(cb => { cb.checked = false; });
+    });
+  }
+
+  async function promoteSelected() {
+    const promoteBtn = document.getElementById('promoteSelectedBtn');
+    const status = document.getElementById('promoteStatus');
+    const senders = Array.from(document.querySelectorAll('input.cand-cb'))
+      .filter(cb => cb.checked)
+      .map(cb => cb.getAttribute('data-sender'));
+    if (senders.length === 0) { status.textContent = 'Nothing selected.'; return; }
+    if (!confirm(`Add ${senders.length} sender${senders.length === 1 ? '' : 's'} to agent.skip_senders?
+They'll be hard-skipped on every future sweep.`)) return;
+    promoteBtn.disabled = true; status.textContent = 'Updating…';
+    try {
+      const r = await fetch('/api/agent/skip_senders/promote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ senders }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const j = await r.json();
+      const added = (j.added || []).length;
+      const dup = (j.already_present || []).length;
+      status.textContent = `Added ${added}${dup ? `, ${dup} already on list` : ''}. Effective on the next sweep.`;
+      // Reload health so the candidates section reflects the new state.
+      setTimeout(loadHealth, 800);
+    } catch (e) {
+      status.textContent = 'Promote failed: ' + e;
+    } finally {
+      promoteBtn.disabled = false;
+    }
   }
 
   // Reload health when the user changes account — fetchPending already
