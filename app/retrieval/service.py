@@ -142,8 +142,18 @@ class RetrievalConfig:
     recency_boost_weight: float
     account_boost_weight: float
     source_weights: dict[str, float]
-    semantic_weight: float = 0.4
+    # Semantic gets equal voice with BM25 (0.5/0.5) — QA found long inbounds
+    # let high-frequency template terms outrank topic semantics under the old
+    # 0.4 weight. The keyword filter (beta.23) shaped the BM25 query; this
+    # gives semantics the room to override what's left.
+    semantic_weight: float = 0.5
     semantic_min_coverage: float = 0.01
+    # Sender-based boosts stay at the conservative weights. An experiment at
+    # 0.20/0.20 regressed retrieval on the Alex/Stripe case — same-domain
+    # boosting amplified Baher's own-account work pairs over topic matches.
+    # The class of bug we're trying to fix is topic mismatch (intros vs
+    # pricing), not sender mismatch — semantic weight + candidate pool are
+    # the right levers; boosts are for the rarer "have-I-talked-to-X" case.
     sender_type_boost: float = 0.15
     sender_domain_boost: float = 0.10
     sender_type_boost_map: dict[str, float] = field(default_factory=dict)
@@ -463,7 +473,9 @@ class RetrievalService:
             ORDER BY cfts.rank
             LIMIT ?
             """,
-            (fts_query, (request.top_k_chunks or self.config.top_k_chunks) * 3),
+            # Pull a wider BM25 candidate pool than the requested top_k so the
+            # semantic re-ranker has more options. Was 3× — bumped to 5×.
+            (fts_query, (request.top_k_chunks or self.config.top_k_chunks) * 5),
         ).fetchall()
         matches: list[RetrievalMatch] = []
         for row in rows:
@@ -519,7 +531,10 @@ class RetrievalService:
             ORDER BY rpfts.rank
             LIMIT ?
             """,
-            (fts_query, (request.top_k_reply_pairs or self.config.top_k_reply_pairs) * 3),
+            # Wider BM25 candidate pool (3× → 5×) so semantic re-ranking can
+            # surface topic-relevant pairs that don't outrank intro/template
+            # emails on lexical similarity alone.
+            (fts_query, (request.top_k_reply_pairs or self.config.top_k_reply_pairs) * 5),
         ).fetchall()
         matches: list[RetrievalMatch] = []
         for row in rows:

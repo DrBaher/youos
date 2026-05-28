@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.2.0-beta.24 — 2026-05-28
+
+### Retrieval tuning: semantic gets equal voice + wider candidate pool
+Two small constants in `app/retrieval/service.py` that the QA inspection identified as the second-order fix after the topic-keyword filter:
+- **`semantic_weight: 0.4 → 0.5`** — semantic now blends equally with BM25 in the combined score, so a long inbound's high-frequency template terms can't outrank topic semantics by lexical weight alone.
+- **BM25 candidate pool `3× → 5×`** the requested top_k for both `reply_pairs_fts` and `chunks_fts`. The semantic re-ranker now picks from a wider lexical short-list, so topic-relevant pairs that barely outscore intro/template emails on BM25 have a chance to surface.
+
+### Sender-domain boost: experimented, reverted to conservative weights
+Bumped `sender_type_boost` and `sender_domain_boost` from `0.15/0.10` to `0.20/0.20`, ran retrieval against the Alex/Stripe inbound (with `sender_type_hint`/`sender_domain_hint` populated as `generate_draft` does), and it **regressed**: same-domain boosting amplified Baher's own-account `@medicus.ai` pairs (recurring meetings/check-ins) over the topic-relevant pricing exemplars. Reverted; left a comment explaining why the boost is the wrong lever for *topic* mismatch (intros vs pricing) — that's what semantic+candidate-pool fix. Boosts remain for the rarer "have-I-talked-to-X" axis.
+
+`sender_type_hint` / `sender_domain_hint` are already wired into `generate_draft` (lines ~1592, 1619); D from the QA plan was already in place.
+
+1136 across the test suite pass (same 4 pre-existing MLX-integration failures, unrelated).
+
 ## v0.2.0-beta.23 — 2026-05-28
 
 ### Retrieval: topic-keyword filter + user-name stripping
