@@ -50,6 +50,32 @@ SERVICE_SUBJECT_PAT = re.compile(
     re.IGNORECASE,
 )
 
+# Transactional template indicator. Matched in *either* subject or body —
+# fires when a message reads as a confirmation/receipt template (booking
+# confirmations, order receipts, appointment confirmations, etc.). Soft
+# penalty rather than hard skip so a real human follow-up that *quotes* one
+# of these phrases can still surface if other signals fire (a "could we
+# reschedule the booking?" reply ends with a question, lifting the score).
+#
+# Caught in b50 QA on a real BaherOS inbox: an "Ali Barber Shop Booking
+# Confirmation" hit score 0.60 (base 0.5 + imperative verb 0.10) and got
+# auto-drafted. Even though replying is technically fine, the agent shouldn't
+# spend its budget on transactional acknowledgements.
+TRANSACTIONAL_TEMPLATE_PAT = re.compile(
+    r"\b(?:"
+    # Common confirmation/receipt subject lines.
+    r"booking confirmation|order confirmation|appointment confirmation|"
+    r"reservation confirmation|receipt for|payment (?:received|confirmation)|"
+    r"delivery scheduled|order (?:placed|received|shipped)|"
+    # Common body openings, e.g. "Your appointment is confirmed".
+    r"your\s+(?:appointment|booking|order|reservation|payment|purchase|delivery|"
+    r"subscription|trip|flight|hotel)\s+"
+    r"(?:is\s+(?:confirmed|booked|scheduled|ready)|"
+    r"has\s+been\s+(?:confirmed|received|placed|scheduled|shipped|processed))"
+    r")\b",
+    re.IGNORECASE,
+)
+
 # --- Soft-penalty patterns (might still want a personal reply) -------------
 
 # `noreply@` / `donotreply@` — was hard-skip, now a soft penalty because
@@ -245,13 +271,34 @@ def classify(
         score -= 0.20
         reasons.append(f"operational mailbox ({msg.sender_email})")
 
+    # Transactional template detection — fires on the subject (strong cue) or
+    # the body's first 500 chars (where template boilerplate sits). Subject
+    # match counts for slightly more because subject patterns rarely false-
+    # positive on real human mail.
+    transactional = False
+    if msg.subject and TRANSACTIONAL_TEMPLATE_PAT.search(msg.subject):
+        score -= 0.25
+        reasons.append("transactional template (subject)")
+        transactional = True
+    elif msg.body and TRANSACTIONAL_TEMPLATE_PAT.search(msg.body[:500]):
+        score -= 0.20
+        reasons.append("transactional template (body)")
+        transactional = True
+
     if "?" in msg.body[-200:]:
         score += 0.20
         reasons.append("ends with a question")
 
     if ACTION_VERB_PAT.search(msg.body):
-        score += 0.10
-        reasons.append("imperative verb present")
+        # Imperative verbs are ubiquitous in transactional templates
+        # ("looking forward to see you", "click here to confirm"). When the
+        # template detector already fired, suppress the imperative bonus —
+        # the verb is template noise, not a request for action.
+        if transactional:
+            reasons.append("imperative verb present — suppressed (transactional)")
+        else:
+            score += 0.10
+            reasons.append("imperative verb present")
 
     word_count = len(msg.body.split())
     if word_count <= 120:
