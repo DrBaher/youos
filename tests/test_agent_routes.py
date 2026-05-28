@@ -208,6 +208,49 @@ def test_promote_skip_senders_rejects_empty_list(authed_client):
     assert r.status_code == 422
 
 
+def test_save_as_feedback_pair_inserts_into_feedback_pairs(authed_client):
+    """Drafts a feedback_pair from an agent row + the user's correction.
+    The interactive review queue uses the same /feedback/submit path, so
+    pair shape is identical. We assert via ``total_pairs`` (the running
+    count surfaced for the UI's "X pairs collected" status)."""
+    rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
+    row_id = rows[0]["id"]
+    r = authed_client.post(
+        f"/api/agent/pending/{row_id}/save_as_feedback_pair",
+        json={"edited_reply": "Hi Alice — Q3 pricing held steady. Let me know if you need a written quote."},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    # First insertion → total_pairs >= 1.
+    assert body["total_pairs"] >= 1
+    # Edit distance reflects that we substantially rewrote the draft.
+    assert 0.0 <= body["edit_distance_pct"] <= 1.0
+
+
+def test_save_as_feedback_pair_rejects_empty_edited_reply(authed_client):
+    rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
+    r = authed_client.post(
+        f"/api/agent/pending/{rows[0]['id']}/save_as_feedback_pair",
+        json={"edited_reply": ""},
+    )
+    # Pydantic min_length=1 → 422.
+    assert r.status_code == 422
+
+
+def test_save_as_feedback_pair_rejects_surface_tier(authed_client):
+    """Surface-for-review rows have no draft, so there's nothing to use as
+    `generated_draft`. Reject so the user can't accidentally seed the
+    training queue with empty rows."""
+    rows = authed_client.get("/api/agent/pending?tier=surface").json()["rows"]
+    r = authed_client.post(
+        f"/api/agent/pending/{rows[0]['id']}/save_as_feedback_pair",
+        json={"edited_reply": "anything"},
+    )
+    assert r.status_code == 400
+    assert "no draft" in r.text
+
+
 def test_observability_endpoint_returns_unified_payload(authed_client):
     # Generate some signal: dismiss a couple as noise so a hint can fire.
     rows = authed_client.get("/api/agent/pending").json()["rows"]
