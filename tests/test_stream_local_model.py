@@ -103,6 +103,11 @@ def test_stream_uses_local_lora_when_adapter_ready(monkeypatch):
     monkeypatch.setattr(sr, "_adapter_available", lambda: True)
     monkeypatch.setattr(sr, "_get_base_model_id", lambda: "Qwen/Qwen2.5-1.5B-Instruct")
     monkeypatch.setattr("app.core.settings.get_adapter_path", lambda: __import__("pathlib").Path("/tmp/adapters/latest"))
+    # Force the *cold subprocess* path: if a developer has an mlx_lm.server
+    # actually running, the production code would short-circuit to the warm
+    # server and skip Popen — which is what the warm-server test below
+    # exercises. This one is specifically about the Popen call shape.
+    monkeypatch.setattr("app.core.model_server.is_enabled", lambda: False)
 
     captured = {}
 
