@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.2.0-beta.63 — 2026-05-28
+
+### Reference Telegram bot — `examples/telegram_bot.py`
+
+A working ~250-line reference orchestrator that wires Telegram to YouOS so the orchestrator vision is demonstrable end-to-end. Pairs with `docs/INTEGRATIONS.md` (the recipe) and `/api/agent/resolve` (b62, the NLU helper).
+
+**Commands**:
+- `/inbox` — calls `/api/agent/digest`, surfaces summary + top-5 pending with row ids
+- `/push <id>` — `POST /api/agent/pending/<id>/push_to_gmail`
+- `/dismiss <id> [reason]` — `POST .../dismiss` (default `noise`); validates against the 5-reason whitelist
+- `/find <words>` — `GET /api/agent/resolve?q=<words>`
+- `/digest [days]` — extended digest with by-reason + auto-promoted
+- `/help` — command list
+
+**Free-text routing** — phrases like `"push the Q3 thing"`, `"dismiss the barber confirmation"`, `"anything important?"` get routed via regex patterns to the right command, with row-id resolution via `/api/agent/resolve`. Substring matching only; a real production orchestrator would route through an LLM here (but the YouOS surface is the same either way).
+
+**Security**: `TELEGRAM_AUTHORIZED_USER` env var pins exactly one Telegram numeric user id allowed to drive the bot. Anyone else is silently ignored. Without this, any Telegram user could find the bot and control your inbox.
+
+**Dependencies**: `python-telegram-bot==21.*` + `requests`. Bot can run on the same Mac as YouOS or on any Tailnet device.
+
+`examples/README.md` describes the patterns reusable for `slack_bot.py`, `hermes_skill.json`, etc.
+
+**Verification**: file parses cleanly (`python3 -m py_compile`); `ruff check examples/` clean. Not exercised against a live Telegram bot in this PR (no test bot configured) — the wiring is small and the API contracts it calls are already fully tested via `tests/test_agent_routes.py` (38 passing).
+
 ## v0.2.0-beta.62 — 2026-05-28
 
 ### `GET /api/agent/resolve?q=...` — orchestrator NLU helper
