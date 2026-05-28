@@ -303,6 +303,54 @@ def strip_signature(text: str) -> str:
     return text
 
 
+def _strip_trailing_user_name(text: str) -> str:
+    """Strip the user's name (and any trailing words like a surname) when it
+    sits at the very end of the text, after a sentence-terminating
+    punctuation mark.
+
+    QA found ``strip_signature`` correctly removes the contact-detail block
+    (``CEO / Work AI w: work.example e: …``) but leaves the trailing
+    ``Baher Al Hakim`` intact — it's not at line start, so the line-anchored
+    patterns miss it. The LoRA then learns ``[brief content] + [name]`` and
+    on short queries emits only the name+contact half.
+
+    Pattern: ``(?<=[.,!?])\\s+<first-name>\\b[^.!?]*$`` —
+    - lookbehind for `.`, `,`, `!`, `?` (so mid-sentence uses don't match)
+    - the user's first name from ``get_user_names()`` (only the first name is
+      configured for BaherOS; trailing surname tokens are captured by the
+      ``[^.!?]*`` tail)
+    - any non-sentence-ending chars to EOF (consumes ``Al Hakim``, contact
+      remnants, etc.)
+    """
+    if not text:
+        return text
+    names = sorted(
+        {n.strip() for n in get_user_names() if n.strip()},
+        key=len, reverse=True,
+    )
+    for name in names:
+        pattern = re.compile(
+            rf"(?<=[.,!?])\s+{re.escape(name)}\b[^.!?]*$",
+            re.IGNORECASE,
+        )
+        new_text = pattern.sub("", text).rstrip()
+        if new_text != text:
+            return new_text
+    return text
+
+
+def strip_exemplar_signature(text: str) -> str:
+    """Aggressive signature strip for exemplars *fed back into the prompt*.
+
+    Beyond ``strip_signature`` (contact details, role+separator, "Sent from
+    my…"), this also drops the trailing user-name suffix. We don't want the
+    LoRA to see ``[content] + [name]`` patterns in its precedents and mirror
+    them — especially on short queries, where the model otherwise emits the
+    name half with no content half at all (BaherOS regression QA).
+    """
+    return _strip_trailing_user_name(strip_signature(text))
+
+
 def _score_confidence(
     reply_pairs: list[RetrievalMatch],
     score_stats: dict[str, float] | None = None,
@@ -470,7 +518,7 @@ def _format_exemplars(
     parts: list[str] = ["The following are examples of how you have replied to similar emails:"]
     for i, rp in enumerate(sorted_pairs[:max_exemplars], 1):
         inbound = (rp.inbound_text or "")[:EXEMPLAR_INBOUND_CHARS]
-        reply = strip_signature(rp.reply_text or "")[:EXEMPLAR_REPLY_CHARS]
+        reply = strip_exemplar_signature(rp.reply_text or "")[:EXEMPLAR_REPLY_CHARS]
         conf = conf_fn(rp.score)
         parts.append(f"[EXAMPLE {i} — confidence: {conf}]\nInbound: {inbound}\nYour reply: {reply}\n---")
     return "\n\n".join(parts)
@@ -899,7 +947,11 @@ def _repair_draft(
             repairs.append("stripped_quote_tail")
 
     if config.get("strip_trailing_signature"):
-        stripped = strip_signature(text).rstrip()
+        # Two passes: first drop contact details / role lines (strip_signature),
+        # then drop a trailing "Baher Al Hakim" suffix that strip_signature
+        # misses because it isn't at line-start. Same logic as the exemplar
+        # path — the LoRA emits the same trailing-name artifact on its output.
+        stripped = _strip_trailing_user_name(strip_signature(text)).rstrip()
         if stripped and stripped != text.rstrip():
             text = stripped
             repairs.append("stripped_trailing_signature")
@@ -1736,7 +1788,7 @@ def generate_draft(
         # budget — the cache is for consistency, not selection.
         for rp in sorted(reply_pairs, key=lambda r: r.score, reverse=True):
             inbound_ex = (rp.inbound_text or "")[:EXEMPLAR_INBOUND_CHARS]
-            reply_ex = strip_signature(rp.reply_text or "")[:EXEMPLAR_REPLY_CHARS]
+            reply_ex = strip_exemplar_signature(rp.reply_text or "")[:EXEMPLAR_REPLY_CHARS]
             cost = _estimate_tokens(f"[EXAMPLE]\nInbound: {inbound_ex}\nYour reply: {reply_ex}\n---")
             if used + cost <= budget:
                 trimmed_pairs.append(rp)

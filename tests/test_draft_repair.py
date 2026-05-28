@@ -242,3 +242,63 @@ def test_repair_pipeline_clears_all_three_artifacts_in_one_pass():
     assert "stripped_quote_tail" in repairs
     assert "stripped_trailing_signature" in repairs
     assert "decoded_html_entities" in repairs
+
+
+# --- Trailing user-name strip (BaherOS QA regression) ---------------------
+# `strip_signature` removes contact details (`CEO / Work AI w: …`) but
+# leaves a trailing `Baher Al Hakim` because it's not at line start. The LoRA
+# learns "[brief content] + [name]" and on short queries emits only the name
+# half. These pin the two-step exemplar/output strip.
+
+
+def test_strip_trailing_user_name_after_punctuation(monkeypatch):
+    monkeypatch.setattr("app.generation.service.get_user_names", lambda: ["Baher"])
+    from app.generation.service import _strip_trailing_user_name as f
+
+    assert f("Awesome! Delivery before holiday. Baher Al Hakim") == "Awesome! Delivery before holiday."
+    assert f("Thanks, Baher Al Hakim") == "Thanks,"
+    assert f("Sure, will move the call. Thanks, Baher") == "Sure, will move the call. Thanks,"
+
+
+def test_strip_trailing_user_name_leaves_mid_sentence_use(monkeypatch):
+    """Lookbehind for a sentence-ending punct + lookahead refusing further
+    `.!?` until EOF means a Baher used mid-sentence isn't stripped."""
+    monkeypatch.setattr("app.generation.service.get_user_names", lambda: ["Baher"])
+    from app.generation.service import _strip_trailing_user_name as f
+
+    assert f("Baher mentioned the team should ship by Friday.") == "Baher mentioned the team should ship by Friday."
+    assert f("Sure, Baher said yes. Thanks.") == "Sure, Baher said yes. Thanks."
+
+
+def test_strip_exemplar_signature_handles_run_on_plus_trailing_name(monkeypatch):
+    """Combined: contact-detail block (via inline patterns) + trailing user
+    name (via lookbehind). The kind of output the BaherOS LoRA produces."""
+    monkeypatch.setattr("app.generation.service.get_user_names", lambda: ["Baher"])
+    from app.generation.service import strip_exemplar_signature
+
+    out = strip_exemplar_signature(
+        "Awesome! Delivery before holiday. Baher Al Hakim CEO / Work AI w: work.example"
+    )
+    assert out == "Awesome! Delivery before holiday."
+
+
+def test_repair_strip_trailing_signature_now_catches_trailing_name(monkeypatch):
+    """`_repair_draft` with `strip_trailing_signature=True` runs both passes,
+    so the LoRA emitting `… Baher Al Hakim` at the end of a draft is
+    truncated cleanly (was previously left intact)."""
+    monkeypatch.setattr("app.generation.service.get_user_names", lambda: ["Baher"])
+    from app.generation.service import _repair_draft
+
+    draft = "Sure, let's schedule a call next week. Let me know what works. Baher Al Hakim"
+    cfg = {
+        "enforce_greeting_closing": False,
+        "strip_trailing_signature": True,
+        "strip_quote_tail": False,
+        "decode_html_entities": False,
+    }
+    text, repairs, _ = _repair_draft(
+        draft, greeting="", closing="", target_words=None, config=cfg,
+    )
+    assert "Baher Al Hakim" not in text
+    assert text.strip().endswith("Let me know what works.")
+    assert "stripped_trailing_signature" in repairs
