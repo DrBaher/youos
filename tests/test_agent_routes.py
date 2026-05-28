@@ -27,6 +27,16 @@ def authed_client(monkeypatch, tmp_path):
     from pathlib import Path
     repo_schema = Path(__file__).resolve().parents[1] / "docs" / "schema.sql"
     (docs / "schema.sql").write_text(repo_schema.read_text())
+    # ``app.core.config.CONFIG_PATH`` is bound at module-import time from
+    # YOUOS_DATA_DIR. By the time pytest runs, that import has already
+    # happened (likely with no YOUOS_DATA_DIR set) — so set_flag would
+    # write to the *real* youos_config.yaml. Override the module global
+    # AND clear the lru-cached load_config() so this test sees a fresh,
+    # empty config rooted in tmp_path.
+    tmp_config = tmp_path / "youos_config.yaml"
+    monkeypatch.setattr("app.core.config.CONFIG_PATH", tmp_config)
+    from app.core.config import load_config
+    load_config.cache_clear()
     from app.core.settings import get_settings
     get_settings.cache_clear()
     from app.db.bootstrap import bootstrap_database

@@ -1,5 +1,60 @@
 # Changelog
 
+## v0.2.0-beta.46 — 2026-05-28
+
+### Test isolation fix (caught: PR #119/120 tests had been writing to the real `youos_config.yaml`)
+
+`app/core/config.py` binds `CONFIG_PATH` at module-import time from `YOUOS_DATA_DIR`. Because `monkeypatch.setenv` in the `authed_client` fixture only fires *after* the module is imported, `set_flag` and the `/api/agent/skip_senders/promote` route were writing to the real user config. Caught when test ordering changed (running `test_gmail_write.py` first) caused promote_skip_senders tests to fail with empty `added: []` — those senders had been leaking in from previous test runs.
+
+Fix: `tests/test_agent_routes.py` fixture now does `monkeypatch.setattr("app.core.config.CONFIG_PATH", tmp_path / "youos_config.yaml")` + `load_config.cache_clear()` so every authed_client test writes to its own tmp config. Cleaned `agent: { skip_senders: ... }` from `youos_config.yaml` (test pollution from b39/b43/b44 runs).
+
+### Phase 2.3: native backend for Push to Gmail Drafts
+
+Closes the backend matrix. `Push to Gmail Drafts` on `/triage` now works on `ingestion.google_backend=native` accounts in addition to `gog` (b37) and `gws` (b40).
+
+**Implementation** (`app/ingestion/gmail_write.py`)
+
+Direct call to Google's REST API via `googleapiclient` — `service.users().drafts().create(userId='me', body={...})`. Same RFC 822 → base64url shape as the CLI backends; the difference is just transport (HTTP vs subprocess).
+
+A new `_NATIVE_WRITE_SCOPES` tuple combines `gmail.readonly` (existing ingestion scope) + `gmail.compose` (write scope). We don't merge `gmail.compose` into the ingestion adapter's `_NATIVE_SCOPES` because read-only users shouldn't be forced into a re-auth — the agent feature is opt-in, and so is the scope expansion.
+
+**Re-auth path**: existing tokens stored at `var/google_tokens/<account>.json` are loaded with the write scopes. If they don't cover `gmail.compose`, the API returns 401/403 and we translate to a clear `GmailWriteError("Native backend draft creation needs the gmail.compose OAuth scope; your current token is read-only. Re-authorize: `youos setup` ...")`.
+
+**Error translation** (parallels gog/gws):
+
+| Failure | Resulting `GmailWriteError` |
+|---|---|
+| Missing credentials file | "No stored Google credentials for {account} at {path}. Authorize first via `youos setup`." |
+| Expired token, no refresh | `_NATIVE_REAUTH_HINT` ("needs gmail.compose scope; re-authorize") |
+| HTTP 401 / 403 | Same hint + status code |
+| Other API exception | "native drafts.create failed: {exc}" |
+| Missing `id` in response | "native drafts.create returned no id; payload=..." |
+| `googleapiclient` not installed | "Native backend needs the google extra: pip install youos[google]" |
+
+**Tests** (`tests/test_gmail_write.py`) — 6 new (parallel to the gog/gws suites):
+
+- `test_native_creates_draft_and_extracts_id` — pins the API call shape (userId='me', body.message.raw + body.message.threadId).
+- `test_native_skips_thread_id_field_when_none` — no threadId on new-thread drafts.
+- `test_native_translates_403_to_reauth_hint` — scope-missing path.
+- `test_native_translates_401_to_reauth_hint` — expired-token path.
+- `test_native_translates_generic_exception_with_context` — other failures surface the underlying error.
+- `test_native_translates_missing_id_to_gmail_write_error` — payload validation.
+- `test_native_translates_credentials_runtime_error_to_gmail_write_error` — credentials helper failures become GmailWriteError, not 500s.
+
+19 gmail_write tests total, all pass. Mocks `_native_gmail_service` so the auth + network stack is exercised by call shape, not real OAuth.
+
+**Docs**: `docs/ARCHITECTURE.md` updated — backend matrix now lists all three implementations + their transport.
+
+---
+
+The full Push to Gmail Drafts surface area is shipped:
+
+| Backend | Transport | Scope source | Status |
+|---|---|---|---|
+| gog | `gog gmail drafts create --raw …` (subprocess) | gog's own auth | b37 |
+| gws | `gws gmail drafts create --raw …` (subprocess) | gws's own auth | b40 |
+| native | `googleapiclient` → REST | `gmail.compose` on stored token | **b46** |
+
 ## v0.2.0-beta.45 — 2026-05-28
 
 ### Agent → LoRA training-pair pipeline
