@@ -275,3 +275,73 @@ def test_skip_list_no_match_keeps_existing_behaviour():
     v = classify(_msg(), skip_senders=["someone@else.com"])
     # Original Alice case still passes (question + imperative + short body).
     assert v.needs_reply
+
+
+# --- Transactional templates (b51) ----------------------------------------
+
+
+def test_booking_confirmation_subject_drops_below_threshold():
+    """The Ali Barber Shop QA case (b50): subject = 'Booking Confirmation
+    for Ali Barber Shop', body paraphrases the appointment details. Without
+    the transactional-template detector it scored 0.60 (base 0.5 + imperative
+    verb 0.10) and got auto-drafted. With the detector it drops to ~0.35
+    and lands in surface-for-review instead."""
+    v = classify(_msg(
+        sender="Ali Barber Shop <office@alibarbershop.at>",
+        sender_email="office@alibarbershop.at",
+        subject="Booking Confirmation for Ali Barber Shop",
+        body=(
+            "Dear Baher, Your appointment for CUT (wash, cut & styling) is "
+            "confirmed. Date: 30/05/2026, Time: 09:00-09:30, Location: Ali "
+            "Barber Shop Amerlingstr. 4, 1060 Vienna, Your Barber: Faisal "
+            "Barber, Price: €38. Thank you for your Booking! Looking forward "
+            "to see you soon!"
+        ),
+    ))
+    # Subject hits TRANSACTIONAL_TEMPLATE_PAT → -0.25 penalty.
+    assert not v.needs_reply
+    assert "transactional template (subject)" in " ".join(v.reasons)
+    # Imperative-verb bonus is suppressed (template noise, not a request).
+    assert any("suppressed (transactional)" in r for r in v.reasons)
+    assert v.score < 0.6
+    # But still high enough to surface — user can still see it if they want.
+    assert v.surface_for_review
+
+
+def test_body_only_template_phrase_drops_score():
+    """Subject is innocuous but the body opens with 'Your booking is
+    confirmed' — body-pattern match (slightly weaker, -0.20)."""
+    v = classify(_msg(
+        sender="Restaurant <hello@bigrest.com>",
+        sender_email="hello@bigrest.com",
+        subject="See you tonight",
+        body=(
+            "Your reservation has been confirmed for tonight at 7pm. "
+            "Looking forward to having you."
+        ),
+    ))
+    assert "transactional template (body)" in " ".join(v.reasons)
+
+
+def test_human_reply_that_mentions_booking_still_passes():
+    """Edge case: real human asking about a booking. Subject and body don't
+    match the template patterns, so no penalty — high score from question."""
+    v = classify(_msg(
+        sender="Alice <alice@partner.com>",
+        sender_email="alice@partner.com",
+        subject="Re: Booking",
+        body="Hey — could we move our booking next week to Thursday afternoon?",
+    ))
+    assert v.needs_reply
+    assert not any("transactional" in r for r in v.reasons)
+
+
+def test_order_receipt_pattern():
+    v = classify(_msg(
+        sender="Amazon <auto-confirm@amazon.com>",
+        sender_email="auto-confirm@amazon.com",
+        subject="Your order has been placed",
+        body="Hi Baher, your order has been placed. Thanks for shopping.",
+    ))
+    assert "transactional template (subject)" in " ".join(v.reasons)
+    assert not v.needs_reply
