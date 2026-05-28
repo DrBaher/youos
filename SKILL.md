@@ -229,6 +229,8 @@ You (Telegram) → "Push #12 to Gmail" → Hermes → POST /api/agent/pending/12
 
 Full recipe + ~30-line Telegram bot example in `docs/INTEGRATIONS.md`. **YouOS already ships an OpenClaw bundle** (this file + `clawhub.json`) and is published on ClawHub; Hermes-style orchestrators discover the surface via `/openapi.json`.
 
+**For LLM-driven agents operating YouOS at runtime**: read `docs/AGENT_OPERATIONS.md` — it covers when to call what, idempotency, HTTP error handling, disambiguation patterns, trust boundaries, paraphrasing guidance, side-effect tables, and a worked end-to-end conversation. The OpenAPI spec is the schema; that doc is the runtime contract.
+
 ## How it works
 
 1. Ingests Gmail, Google Docs, WhatsApp exports — plus organic pairs from emails you sent without YouOS
