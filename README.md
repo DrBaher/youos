@@ -86,6 +86,8 @@ youos serve     # then visit /triage
 
 Features: **standing instructions** threaded into every draft prompt, **cold-outreach detection** with an automatic decline-nudge, **prior-history boost** that prioritises senders you've actually corresponded with, **audit log** of every sweep visible in the `/triage` Recent activity panel, and three safety guardrails — per-sender skip list, daily draft cap, and strict-local mode (refuses cloud fallback during background sweeps). Manual one-shot: `youos triage --window 3d --limit 8 [--dry-run]`.
 
+**Remote access**: `/triage` is reachable from your phone via Tailscale + PIN auth — see [`docs/REMOTE_ACCESS.md`](docs/REMOTE_ACCESS.md). The agent runs autonomously on your Mac and pushes drafts to Gmail Drafts, which you can finish-and-send from any device without YouOS exposed at all.
+
 ## Does it actually sound like you? (measured)
 
 The whole bet behind YouOS is that a small model fine-tuned on *your* mail beats a frontier model that isn't — at sounding like you. So we measured it. `youos compare-models` drafts your held-out messages under each backend and scores every draft against the reply you actually sent — **voice-match**: a blend of semantic similarity, stylometry, phrasing overlap, and length fit.
