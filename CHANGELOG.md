@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.2.0-beta.58 — 2026-05-28
+
+### Multi-account end-to-end — verified + documented
+
+Live-verified that `baher@work.example` works alongside `you@gmail.com` through the full agent loop on baheros.
+
+**Verifications**:
+- `gog auth list` shows both accounts authed
+- `youos triage --account baher@work.example` swept 8 unread threads, all hard-skipped cleanly (~20s vs ~40s for you)
+- `agent_audit` per-account: counts isolated
+- `/api/agent/observability?account=...` returns per-account stats
+- Scheduler with `interval_minutes=1` swept both accounts sequentially each tick (you 40s → work 20s)
+
+**Two findings + fixes**:
+
+1. **`agent.accounts` wasn't a settable flag** — read by `get_agent_config()` but absent from the feature-flag whitelist, so `youos config set agent.accounts ...` failed with `unknown flag`. Added as `text` flag with comma-or-list parsing.
+
+2. **`get_agent_config` now parses `agent.accounts` through `_parse_skip_senders`** so a CLI-set string works identically to a YAML list (case-folded, deduped, trimmed).
+
+**Tests** — 2 new: comma-string parsing, list-form parsing.
+
+**`docs/REMOTE_ACCESS.md`** — new "Multi-account setup" section:
+- gog auth + `youos config set user.emails 'a@x.com, b@y.com'`
+- Per-account vs global matrix (queue, audit, observability, dismissal stats are per-account; everything else is global)
+- `agent.accounts` as the override knob
+- Verification steps + typical per-account sweep duration
+
+The architecture supported multi-account from the start (every store/API/CLI path takes `account=`); this PR confirms the end-to-end flow and fills the one CLI-affordance gap.
+
 ## v0.2.0-beta.57 — 2026-05-28
 
 ### Gmail-label dismissal signal — dismiss from any client

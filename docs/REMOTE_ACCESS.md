@@ -128,6 +128,67 @@ The dismissal goes through the same path as `/triage`'s dismiss button, so it co
 
 Safe — `sync-labels` skips threads with no matching `agent_pending_drafts` row (e.g. an old thread you labelled before the agent saw it). The label stays applied; nothing happens.
 
+## Multi-account setup
+
+YouOS handles multiple Gmail accounts on one machine. Each account runs through gog's stored OAuth tokens; the agent sweeps them sequentially on each scheduler tick.
+
+### Setup
+
+1. Authorize each account with gog (one-time per account):
+
+   ```bash
+   gog auth login --account you@gmail.com
+   gog auth login --account baher@work.example
+   gog auth list                       # confirm both are listed
+   ```
+
+2. Add both to `user.emails`:
+
+   ```bash
+   youos config set user.emails 'you@gmail.com, baher@work.example'
+   ```
+
+3. The scheduler now sweeps both accounts each tick (no agent restart needed — `get_agent_config` re-reads on every iteration).
+
+### What's per-account vs global
+
+| Item | Per-account | Global |
+|---|---|---|
+| `agent_pending_drafts` rows (the queue at `/triage`) | ✓ | |
+| `agent_audit` rows (sweep history) | ✓ | |
+| `/api/agent/observability?account=X` | ✓ | |
+| Dismissal stats / candidates / promotion list | ✓ | |
+| `agent.enabled` | | ✓ |
+| `agent.interval_minutes` | | ✓ |
+| `agent.standing_instructions` | | ✓ |
+| `agent.skip_senders` | | ✓ (mute applies to both inboxes) |
+| `agent.daily_draft_cap` | | ✓ (per-UTC-day quota applies per account) |
+| `agent.threshold` / `window` / `limit` | | ✓ |
+| `agent.auto_promote_skip_senders` | | ✓ |
+| Standing instructions snapshot (column on each row) | ✓ (snapshotted at draft time) | |
+
+If you want different standing-instructions or skip-senders per account, that's a deliberate future feature — current design is "configure once, applies to both."
+
+### Selecting which accounts the scheduler sweeps
+
+By default the scheduler picks up everything in `user.emails`. To restrict (e.g. pause one account temporarily without losing its identity entry):
+
+```bash
+youos config set agent.accounts 'you@gmail.com'   # sweep only you
+youos config set agent.accounts ''                    # back to user.emails
+```
+
+### Verifying multi-account sweeps
+
+The `/triage` Recent activity table shows the `Account` column for each sweep. The digest CLI is per-account too:
+
+```bash
+youos digest --account you@gmail.com
+youos digest --account baher@work.example
+```
+
+On a typical inbox, one account-sweep takes 20–45 seconds. With two accounts and a 1-minute interval, expect the loop to be busy most of the time and finish each tick around the 60s mark. Set `agent.interval_minutes` higher (5, 15) for less churn.
+
 ## Daily digest email (poor-man's push notification)
 
 `youos digest` prints a summary of the agent's recent activity — sweep counts, drafts pending vs pushed, dismissal rate by reason, auto-promoted senders, top noise-dismissed senders, and a clickable Tailscale link to `/triage`. Pipe it to `mail` via cron and you get a daily email digest of what the agent did while you were away.
