@@ -113,6 +113,22 @@
     <span class="status-line" id="statusLine">Loading…</span>
   </div>
 
+  <details class="standing-banner" id="standingBanner">
+    <summary><span id="standingSummary">Standing instructions — none</span></summary>
+    <p class="sub" style="margin-top:8px">Free-form guidance threaded into every triage draft (e.g. <em>"today I'm out; politely decline meetings"</em>). Snapshotted with each draft for auditability.</p>
+    <textarea id="standingInput" rows="3" placeholder="(empty — no standing instructions applied)" style="width:100%;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:8px;font-family:inherit;font-size:0.9rem;margin-top:6px;"></textarea>
+    <div class="row-actions" style="margin-top:8px">
+      <button class="btn" id="standingSaveBtn">Save</button>
+      <button class="btn secondary" id="standingClearBtn">Clear</button>
+      <span class="status-line" id="standingStatus"></span>
+    </div>
+  </details>
+  <style>
+    .standing-banner { margin: 14px 0 20px; padding: 12px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+    .standing-banner summary { cursor: pointer; color: var(--muted); font-size: 0.9rem; font-weight: 600; }
+    .standing-banner[open] summary { margin-bottom: 4px; color: var(--text); }
+  </style>
+
   <div id="drafts"></div>
 
   <details class="surface-section" id="surfaceSection" style="display:none">
@@ -280,6 +296,57 @@
     if (action && id) { rowAction(id, action); }
   });
 
+  // Standing instructions banner — loads current value from /api/config/flags,
+  // saves via /api/config/set. Snapshotted on every triage draft (column
+  // already exists from β.1).
+  const standingInput = $('standingInput'), standingStatus = $('standingStatus');
+  const standingSummary = $('standingSummary'), standingBanner = $('standingBanner');
+  const standingSaveBtn = $('standingSaveBtn'), standingClearBtn = $('standingClearBtn');
+
+  function reflectStanding(value) {
+    standingInput.value = value || '';
+    if (value && value.trim()) {
+      standingSummary.textContent = 'Standing instructions: ' + value.slice(0, 80) + (value.length > 80 ? '…' : '');
+      standingSummary.style.color = 'var(--teal)';
+    } else {
+      standingSummary.textContent = 'Standing instructions — none';
+      standingSummary.style.color = '';
+    }
+  }
+
+  async function loadStanding() {
+    try {
+      const r = await fetch('/api/config/flags').then(r => r.json());
+      const flag = (r.flags || []).find(f => f.key === 'agent.standing_instructions');
+      reflectStanding(flag ? (flag.value || '') : '');
+    } catch (e) {
+      standingStatus.textContent = 'Load failed.';
+    }
+  }
+
+  async function saveStanding(value) {
+    standingSaveBtn.disabled = true;
+    standingStatus.textContent = 'Saving…';
+    try {
+      const r = await fetch('/api/config/set', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'agent.standing_instructions', value: value }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      reflectStanding(value);
+      standingStatus.textContent = value.trim() ? 'Saved — applied to the next triage run.' : 'Cleared.';
+    } catch (e) {
+      standingStatus.textContent = 'Save failed: ' + e;
+    } finally {
+      standingSaveBtn.disabled = false;
+    }
+  }
+
+  standingSaveBtn.addEventListener('click', () => saveStanding(standingInput.value));
+  standingClearBtn.addEventListener('click', () => saveStanding(''));
+
+  loadStanding();
   fetchPending();
 })();
 </script>
