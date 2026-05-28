@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.2.0-beta.54 — 2026-05-28
+
+### Remote access docs + safer `youos status` / `youos doctor` exposure messaging
+
+The remote-access infrastructure already existed — non-loopback bind via `server.host`, PIN auth via `server.pin`, Tailscale hostname via `tailscale.hostname`. What was missing was the *setup story* + safety rails that flag insecure configurations.
+
+**New `docs/REMOTE_ACCESS.md`** — end-to-end Tailscale + PIN setup walkthrough. Covers prerequisites, the 5-step config (find hostname → set PIN → bind to 0.0.0.0 → set Tailscale hostname → restart), what to do on the phone (URL, add-to-home-screen), what's protected (PIN, API tokens, Tailnet identity), what's not yet supported (push notifications, mobile-responsive UI, remote dismissal), and a troubleshooting section.
+
+**`youos status` fixes**:
+- Tailscale URL was shown as `https://<hostname>.ts.net` — wrong scheme (no TLS terminator) and missing port. Now shows `http://<hostname>:<port>` matching direct binding.
+- New `Remote URL:` line when `server.host` is non-loopback but Tailscale isn't configured.
+- Loud `⚠️ server.host is exposed but server.pin is empty` warning when binding without auth.
+- Default ("not configured") nudge points at the new docs.
+
+**`youos doctor` warning** for the same insecure-exposure case: `server.host = '0.0.0.0' is exposed (non-loopback) but server.pin is empty. Anyone on your network can reach /triage.` Smoke-tested locally — fires correctly.
+
+**README** — new "Remote access" line under the Autonomous-triage section pointing at `docs/REMOTE_ACCESS.md`.
+
+No code changes to the FastAPI server itself; this is purely surfacing + documenting the existing remote-access capability so users can actually use it without trial-and-error.
+
 ## v0.2.0-beta.53 — 2026-05-28
 
 ### Process hardening: branch protection + verification checklists in CONTRIBUTING

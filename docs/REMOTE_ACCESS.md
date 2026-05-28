@@ -1,0 +1,112 @@
+# Remote access — YouOS from your phone or another machine
+
+YouOS runs locally on Apple Silicon by design — the model, the LoRA, your inbox corpus, your draft history all stay on your Mac. But the *UI* (`/triage`, `/feedback`, `/stats`, `/settings`) is just a FastAPI server; it can be reached from any device with a network route to your Mac.
+
+This doc covers the **Tailscale + PIN** path, which is the recommended remote-access setup. It gives you a private network between your Mac and your phone (and any other devices on your Tailnet) without exposing anything to the public internet.
+
+## What you can do remotely
+
+| Action | Where it lives |
+|---|---|
+| Read drafts the agent queued | Gmail.com (after `Push to Gmail Drafts`) |
+| Finish and send a drafted reply | Gmail.com |
+| Browse the `/triage` queue | YouOS server (this doc) |
+| Dismiss with a categorical reason | YouOS server |
+| Save as training pair (edit + capture for LoRA retrain) | YouOS server |
+| Check `Agent health` (sweep stats, dismissal rate, score histogram) | YouOS server |
+| Toggle flags at `/settings` | YouOS server |
+
+The Gmail path works on any device without additional setup. The YouOS server requires a network route, which Tailscale provides.
+
+## Prerequisites
+
+- [Tailscale](https://tailscale.com/download) installed on **your Mac** (it should already be — `tailscale status` should print your devices) and on **your phone** (App Store / Play Store).
+- Both devices logged into the same Tailnet account.
+
+You don't need a paid plan — the free tier covers everything below.
+
+## Setup (one-time, ~2 minutes)
+
+### 1. Find your Mac's Tailscale hostname
+
+```bash
+tailscale status | head -1
+```
+
+The first column is the IP, the second is the hostname. Use the hostname (e.g. `bbots-mac-mini`) — it's stable across reboots.
+
+### 2. Set a PIN (required — protects the exposed UI)
+
+```bash
+# Replace `YOUR-PIN-HERE` with a real PIN; never commit it.
+youos config set server.pin YOUR-PIN-HERE
+```
+
+PIN can be any string — 6+ characters recommended. You'll be prompted for it once per device (then it's cookied).
+
+> **Don't skip this.** Once you bind the server to a non-loopback interface, anyone on your Tailnet can reach it. The PIN is what limits access to you.
+
+### 3. Bind YouOS to the Tailscale interface
+
+```bash
+youos config set server.host 0.0.0.0
+youos config set tailscale.hostname bbots-mac-mini   # use your hostname from step 1
+```
+
+`0.0.0.0` binds to all interfaces on your Mac. Tailscale routes Tailnet traffic to it; localhost still works from the Mac itself; LAN devices that aren't on your Tailnet are still blocked by your local firewall (assuming default macOS settings).
+
+If you want stricter binding (only the Tailscale interface, not LAN at all), use your Tailscale IP from step 1: `youos config set server.host 100.79.48.17`. The trade-off is that your IP changes if Tailscale reassigns it (rare on free tier).
+
+### 4. Restart the server
+
+```bash
+pkill -f "youos serve"
+youos serve &
+youos status
+```
+
+`youos status` should now print:
+
+```
+Tailscale:   ✅ http://bbots-mac-mini:8901
+```
+
+### 5. Open `/triage` on your phone
+
+On your phone (with Tailscale running and connected to the same Tailnet):
+
+```
+http://bbots-mac-mini:8901/triage
+```
+
+Or use the IP form (`http://100.79.48.17:8901/triage`) if MagicDNS isn't resolving on your phone.
+
+First visit prompts for the PIN. After that, it's cookied for ~30 days.
+
+### 6. (Optional) Add to your phone's home screen
+
+In Safari: tap the Share button → "Add to Home Screen". Names it whatever you want. From your home screen it opens like an app.
+
+## What's protected
+
+- **PIN gates browser access** to all routes except `/login` and static assets.
+- **API tokens** (for the Gmail extension's cross-origin calls) are a separate path; see `/settings → Auth` to manage.
+- **Tailscale provides network-level identity** — only devices logged into your Tailnet can reach the bind.
+
+## What's not yet supported (gaps to know about)
+
+- **Push notifications to your phone** — the agent loop only fires `display notification` on the Mac. No iOS/Android push integration yet. Workaround: enable a daily digest email (see `agent.digest_email`, planned).
+- **Mobile-responsive `/triage`** — templates are desktop-first. They render on a phone but may need horizontal scrolling for the dismiss-reason selector and bulk-action buttons.
+- **Remote dismissal without `/triage`** — currently requires opening the page. A Gmail-label-based signal (e.g. apply "YouOS/dismiss" to a thread) is on the roadmap.
+
+## Troubleshooting
+
+**`youos status` doesn't show Tailscale URL.** Check `tailscale.hostname` is set (`youos config get tailscale.hostname`) and that `tailscale status` lists your Mac.
+
+**Phone can resolve but can't connect.** Confirm `server.host` is `0.0.0.0` (or your Tailscale IP), not `127.0.0.1`. Restart the server after changing.
+
+**Phone resolves the hostname but is told `connection refused`.** Server isn't running, or it's bound to loopback only. Check `pgrep -af "uvicorn.*app.main:app"`.
+
+**PIN prompt loops.** Cookie storage may be disabled on the phone browser. Try a different browser or check the browser's site-settings → cookies.
+
+**Tailscale shows the Mac as `offline`.** Make sure Tailscale is actually running on the Mac (`brew services start tailscale` or the menubar icon). Tailscale sometimes pauses on macOS sleep — wake the Mac.
