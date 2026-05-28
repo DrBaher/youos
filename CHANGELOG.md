@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.2.0-beta.60 — 2026-05-28
+
+### ClawHub refresh — orchestrator surface visible in the registry
+
+The YouOS bundle is already published on ClawHub but `clawhub.json` + `SKILL.md` predated the orchestrator vision (b59). Refreshed both so the ClawHub listing accurately reflects what users get today.
+
+**`clawhub.json`**:
+- Description rewritten to mention the background agent + REST + OpenAPI surface
+- Tags extended: `agent`, `orchestrator-backend`, `openapi`, `telegram`, `tailscale`
+
+**`SKILL.md`**:
+- 9 new trigger phrases for orchestrator-style invocations (`"anything important in my inbox"`, `"triage my email"`, `"push to gmail drafts"`, `"dismiss as noise"`, etc.) so Hermes-style routers correctly direct intent at YouOS
+- New "Integrations (orchestrator backend)" section between "Autonomous triage" and "How it works" — describes the surface area, auth, network setup, and points at `docs/INTEGRATIONS.md` for the recipe
+- New paragraph in the triage section documenting Gmail-label remote dismissal (b57)
+
+No code changes — pure metadata/docs surface. Bundle remains text-only per ClawHub convention; rebuild via `scripts/prepare_clawhub_release.sh` when ready to publish.
+
 ## v0.2.0-beta.59 — 2026-05-28
 
 ### Orchestrator integration — drive YouOS from Hermes / OpenClaw / Telegram bot
