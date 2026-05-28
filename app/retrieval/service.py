@@ -13,7 +13,7 @@ from typing import Any, Literal
 import yaml
 
 from app.core.embeddings import cosine_similarity, deserialize_embedding, get_embedding, get_embedding_model_id
-from app.core.sender import classify_sender, extract_domain
+from app.core.sender import classify_sender, extract_domain, extract_email as _extract_email
 from app.db.bootstrap import connect, resolve_sqlite_path
 
 ResultType = Literal["document", "chunk", "reply_pair"]
@@ -62,6 +62,7 @@ class RetrievalRequest:
     top_k_reply_pairs: int | None = None
     sender_type_hint: str | None = None
     sender_domain_hint: str | None = None
+    sender_email_hint: str | None = None
     language_hint: str | None = None
     intent_hint: str | None = None
     intent_hint_2: str | None = None
@@ -156,6 +157,11 @@ class RetrievalConfig:
     # the right levers; boosts are for the rarer "have-I-talked-to-X" case.
     sender_type_boost: float = 0.15
     sender_domain_boost: float = 0.10
+    # Exact-email match is the strongest "I've corresponded with this exact
+    # person before" signal — much sharper than same-domain (which over-fires
+    # within the user's own org). Heavily weighted so direct prior exchanges
+    # outrank topic-relevant strangers when both exist.
+    sender_email_boost: float = 0.40
     sender_type_boost_map: dict[str, float] = field(default_factory=dict)
     reranker_enabled: bool = False
     # Cross-encoder reranker knobs (only consulted when reranker_enabled).
@@ -631,6 +637,7 @@ class RetrievalService:
             inbound_author=row["inbound_author"],
             sender_type_hint=request.sender_type_hint,
             sender_domain_hint=request.sender_domain_hint,
+            sender_email_hint=request.sender_email_hint,
         )
         # Apply quality_score multiplier from feedback
         quality_score = float(row["quality_score"]) if "quality_score" in row.keys() else 1.0
@@ -910,6 +917,7 @@ class RetrievalService:
             inbound_author=row["inbound_author"],
             sender_type_hint=request.sender_type_hint,
             sender_domain_hint=request.sender_domain_hint,
+            sender_email_hint=request.sender_email_hint,
         )
         quality_score = float(row["quality_score"]) if "quality_score" in row.keys() else 1.0
         # Surface quality into metadata so exemplar selection can rank by it.
@@ -964,6 +972,7 @@ class RetrievalService:
         inbound_author: str | None = None,
         sender_type_hint: str | None = None,
         sender_domain_hint: str | None = None,
+        sender_email_hint: str | None = None,
     ) -> float:
         source_weight = self.config.source_weights.get(source_type, 1.0) - 1.0
         recency_bonus = _recency_bonus(
@@ -975,9 +984,16 @@ class RetrievalService:
         if request_account_emails and account_email and account_email in request_account_emails:
             account_bonus = self.config.account_boost_weight
 
-        # Sender-aware boosts
+        # Sender-aware boosts (in increasing order of specificity).
+        # Exact-email match is by far the strongest signal — "I've corresponded
+        # with this exact person before" — and outweighs the same-domain or
+        # same-type heuristics that were already in place.
         sender_bonus = 0.0
         sender_multiplier = 1.0
+        if sender_email_hint and inbound_author:
+            stored_email = _extract_email(inbound_author)
+            if stored_email and stored_email.lower() == sender_email_hint.lower():
+                sender_bonus += self.config.sender_email_boost
         if sender_type_hint and inbound_author:
             stored_sender_type = classify_sender(inbound_author)
             if stored_sender_type == sender_type_hint:
