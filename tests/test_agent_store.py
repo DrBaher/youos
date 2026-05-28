@@ -176,6 +176,41 @@ def test_list_pending_default_excludes_non_pending(db_url):
 # --- ε: audit log ---------------------------------------------------------
 
 
+def test_log_sweep_records_auto_promoted_senders(db_url):
+    """b52: the audit row captures which senders were auto-added to
+    skip_senders during this sweep — rehydrated on list_recent_sweeps."""
+    from app.agent import store
+
+    store.log_sweep(
+        db_url, account="a@x.com", trigger="scheduled", window="24h", threshold=0.6,
+        fetched=8, kept=2, surfaced=1, persisted=2, errors=[],
+        standing_instructions_snapshot=None,
+        started_at="2026-05-28T10:00:00Z", finished_at="2026-05-28T10:00:01Z",
+        duration_ms=1000,
+        auto_promoted_senders=["spam@x.com", "noise@y.com"],
+    )
+    sweeps = store.list_recent_sweeps(db_url)
+    assert len(sweeps) == 1
+    # JSON column rehydrated to a list under the bare key.
+    assert sweeps[0]["auto_promoted"] == ["spam@x.com", "noise@y.com"]
+
+
+def test_log_sweep_auto_promoted_defaults_to_empty_list(db_url):
+    """Callers that omit ``auto_promoted_senders`` get an empty list back —
+    matches the column default and keeps the UI null-safe."""
+    from app.agent import store
+
+    store.log_sweep(
+        db_url, account="a@x.com", trigger="manual", window=None, threshold=None,
+        fetched=0, kept=0, surfaced=0, persisted=0, errors=[],
+        standing_instructions_snapshot=None,
+        started_at="2026-05-28T10:00:00Z", finished_at="2026-05-28T10:00:01Z",
+        duration_ms=500,
+    )
+    sweeps = store.list_recent_sweeps(db_url)
+    assert sweeps[0]["auto_promoted"] == []
+
+
 def test_log_sweep_inserts_and_list_recent_orders_newest_first(db_url):
     from app.agent import store
 
