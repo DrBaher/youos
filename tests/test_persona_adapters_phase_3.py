@@ -192,6 +192,10 @@ def test_call_local_model_default_uses_global_adapter(monkeypatch):
     falls back to the global ADAPTER_PATH constant."""
     import app.generation.service as svc
 
+    # Force cold-subprocess path so the warm-server short-circuit doesn't
+    # skip _run_subprocess (real mlx_lm.server may be up on the dev machine).
+    monkeypatch.setattr("app.core.model_server.is_enabled", lambda: False)
+
     captured: dict = {}
 
     class _R:
