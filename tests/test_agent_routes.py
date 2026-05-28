@@ -260,6 +260,37 @@ def test_save_as_feedback_pair_rejects_surface_tier(authed_client):
     assert "no draft" in r.text
 
 
+def test_resolve_finds_pending_row_by_subject_substring(authed_client):
+    """b62: orchestrator NLU helper — substring match against subject."""
+    # Fixture seeds a row with subject 'Q3 pricing?'; the search should find it.
+    r = authed_client.get("/api/agent/resolve?q=Q3")
+    body = r.json()
+    assert r.status_code == 200
+    assert body["count"] >= 1
+    top = body["rows"][0]
+    assert "Q3" in (top["subject"] or "")
+    assert top["match_field"] == "subject"
+
+
+def test_resolve_finds_row_by_sender_substring(authed_client):
+    """Substring match against sender email also works."""
+    body = authed_client.get("/api/agent/resolve?q=partner.com").json()
+    assert body["count"] >= 1
+    assert body["rows"][0]["match_field"] == "sender"
+
+
+def test_resolve_returns_empty_count_when_no_match(authed_client):
+    body = authed_client.get("/api/agent/resolve?q=nonexistent-banana-string").json()
+    assert body["count"] == 0
+    assert body["rows"] == []
+
+
+def test_resolve_requires_q_param(authed_client):
+    """Missing or empty q → 422 (Pydantic min_length=1)."""
+    r = authed_client.get("/api/agent/resolve")
+    assert r.status_code == 422
+
+
 def test_digest_endpoint_mirrors_cli_output(authed_client):
     """b59: GET /api/agent/digest returns the same shape as
     `youos digest --format json` — orchestrator-facing entry point."""
