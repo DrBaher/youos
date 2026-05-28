@@ -88,7 +88,8 @@ def test_labelled_thread_with_pending_row_gets_dismissed_and_label_removed(db_ur
     })
 
     from app.agent.gmail_label_sync import sync_gmail_label_dismissals
-    r = sync_gmail_label_dismissals(account="you@x.com", database_url=db_url)
+    # b61: pin the b57 single-label path explicitly (default now iterates all).
+    r = sync_gmail_label_dismissals(account="you@x.com", database_url=db_url, label="YouOS/skip")
 
     assert r.dismissed == [rid]
     # The modify-remove call was issued for the labelled message.
@@ -112,7 +113,7 @@ def test_labelled_thread_with_no_pending_row_is_skipped_not_errored(db_url, monk
     })
     from app.agent.gmail_label_sync import sync_gmail_label_dismissals
 
-    r = sync_gmail_label_dismissals(account="you@x.com", database_url=db_url)
+    r = sync_gmail_label_dismissals(account="you@x.com", database_url=db_url, label="YouOS/skip")
     assert r.dismissed == []
     assert r.skipped == ["t-99"]
     assert r.errors == []
@@ -126,7 +127,7 @@ def test_already_dismissed_row_skipped(db_url, monkeypatch):
     })
     from app.agent.gmail_label_sync import sync_gmail_label_dismissals
 
-    r = sync_gmail_label_dismissals(account="you@x.com", database_url=db_url)
+    r = sync_gmail_label_dismissals(account="you@x.com", database_url=db_url, label="YouOS/skip")
     assert r.dismissed == []
     assert "t-2" in r.skipped
 
@@ -140,7 +141,7 @@ def test_label_removal_failure_keeps_dismissal_recorded(db_url, monkeypatch):
     }, modify_returncode=1, modify_stderr="some transient gog error")
 
     from app.agent.gmail_label_sync import sync_gmail_label_dismissals
-    r = sync_gmail_label_dismissals(account="you@x.com", database_url=db_url)
+    r = sync_gmail_label_dismissals(account="you@x.com", database_url=db_url, label="YouOS/skip")
 
     # Dismissed despite the remove-label failure.
     assert r.dismissed == [rid]
@@ -162,6 +163,92 @@ def test_invalid_label_returns_empty_no_error(db_url, monkeypatch):
     r = sync_gmail_label_dismissals(account="you@x.com", database_url=db_url)
     assert r == r  # smoke: no raise
     assert r.dismissed == [] and r.errors == []
+
+
+# --- b61: multi-label categorical dismissal -------------------------------
+
+
+def test_multi_label_iterates_all_known_labels_when_label_is_none(db_url, monkeypatch):
+    """Default behavior (``label=None``): iterate every label in
+    LABEL_TO_REASON. The mock returns matches for one label and an
+    empty list for others; verify gog search is called once per known
+    label (so any new entry added to the map auto-participates)."""
+    from app.agent import store
+    rid = _seed_row(db_url, thread_id="t-multi-1")
+    store.upsert_pending(db_url, **{
+        "message_id": "m-multi-2", "thread_id": "t-multi-2", "account": "you@x.com",
+        "sender": "X", "sender_email": "x@x.com", "subject": "x", "body": "y",
+        "received_at": None, "needs_reply_score": 0.7, "reasons": [],
+        "cold_outreach": False, "tier": "draft", "draft": "hi",
+        "draft_model": "m", "draft_repairs": [],
+        "standing_instructions_snapshot": None,
+    })
+
+    search_calls: list[str] = []
+
+    def _fake_run(cmd, capture_output=True, text=True, timeout=None):
+        if cmd[:3] == ["gog", "gmail", "search"]:
+            # cmd[3] is "label:YouOS/skip-noise" etc. Record which label was searched.
+            search_calls.append(cmd[3])
+            # Return a match only for YouOS/skip-wrong-content (so we can assert
+            # that the corresponding row gets dismissed with reason='wrong_content').
+            if cmd[3] == "label:YouOS/skip-wrong-content":
+                import json
+                from types import SimpleNamespace
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps({"threads": [{"id": "m-multi-1", "threadId": "t-multi-1"}]}),
+                    stderr="",
+                )
+            import json
+            from types import SimpleNamespace
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"threads": []}), stderr="")
+        # modify --remove
+        from types import SimpleNamespace
+        return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+
+    monkeypatch.setattr("app.agent.gmail_label_sync.subprocess.run", _fake_run)
+    from app.agent.gmail_label_sync import LABEL_TO_REASON, sync_gmail_label_dismissals
+
+    r = sync_gmail_label_dismissals(account="you@x.com", database_url=db_url)
+
+    # Every label in the map got searched.
+    expected_searches = {f"label:{lbl}" for lbl in LABEL_TO_REASON}
+    assert set(search_calls) == expected_searches
+    # The row that matched wrong-content got dismissed with the right reason.
+    assert r.dismissed == [rid]
+    assert store.get(db_url, rid)["dismissal_reason"] == "wrong_content"
+
+
+def test_explicit_label_keeps_b57_single_label_behavior(db_url, monkeypatch):
+    """Backwards compat: passing label='YouOS/skip' (the b57 default)
+    processes only that label, mapping to reason='noise'."""
+    rid = _seed_row(db_url, thread_id="t-b57")
+    _install_gog_mocks(monkeypatch, search_payload={
+        "threads": [{"id": "m-b57", "threadId": "t-b57"}],
+    })
+
+    from app.agent import store
+    from app.agent.gmail_label_sync import sync_gmail_label_dismissals
+    r = sync_gmail_label_dismissals(
+        account="you@x.com", database_url=db_url, label="YouOS/skip",
+    )
+    assert r.dismissed == [rid]
+    assert store.get(db_url, rid)["dismissal_reason"] == "noise"
+
+
+def test_label_to_reason_map_includes_all_dismissal_buckets():
+    """The map must cover every dismissal reason except, by design,
+    legacy-NULL — apply one of the labels and get the right reason."""
+    from app.agent.gmail_label_sync import LABEL_TO_REASON
+    from app.agent.store import DISMISSAL_REASONS
+
+    reasons_in_map = set(LABEL_TO_REASON.values())
+    # Every categorical reason has at least one corresponding label
+    # (so chat-side dismissal can carry the same reason granularity as
+    # the /triage dismiss selector).
+    for reason in DISMISSAL_REASONS:
+        assert reason in reasons_in_map, f"no label maps to {reason!r}"
 
 
 def test_run_triage_calls_label_sync_at_start(monkeypatch, tmp_path):
