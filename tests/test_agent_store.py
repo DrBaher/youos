@@ -217,3 +217,74 @@ def test_list_recent_sweeps_filters_by_account(db_url):
     only_a = store.list_recent_sweeps(db_url, account="a@x.com")
     assert len(only_a) == 2
     assert all(s["account"] == "a@x.com" for s in only_a)
+
+
+# --- b42: observability aggregates ---------------------------------------
+
+
+def _log(db_url, **overrides):
+    """Test helper — log a sweep with sensible defaults, override what matters."""
+    from app.agent import store
+
+    defaults = dict(
+        account="a@x.com", trigger="manual", window="3d", threshold=0.6,
+        fetched=0, kept=0, surfaced=0, persisted=0, errors=[],
+        standing_instructions_snapshot=None,
+        started_at="2026-05-28T10:00:00Z", finished_at="2026-05-28T10:00:01Z",
+        duration_ms=1000,
+    )
+    defaults.update(overrides)
+    store.log_sweep(db_url, **defaults)
+
+
+def test_sweep_aggregate_sums_counters_and_computes_success_rate(db_url):
+    from app.agent import store
+
+    # 3 sweeps: 2 successful (empty errors), 1 failed.
+    _log(db_url, fetched=10, kept=4, surfaced=1, persisted=4, errors=[])
+    _log(db_url, fetched=8,  kept=3, surfaced=2, persisted=3, errors=[])
+    _log(db_url, fetched=12, kept=5, surfaced=0, persisted=5, errors=["gog auth"])
+
+    agg = store.sweep_aggregate(db_url)
+    assert agg["sweeps"] == 3
+    assert agg["successful"] == 2
+    assert agg["success_rate"] == round(2/3, 4)
+    assert agg["fetched"] == 30
+    assert agg["kept"] == 12
+    assert agg["surfaced"] == 3
+    assert agg["persisted"] == 12
+    assert agg["hard_skipped"] == 30 - 12   # fetched - kept
+
+
+def test_sweep_aggregate_filters_by_account(db_url):
+    from app.agent import store
+
+    _log(db_url, account="a@x.com", fetched=10, kept=4)
+    _log(db_url, account="b@x.com", fetched=20, kept=8)
+    only_a = store.sweep_aggregate(db_url, account="a@x.com")
+    assert only_a["fetched"] == 10
+    assert only_a["kept"] == 4
+
+
+def test_sweep_aggregate_empty_returns_zero_counts_and_zero_rate(db_url):
+    from app.agent import store
+
+    agg = store.sweep_aggregate(db_url)
+    assert agg["sweeps"] == 0
+    assert agg["success_rate"] == 0.0   # no sweeps → no rate to compute
+    assert agg["fetched"] == 0
+
+
+def test_score_histogram_buckets_by_score(db_url):
+    from app.agent import store
+
+    for i, score in enumerate([0.10, 0.40, 0.55, 0.75, 0.80, 0.95, 1.0]):
+        store.upsert_pending(db_url, **{**_DEFAULTS, "message_id": f"m-{i}", "needs_reply_score": score})
+
+    h = store.score_histogram(db_url)["buckets"]
+    # 0.10 → 0.0-0.3 ; 0.40 → 0.3-0.5 ; 0.55 → 0.5-0.7 ; 0.75 + 0.80 → 0.7-0.9 ; 0.95 + 1.0 → 0.9-1.0
+    assert h["0.0-0.3"] == 1
+    assert h["0.3-0.5"] == 1
+    assert h["0.5-0.7"] == 1
+    assert h["0.7-0.9"] == 2
+    assert h["0.9-1.0"] == 2

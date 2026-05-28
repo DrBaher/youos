@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.2.0-beta.42 — 2026-05-28
+
+### Agent observability — health card on /triage
+
+The dismissal-feedback PR (b39) shipped the substrate; this one consumes it. New `Agent health` collapsible at the top of `/triage` shows the agent's behavior at a glance over the last 30 days — sweep success rate, throughput, dismissal signal, score distribution — plus rule-based hints that tell you *what to change* when the numbers look off.
+
+**New `GET /api/agent/observability`** — one fetch returns three aggregates + hints:
+
+- `sweep` — counts (sweeps, successful, fetched, kept, surfaced, persisted, avg_duration_ms), success rate, derived `hard_skipped = fetched - kept`.
+- `dismissals` — the b39 aggregate (total, dismissed, rate, by_reason).
+- `score_histogram` — buckets needs_reply_score across persisted rows into 5 bands (0.0-0.3 / 0.3-0.5 / 0.5-0.7 / 0.7-0.9 / 0.9-1.0). Boundary choices line up with the surface-for-review band.
+- `hints` — rule-based interpretations the UI doesn't need to encode. Three rules currently fire:
+  - **Noise > 30%** of total persisted (when total ≥ 5) → "raise `agent.threshold` or extend `agent.skip_senders`."
+  - **Sweep success rate < 80%** (when sweeps ≥ 3) → "check Recent activity for the actual errors."
+  - **≥ 3 `wrong_content` dismissals** → "review-queue these as feedback pairs to retrain the LoRA" (drafting signal, distinct from filter signal).
+
+**New aggregation helpers in `app/agent/store.py`**
+
+- `sweep_aggregate(account=None, days=30)` — derives `hard_skipped` from audit counters since hard-skipped rows aren't persisted (they're filter-stage noise).
+- `score_histogram(account=None, days=30)` — five buckets, zero-filled.
+
+**`/triage` UI** — new `Agent health` `<details>` section right above the drafts:
+
+- Four tiles: Sweeps (30d) · Fetched · Drafted · Dismissed (each with a sub-label).
+- Yellow hint callouts when any of the three rules fire.
+- Horizontal bar chart of the score histogram.
+- Dismissal-reason breakdown (zero buckets hidden to keep the list tight).
+
+Refresh-on-demand by changing the account selector; otherwise updates automatically after each `fetchPending()` call (which happens on triage runs and manual refresh).
+
+**Tests**
+
+- `tests/test_agent_store.py` — 4 new: sweep_aggregate sums + success-rate, account filter, empty-table edge case, score_histogram bucketing.
+- `tests/test_agent_routes.py` — observability endpoint returns the unified shape with all three aggregates + hints.
+
+---
+
+This completes the agent-triage feature arc (α–ζ + Phase 2.1/2.2 + dismissal-feedback + UX + observability). You can now: enable the loop opt-in, watch it run autonomously, see what it's doing, dismiss with categorical feedback, push surviving drafts to Gmail, and get rule-based guidance when the filter or model drifts off.
+
 ## v0.2.0-beta.41 — 2026-05-28
 
 ### `/triage` UX upgrades
