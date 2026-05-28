@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.2.0-beta.32 — 2026-05-28
+
+### Agent triage — β.2 (API + `/triage` page)
+Second half of β. The persisted ``agent_pending_drafts`` table is now visible and actionable through the web UI; the agent loop is end-to-end usable in a browser without touching the CLI.
+
+**New `app/api/agent_routes.py`**:
+- ``GET /api/agent/pending`` — list pending rows. Optional ``?account=`` / ``?tier=draft|surface`` / ``?status=`` / ``?limit=`` filters; JSON columns rehydrated to lists.
+- ``POST /api/agent/pending/{id}/amend`` — save user edits to ``amended_draft``, status → ``amended``.
+- ``POST /api/agent/pending/{id}/dismiss`` — status → ``dismissed``, ``dismissed_at`` stamped.
+- ``POST /api/agent/pending/{id}/mark_sent`` — status → ``sent``, ``sent_at`` stamped (does NOT push to Gmail — that's Phase 2; this is the "I sent it manually, stop showing it" signal).
+- ``POST /api/agent/triage`` — synchronous triage trigger from the UI (``{account, window, limit, threshold, backend}``). Defaults to the first ``user.emails``.
+- ``GET /triage`` — page route serving the template.
+
+**New `templates/triage.html`** — full UI:
+- Toolbar: account input (persisted to ``localStorage``), window picker (24h/3d/7d/14d), **Run triage now** + **Refresh** buttons, status line.
+- **Tier 1 — drafts**: each row is a card with score / cold-outreach / model badges, inbound (left) + editable draft (right), per-row actions (**Save edits** / **Copy draft** / **Mark sent** / **Dismiss**).
+- **Tier 2 — surface for review**: collapsed `<details>` panel listing borderline cases that were intentionally not auto-drafted (e.g. the demo-form noreply lead from the work QA). Per-row **Dismiss** so the user can clear them.
+- Theme-aware (light/dark via the existing `data-theme` / no-flash mechanism), uses the shared design system tokens from `youos.css`.
+
+**Nav link wired into** ``feedback.html``, ``stats.html``, ``settings.html``, ``bookmarklet.html``, ``about.html`` — `/triage` shows up next to **Draft Email** in every chrome.
+
+### Tests
+- ``tests/test_agent_routes.py`` (7 new) — list with both tiers + tier filter, amend/dismiss/mark-sent state transitions, 404 on missing id, page renders with expected nav/assets.
+- Fixed a test-isolation issue: ``app.state.settings`` is sticky across tests (set once at import time), so the fixture now re-binds it per test to point at the per-test DB.
+- 32/32 across agent suites (was 25/25 in β.1; +7 routes); 1179/1183 full sweep (same 4 MLX-integration pre-existing failures, unrelated).
+
+### What you can do now
+1. ``youos triage`` (CLI) — persists drafts to the DB.
+2. Visit ``/triage`` in the web UI — see them, edit, dismiss, mark sent.
+3. The "Run triage now" button on the page triggers a fresh sweep without the CLI.
+
+### What's still missing (γ → Phase 2)
+- **γ**: background scheduler in the running server + macOS notification.
+- **δ**: standing-instructions field threaded into the prompt.
+- **ε**: audit log + a "what the agent did today" view.
+- **ζ**: per-sender opt-out + daily cap + strict-local switch.
+- **Phase 2**: ``gmail.compose`` OAuth → "Mark sent" pushes to real Gmail Drafts (so you actually send from Gmail, not just clear the queue).
+
 ## v0.2.0-beta.31 — 2026-05-28
 
 ### Agent triage — β.1 (persistence)
