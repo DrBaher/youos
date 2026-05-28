@@ -219,7 +219,7 @@ def _build_signature_patterns() -> list[re.Pattern[str]]:
     for name in get_user_names():
         if name.strip():
             patterns.append(re.compile(rf"^{re.escape(name)}", re.MULTILINE))
-    # Standard signature delimiters
+    # Standard signature delimiters on their own line (newline-separated form).
     patterns.extend(
         [
             re.compile(r"^-- $", re.MULTILINE),
@@ -232,7 +232,50 @@ def _build_signature_patterns() -> list[re.Pattern[str]]:
             re.compile(r"^Sent from my iPhone", re.MULTILINE),
         ]
     )
+    # Inline signature markers — the LoRA sometimes emits a run-on signature
+    # ("Cheers, Baher Al Hakim CEO / Work AI w: work.example e: baher@…")
+    # rather than the newline-separated form. Each pattern is signature-specific
+    # to avoid eating legitimate prose: role+separator+capital, the single-letter
+    # contact marker w:/e:/p:/t: followed by a URL/email/phone/domain, and the
+    # "Sent from my <device>" idiom anywhere on a line.
+    patterns.extend(
+        [
+            re.compile(
+                r"\b(CEO|Founder|Co-?founder|Director|Managing Director|Head of)\s*[/|—\-]\s*[A-Z]"
+            ),
+            re.compile(
+                r"(?:^|\s)[wepftWEPFT]:\s+(?:https?://|[\w.+-]+@[\w-]+|\+?\d|[\w-]+\.[a-z]{2,})"
+            ),
+            re.compile(r"Sent from my (iPhone|iPad|Android|Mac|Galaxy)", re.IGNORECASE),
+        ]
+    )
     return patterns
+
+
+# Quote-tail artifact: "On 23. Jul 2025 at 10:17 +0200, X <a@b> wrote:" — the
+# LoRA can hallucinate this prefix when trained on quote-laden replies. The
+# {0,100} bound keeps the match local; DOTALL would over-eat across paragraphs.
+_QUOTE_TAIL_PATTERN = re.compile(r"\bOn\s+[^\n]{0,160}\bwrote\s*:", re.IGNORECASE)
+
+
+def strip_quote_tail(text: str) -> str:
+    """Remove an email-quote tail like ``On <date>, <person> wrote:``.
+
+    Truncates from the start of the match through the rest of the draft.
+    Returns the trimmed text (or ``text`` unchanged if no match).
+    """
+    m = _QUOTE_TAIL_PATTERN.search(text)
+    if m:
+        return text[: m.start()].rstrip()
+    return text
+
+
+def decode_html_entities(text: str) -> str:
+    """Decode HTML entities (``&#39;`` → ``'``, ``&amp;`` → ``&``) that leak
+    through when the LoRA is trained on HTML-mangled mail bodies."""
+    import html
+
+    return html.unescape(text)
 
 
 # Lazily built on first use so config is loaded at call time, not import time.
@@ -771,7 +814,14 @@ _CLOSING_TOKENS = (
 
 
 def _get_repair_config() -> dict[str, bool]:
-    """Read ``generation.repair`` flags (all default False / behavior-preserving)."""
+    """Read ``generation.repair`` flags.
+
+    Defaults reflect intent: the three artifact-removal repairs (signature,
+    quote tail, HTML entities) are objectively-correct cleanups and default
+    True — they catch training-data leakage the model emits but the user
+    never wants. ``enforce_greeting_closing`` defaults False because it
+    *adds* content the model didn't produce; safer as opt-in.
+    """
     from app.core.config import load_config
 
     cfg = load_config() or {}
@@ -780,7 +830,9 @@ def _get_repair_config() -> dict[str, bool]:
     rep = rep if isinstance(rep, dict) else {}
     return {
         "enforce_greeting_closing": bool(rep.get("enforce_greeting_closing", False)),
-        "strip_trailing_signature": bool(rep.get("strip_trailing_signature", False)),
+        "strip_trailing_signature": bool(rep.get("strip_trailing_signature", True)),
+        "strip_quote_tail": bool(rep.get("strip_quote_tail", True)),
+        "decode_html_entities": bool(rep.get("decode_html_entities", True)),
     }
 
 
@@ -837,11 +889,26 @@ def _repair_draft(
     if stripped_all.startswith("[") and stripped_all.endswith("]"):
         return text, repairs, None
 
+    # Order: quote-tail first (it can sit *before* a signature in the output,
+    # so stripping it first leaves the signature pass with a smaller, cleaner
+    # substring to work on). HTML decode is order-independent and runs last.
+    if config.get("strip_quote_tail"):
+        stripped = strip_quote_tail(text)
+        if stripped and stripped != text.rstrip():
+            text = stripped
+            repairs.append("stripped_quote_tail")
+
     if config.get("strip_trailing_signature"):
         stripped = strip_signature(text).rstrip()
         if stripped and stripped != text.rstrip():
             text = stripped
             repairs.append("stripped_trailing_signature")
+
+    if config.get("decode_html_entities"):
+        decoded = decode_html_entities(text)
+        if decoded != text:
+            text = decoded
+            repairs.append("decoded_html_entities")
 
     if config.get("enforce_greeting_closing"):
         if greeting and not _draft_has_greeting(text, greeting):
