@@ -156,16 +156,19 @@ def test_gog_translates_missing_id_to_gmail_write_error(monkeypatch):
 
 
 def test_gws_creates_draft_and_extracts_id(monkeypatch):
-    """Pin the gws call shape — every flag asserted below is a single place
-    to update if your local gws uses different syntax. The body is the same
-    base64url-encoded RFC822 we send to gog (Gmail API shape)."""
+    """Pin the gws call shape — verified via ``gws schema gmail.users.drafts.create``.
+
+    gws argv is <service> <resource> <subresource> <method> with URL params
+    via --params JSON and the request body via --json JSON. threadId lives
+    INSIDE the request body's message object, not as a separate flag.
+    """
     captured: dict = {}
 
     def _fake_run(cmd, capture_output, text, timeout):
         captured["cmd"] = cmd
         return SimpleNamespace(
             returncode=0,
-            stdout=json.dumps({"id": "draft_gws_99", "message": {"id": "msg_gws_42"}}),
+            stdout=json.dumps({"id": "draft_gws_99", "message": {"id": "msg_gws_42", "threadId": "thr_99"}}),
             stderr="",
         )
 
@@ -182,20 +185,24 @@ def test_gws_creates_draft_and_extracts_id(monkeypatch):
 
     assert result.draft_id == "draft_gws_99"
     cmd = captured["cmd"]
-    assert cmd[:4] == ["gws", "gmail", "drafts", "create"]
-    # gws conventions: --user (not --account) + --threadId (camelCase).
-    assert "--user" in cmd and cmd[cmd.index("--user") + 1] == "me@medicus.ai"
-    assert "--threadId" in cmd and cmd[cmd.index("--threadId") + 1] == "thr_99"
-    assert "--format" in cmd and cmd[cmd.index("--format") + 1] == "json"
-    assert "--raw" in cmd
-    raw_b64 = cmd[cmd.index("--raw") + 1]
-    rfc = base64.urlsafe_b64decode(raw_b64).decode("utf-8")
+    # gws path is gmail.users.drafts.create — note "users" subresource.
+    assert cmd[:5] == ["gws", "gmail", "users", "drafts", "create"]
+
+    # --params carries URL/query params as JSON; userId lives here.
+    params = json.loads(cmd[cmd.index("--params") + 1])
+    assert params == {"userId": "me@medicus.ai"}
+
+    # --json carries the request body; threadId is INSIDE the message dict.
+    body_arg = json.loads(cmd[cmd.index("--json") + 1])
+    assert body_arg["message"]["threadId"] == "thr_99"
+    rfc = base64.urlsafe_b64decode(body_arg["message"]["raw"]).decode("utf-8")
     assert "To: bob@partner.com" in rfc
     assert "Subject: Re: invoice" in rfc
     assert "Paid — confirmation attached." in rfc
 
 
-def test_gws_skips_thread_id_flag_when_none(monkeypatch):
+def test_gws_omits_thread_id_in_body_when_none(monkeypatch):
+    """No threadId field when starting a brand-new thread."""
     captured: dict = {}
     def _fake_run(cmd, capture_output, text, timeout):
         captured["cmd"] = cmd
@@ -205,7 +212,8 @@ def test_gws_skips_thread_id_flag_when_none(monkeypatch):
 
     from app.ingestion.gmail_write import create_draft
     create_draft(account="me@x.com", thread_id=None, to_email="t@y.com", subject="s", body="b")
-    assert "--threadId" not in captured["cmd"]
+    body_arg = json.loads(captured["cmd"][captured["cmd"].index("--json") + 1])
+    assert "threadId" not in body_arg["message"]
 
 
 # --- gws: error paths ------------------------------------------------------
