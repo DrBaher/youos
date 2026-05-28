@@ -174,6 +174,43 @@
     .standing-banner[open] summary { margin-bottom: 4px; color: var(--text); }
   </style>
 
+  <!-- Agent health card — sweep success, dismissal signal, score histogram,
+       plus rule-based hints when the filter looks too generous / drafts are
+       wrong / sweeps are failing. Collapsed by default so it doesn't push
+       drafts below the fold. -->
+  <details class="surface-section" id="healthSection">
+    <summary id="healthSummary">Agent health — loading…</summary>
+    <div id="healthBody" style="margin-top:12px"></div>
+  </details>
+  <style>
+    #healthBody .health-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px; margin: 10px 0 14px;
+    }
+    #healthBody .health-tile {
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 12px;
+    }
+    #healthBody .health-tile .label {
+      color: var(--muted-2); font-size: 0.72rem; text-transform: uppercase;
+      letter-spacing: 0.05em; margin-bottom: 4px;
+    }
+    #healthBody .health-tile .value { font-size: 1.3rem; font-weight: 600; color: var(--text); }
+    #healthBody .health-tile .sub   { color: var(--muted); font-size: 0.78rem; margin-top: 2px; }
+    #healthBody h4 { color: var(--muted); font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.05em; margin: 14px 0 6px; }
+    #healthBody .hist-row { display: grid; grid-template-columns: 90px 1fr 60px; gap: 8px; align-items: center; padding: 3px 0; font-size: 0.85rem; }
+    #healthBody .hist-bar { background: var(--surface-2); border-radius: 4px; height: 14px; overflow: hidden; }
+    #healthBody .hist-fill { background: var(--teal); height: 100%; }
+    #healthBody .reason-row { display: grid; grid-template-columns: 1fr 60px; padding: 2px 0; font-size: 0.88rem; }
+    #healthBody .reason-row .key { color: var(--muted); }
+    #healthBody .reason-row .cnt { text-align: right; font-variant-numeric: tabular-nums; }
+    #healthBody .hint {
+      background: rgba(255, 180, 50, 0.08); border-left: 3px solid var(--warn);
+      padding: 8px 12px; border-radius: 4px; margin: 6px 0; font-size: 0.88rem;
+      color: var(--text);
+    }
+  </style>
+
   <div id="drafts"></div>
 
   <!-- Keyboard-shortcut help overlay (hidden by default). -->
@@ -327,6 +364,8 @@
     applyClientFilter();
     // ε: keep the activity panel in sync after every refresh + after triage runs.
     if (typeof loadActivity === 'function') { try { await loadActivity(); } catch (e) {} }
+    // b42: refresh the agent-health card too — sweep totals + dismissal aggregate change.
+    if (typeof loadHealth === 'function') { try { await loadHealth(); } catch (e) {} }
   }
 
   // Visible-only filter — operates on the cached rows so flipping a control
@@ -704,8 +743,93 @@
     } else if (key === 'm') { rowAction(id, 'sent'); ev.preventDefault(); }
   });
 
+  // --- Agent health card -----------------------------------------------
+  // One fetch → /api/agent/observability → three aggregates + rule-based
+  // hints. Rendered as small tiles + a histogram of needs_reply scores
+  // + the dismissal-reason breakdown.
+  const healthSummary = $('healthSummary'), healthBody = $('healthBody');
+
+  async function loadHealth() {
+    try {
+      const url = new URL('/api/agent/observability', window.location.origin);
+      if (acct.value) url.searchParams.set('account', acct.value);
+      url.searchParams.set('days', '30');
+      const data = await fetch(url).then(r => r.json());
+      renderHealth(data);
+    } catch (e) {
+      healthSummary.textContent = 'Agent health — load failed';
+    }
+  }
+
+  function renderHealth(d) {
+    const sw = d.sweep || {}, dm = d.dismissals || {}, hist = (d.score_histogram || {}).buckets || {};
+    const sweeps = sw.sweeps || 0;
+    const rate = sweeps ? Math.round((sw.success_rate || 0) * 100) : 0;
+    const persisted = dm.total_persisted || 0;
+    const dismissed = dm.dismissed || 0;
+    const dismissedPct = persisted ? Math.round((dm.dismissal_rate || 0) * 100) : 0;
+    const drafts = (sw.persisted || 0) - (sw.surfaced || 0);
+
+    healthSummary.textContent = sweeps
+      ? `Agent health — ${sweeps} sweeps · ${rate}% successful · ${dismissedPct}% dismissed (last 30d)`
+      : 'Agent health — no sweeps yet (last 30d)';
+
+    if (sweeps === 0 && persisted === 0) {
+      healthBody.innerHTML = '<div class="sub">No data yet. Run a triage sweep — health metrics will populate.</div>';
+      return;
+    }
+
+    const tile = (label, value, sub) =>
+      `<div class="health-tile"><div class="label">${esc(label)}</div><div class="value">${esc(String(value))}</div>${sub ? `<div class="sub">${esc(sub)}</div>` : ''}</div>`;
+
+    let html = '<div class="health-grid">';
+    html += tile('Sweeps (30d)', sweeps, `${sw.successful || 0} successful (${rate}%)`);
+    html += tile('Fetched', sw.fetched || 0, `${sw.hard_skipped || 0} hard-skipped by filter`);
+    html += tile('Drafted', Math.max(drafts, 0), `${sw.surfaced || 0} surfaced for review`);
+    html += tile('Dismissed', `${dismissed} / ${persisted}`, `${dismissedPct}% of queued rows`);
+    html += '</div>';
+
+    // Hints (yellow callouts).
+    if ((d.hints || []).length > 0) {
+      html += '<h4>Hints</h4>';
+      d.hints.forEach(h => { html += `<div class="hint">${esc(h)}</div>`; });
+    }
+
+    // Score histogram — visual cue for "where is the filter clustering."
+    const histMax = Math.max(1, ...Object.values(hist));
+    html += '<h4>Score distribution (persisted rows)</h4>';
+    Object.entries(hist).forEach(([label, count]) => {
+      const pct = Math.round((count / histMax) * 100);
+      html += `<div class="hist-row">
+        <span style="color:var(--muted)">${esc(label)}</span>
+        <span class="hist-bar"><span class="hist-fill" style="width:${pct}%"></span></span>
+        <span style="text-align:right;color:var(--muted-2);font-variant-numeric:tabular-nums">${count}</span>
+      </div>`;
+    });
+
+    // Dismissal-reason breakdown (from b39).
+    if (persisted > 0) {
+      html += '<h4>Dismissal reasons</h4>';
+      const reasons = dm.by_reason || {};
+      Object.entries(reasons).forEach(([key, count]) => {
+        if (count === 0) return;     // hide zero buckets to keep the list tight
+        html += `<div class="reason-row"><span class="key">${esc(key)}</span><span class="cnt">${count}</span></div>`;
+      });
+      if (Object.values(reasons).every(c => c === 0)) {
+        html += '<div class="sub">No dismissals yet — nothing to learn from.</div>';
+      }
+    }
+
+    healthBody.innerHTML = html;
+  }
+
+  // Reload health when the user changes account — fetchPending already
+  // refreshes health at its tail, so triage runs + manual refreshes pick
+  // up new data for free.
+  acct.addEventListener('change', loadHealth);
+
   loadStanding();
-  fetchPending();    // fetchPending also kicks off loadActivity at the end
+  fetchPending();    // fetchPending also kicks off loadActivity + loadHealth at the end
 })();
 </script>
 </body>
