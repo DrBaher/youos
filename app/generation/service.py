@@ -1066,6 +1066,7 @@ def assemble_prompt(
     score_stats: dict[str, float] | None = None,
     subject: str | None = None,
     user_prompt: str | None = None,
+    extra_constraint: str | None = None,
 ) -> str:
     style = persona.get("style", {})
     voice = style.get("voice", "direct, clear, pragmatic")
@@ -1101,6 +1102,12 @@ def assemble_prompt(
     avg_para = style.get("avg_paragraphs")
     if avg_para is not None and avg_para > 2:
         persona_lines.append("- use clear paragraph breaks")
+
+    # Per-draft constraint (e.g. cold-outreach decline nudge — see
+    # app.core.cold_outreach.DECLINE_NUDGE). Joins the persona block as a
+    # final line so the model sees it alongside the other constraints.
+    if extra_constraint:
+        persona_lines.append(f"- {extra_constraint}")
 
     persona_block = "\n".join(persona_lines)
 
@@ -1649,6 +1656,19 @@ def generate_draft(
             from app.core.sender import extract_email
             sender_email_hint = extract_email(request.sender)
 
+        # Cold-outreach detection — pushy sales outbounds get a polite-decline
+        # nudge in the prompt so the LoRA doesn't auto-accept calls/demos
+        # from people the user has no history with. Heuristic; logged for
+        # auditing alongside repairs.
+        from app.core.cold_outreach import DECLINE_NUDGE, detect_cold_outbound
+
+        _cold_verdict = detect_cold_outbound(
+            subject=request.subject,
+            body=clean_inbound,
+            sender_email=sender_email_hint,
+        )
+        cold_outbound_nudge = DECLINE_NUDGE if _cold_verdict.is_cold else None
+
         # Classify intent (multi-intent support)
         from app.core.intent import classify_intents_multi
 
@@ -1761,6 +1781,7 @@ def generate_draft(
         score_stats=score_stats,
         subject=request.subject,
         user_prompt=request.user_prompt,
+        extra_constraint=cold_outbound_nudge,
     )
 
     # Token budget check — greedy knapsack: calculate each exemplar cost once (P5)
@@ -1784,6 +1805,7 @@ def generate_draft(
             score_stats=score_stats,
             subject=request.subject,
             user_prompt=request.user_prompt,
+            extra_constraint=cold_outbound_nudge,
         )
         budget = PROMPT_TOKEN_BUDGET - _estimate_tokens(base_prompt)
         used = 0
@@ -1820,6 +1842,7 @@ def generate_draft(
                 score_stats=score_stats,
                 subject=request.subject,
                 user_prompt=request.user_prompt,
+                extra_constraint=cold_outbound_nudge,
             )
         token_estimate = _estimate_tokens(prompt)
 
