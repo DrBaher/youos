@@ -111,6 +111,61 @@ def dismissal_stats(
     return store.dismissal_stats(_db_url(request), account=account, days=days)
 
 
+@router.get("/api/agent/observability")
+def observability(
+    request: Request,
+    account: str | None = Query(None),
+    days: int = Query(30, ge=1, le=365),
+) -> dict:
+    """Unified observability payload for the /triage 'Agent health' card.
+
+    Bundles three aggregates so the card needs one fetch:
+      * sweep — sweep counts, success rate, total throughput, hard-skipped
+      * dismissals — dismissal rate + by-reason breakdown (from b39)
+      * score_histogram — bucketed needs_reply scores across persisted rows
+
+    Also emits a small ``hints`` list with rule-based interpretations
+    ("noise > 30% — consider raising the threshold or extending
+    skip_senders") so the UI doesn't need to encode the thresholds itself.
+    """
+    db = _db_url(request)
+    sweep = store.sweep_aggregate(db, account=account, days=days)
+    dismissals = store.dismissal_stats(db, account=account, days=days)
+    histogram = store.score_histogram(db, account=account, days=days)
+
+    hints: list[str] = []
+    # Filter is too generous: lots of drafts ending up dismissed as noise.
+    noise = dismissals["by_reason"].get("noise", 0)
+    total = dismissals["total_persisted"] or 0
+    if total >= 5 and total > 0 and noise / total >= 0.30:
+        hints.append(
+            f"Noise dismissals = {noise}/{total} ({noise/total:.0%}). "
+            "Consider raising agent.threshold or extending agent.skip_senders."
+        )
+    # Sweep error rate is alarming.
+    if sweep["sweeps"] >= 3 and sweep["success_rate"] < 0.8:
+        hints.append(
+            f"Sweep success rate = {sweep['success_rate']:.0%} "
+            f"({sweep['successful']}/{sweep['sweeps']}). Check the Recent activity "
+            "panel for the actual errors."
+        )
+    # Drafting quality signal — wrong_content is a *generation* concern, not
+    # a filter one, so we route it to a different remediation.
+    wrong_content = dismissals["by_reason"].get("wrong_content", 0)
+    if wrong_content >= 3:
+        hints.append(
+            f"{wrong_content} dismissals as 'wrong_content' — review queue these "
+            "as feedback pairs to retrain the LoRA on them."
+        )
+
+    return {
+        "sweep": sweep,
+        "dismissals": dismissals,
+        "score_histogram": histogram,
+        "hints": hints,
+    }
+
+
 @router.post("/api/agent/pending/{row_id}/mark_sent")
 def mark_sent(row_id: int, request: Request) -> dict:
     if not store.mark_sent(_db_url(request), row_id):
