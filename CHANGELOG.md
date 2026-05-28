@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.2.0-beta.27 — 2026-05-28
+
+### Cold-outreach detection + polite-decline prompt nudge
+QA fix #3/3: the LoRA politely accepts pushy outbound sales emails because Baher's training data doesn't include many polite-decline replies (he mostly ignores cold sales). This catches the *inbound* shape so generation nudges the prompt toward declining.
+
+- **`app/core/cold_outreach.py`** — `detect_cold_outbound(subject, body, sender_email)` returns a `ColdOutboundVerdict(is_cold, score, hits)`. Weighted heuristic: subject patterns ("Boost / 10x / 30-min call"), body patterns ("I work with [type] founders" — weighted 2×, "saw your", "can I steal X min", "10x", "portfolio founders"), domain patterns (`@*market*`, `@*growth*`, `@*outreach*`). Threshold = 3 signals.
+- **`DECLINE_NUDGE`** — phrased as soft guidance, not a hard rule ("Reply briefly and either politely decline or ask a clarifying question"). The 1.5B LoRA doesn't reliably follow rigid instructions.
+- **`assemble_prompt`** gained `extra_constraint` — appended to the persona-constraints block. `generate_draft` populates it with `DECLINE_NUDGE` when the verdict is cold.
+
+### Live evidence (Jess QA case, BaherOS)
+- Detector: `is_cold=True, score=9`, 8 hits (2 subject + 5 body + 1 domain). The exact case that motivated this.
+- Draft tone shifted from `"I'm happy to schedule a call next week. I'm also happy to share…"` (b26) to `"I'm not sure if I can make it. I'm also on a tight schedule this week…"` (b27). The decline framing landed.
+
+### Honest limit
+The LoRA loops on the same phrase 4× under the new constraint ("not sure if I can make it" / "tight schedule" repeated). The cold-outreach part works; the LoRA's tendency to repeat under longer prompts is a separate model-quality issue not addressed here. Real-life this surfaces as a draft for review — exactly what the agent's "draft only, never auto-send" design assumes.
+
+### Tests
+Six in `test_cold_outreach`: the Jess case (positive), Alex pricing inquiry (true negative), Sam friend message (true negative), internal teammate quick-chat (true negative — guards against false positive on "quick chat" subjects from `@medicus.ai` peers), high-confidence body-pattern double-weighting, and the `DECLINE_NUDGE` constant. 50/50 across the affected suites.
+
+### QA series complete
+This closes the three "still not great" items from the BaherOS review:
+- #1 (b25) — strip trailing user-name from exemplars + output.
+- #2 (b26) — sender-history boost (exact email > domain).
+- #3 (b27) — cold-outreach detection + decline nudge.
+
+The deeper content-semantics issues (the LoRA's small size and Baher's relatively pleasant-and-cooperative corpus) need a retrain on hard cases. Out of scope for this series; a known follow-up.
+
 ## v0.2.0-beta.26 — 2026-05-28
 
 ### Retrieval: sender-history boost (exact email > domain)
