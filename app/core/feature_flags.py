@@ -148,6 +148,19 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.accounts",
+        "label": "Accounts to sweep (override user.emails)",
+        "type": "text",
+        "default": "",
+        "help": (
+            "Comma-separated email addresses the background scheduler "
+            "should sweep on each tick. Empty falls back to "
+            "``user.emails`` (most users don't need to set this — set "
+            "user.emails and it Just Works). Use this if you want the "
+            "agent to ignore one of your configured accounts."
+        ),
+    },
+    {
         "key": "agent.auto_promote_skip_senders",
         "label": "Auto-promote senders dismissed as noise 3+ times",
         "type": "bool",

@@ -42,7 +42,12 @@ def get_agent_config() -> dict[str, Any]:
     return {
         "enabled": bool(a.get("enabled", False)),
         "interval_minutes": max(1, int(a.get("interval_minutes", 15))),
-        "accounts": list(a.get("accounts") or []),
+        # b58: accept either a list (programmatic YAML edit) or a comma-
+        # separated string (the textarea form set via ``youos config set
+        # agent.accounts ...``). Empty falls back to ``user.emails`` in
+        # ``_resolve_accounts`` so single-account setups don't need to
+        # touch this flag at all.
+        "accounts": _parse_skip_senders(a.get("accounts")),
         "window": str(a.get("window", "24h")),
         "limit": int(a.get("limit", 25)),
         "threshold": float(a.get("threshold", 0.6)),
