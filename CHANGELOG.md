@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.2.0-beta.45 — 2026-05-28
+
+### Agent → LoRA training-pair pipeline
+
+This PR completes the symmetric half of the dismissal-feedback story. b39-44 routed `noise`-style signal back into the filter (`agent.skip_senders`). **b45 routes drafting-quality signal back into the LoRA** (`feedback_pairs`).
+
+When the agent drafts something and it's *wrong* — wrong tone, missed the point, made up facts — the right move isn't to dismiss it; it's to **teach the model** what you'd actually have said. New **Save as training pair** button on every draft card does exactly that:
+
+1. Edit the draft textarea to what you'd actually send.
+2. Click **Save as training pair**.
+3. The `(inbound, agent's draft, your edited reply)` tuple is inserted into `feedback_pairs` (rating defaults to 2).
+4. The next nightly LoRA retrain picks it up.
+
+The row **stays in the queue** so you can also Push to Gmail Drafts (send the edited version) or Dismiss separately — these are orthogonal actions.
+
+**New endpoint**: `POST /api/agent/pending/{id}/save_as_feedback_pair` with `{edited_reply, rating?, feedback_note?}`. Goes through the existing `app.api.feedback_routes.feedback_submit` handler in-process so the same edit-distance / edit-category / quality-score / facts-extraction logic runs — the new path and the interactive review queue produce identical training pairs. Surface tier rejected (400) — no draft to compare against. Empty `edited_reply` rejected (422).
+
+**UI** (`/triage`): new **Save as training pair** button between **Copy draft** and **Mark sent manually**. Tooltip: "Edit the draft above to what you'd have said, then click — captures it as a training pair for the next nightly LoRA retrain." Status line surfaces `total_pairs` (running feedback-pairs count) so the user sees momentum: "Saved as training pair — 47 pairs collected."
+
+**Tests** (`tests/test_agent_routes.py`) — 3 new: insertion happy-path (asserts `total_pairs` increments + `edit_distance_pct` is plausible), empty `edited_reply` → 422, surface tier → 400.
+
+---
+
+The full dismissal-feedback story is now symmetric:
+
+| Reason | Routes to | How |
+|---|---|---|
+| `noise` | `agent.skip_senders` | b43 (one-click) / b44 (auto) |
+| `wrong_sender` | (manual triage; user-driven) | b39 + UI checkbox in dismiss |
+| **`wrong_content`** | **`feedback_pairs` → LoRA** | **b45 (this PR)** |
+| `already_handled` | no action (orthogonal) | — |
+| `other` | no action | — |
+
 ## v0.2.0-beta.44 — 2026-05-28
 
 ### Agent — auto-promote skip_senders at sweep tail (opt-in, off by default)

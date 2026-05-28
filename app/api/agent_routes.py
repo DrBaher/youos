@@ -265,6 +265,73 @@ def mark_sent(row_id: int, request: Request) -> dict:
     return {"ok": True, "row": store.get(_db_url(request), row_id)}
 
 
+class SaveAsTrainingPairBody(BaseModel):
+    """Capture the user's better version of an agent draft as a feedback pair.
+
+    The LoRA training pipeline picks up rows from ``feedback_pairs``; this
+    endpoint is the bridge from the agent's review queue into that pipeline.
+    Rating defaults to 2 (the agent drafted something, the user is editing
+    it because it was wrong) but can be overridden.
+    """
+
+    edited_reply: str = Field(min_length=1)
+    rating: int | None = Field(default=2, ge=1, le=5)
+    feedback_note: str | None = None
+
+
+@router.post("/api/agent/pending/{row_id}/save_as_feedback_pair")
+def save_as_feedback_pair(row_id: int, body: SaveAsTrainingPairBody, request: Request) -> dict:
+    """Capture (inbound, generated_draft, edited_reply) as a feedback pair.
+
+    Closes the dismissal-feedback loop for ``wrong_content`` dismissals
+    (or any time the user has a better version): the row's inbound + the
+    agent's draft + the user's correction become a training pair for the
+    nightly LoRA retrain. Doesn't alter the agent row's status — the user
+    can also push to Gmail, mark sent, or dismiss separately.
+    """
+    db_url = _db_url(request)
+    row = store.get(db_url, row_id)
+    if not row:
+        raise HTTPException(404, "pending row not found")
+    if row.get("tier") != "draft" or not row.get("draft"):
+        raise HTTPException(400, "row has no draft to compare against (tier=surface, or draft is empty)")
+    inbound = row.get("body") or ""
+    if not inbound.strip():
+        raise HTTPException(400, "row has no inbound body to use as training input")
+
+    # Call the existing /feedback/submit handler in-process so the same
+    # edit-distance / edit-category / quality-score logic runs as for the
+    # interactive review queue. Importing the function (not the route)
+    # avoids a second HTTP hop and shares ``request.app.state.settings``.
+    from app.api.feedback_routes import SubmitBody, feedback_submit
+
+    try:
+        submit_body = SubmitBody(
+            inbound_text=inbound,
+            generated_draft=row.get("amended_draft") or row.get("draft") or "",
+            edited_reply=body.edited_reply,
+            feedback_note=body.feedback_note or f"from agent triage row {row_id}",
+            rating=body.rating,
+            sender=row.get("sender") or row.get("sender_email"),
+        )
+        payload = feedback_submit(submit_body, request)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"feedback_pairs insert failed: {exc}")
+
+    # The interactive /feedback/submit response returns ``total_pairs``
+    # (running count of feedback_pairs rows) but not the inserted id —
+    # the autoresearch nightly pipeline keys off ``total_pairs`` to decide
+    # when to retrain, so surface it back to the UI for the status line.
+    return {
+        "ok": True,
+        "total_pairs": payload.get("total_pairs"),
+        "edit_distance_pct": payload.get("edit_distance_pct"),
+        "row": row,
+    }
+
+
 @router.post("/api/agent/pending/{row_id}/push_to_gmail")
 def push_to_gmail(row_id: int, request: Request) -> dict:
     """Phase 2: create a real Gmail Drafts entry for this pending row.

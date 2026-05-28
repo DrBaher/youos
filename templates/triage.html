@@ -313,6 +313,7 @@
           <button class="btn"        data-action="save"     data-id="${row.id}">Save edits</button>
           <button class="btn"        data-action="push"     data-id="${row.id}" title="Create a real Gmail Draft on the original thread; then send it yourself from Gmail.">Push to Gmail Drafts</button>
           <button class="btn secondary" data-action="copy"  data-id="${row.id}">Copy draft</button>
+          <button class="btn secondary" data-action="train" data-id="${row.id}" title="Edit the draft above to what you'd have said, then click — captures it as a training pair for the next nightly LoRA retrain.">Save as training pair</button>
           <button class="btn ok"      data-action="sent"    data-id="${row.id}" title="I sent it manually outside YouOS — just close this row.">Mark sent manually</button>
           ${dismissControls(row.id)}
         </div>
@@ -464,6 +465,15 @@
       const ta = card.querySelector(`#draft-${id}`);
       try { await navigator.clipboard.writeText(ta.value); status.textContent = 'Draft copied — paste into Gmail to send.'; } catch (e) { alert('Copy failed: ' + e); }
       return;
+    } else if (action === 'train') {
+      // Save the inbound + agent's draft + the user's edited version as a
+      // feedback pair (rating defaults to 2 — the draft was wrong enough to
+      // need editing). Row stays in the queue so user can also push/dismiss.
+      const ta = card.querySelector(`#draft-${id}`);
+      const edited = (ta && ta.value || '').trim();
+      if (!edited) { alert('Edit the draft above first — then click "Save as training pair".'); return; }
+      url = `/api/agent/pending/${id}/save_as_feedback_pair`;
+      body = { edited_reply: edited };
     } else {
       return;
     }
@@ -480,6 +490,10 @@
     }
     if (action === 'save') {
       status.textContent = 'Saved.';
+    } else if (action === 'train') {
+      let total = '';
+      try { const j = await r.json(); total = j.total_pairs ? ` — ${j.total_pairs} pairs collected` : ''; } catch (e) {}
+      status.textContent = `Saved as training pair${total}. Will be used in the next nightly retrain. Row still in queue.`;
     } else {
       card.remove();             // dismissed/sent/pushed rows drop off the page
       if (action === 'push') {
