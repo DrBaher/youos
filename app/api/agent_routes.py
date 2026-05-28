@@ -111,6 +111,98 @@ def dismissal_stats(
     return store.dismissal_stats(_db_url(request), account=account, days=days)
 
 
+@router.get("/api/agent/skip_sender_candidates")
+def skip_sender_candidates(
+    request: Request,
+    account: str | None = Query(None),
+    days: int = Query(30, ge=1, le=365),
+    min_count: int = Query(2, ge=1, le=20),
+) -> dict:
+    """Senders the user has repeatedly dismissed as 'noise' — closing the
+    feedback loop. Each entry already has count + most-recent subject; the
+    /triage UI lets the user promote any subset to ``agent.skip_senders``."""
+    return {
+        "candidates": store.noise_dismissal_candidates(
+            _db_url(request), account=account, days=days, min_count=min_count,
+        ),
+        "min_count": min_count,
+        "window_days": days,
+    }
+
+
+class PromoteSkipSendersBody(BaseModel):
+    """Bulk-append senders to ``agent.skip_senders``.
+
+    Preserves the existing separator (comma or newline) so the user's
+    chosen formatting in /settings stays intact. Idempotent — senders
+    already on the list are skipped (counted under ``already_present``).
+    """
+
+    senders: list[str] = Field(min_length=1)
+
+
+@router.post("/api/agent/skip_senders/promote")
+def promote_skip_senders(body: PromoteSkipSendersBody) -> dict:
+    """Append the given senders to ``agent.skip_senders`` via the same
+    feature-flag whitelist the /settings page uses. Returns counts so the
+    UI can render "added 3, already present 1" feedback."""
+    from app.core.feature_flags import list_flags, set_flag
+
+    flags = list_flags()
+    current_value = ""
+    for flag in flags:
+        if flag.get("key") == "agent.skip_senders":
+            current_value = flag.get("value") or ""
+            break
+
+    # Honour the existing separator — comma-then-newline preference matches
+    # what the /triage 'also skip sender' checkbox writes.
+    sep = "\n" if "\n" in current_value else ", "
+    existing = {
+        s.strip().lower()
+        for s in current_value.replace("\n", ",").split(",")
+        if s.strip()
+    }
+
+    added: list[str] = []
+    already_present: list[str] = []
+    for raw in body.senders:
+        s = (raw or "").strip().lower()
+        if not s:
+            continue
+        if s in existing:
+            already_present.append(s)
+        else:
+            added.append(s)
+            existing.add(s)
+
+    if not added:
+        return {
+            "ok": True,
+            "added": [],
+            "already_present": already_present,
+            "value": current_value,
+        }
+
+    # Rebuild preserving order: original entries first (preserves user's
+    # manual layout), then the new ones at the tail.
+    new_value = current_value
+    for s in added:
+        new_value = (new_value + sep + s) if new_value else s
+
+    try:
+        saved = set_flag("agent.skip_senders", new_value)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(400, f"could not update agent.skip_senders: {exc}")
+
+    return {
+        "ok": True,
+        "added": added,
+        "already_present": already_present,
+        "value": saved,
+    }
+
+
 @router.get("/api/agent/observability")
 def observability(
     request: Request,
