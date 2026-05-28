@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.2.0-beta.47 — 2026-05-28
+
+### CRITICAL: fix gog `drafts create` call shape — Push to Gmail Drafts was broken since b37
+
+Live-verified against `gog` 0.17.0. The b37 `_gog_create_draft` was based on the Google REST API shape — it passed `--raw <base64-rfc822>` + `--thread-id`. **`gog gmail drafts create` doesn't expose `--raw` or `--thread-id` at all.** It takes broken-out fields and threads via the inbound message id:
+
+| What we shipped (broken) | What actually works |
+|---|---|
+| `--raw <base64-rfc822>` | `--to <addr> --subject <s> --body-file -` (body via stdin) |
+| `--thread-id <tid>` | `--reply-to-message-id <mid>` |
+
+Anyone who tried **Push to Gmail Drafts** between b37 and b46 got a CLI error. The mocked test suite passed (we asserted the shape we wrote, not the shape gog wants) — a textbook "tests verified the wrong contract" failure.
+
+**Fixes**:
+
+- `_gog_create_draft` rewritten to use the verified CLI shape. Body goes via stdin (`--body-file -`) so multi-line / shell-hazardous content passes through unmangled.
+- `create_draft(...)` signature gains `reply_to_message_id=` alongside `thread_id=` — gog uses the former, gws/native use the latter. `agent_pending_drafts.message_id` is the gog id; `thread_id` stays for the other backends.
+- `/api/agent/pending/{id}/push_to_gmail` now passes both ids so each backend gets what it wants.
+- Tests updated to pin the actual command shape. Sentinel assertions guard against drift.
+
+**Live verification** (you@gmail.com):
+- Created a real draft via the CLI directly → `draftId=r6218207234521709256`, `threadId` matched the inbound's threadId. ✓
+- Created another via `app.ingestion.gmail_write.create_draft(backend='gog')` → `draftId=r-8815361813087480813`, threading correct, multi-line body intact. ✓
+- Both verification drafts deleted.
+
+**Why this slipped**: the b37 PR explicitly flagged the gog command as "best-effort; needs live verification" and isolated it to one function for easy correction. The discipline paid off — fix was a single-function rewrite. Lesson: mocked tests can't catch a wrong call shape; "verified against the real CLI" check should be in the merge gate for any subprocess-shelling code.
+
+### Other (carried forward in this PR)
+
+- gws backend (b40) — call shape unchanged, but it's also unverified against the actual gws CLI. Plain `--user / --threadId / --format json / --raw` was a guess; needs the same `gws gmail drafts create --help` check before trusting it. Adding to the post-merge follow-up.
+
 ## v0.2.0-beta.46 — 2026-05-28
 
 ### Test isolation fix (caught: PR #119/120 tests had been writing to the real `youos_config.yaml`)

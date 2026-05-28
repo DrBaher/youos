@@ -365,6 +365,9 @@ def push_to_gmail(row_id: int, request: Request) -> dict:
     try:
         result = create_draft(
             account=row["account"],
+            # gog threads via the inbound message id; gws/native via thread id.
+            # We pass both so each backend uses its preferred id.
+            reply_to_message_id=row.get("message_id"),
             thread_id=row.get("thread_id"),
             to_email=row["sender_email"],
             subject=subject,
