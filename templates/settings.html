@@ -91,6 +91,24 @@
       });
       return { el: sel, read: () => sel.value, node: sel };
     }
+    if (f.type === "int") {
+      const inp = document.createElement("input");
+      inp.type = "number";
+      inp.value = String(f.value ?? f.default ?? 0);
+      inp.min = "1";
+      inp.style.width = "120px";
+      return { el: inp, read: () => parseInt(inp.value, 10) || 0, node: inp };
+    }
+    if (f.type === "text") {
+      const ta = document.createElement("textarea");
+      ta.rows = 3;
+      ta.value = f.value || "";
+      ta.placeholder = "(empty — no standing instructions applied)";
+      ta.style.width = "100%";
+      ta.style.minHeight = "60px";
+      ta.style.fontFamily = "inherit";
+      return { el: ta, read: () => ta.value, node: ta };
+    }
     const label = document.createElement("label");
     label.className = "switch";
     const input = document.createElement("input");

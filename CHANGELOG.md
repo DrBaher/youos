@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.2.0-beta.34 — 2026-05-28
+
+### Agent triage — δ (standing instructions)
+A free-form text field threaded into every triage draft. Set it to "today I'm OOO; politely decline meetings" and the agent will reflect that in what it drafts. Snapshotted with each persisted row (column was reserved in β.1; now actually written) so a draft made under last week's instructions stays traceable to that exact text.
+
+**Threading**:
+- New ``DraftRequest.standing_instructions`` field. Inside ``generate_draft``, the cold-outreach ``DECLINE_NUDGE`` (b27) and the standing instructions are *combined additively* into the same ``extra_constraint`` slot that ``assemble_prompt`` consumes — so both can apply to a single draft when the inbound is a pushy outbound *and* the user is OOO.
+- ``run_triage`` accepts ``standing_instructions=...``; when the caller omits it, the orchestrator reads ``agent.standing_instructions`` from config so the background scheduler + the CLI + the API-trigger path all see the same value.
+- ``store.upsert_pending`` was already writing whatever the orchestrator handed it; now the orchestrator hands it the active standing-instructions string, and the snapshot column finally has data.
+
+**`/triage` page** gains a collapsible **standing-instructions** banner at the top:
+- Summary line shows the first 80 chars when set (teal-coloured); "none" when empty.
+- Textarea + **Save** / **Clear** buttons. Save POSTs to ``/api/config/set`` with key ``agent.standing_instructions`` — the same config-write API the rest of ``/settings`` already uses.
+- Changes take effect on the next triage run (immediate on a manual **Run triage now**, on the next γ tick for the background scheduler).
+
+**`/settings` page** also surfaces the field as a flag (``type: "text"``). Settings.html gained ``text`` (textarea) and ``int`` (number input) renderers — fixing a pre-existing γ-era bug where ``agent.interval_minutes`` was rendering as a checkbox.
+
+### Tests
+- ``tests/test_agent_triage.py`` (3 new): standing-instructions threaded into ``DraftRequest``, snapshotted per persisted row, falls back to config when the caller omits it.
+- 25/25 across agent suites; 1193/1197 full sweep (was 1190 in γ; same 4 pre-existing MLX failures unrelated).
+
+### Remaining on the agent roadmap
+- **ε** — audit log + "what the agent did today" view on ``/triage``.
+- **ζ** — per-sender opt-out, daily cap, strict-local switch (refuses cloud fallback during triage).
+- **Phase 2** — ``gmail.compose`` OAuth → real Gmail Drafts on **Mark sent**.
+
 ## v0.2.0-beta.33 — 2026-05-28
 
 ### Agent triage — γ (background scheduler + macOS notify)
