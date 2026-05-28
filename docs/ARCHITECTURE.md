@@ -46,6 +46,19 @@ Each source produces:
 - Keeps improvements, reverts regressions
 - Runs nightly after ingestion and fine-tuning, on a weekly-rotating benchmark sample (prevents overfitting to fixed cases)
 
+### Autonomous triage (`app/agent/`) — opt-in
+Background loop that sweeps unread inbox, filters noise, and queues drafts for review. Never auto-sends.
+
+- **`inbox_fetch.py`** — pulls unread messages from each enabled account via the configured Google backend (gog/gws/native), bounded by `agent.window` and `agent.limit`
+- **`needs_reply.py`** — two-tier classifier. Hard-skip rules (per-sender skip list → List-Unsubscribe → mailer-daemon → automation domains → CI subjects → empty body) eliminate noise; soft penalties (noreply, operational mailboxes, very long digests, cold outreach) reduce score without rejecting outright. Returns `NeedsReplyVerdict(needs_reply, score, reasons, cold_outreach, surface_for_review)` — borderline scores (0.30–0.59) surface for review without being drafted
+- **`triage.py`** — orchestrates a sweep: fetch → classify → draft survivors (threading `agent.standing_instructions` into the prompt via `extra_constraint`, honoring `agent.strict_local` and `agent.daily_draft_cap`) → persist to `agent_pending_drafts` → log one row to `agent_audit`
+- **`scheduler.py`** — `_loop(app)` wakes every `agent.interval_minutes`, re-reads config each iteration so flag changes take effect without restart; macOS notification on new drafts. No-ops under `PYTEST_CURRENT_TEST`
+- **`store.py`** — pending-draft CRUD (idempotent on `message_id`), daily-cap counter, and sweep audit log
+
+The `/triage` page shows the pending queue (Save edits, Push to Gmail Drafts, Copy, Mark sent, Dismiss), surface-for-review collapsibles, and Recent activity. `Push to Gmail Drafts` (`app/ingestion/gmail_write.py`) creates a real Gmail Draft on the original thread via the configured backend — gog implemented (Phase 2.1); gws/native raise NotImplementedError until Phase 2.2.
+
+All seven `agent.*` flags (`enabled`, `interval_minutes`, `accounts`, `window`, `limit`, `threshold`, `notify_macos`, `standing_instructions`, `skip_senders`, `daily_draft_cap`, `strict_local`) are toggleable via `/settings` or `youos config set`.
+
 ### Web UI (`templates/`)
 - Feedback collection with streaming draft generation + cold-start loading overlay
 - Review queue for human-in-the-loop training
@@ -76,4 +89,4 @@ Inbound email ─► Retrieval ─► Generation ─► Draft
 
 SQLite with FTS5 virtual tables for full-text search. Schema in `docs/schema.sql`.
 
-Key tables: `documents`, `chunks`, `reply_pairs`, `feedback_pairs`, `benchmark_cases`, `eval_runs`, `sender_profiles`, `ingest_runs`, `facts`.
+Key tables: `documents`, `chunks`, `reply_pairs`, `feedback_pairs`, `benchmark_cases`, `eval_runs`, `sender_profiles`, `ingest_runs`, `facts`, `agent_pending_drafts`, `agent_audit`.

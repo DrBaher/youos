@@ -164,6 +164,36 @@ panel to Gmail:
 A bookmarklet remains as a no-install fallback (it can break when Gmail changes its markup;
 the extension doesn't).
 
+## Autonomous triage (opt-in)
+
+YouOS can sweep your unread inbox on a schedule and pre-draft replies for the ones that actually want a reply. **Never auto-sends** — drafts surface at **`/triage`** for you to review, edit, and either push to your Gmail Drafts folder or copy-paste manually.
+
+**Turn it on**:
+```bash
+youos config set agent.enabled true
+youos config set agent.interval_minutes 15
+youos config set agent.standing_instructions "today I'm OOO; politely decline meetings"
+youos serve
+```
+
+Every N minutes (default 15) the loop:
+1. Fetches unread inbox via the configured Google backend
+2. **Filters**: hard-skips `List-Unsubscribe` newsletters, automation domains (`@github.com`, `@gitlab.com`, `*.atlassian.net`, `fireflies.ai`, `otter.ai`, etc.), `mailer-daemon`/bounces, CI/build subject patterns (`[Org/Repo]`, `PR run failed`); soft-penalises `noreply@` + operational mailboxes (`billing-support@`, `notifications@`, `calendar-notification@`)
+3. **Scores** survivors with prior-history boost, question/imperative detection, cold-outreach heuristics, length-based signals
+4. **Drafts** what crosses the threshold using the same local-LoRA pipeline `/feedback` uses (standing instructions threaded into the prompt; cold outreach gets an additional decline-nudge)
+5. **Persists** to `agent_pending_drafts`; **macOS notification** when new drafts land
+6. **Audit log** — every sweep records what was attempted, by what trigger (scheduled / manual / api), with counts, duration, and any per-message errors
+
+`/triage` shows three things: the **pending drafts** with inbound + editable draft side-by-side, the **surface for review** (borderline cases not auto-drafted), and **Recent activity** (last 15 sweeps).
+
+**Send path** (Phase 2.1, gog backend): **Push to Gmail Drafts** creates a real Gmail Draft on the original thread; you finish-and-send from Gmail. **Mark sent manually** records the row as sent without writing to Gmail (for when you sent through another channel).
+
+**Safety**:
+- `agent.skip_senders` — comma-separated emails or `@domain` entries to hard-skip
+- `agent.daily_draft_cap` — per-UTC-day quota per account; defends against a runaway loop on a noisy inbox
+- `agent.strict_local` — refuses cloud fallback during background triage (interactive `/feedback` unaffected)
+- Manual one-shot: `youos triage [--account] [--window 3d] [--limit 8] [--dry-run]`
+
 ## How it works
 
 1. Ingests Gmail, Google Docs, WhatsApp exports — plus organic pairs from emails you sent without YouOS

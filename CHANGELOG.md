@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.2.0-beta.38 — 2026-05-28
+
+### Documentation refresh — agent triage feature
+
+The autonomous-triage feature shipped across PRs α–ζ and Phase 2.1 was already user-visible (CLI, /triage page, settings), but the **introductory surfaces** — landing page, SKILL.md, README, /about, docs — still described YouOS as draft-only. This PR threads a consistent agent narrative through five surfaces so a first-time visitor lands on a coherent story.
+
+**`SKILL.md`** — new "Autonomous triage (opt-in)" section between "Drafting inside Gmail" and "How it works": enabling commands, the 6-step loop summary, /triage page description, Phase 2.1 Push-to-Gmail-Drafts path, and safety features (never auto-sends, opt-in, audit log, rate-limit, sender skip list, strict-local mode).
+
+**`README.md`** — new "Autonomous triage (opt-in)" section right before "Does it actually sound like you?": same enabling snippet and feature summary as SKILL.md, framed for repo readers.
+
+**`docs/USAGE.md`** — new `youos triage` row in the command table: `Sweep unread inbox, filter, draft survivors; persists to agent_pending_drafts (view at /triage). Background loop opt-in via agent.enabled.`
+
+**`site/index.html` (landing)** — new comparison card in the "vs cloud assistants" block: "You manually paste drafts one by one ↔ Optional autonomous triage — sweeps unread, drafts replies, never auto-sends (opt-in via `agent.enabled`; review queue at `/triage`; push to Gmail Drafts with one click)."
+
+**`templates/about.html` (/about)** — `youos triage` added to the CLI tech-card bullet; new "🤖 Autonomous triage (opt-in)" tech-card detailing the loop, two-tier filter, per-sender skip list, daily-cap, strict-local mode, standing instructions, audit log, and the explicit no-auto-send guarantee.
+
+**`docs/ARCHITECTURE.md`** — new "Autonomous triage (`app/agent/`) — opt-in" component section between Autoresearch and Web UI, with one bullet per module (`inbox_fetch`, `needs_reply`, `triage`, `scheduler`, `store`) plus a paragraph on the /triage page, the Push-to-Gmail-Drafts path, and the seven `agent.*` flags. New tables (`agent_pending_drafts`, `agent_audit`) added to the Database key-tables list.
+
+No code changes; behavior is identical to b37.
+
 ## v0.2.0-beta.37 — 2026-05-28
 
 ### Agent triage — Phase 2.1 (Push to Gmail Drafts)

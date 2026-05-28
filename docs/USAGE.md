@@ -66,6 +66,7 @@ youos compare-models --limit 30 --semantic
 | `youos doctor` | Check system requirements (Python, Google backend, MLX, disk) |
 | `youos status` | Show system status |
 | `youos draft "text"` | Generate a draft reply |
+| `youos triage [--window 3d] [--limit 8] [--dry-run]` | Sweep unread inbox, filter, draft survivors; persists to `agent_pending_drafts` (view at `/triage`). Background loop opt-in via `agent.enabled`. |
 | `youos serve` | Start the web server |
 | `youos ui` | Open the web UI in your browser |
 | `youos service install` | Run the server as a background service (starts at login) |
