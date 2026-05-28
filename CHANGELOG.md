@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.2.0-beta.28 — 2026-05-28
+
+### Agent triage — Phase 1 (α): fetch + filter + dry-run CLI
+First slice of the autonomous email-assistant loop. **No persistence, no Gmail writes, no auto-send** — Phase 1 is "show me what the agent would do" against the real inbox. Persistence (β), background scheduling (γ), and Gmail-drafts OAuth (Phase 2) follow.
+
+**New `app/agent/` module**:
+- **`inbox_fetch.fetch_unread(account, window, limit, backend=None)`** — pulls unread threads via the configured Google backend (`gog`/`gws`/`native`) using the existing adapter; returns the latest message per thread as a normalised `InboxMessage` (sender, subject, body, headers, parsed `sender_email`). The only difference from `youos ingest` is the query: `in:inbox is:unread newer_than:<window>` instead of `in:sent`.
+- **`needs_reply.classify(msg, history, threshold)`** — combines hard rules (skip `List-Unsubscribe`, `noreply@`, automation domains, empty body) + lightweight scoring (base 0.5, +0.20 ending question, +0.10 imperative verb, +0.10 short body, +0.20 prior history with this exact sender, +0.10 short-body bonus, −0.20 very long digest, −0.15 cold-outreach flag). Returns a `NeedsReplyVerdict(needs_reply, score, reasons, cold_outreach)`.
+- **`needs_reply.SenderHistory`** — cached count of prior reply pairs per inbound author, queried from the active instance's `reply_pairs` table. The b26 sender-history boost re-applied as a needs-reply signal.
+- **`triage.run_triage(...)`** — orchestrator. Fetches, classifies, drafts the survivors via the same `generate_draft` path `/feedback` uses (so all our repair/persona/retrieval work flows through). Per-message draft failures are recorded with `error=` rather than killing the sweep.
+
+**New CLI command `youos triage`** — `--account` / `--window` (default `3d`) / `--limit` (default 8) / `--threshold` (default 0.6) / `--backend`. Prints `[score]  flag  subject / from / reasons / model / draft` for each kept inbound, then a `skipped` list with reasons. Always dry-run in Phase 1; persistence + actions come in β.
+
+The cold-outreach detector (b27), sender-email boost (b26), and post-generation repairs (b21–b25) all flow through unchanged — the agent loop *reuses* that work, doesn't duplicate it.
+
+### Tests
+- `test_agent_needs_reply` — hard-skip rules (list-unsubscribe, noreply, automation domains, empty body), question + imperative scoring, long-digest drop, cold-outreach flagging, sender-history boost.
+- `test_agent_triage` — end-to-end with a mocked Google source: drafts the real inbound, skips the newsletter, records per-message generation errors without crashing the sweep.
+- 10/10 in the agent suites; 1157 in the full suite (same 4 pre-existing MLX-integration failures, unrelated).
+
+### Next in the autonomous-agent series
+- **β** — `agent_pending_drafts` table + `/triage` web page + persistence.
+- **γ** — Background scheduler in the running server + macOS notifications.
+- **δ** — Standing-instructions surface threaded into the prompt via `extra_constraint` (already in `assemble_prompt`).
+- **ε** — Audit log + observability on the `/triage` page.
+- **ζ** — Safety polish: per-sender opt-out, daily cap, strict-local mode.
+- **Phase 2** — `gmail.compose` OAuth and real Gmail-Drafts integration.
+
 ## v0.2.0-beta.27 — 2026-05-28
 
 ### Cold-outreach detection + polite-decline prompt nudge
