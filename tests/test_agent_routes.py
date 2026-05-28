@@ -135,3 +135,30 @@ def test_triage_page_renders_with_nav_and_assets(authed_client):
     assert "Run triage now" in html         # core action
     # New nav link is present on the page.
     assert ">Triage<" in html
+
+
+# --- ε: sweeps endpoint ----------------------------------------------------
+
+
+def test_sweeps_endpoint_returns_recent_audit_rows(authed_client):
+    """``/api/agent/sweeps`` returns the audit log (newest first), with
+    rehydrated ``errors`` arrays."""
+    from app.core.settings import get_settings
+    from app.agent import store
+
+    db_url = get_settings().database_url
+    store.log_sweep(
+        db_url, account="you@example.com", trigger="manual",
+        window="3d", threshold=0.6,
+        fetched=4, kept=1, surfaced=1, persisted=1, errors=[],
+        standing_instructions_snapshot=None,
+        started_at="2026-05-28T10:00:00Z", finished_at="2026-05-28T10:00:02Z",
+        duration_ms=2000,
+    )
+
+    r = authed_client.get("/api/agent/sweeps?limit=10")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] >= 1
+    assert body["sweeps"][0]["trigger"] == "manual"
+    assert body["sweeps"][0]["errors"] == []

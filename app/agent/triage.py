@@ -49,6 +49,8 @@ def run_triage(
     backend: str | None = None,
     persist: bool = True,
     standing_instructions: str | None = None,
+    trigger: str = "manual",  # ε: tagged in agent_audit so /triage shows
+                              # who started which sweep (scheduled vs manual vs api)
 ) -> TriageResult:
     """Fetch unread, filter, generate drafts for the survivors, persist to
     ``agent_pending_drafts``.
@@ -65,6 +67,14 @@ def run_triage(
         settings = get_settings()
         database_url = database_url or settings.database_url
         configs_dir = configs_dir or settings.configs_dir
+
+    # ε: bracket the whole sweep so we can log a single agent_audit row at
+    # the end — start time, duration, counts, any per-message errors.
+    import time as _time
+    from datetime import datetime, timezone as _tz
+
+    _started_at_iso = datetime.now(_tz.utc).isoformat()
+    _t0 = _time.monotonic()
 
     # δ: if the caller didn't pass standing instructions, fall back to the
     # ``agent.standing_instructions`` config value so a /triage user that
@@ -181,9 +191,43 @@ def run_triage(
             if row_id is not None:
                 persisted += 1
 
+    kept_count = sum(1 for d in drafts if d.error is None)
+    errors_list = [d.error for d in drafts if d.error]
+
+    # ε: append one row per sweep — always written, regardless of persist=.
+    # The audit log records *attempts*, not outcomes; --dry-run still leaves
+    # a trace of what was swept (with persisted=0).
+    try:
+        from datetime import datetime as _dt, timezone as _tz2
+
+        _finished_at_iso = _dt.now(_tz2.utc).isoformat()
+        _duration_ms = int((_time.monotonic() - _t0) * 1000)
+        from app.agent.store import log_sweep
+
+        log_sweep(
+            database_url,
+            account=account,
+            trigger=trigger,
+            window=window,
+            threshold=threshold,
+            fetched=len(messages),
+            kept=kept_count,
+            surfaced=len(surfaced),
+            persisted=persisted,
+            errors=errors_list,
+            standing_instructions_snapshot=standing_instructions,
+            started_at=_started_at_iso,
+            finished_at=_finished_at_iso,
+            duration_ms=_duration_ms,
+        )
+    except Exception as exc:
+        # Audit-log failure must not propagate — the agent loop has higher
+        # priorities than its own observability.
+        logger.warning("triage audit log failed: %s", exc)
+
     return TriageResult(
         fetched=len(messages),
-        kept=sum(1 for d in drafts if d.error is None),
+        kept=kept_count,
         drafts=drafts,
         skipped=skipped,
         surfaced=surfaced,
