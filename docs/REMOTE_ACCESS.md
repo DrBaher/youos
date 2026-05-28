@@ -96,7 +96,37 @@ In Safari: tap the Share button → "Add to Home Screen". Names it whatever you 
 ## What's not yet supported (gaps to know about)
 
 - **Push notifications to your phone** — the agent loop only fires `display notification` on the Mac. No iOS/Android push integration. **Workaround**: pipe the daily digest (below) to your phone via email.
-- **Remote dismissal without `/triage`** — currently requires opening the page. A Gmail-label-based signal (e.g. apply "YouOS/dismiss" to a thread) is on the roadmap.
+
+## Remote dismissal via Gmail label
+
+If `/triage` isn't reachable but Gmail is (the universal case — phone, friend's laptop, work web client), you can still dismiss a queued draft by applying a Gmail label to the original thread.
+
+### Setup (once)
+
+1. In Gmail web (or any client), create a label called **`YouOS/skip`** (the slash creates a nested label under a YouOS folder for tidiness).
+2. That's it — `run_triage` checks for this label at the start of every sweep.
+
+### Usage
+
+When you see one of the agent's drafts in **Gmail Drafts** that shouldn't have been drafted:
+
+1. Open the **original inbound thread** the draft replies to (not the Draft itself).
+2. Apply the **`YouOS/skip`** label (sidebar → Labels → YouOS/skip).
+3. Next sweep (within `agent.interval_minutes`), the matching `agent_pending_drafts` row is marked **dismissed with reason='noise'**, and the label is removed from the thread so it isn't reprocessed.
+
+You can also run the sync immediately:
+
+```bash
+youos sync-labels                              # default account, default label
+youos sync-labels --account other@x.com       # specific account
+youos sync-labels --label "Custom/skip-tag"   # custom label name
+```
+
+The dismissal goes through the same path as `/triage`'s dismiss button, so it counts in the dismissal-feedback aggregate, contributes to `agent.auto_promote_skip_senders` once you hit 3+ dismissals from the same sender, and shows up on the next digest email.
+
+### What if I label something not in the queue?
+
+Safe — `sync-labels` skips threads with no matching `agent_pending_drafts` row (e.g. an old thread you labelled before the agent saw it). The label stays applied; nothing happens.
 
 ## Daily digest email (poor-man's push notification)
 
