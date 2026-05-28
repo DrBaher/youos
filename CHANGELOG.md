@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.2.0-beta.44 — 2026-05-28
+
+### Agent — auto-promote skip_senders at sweep tail (opt-in, off by default)
+
+The b43 PR made promotion one-click. This PR makes it zero-click — *if* the user opts in. With `agent.auto_promote_skip_senders` on, the agent itself promotes any sender dismissed as `noise` 3+ times in the last 30 days to `agent.skip_senders` at the tail of every sweep. The next iteration of the loop already sees the new skip-list — fully self-tuning.
+
+The b39 → b42 → b43 → b44 arc:
+- b39 — categorical dismissal reasons (substrate)
+- b42 — observability card (visibility)
+- b43 — one-click promotion (suggestion → action)
+- **b44 — zero-click auto-promotion** (action → habit)
+
+**Threshold**: 3 dismissals (higher than the UI's min_count=2). Auto-action without click should require stronger signal than a user-confirmed promotion.
+
+**Default off**. Even with it on:
+- The promoted senders show up in the resulting `agent.skip_senders` value — visible at `/settings` and editable there. Easy to remove anything you didn't want.
+- The promotion is logged to the structured logger ("auto-promoted N sender(s) to agent.skip_senders for account=... : ...").
+- Already-on-list senders aren't re-added (no duplicate writes).
+- If no senders qualify, the flag isn't touched at all.
+
+**Failure isolation**: The auto-promote step runs after the audit-log write, inside its own try/except. A failure there can't crash the sweep or corrupt the audit row.
+
+**New flag** (`app/core/feature_flags.py`): `agent.auto_promote_skip_senders` — bool, default False, with a help string explaining the threshold and reversibility.
+
+**Implementation** (`app/agent/triage.py`): new `_maybe_auto_promote_skip_senders` helper called at the tail of `run_triage`. Mirrors the `/api/agent/skip_senders/promote` route logic so the two paths stay in sync (one for user-initiated, one for auto).
+
+**Tests** (`tests/test_agent_triage.py`) — 3 new: no-op when flag off, promotes qualifying senders (≥3 noise dismissals) when on, skips already-listed senders without writing the flag.
+
+**Docs**: SKILL.md now describes the self-tuning loop end-to-end.
+
 ## v0.2.0-beta.43 — 2026-05-28
 
 ### Skip-sender promotion — closing the feedback loop
