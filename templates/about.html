@@ -241,8 +241,19 @@ body {
           <li>Review Queue optimized for fast sequential review (submit/skip, rating, keyboard shortcuts)</li>
           <li>Per-draft model badge + a "Drafting with" health row — always see whether your LoRA, the base model, or the cloud wrote a draft</li>
           <li>History tab with intent and confidence badges</li>
-          <li>CLI: <code style="background:var(--surface-2);padding:0.1rem 0.3rem;border-radius:4px;color:var(--teal);">youos doctor</code>, <code style="background:var(--surface-2);padding:0.1rem 0.3rem;border-radius:4px;color:var(--teal);">youos corpus</code>, <code style="background:var(--surface-2);padding:0.1rem 0.3rem;border-radius:4px;color:var(--teal);">youos eval --golden</code>, <code style="background:var(--surface-2);padding:0.1rem 0.3rem;border-radius:4px;color:var(--teal);">youos compare-models</code></li>
+          <li>CLI: <code style="background:var(--surface-2);padding:0.1rem 0.3rem;border-radius:4px;color:var(--teal);">youos doctor</code>, <code style="background:var(--surface-2);padding:0.1rem 0.3rem;border-radius:4px;color:var(--teal);">youos corpus</code>, <code style="background:var(--surface-2);padding:0.1rem 0.3rem;border-radius:4px;color:var(--teal);">youos eval --golden</code>, <code style="background:var(--surface-2);padding:0.1rem 0.3rem;border-radius:4px;color:var(--teal);">youos compare-models</code>, <code style="background:var(--surface-2);padding:0.1rem 0.3rem;border-radius:4px;color:var(--teal);">youos triage</code></li>
           <li>Mobile-friendly and rate-limited</li>
+        </ul>
+      </div>
+      <div class="tech-card">
+        <strong>&#x1F916; Autonomous triage (opt-in)</strong>
+        <ul class="card-bullets">
+          <li>Background loop sweeps unread inbox every N minutes (default 15); macOS notification on new drafts</li>
+          <li>Two-tier filter: hard-skip List-Unsubscribe / automation domains (GitHub, CI, Calendar, Fireflies…) / CI subjects; soft-penalty noreply &amp; operational mailboxes (billing-support@, calendar-notification@) so transactional leads can still surface</li>
+          <li>Per-sender skip list, daily draft cap, strict-local mode (refuses cloud fallback during background sweeps)</li>
+          <li>Standing instructions ("today I'm OOO; decline meetings") threaded into every draft prompt; snapshotted with each row for auditability</li>
+          <li>Audit log: every sweep (scheduled / manual / api) records counts, duration, errors — visible in <code style="background:var(--surface-2);padding:0.1rem 0.3rem;border-radius:4px;color:var(--teal);">/triage</code> Recent activity</li>
+          <li><strong>Never auto-sends.</strong> Drafts queue at <code style="background:var(--surface-2);padding:0.1rem 0.3rem;border-radius:4px;color:var(--teal);">/triage</code>; <em>Push to Gmail Drafts</em> creates a real Gmail Draft on the original thread; you finish-and-send from Gmail</li>
         </ul>
       </div>
     </div>
