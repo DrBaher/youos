@@ -439,6 +439,66 @@ def score_histogram(
     return {"buckets": out, "window_days": int(days), "account": account}
 
 
+def noise_dismissal_candidates(
+    database_url: str,
+    *,
+    account: str | None = None,
+    days: int = 30,
+    min_count: int = 2,
+) -> list[dict[str, Any]]:
+    """Senders the user has dismissed as 'noise' ``min_count`` or more times.
+
+    Drives the skip-sender promotion UI on /triage: when the same sender
+    keeps slipping past the filter and the user keeps dismissing them as
+    noise, the right answer is to add them to ``agent.skip_senders`` — but
+    we can't do that automatically without an explicit signal. This helper
+    finds the candidates; the UI lets the user promote them in one click.
+
+    Returns one row per sender_email, with ``count`` (number of noise
+    dismissals in the window) and ``last_subject`` (most recent dismissed
+    subject, as a memory aid). Ordered by count DESC then most-recent.
+    Excludes rows where ``sender_email`` is NULL — without an email
+    address there's nothing to add to the skip list.
+    """
+    where = "date(created_at) >= date('now', ?) AND status = 'dismissed' " \
+            "AND dismissal_reason = 'noise' AND sender_email IS NOT NULL " \
+            "AND sender_email != ''"
+    params: list[Any] = [f"-{int(days)} days"]
+    if account:
+        where += " AND account = ?"
+        params.append(account)
+
+    with closing(_connect(database_url)) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT
+                LOWER(sender_email) AS sender_email,
+                COUNT(*)            AS cnt,
+                MAX(created_at)     AS most_recent,
+                (SELECT subject FROM agent_pending_drafts a2
+                   WHERE LOWER(a2.sender_email) = LOWER(agent_pending_drafts.sender_email)
+                     AND a2.status = 'dismissed' AND a2.dismissal_reason = 'noise'
+                   ORDER BY a2.created_at DESC LIMIT 1) AS last_subject
+            FROM agent_pending_drafts
+            WHERE {where}
+            GROUP BY LOWER(sender_email)
+            HAVING cnt >= ?
+            ORDER BY cnt DESC, most_recent DESC
+            """,
+            params + [int(min_count)],
+        ).fetchall()
+
+    return [
+        {
+            "sender_email": r["sender_email"],
+            "count": int(r["cnt"]),
+            "most_recent": r["most_recent"],
+            "last_subject": r["last_subject"],
+        }
+        for r in rows
+    ]
+
+
 def _audit_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     d = dict(row)
     v = d.get("errors_json")
