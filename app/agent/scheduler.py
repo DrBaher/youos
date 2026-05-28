@@ -52,7 +52,36 @@ def get_agent_config() -> dict[str, Any]:
         # ``agent.standing_instructions`` so it's editable from /settings,
         # /triage, or a single ``youos config set`` line.
         "standing_instructions": str(a.get("standing_instructions") or "").strip(),
+        # ζ: safety guardrails. ``skip_senders`` is a comma-separated string
+        # for textarea-friendliness; parsed into a normalised list at use
+        # time. ``daily_draft_cap`` is per-UTC-day per-account; 0 = unlimited.
+        # ``strict_local`` refuses cloud fallback during triage only.
+        "skip_senders": _parse_skip_senders(a.get("skip_senders")),
+        "daily_draft_cap": max(0, int(a.get("daily_draft_cap", 50))),
+        "strict_local": bool(a.get("strict_local", False)),
     }
+
+
+def _parse_skip_senders(raw: Any) -> list[str]:
+    """Normalise the ``agent.skip_senders`` textarea value to a deduped list
+    of lowercase entries. Accepts the string form (comma-separated) for
+    user convenience and the list form for programmatic config edits."""
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        items = [s.strip() for s in raw.replace("\n", ",").split(",")]
+    elif isinstance(raw, (list, tuple)):
+        items = [str(s).strip() for s in raw]
+    else:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for s in items:
+        s = s.lower()
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
 
 
 def _notify_macos(*, title: str, message: str) -> None:

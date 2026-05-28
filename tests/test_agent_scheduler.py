@@ -237,3 +237,30 @@ def test_start_is_a_noop_under_pytest():
     app = SimpleNamespace(state=SimpleNamespace())
     scheduler.start(app)
     assert getattr(app.state, "_agent_loop_task", None) is None
+
+
+# --- ζ: skip-list parsing --------------------------------------------------
+
+
+def test_parse_skip_senders_comma_separated_string():
+    from app.agent.scheduler import _parse_skip_senders
+
+    assert _parse_skip_senders("alice@x.com, @bigcorp.com,bob@y.com ,") == [
+        "alice@x.com", "@bigcorp.com", "bob@y.com",
+    ]
+
+
+def test_parse_skip_senders_list_form_and_dedup_lowercase():
+    from app.agent.scheduler import _parse_skip_senders
+
+    assert _parse_skip_senders(["Alice@X.com", "alice@x.com", "@BIGCORP.com"]) == [
+        "alice@x.com", "@bigcorp.com",
+    ]
+
+
+def test_parse_skip_senders_empty_inputs():
+    from app.agent.scheduler import _parse_skip_senders
+
+    assert _parse_skip_senders(None) == []
+    assert _parse_skip_senders("") == []
+    assert _parse_skip_senders([]) == []
