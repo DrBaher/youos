@@ -7,13 +7,16 @@ loop's "Mark sent" path remains a separate signal for "I sent it manually
 elsewhere."
 
 Backend dispatch follows the existing ``ingestion.google_backend`` setting
-(``gog`` / ``gws`` / ``native``). ``gog`` is implemented because the user's
-authenticated path runs through it; ``gws`` + ``native`` raise a clear
-``NotImplementedError`` until Phase 2.2 adds them.
+— all three backends implemented:
 
-If you need to fix the exact ``gog gmail drafts create`` invocation, the
-command lives in ``_gog_create_draft`` and is the only thing that should
-change — the abstraction + the caller are stable.
+* ``gog`` (Phase 2.1) — shells out to the ``gog`` CLI
+* ``gws`` (Phase 2.2) — shells out to Google's first-party ``gws`` CLI
+* ``native`` (Phase 2.3) — direct googleapiclient call; needs the
+  ``gmail.compose`` scope on the stored token (re-auth via ``youos setup``)
+
+If you need to fix the exact ``gog`` or ``gws`` invocation, the commands
+live in ``_gog_create_draft`` / ``_gws_create_draft`` — the only places to
+change. The abstraction + the caller are stable across all three.
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ import json
 import logging
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -73,9 +77,9 @@ def create_draft(
             to_email=to_email, subject=subject, body=body,
         )
     if name == "native":
-        raise NotImplementedError(
-            "native backend draft creation needs the gmail.compose OAuth "
-            "scope; one-time re-auth is required. Implementation in Phase 2.2."
+        return _native_create_draft(
+            account=account, thread_id=thread_id,
+            to_email=to_email, subject=subject, body=body,
         )
     raise ValueError(f"unknown ingestion.google_backend: {name!r}")
 
@@ -217,3 +221,129 @@ def _gws_create_draft(
 
     logger.info("created gmail draft %s via gws (account=%s thread=%s)", draft_id, account, thread_id)
     return GmailDraftResult(draft_id=str(draft_id), raw_response=payload)
+
+
+# --- native backend --------------------------------------------------------
+
+
+# Scope needed to *write* drafts. The native ingestion backend uses
+# gmail.readonly; the write path needs gmail.compose. We don't merge these
+# into _NATIVE_SCOPES in adapters.py because a user who only ingests
+# shouldn't be forced into a re-auth — read-only is the safer default.
+# Re-auth instructions live in the error message below.
+_NATIVE_WRITE_SCOPES = (
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.compose",
+)
+
+_NATIVE_REAUTH_HINT = (
+    "Native backend draft creation needs the gmail.compose OAuth scope; "
+    "your current token is read-only. Re-authorize: "
+    "`youos setup` (or call NativeSource.authorize_account with "
+    "the write scopes)."
+)
+
+
+def _native_create_draft(
+    *,
+    account: str,
+    thread_id: str | None,
+    to_email: str,
+    subject: str,
+    body: str,
+) -> GmailDraftResult:
+    """Create a draft via Google's REST API directly.
+
+    Mirrors the gog/gws shape (RFC822 → base64url → raw) but uses the
+    google-api-python-client to call ``drafts().create()`` rather than
+    shelling out. Requires the ``gmail.compose`` scope on the stored
+    token — missing scope translates to a clear re-auth message.
+
+    Tests mock ``googleapiclient.discovery.build`` so the auth + API
+    stack is exercised by the call shape, not the network.
+    """
+    rfc = _build_rfc822(to_email=to_email, subject=subject, body=body)
+    raw_b64 = base64.urlsafe_b64encode(rfc).decode("ascii")
+
+    try:
+        service = _native_gmail_service(account=account)
+    except RuntimeError as exc:
+        # Credentials missing, expired without refresh-token, or scope-narrow
+        # — translate to GmailWriteError so the agent route returns 502 with
+        # an actionable message instead of a generic 500.
+        raise GmailWriteError(str(exc)) from exc
+
+    request_body: dict[str, Any] = {"message": {"raw": raw_b64}}
+    if thread_id:
+        request_body["message"]["threadId"] = thread_id
+
+    try:
+        result = service.users().drafts().create(
+            userId="me", body=request_body,
+        ).execute()
+    except Exception as exc:
+        # googleapiclient.errors.HttpError has .resp.status; we check by
+        # attribute access so the test mocks don't need to construct one.
+        status_code = getattr(getattr(exc, "resp", None), "status", None)
+        if status_code in (401, 403):
+            raise GmailWriteError(
+                f"{_NATIVE_REAUTH_HINT} (Google returned HTTP {status_code})"
+            ) from exc
+        raise GmailWriteError(f"native drafts.create failed: {exc}") from exc
+
+    draft_id = result.get("id") if isinstance(result, dict) else None
+    if not draft_id:
+        raise GmailWriteError(f"native drafts.create returned no id; payload={result!r}")
+
+    logger.info(
+        "created gmail draft %s via native (account=%s thread=%s)",
+        draft_id, account, thread_id,
+    )
+    return GmailDraftResult(draft_id=str(draft_id), raw_response=result if isinstance(result, dict) else {})
+
+
+def _native_gmail_service(*, account: str) -> Any:
+    """Load the user's stored OAuth credentials for ``account`` (with write
+    scope) and return a Gmail v1 service object.
+
+    Reuses the same token-storage convention as ``NativeSource`` in
+    ``app.ingestion.adapters`` (token files keyed by account email under
+    ``var/google_tokens/``). Doesn't refresh tokens that lack a
+    refresh_token — that's a re-auth case.
+    """
+    try:
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request as GoogleAuthRequest
+        from googleapiclient.discovery import build
+    except ImportError as exc:
+        raise RuntimeError(
+            "Native backend needs the google extra: pip install youos[google]"
+        ) from exc
+
+    from app.ingestion.adapters import _native_config
+    from app.core.settings import get_instance_root
+
+    token_dir_cfg = (_native_config().get("google_token_dir") or "").strip()
+    token_dir = (
+        Path(token_dir_cfg).expanduser()
+        if token_dir_cfg else get_instance_root() / "var" / "google_tokens"
+    )
+    safe = account.replace("/", "_").replace("\\", "_")
+    token_path = token_dir / f"{safe}.json"
+    if not token_path.exists():
+        raise RuntimeError(
+            f"No stored Google credentials for {account!r} at {token_path}. "
+            "Authorize first via `youos setup`."
+        )
+
+    creds = Credentials.from_authorized_user_file(
+        str(token_path), scopes=list(_NATIVE_WRITE_SCOPES),
+    )
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
+            creds.refresh(GoogleAuthRequest())
+            token_path.write_text(creds.to_json(), encoding="utf-8")
+        else:
+            raise RuntimeError(_NATIVE_REAUTH_HINT)
+
+    return build("gmail", "v1", credentials=creds, cache_discovery=False)
