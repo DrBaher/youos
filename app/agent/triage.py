@@ -94,7 +94,36 @@ def run_triage(
     # 2) Score + filter. Sender-history uses the active instance's DB so a
     # repeat-correspondent gets the prior-pairs boost.
     history = SenderHistory.from_database_url(database_url)
-    classified = classify_many(messages, history=history, threshold=threshold)
+
+    # ζ: read safety guardrails (skip-list, daily cap, strict-local) from
+    # config. Pull them once per sweep so the values are stable across all
+    # messages in the same triage even if the config is being edited.
+    try:
+        from app.agent.scheduler import get_agent_config
+
+        _cfg = get_agent_config()
+        skip_senders = _cfg.get("skip_senders") or []
+        daily_cap = int(_cfg.get("daily_draft_cap") or 0)
+        strict_local = bool(_cfg.get("strict_local") or False)
+    except Exception:
+        skip_senders, daily_cap, strict_local = [], 0, False
+
+    classified = classify_many(
+        messages, history=history, threshold=threshold, skip_senders=skip_senders,
+    )
+
+    # ζ: daily cap — count already-persisted rows for this account today, then
+    # cap how many MORE we'll write this sweep. 0 disables. Hit-cap drafts are
+    # still classified (and audit-logged in their counts), just not persisted
+    # or generated to avoid burning model time on dropped output.
+    cap_remaining: int | float
+    if persist and daily_cap > 0:
+        from app.agent.store import count_persisted_today
+
+        already = count_persisted_today(database_url, account=account)
+        cap_remaining = max(0, daily_cap - already)
+    else:
+        cap_remaining = float("inf")
 
     # 3) Draft the survivors via the same generation pipeline /feedback uses.
     from app.generation.service import DraftRequest, generate_draft
@@ -102,11 +131,25 @@ def run_triage(
     drafts: list[TriageDraft] = []
     skipped: list[tuple[InboxMessage, NeedsReplyVerdict]] = []
     surfaced: list[tuple[InboxMessage, NeedsReplyVerdict]] = []
+    cap_hit_count = 0
     for msg, verdict in classified:
         if not verdict.needs_reply:
             skipped.append((msg, verdict))
             if verdict.surface_for_review:
                 surfaced.append((msg, verdict))
+            continue
+        # ζ: daily cap — stop generating *and persisting* new drafts once the
+        # account's UTC-day quota is exhausted. Record as a skip with a clear
+        # reason so the operator can see why a sweep ended quiet.
+        if cap_remaining <= 0:
+            cap_hit_count += 1
+            verdict_capped = NeedsReplyVerdict(
+                needs_reply=False, score=verdict.score,
+                reasons=verdict.reasons + [f"daily cap reached ({daily_cap})"],
+                cold_outreach=verdict.cold_outreach,
+                surface_for_review=False,
+            )
+            skipped.append((msg, verdict_capped))
             continue
         try:
             resp = generate_draft(
@@ -117,6 +160,12 @@ def run_triage(
                     account_email=account,
                     thread_id=msg.thread_id,
                     standing_instructions=standing_instructions,
+                    # ζ: refuse cloud fallback during background triage when
+                    # strict-local is on. The generation pipeline reads this
+                    # via DraftRequest; cold-start before the LoRA is trained
+                    # is still served by the model server, but a hard local
+                    # failure won't silently go to Claude.
+                    strict_local=strict_local,
                 ),
                 database_url=database_url,
                 configs_dir=configs_dir,
@@ -130,6 +179,7 @@ def run_triage(
                     repairs=list(getattr(resp, "repairs", []) or []),
                 )
             )
+            cap_remaining -= 1  # ζ: one less slot for this UTC day
         except Exception as exc:
             logger.warning("triage draft generation failed for %s: %s", msg.message_id, exc)
             drafts.append(
