@@ -208,9 +208,26 @@
           <button class="btn"        data-action="push"     data-id="${row.id}" title="Create a real Gmail Draft on the original thread; then send it yourself from Gmail.">Push to Gmail Drafts</button>
           <button class="btn secondary" data-action="copy"  data-id="${row.id}">Copy draft</button>
           <button class="btn ok"      data-action="sent"    data-id="${row.id}" title="I sent it manually outside YouOS — just close this row.">Mark sent manually</button>
-          <button class="btn danger"  data-action="dismiss" data-id="${row.id}">Dismiss</button>
+          ${dismissControls(row.id)}
         </div>
       </div>`;
+  }
+
+  // Inline reason selector next to each Dismiss button — categorical signal
+  // for the agent-tuning loop. Empty value = "no reason given" (legacy path).
+  function dismissControls(rowId) {
+    return `
+      <span class="dismiss-group" style="display:inline-flex;gap:4px;align-items:center">
+        <select class="dismiss-reason" data-reason-for="${rowId}" title="Why? Helps the filter learn over time." style="font-size:12px;padding:4px 6px;border-radius:4px;border:1px solid var(--border)">
+          <option value="">Why? (optional)</option>
+          <option value="noise">Noise — shouldn't have drafted</option>
+          <option value="wrong_sender">Wrong sender</option>
+          <option value="wrong_content">Wrong content / draft missed the point</option>
+          <option value="already_handled">Already handled outside YouOS</option>
+          <option value="other">Other</option>
+        </select>
+        <button class="btn danger" data-action="dismiss" data-id="${rowId}">Dismiss</button>
+      </span>`;
   }
 
   function renderSurfaceRow(row) {
@@ -221,7 +238,7 @@
         <div class="from">from ${esc(row.sender || '(unknown)')}</div>
         <div class="reasons">${esc(reasons)}</div>
         <div class="row-actions" style="margin-top:6px">
-          <button class="btn danger" data-action="dismiss" data-id="${row.id}">Dismiss</button>
+          ${dismissControls(row.id)}
         </div>
       </div>`;
   }
@@ -284,6 +301,9 @@
       url = `/api/agent/pending/${id}/push_to_gmail`;
     } else if (action === 'dismiss') {
       url = `/api/agent/pending/${id}/dismiss`;
+      const sel = card.querySelector(`select.dismiss-reason[data-reason-for="${id}"]`);
+      const reason = sel && sel.value ? sel.value : null;
+      if (reason) body = { reason };
     } else if (action === 'copy') {
       const ta = card.querySelector(`#draft-${id}`);
       try { await navigator.clipboard.writeText(ta.value); status.textContent = 'Draft copied — paste into Gmail to send.'; } catch (e) { alert('Copy failed: ' + e); }
