@@ -71,7 +71,8 @@ def run_triage(
     # ε: bracket the whole sweep so we can log a single agent_audit row at
     # the end — start time, duration, counts, any per-message errors.
     import time as _time
-    from datetime import datetime, timezone as _tz
+    from datetime import datetime
+    from datetime import timezone as _tz
 
     _started_at_iso = datetime.now(_tz.utc).isoformat()
     _t0 = _time.monotonic()
@@ -248,7 +249,8 @@ def run_triage(
     # The audit log records *attempts*, not outcomes; --dry-run still leaves
     # a trace of what was swept (with persisted=0).
     try:
-        from datetime import datetime as _dt, timezone as _tz2
+        from datetime import datetime as _dt
+        from datetime import timezone as _tz2
 
         _finished_at_iso = _dt.now(_tz2.utc).isoformat()
         _duration_ms = int((_time.monotonic() - _t0) * 1000)
@@ -309,8 +311,8 @@ def _maybe_auto_promote_skip_senders(*, database_url: str, account: str) -> list
     swallowed at the caller; the agent loop has higher priorities than its
     own self-tuning.
     """
-    from app.core.feature_flags import get_flag, set_flag
     from app.agent.store import noise_dismissal_candidates
+    from app.core.feature_flags import get_flag, set_flag
 
     if not bool(get_flag("agent.auto_promote_skip_senders")):
         return []

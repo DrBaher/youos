@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import urllib.parse
 from contextlib import closing
 from pathlib import Path
 from typing import Any, Literal
@@ -20,7 +19,18 @@ Status = Literal["pending", "amended", "sent", "dismissed"]
 
 
 def _db_path(database_url: str) -> Path:
-    return Path(urllib.parse.urlparse(database_url).path)
+    """Parse a ``sqlite:///<path>`` URL to a filesystem path.
+
+    Uses ``removeprefix`` (matching ``app/db/bootstrap.py``) rather than
+    ``urllib.parse.urlparse``, because urlparse always treats the parsed
+    path as absolute (``sqlite:///var/youos.db`` → ``/var/youos.db``),
+    breaking the *relative* path that ``Settings`` emits by default. The
+    bootstrap script + ingestion modules all use removeprefix; this aligns.
+    """
+    prefix = "sqlite:///"
+    if not database_url.startswith(prefix):
+        raise ValueError(f"Only sqlite:/// URLs are supported (got {database_url!r})")
+    return Path(database_url.removeprefix(prefix))
 
 
 def _connect(database_url: str) -> sqlite3.Connection:

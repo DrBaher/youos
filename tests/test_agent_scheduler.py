@@ -9,9 +9,6 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-import pytest
-
-
 # --- config reader ---------------------------------------------------------
 
 
@@ -89,6 +86,7 @@ def test_notify_macos_swallows_subprocess_failure(monkeypatch):
     """An ``osascript`` failure (non-Darwin host, missing binary) must not
     bubble — agent uptime > notification fidelity."""
     import subprocess as _sub
+
     from app.agent import scheduler
 
     def _boom(*a, **k):

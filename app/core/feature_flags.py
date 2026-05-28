@@ -107,35 +107,58 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "label": "Standing instructions",
         "type": "text",
         "default": "",
-        "help": "Free-form guidance threaded into every triage draft (e.g. \"today I'm out of office; politely decline meetings\"). Snapshotted with each draft for auditability. Empty = none.",
+        "help": (
+            "Free-form guidance threaded into every triage draft "
+            "(e.g. \"today I'm out of office; politely decline meetings\"). "
+            "Snapshotted with each draft for auditability. Empty = none."
+        ),
     },
     {
         "key": "agent.skip_senders",
         "label": "Never draft for these senders",
         "type": "text",
         "default": "",
-        "help": "Comma-separated emails or @domains the agent skips outright. Use exact emails (alice@x.com) or @domain (@bigcorp.com) to skip a whole org. Hard-skip; runs before scoring.",
+        "help": (
+            "Comma-separated emails or @domains the agent skips outright. "
+            "Use exact emails (alice@x.com) or @domain (@bigcorp.com) to "
+            "skip a whole org. Hard-skip; runs before scoring."
+        ),
     },
     {
         "key": "agent.daily_draft_cap",
         "label": "Daily draft cap",
         "type": "int",
         "default": 50,
-        "help": "Maximum new drafts the agent will persist in one UTC day, per account. Defends against a runaway loop on a noisy inbox. Set to 0 to disable.",
+        "help": (
+            "Maximum new drafts the agent will persist in one UTC day, "
+            "per account. Defends against a runaway loop on a noisy "
+            "inbox. Set to 0 to disable."
+        ),
     },
     {
         "key": "agent.strict_local",
         "label": "Strict local-only (no cloud fallback during triage)",
         "type": "bool",
         "default": False,
-        "help": "Refuse cloud fallback during background triage — if the local model is unavailable, the message is logged as an error rather than drafted via Claude. Doesn't affect interactive /feedback or /draft.",
+        "help": (
+            "Refuse cloud fallback during background triage — if the "
+            "local model is unavailable, the message is logged as an "
+            "error rather than drafted via Claude. Doesn't affect "
+            "interactive /feedback or /draft."
+        ),
     },
     {
         "key": "agent.auto_promote_skip_senders",
         "label": "Auto-promote senders dismissed as noise 3+ times",
         "type": "bool",
         "default": False,
-        "help": "When a sender has been dismissed as 'noise' 3+ times in the last 30 days, automatically add them to skip_senders at the end of each sweep — no click required. Off by default; even with it on, the user can review promotions in the audit log and remove any in /settings.",
+        "help": (
+            "When a sender has been dismissed as 'noise' 3+ times in the "
+            "last 30 days, automatically add them to skip_senders at the "
+            "end of each sweep — no click required. Off by default; even "
+            "with it on, the user can review promotions in the audit log "
+            "and remove any in /settings."
+        ),
     },
 ]
 
