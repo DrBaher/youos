@@ -203,6 +203,40 @@ def promote_skip_senders(body: PromoteSkipSendersBody) -> dict:
     }
 
 
+@router.get("/api/agent/digest")
+def digest(
+    request: Request,
+    account: str | None = Query(None),
+    days: int = Query(1, ge=1, le=365),
+) -> dict:
+    """Orchestrator-facing digest endpoint (b59).
+
+    Mirrors ``youos digest --format json`` over HTTP. Designed for
+    integrations like OpenClaw / Hermes / a Telegram bot — they POST the
+    user's intent ("anything important in my inbox?"), call this once,
+    then paraphrase the ``summary`` field into a chat bubble. The
+    structured fields are there for drill-downs ("which sender is
+    auto-promoted?", "top noise dismissals?").
+
+    See ``docs/INTEGRATIONS.md`` for the full wiring recipe.
+    """
+    from app.agent.digest import _data_to_dict, build_digest
+    from app.core.config import get_user_emails
+
+    if not account:
+        emails = get_user_emails()
+        account = emails[0] if emails else None
+    if not account:
+        raise HTTPException(400, "no account configured; pass ?account=...")
+
+    data = build_digest(
+        database_url=_db_url(request),
+        account=account,
+        days=days,
+    )
+    return _data_to_dict(data)
+
+
 @router.get("/api/agent/observability")
 def observability(
     request: Request,

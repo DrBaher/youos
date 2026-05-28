@@ -260,6 +260,36 @@ def test_save_as_feedback_pair_rejects_surface_tier(authed_client):
     assert "no draft" in r.text
 
 
+def test_digest_endpoint_mirrors_cli_output(authed_client):
+    """b59: GET /api/agent/digest returns the same shape as
+    `youos digest --format json` — orchestrator-facing entry point."""
+    # Dismiss one row so the digest has interesting state.
+    rows = authed_client.get("/api/agent/pending").json()["rows"]
+    if rows:
+        authed_client.post(f"/api/agent/pending/{rows[0]['id']}/dismiss",
+                           json={"reason": "noise"})
+
+    # Pass account explicitly — the test fixture doesn't set user.emails.
+    body = authed_client.get("/api/agent/digest?account=you@example.com").json()
+    # Required orchestrator surface: summary headline + structured counts.
+    assert "summary" in body
+    assert body["summary"].startswith("YouOS")
+    assert "sweeps" in body
+    assert "pending_count" in body
+    assert "dismissed_count" in body
+    assert "pending_preview" in body  # b59: action-handle list for chat orchestrators
+    assert body["account"] == "you@example.com"
+
+
+def test_digest_endpoint_400s_without_account_or_user_emails(authed_client, monkeypatch):
+    """If no account is passed AND user.emails is empty, return a clear
+    400 rather than crashing."""
+    monkeypatch.setattr("app.core.config.get_user_emails", lambda *a, **k: [])
+    r = authed_client.get("/api/agent/digest")
+    assert r.status_code == 400
+    assert "no account" in r.text.lower()
+
+
 def test_observability_endpoint_returns_unified_payload(authed_client):
     # Generate some signal: dismiss a couple as noise so a hint can fire.
     rows = authed_client.get("/api/agent/pending").json()["rows"]

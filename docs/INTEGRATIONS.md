@@ -1,0 +1,182 @@
+# Integrations — driving YouOS from another agent
+
+YouOS is a **local-first email backend** with a clean REST surface. The whole agent loop (triage, draft, queue, dismiss, push to Gmail) is also reachable as an HTTP API — which means orchestrator-style agents like [OpenClaw](https://openclaw.dev), [Hermes](https://github.com/your-org/hermes), a Telegram bot, or a Slack bot can talk to YouOS the same way `/triage` does, and surface results in whatever channel the user already lives in.
+
+This doc covers the wiring.
+
+## The vision
+
+```
+                 ┌────────────────────────┐
+You on phone ←→  │  Telegram / WhatsApp /  │  ←→  Hermes / OpenClaw / a bot
+                 │  Slack — your chat      │            │
+                 └────────────────────────┘            │ HTTP + token
+                                                       ↓
+                                          ┌─────────────────────┐
+                                          │  YouOS server       │
+                                          │  (Mac, Tailscale)   │
+                                          │   /api/agent/...    │
+                                          └─────────────────────┘
+                                                       │
+                                                       │ gog / gws / native
+                                                       ↓
+                                                   Gmail
+```
+
+You ask "what's in my inbox?" in Telegram. Your orchestrator (Hermes / OpenClaw) calls YouOS, gets a structured summary, paraphrases it back. You ask "push #12" — orchestrator hits `POST /api/agent/pending/12/push_to_gmail`. Done. **You never leave your chat app.**
+
+## What's already there (no changes needed)
+
+| Surface | Where |
+|---|---|
+| OpenAPI spec | `GET /openapi.json` — FastAPI-generated, complete |
+| Swagger UI | `GET /docs` — interactive |
+| API-token auth | `X-YouOS-Token: <token>` or `Authorization: Bearer <token>` header |
+| Token issuance | `youos token-create` (one-time print; stored hashed) |
+| Token revocation | `youos token-revoke` |
+| Per-account isolation | every endpoint accepts `account=` query param |
+| Structured digest | `GET /api/agent/digest` returns summary + counts + pending preview + actions |
+
+## Setup recipe
+
+### 1. Make YouOS reachable
+
+Follow `docs/REMOTE_ACCESS.md` to set up Tailscale + a non-loopback bind. Don't set a PIN if you're only going to use token auth — PIN gates browser access (cookies); tokens gate API access.
+
+### 2. Mint an API token for your orchestrator
+
+```bash
+youos token-create
+# → API token created. Paste it into the YouOS extension Options — it is not shown again:
+#
+#   abc123def456-LONG-RANDOM-STRING
+#
+# Stored hashed on disk. Revoke all tokens with `youos token-revoke`.
+```
+
+Copy the token. Store it in your orchestrator's config (Hermes config file, OpenClaw secrets, Telegram-bot env var) — never commit it.
+
+### 3. From your orchestrator, hit YouOS
+
+Every call needs the token header:
+
+```bash
+curl -s -H "X-YouOS-Token: abc123..." \
+     "http://bbots-mac-mini:8901/api/agent/digest?days=1" \
+     | jq .summary
+# → "YouOS (today): 1 pending · 0 pushed · 0 dismissed (8 sweeps)"
+```
+
+That `summary` field is what the orchestrator paraphrases into the chat bubble.
+
+## Orchestrator playbook
+
+A typical conversation:
+
+**User**: "Anything important?"
+**Orchestrator**: `GET /api/agent/digest?days=1` → reads `summary` + `pending_preview`
+**Orchestrator** (in chat): "1 draft pending. Top: Q3 pricing from alice@partner.com (score 0.85)."
+
+**User**: "Push #12 to Gmail Drafts"
+**Orchestrator**: `POST /api/agent/pending/12/push_to_gmail`
+**Orchestrator**: "Done — Gmail draft `r1234...` created on the original thread. Finish-and-send from Gmail."
+
+**User**: "Dismiss it as noise"
+**Orchestrator**: `POST /api/agent/pending/12/dismiss` with `{"reason": "noise"}`
+**Orchestrator**: "Dismissed. Sender added to noise candidates."
+
+**User**: "Save my version as a training pair" (with the user's correction in the message body)
+**Orchestrator**: `POST /api/agent/pending/12/save_as_feedback_pair` with `{"edited_reply": "user's version"}`
+**Orchestrator**: "Saved as training pair #47. Will feed into the next nightly LoRA retrain."
+
+## Endpoint reference
+
+| Verb | Path | Purpose |
+|---|---|---|
+| GET | `/api/agent/digest?account=&days=1` | Headline + structured counts + pending preview |
+| GET | `/api/agent/pending?account=&tier=&status=&limit=` | Full pending queue |
+| GET | `/api/agent/sweeps?account=&limit=` | Audit log of recent sweeps |
+| GET | `/api/agent/observability?account=&days=30` | Sweep stats + dismissal aggregate + score histogram + hints |
+| GET | `/api/agent/dismissal_stats?account=&days=30` | Dismissal-rate aggregate |
+| GET | `/api/agent/skip_sender_candidates?account=&min_count=2&days=30` | Senders the user has dismissed as noise; ready to promote |
+| POST | `/api/agent/skip_senders/promote` `{senders: [list]}` | Bulk-add to `agent.skip_senders` |
+| POST | `/api/agent/pending/{id}/amend` `{amended_draft}` | Save edited draft text |
+| POST | `/api/agent/pending/{id}/dismiss` `{reason?}` | Dismiss (optional categorical reason) |
+| POST | `/api/agent/pending/{id}/mark_sent` | Mark sent (for "I sent manually outside YouOS") |
+| POST | `/api/agent/pending/{id}/push_to_gmail` | Create real Gmail Draft on original thread |
+| POST | `/api/agent/pending/{id}/save_as_feedback_pair` `{edited_reply, rating?, feedback_note?}` | Feed correction into LoRA training |
+| POST | `/api/agent/triage` `{account, window, limit, threshold, backend?}` | Trigger a fresh sweep on demand |
+
+## Token-auth contract
+
+Every API call returning anything other than the rendered HTML pages needs **either**:
+- `X-YouOS-Token: <token>` header, OR
+- `Authorization: Bearer <token>` header
+
+Tokens are stored hashed (PBKDF2 — same as PINs); plaintext is shown once at creation. `youos token-list` shows count + creation dates but never the plaintext.
+
+Revoke a single compromised token by revoking all (`youos token-revoke`) and re-minting the ones you still need — current schema is "all tokens or none." A finer-grained revocation API is a future feature.
+
+## OpenAPI spec for tool-discovery
+
+LLM-driven orchestrators that want to discover the YouOS surface dynamically can fetch:
+
+```
+GET /openapi.json
+```
+
+This returns the full FastAPI-generated OpenAPI 3.x document with every endpoint, parameter, request body schema, and response shape. Tools like LangChain's `OpenAPISpec.from_url` consume this directly.
+
+The `summary`/`description` fields on each route come from the docstrings, so the orchestrator gets human-readable explanations of what each endpoint does.
+
+## Example: minimal Telegram bot wiring (sketch)
+
+```python
+import os, requests
+from telegram.ext import Application, CommandHandler
+
+YOUOS = os.environ["YOUOS_URL"]            # http://bbots-mac-mini:8901
+TOKEN = os.environ["YOUOS_TOKEN"]
+HEAD  = {"X-YouOS-Token": TOKEN}
+
+def digest(update, ctx):
+    r = requests.get(f"{YOUOS}/api/agent/digest?days=1", headers=HEAD).json()
+    msg = r["summary"]
+    for row in r["pending_preview"]:
+        msg += f"\n#{row['id']}  {row['subject']}  ←  {row['sender']}"
+    update.message.reply_text(msg)
+
+def push(update, ctx):
+    row_id = int(ctx.args[0])
+    r = requests.post(f"{YOUOS}/api/agent/pending/{row_id}/push_to_gmail", headers=HEAD).json()
+    update.message.reply_text(f"Pushed: {r.get('gmail_draft_id', '?')}")
+
+def dismiss(update, ctx):
+    row_id = int(ctx.args[0])
+    requests.post(f"{YOUOS}/api/agent/pending/{row_id}/dismiss",
+                  json={"reason": "noise"}, headers=HEAD)
+    update.message.reply_text("Dismissed.")
+
+app = Application.builder().token(os.environ["TELEGRAM_TOKEN"]).build()
+app.add_handler(CommandHandler("inbox", digest))
+app.add_handler(CommandHandler("push", push))
+app.add_handler(CommandHandler("dismiss", dismiss))
+app.run_polling()
+```
+
+That's ~30 lines. The complexity is in the orchestrator's NLU layer (parsing "push the Q3 thing" → `row_id=12`), not in talking to YouOS.
+
+## Hermes / OpenClaw
+
+YouOS already ships an OpenClaw bundle (`clawhub.json` at the repo root + `SKILL.md` describing the agent surface). For Hermes-style orchestrators, the wiring is simpler — point them at the YouOS URL + token and let them discover the surface via `/openapi.json`.
+
+Future: a dedicated **Hermes skill manifest** (similar to clawhub.json but Hermes-flavored) is a small follow-up if the integration takes off. For now, the OpenAPI spec is the contract.
+
+## Security model
+
+- **Tailscale provides the network boundary.** Only devices on your Tailnet can reach the IP.
+- **Tokens provide the API gate.** Even on the Tailnet, a request without a valid token gets 401.
+- **PIN provides the browser gate.** If you set a PIN, browser visits to `/triage` need it. Tokens still work for API.
+- **No external egress** from YouOS to anywhere except the user's Gmail. Orchestrators *pull* from YouOS; YouOS doesn't *push* to orchestrators (so a compromised orchestrator can read+act on your inbox but can't pivot back out).
+
+If your orchestrator is on a different machine than YouOS, both need to be on the same Tailnet. If the orchestrator is hosted (cloud), you'd need either (a) Tailscale's userspace-mode networking in the orchestrator container or (b) Funnel'ed exposure — both more complex than the local-Tailscale story this doc covers.

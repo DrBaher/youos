@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.2.0-beta.59 — 2026-05-28
+
+### Orchestrator integration — drive YouOS from Hermes / OpenClaw / Telegram bot
+
+User vision: "users set this IP on their local model like OpenClaw and Hermes and they handle email processing and triage through the same agent channel — usually Telegram, WhatsApp, or Slack." The end-user lives in their chat app; an orchestrator handles email by calling YouOS.
+
+**What was already there** (audit at PR time): `/openapi.json` (12 endpoints), `/docs` (Swagger), `X-YouOS-Token` auth, `youos token-create`, per-account isolation on every endpoint.
+
+**What this PR adds** (the missing pieces for chat-bubble UX):
+
+1. **`GET /api/agent/digest?account=&days=1`** — orchestrator-facing endpoint mirroring `youos digest --format json`. Returns `summary` headline + counts + `pending_preview` (top-5 with action handles).
+
+2. **`youos digest --format chat`** — compact text rendering with the summary headline + top-5 pending rows + auto-promoted senders + Tailscale URL. Designed for Telegram-bubble use (~1500 chars).
+
+3. **`summary_line()` helper** — one-line headline ≤120 chars for push-notification / chat-bubble use.
+
+4. **`pending_preview` field** on `DigestData` — top-5 rows captured at build-time so the chat formatter is pure.
+
+**Live-verified**: `youos digest --format chat` shows clean rows with IDs; `GET /api/agent/digest` returns the same JSON.
+
+**New `docs/INTEGRATIONS.md`** — the wiring recipe:
+- ASCII architecture diagram (Telegram ↔ Orchestrator ↔ YouOS ↔ Gmail)
+- Setup: Tailscale + `youos token-create` + paste token into orchestrator config
+- Orchestrator playbook with 4 example dialogs
+- Endpoint reference table
+- Token-auth contract
+- ~30-line Telegram bot example
+- Security model
+
+**Tests** — 5 new (digest formatters + route).
+
+The agent loop is now driveable from any chat orchestrator without the user leaving their existing app.
+
 ## v0.2.0-beta.58 — 2026-05-28
 
 ### Multi-account end-to-end — verified + documented
