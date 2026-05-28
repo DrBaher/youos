@@ -1,5 +1,46 @@
 # Changelog
 
+## v0.2.0-beta.33 — 2026-05-28
+
+### Agent triage — γ (background scheduler + macOS notify)
+The agent is now actually autonomous — the running ``youos serve`` process sweeps your unread inbox every N minutes by itself and posts a macOS notification when there's something new to review at ``/triage``. Opt-in via ``agent.enabled``; off by default so installing YouOS doesn't quietly start polling.
+
+**`app/agent/scheduler.py`** (new):
+- ``get_agent_config()`` — reads ``agent.*`` from ``youos_config.yaml`` (re-read every iteration so a ``youos config set agent.enabled false`` takes effect on the next tick; no restart needed).
+- ``_loop(app)`` — the background coroutine. For each ``agent.accounts`` (or fallback to ``user.emails``), call ``run_triage`` in a thread executor and tally ``persisted``. Notify macOS only when the count is > 0 (no Notification Center spam on quiet polls). Sleeps via ``asyncio.wait_for(stop.wait(), …)`` so shutdown is immediate, not "wait the full interval."
+- Per-iteration failures (transient gog auth, network blip) are caught + logged at info; the loop keeps running.
+- ``_notify_macos(...)`` — best-effort ``osascript display notification``; silently no-ops on non-Darwin or if the call fails. Agent uptime > notification fidelity.
+- ``start(app)`` / ``stop(app)`` — lifespan hooks. ``start()`` short-circuits when ``PYTEST_CURRENT_TEST`` is set, so tests can't accidentally launch a real sweep.
+- A 60-second floor on the interval prevents an accidental tight-loop config.
+
+**`app/main.py`** — lifespan calls ``scheduler.start(app)`` after the warm-server pre-warm; on shutdown ``scheduler.stop(app)`` sets the event and awaits the task (5s timeout, then cancel). Scheduler failure does NOT block server startup.
+
+**`app/core/feature_flags.py`** — three new flags, surfaced on ``/settings``:
+- ``agent.enabled`` (bool, default False)
+- ``agent.interval_minutes`` (int, default 15)
+- ``agent.notify_macos`` (bool, default True)
+
+### Tests
+- ``tests/test_agent_scheduler.py`` (11 new) — config reads + clamping, account resolution (explicit list vs fallback to ``user.emails``), ``osascript`` failure swallowed, loop exit-when-disabled, multi-account sweep + single notification with the correct count, no-notification-on-zero, sweep failure on one account doesn't kill the others, ``start()`` is a no-op under pytest.
+- 1190/1194 full sweep (was 1179 in β.2; +11 here). Same 4 pre-existing MLX-integration failures, unrelated.
+
+### How to turn it on
+```bash
+youos config set agent.enabled true                # opt in
+youos config set agent.interval_minutes 15         # default
+youos config set agent.notify_macos true           # default
+youos config set agent.accounts '["baher@medicus.ai", "drbaher@gmail.com"]'  # optional; falls back to user.emails
+# Restart the server (or just start it if not already running)
+youos serve
+```
+Open ``/triage`` to see drafts as they appear.
+
+### What's still missing (δ → Phase 2)
+- **δ**: standing-instructions field in ``/settings``, threaded into the generation prompt via the existing ``extra_constraint`` hook.
+- **ε**: audit log + a "what the agent did today" view on ``/triage``.
+- **ζ**: per-sender opt-out, daily cap, strict-local switch (refuses to use cloud fallback during triage).
+- **Phase 2**: ``gmail.compose`` OAuth → real Gmail Drafts on **Mark sent**.
+
 ## v0.2.0-beta.32 — 2026-05-28
 
 ### Agent triage — β.2 (API + `/triage` page)

@@ -175,7 +175,27 @@ async def _lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # γ: background agent-triage loop. No-op under pytest; otherwise opts in
+    # via `agent.enabled` (read every iteration so flipping the flag takes
+    # effect without restart).
+    try:
+        from app.agent import scheduler as _agent_scheduler
+
+        _agent_scheduler.start(app)
+    except Exception as exc:
+        # Failure to start the scheduler must not block server startup.
+        print(f"[YOUOS WARNING]: agent scheduler failed to start: {exc}")
+
     yield
+
+    # Stop the agent loop cleanly before everything else tears down.
+    try:
+        from app.agent import scheduler as _agent_scheduler
+
+        await _agent_scheduler.stop(app)
+    except Exception:
+        pass
+
     # Clear embedding cache on shutdown
     from app.core.embeddings import clear_embedding_cache
 
