@@ -51,24 +51,29 @@ class GmailDraftResult:
 def create_draft(
     *,
     account: str,
-    thread_id: str | None,
+    thread_id: str | None = None,
+    reply_to_message_id: str | None = None,
     to_email: str,
     subject: str,
     body: str,
     backend: str | None = None,
 ) -> GmailDraftResult:
-    """Create a Gmail draft on ``thread_id`` (if set) addressed to ``to_email``.
+    """Create a Gmail draft addressed to ``to_email`` on the user's ``account``.
 
-    ``account`` is the Google account that *owns* the draft (the user's
-    address, not the recipient's). ``backend`` overrides the configured
-    ``ingestion.google_backend``; leave None to use the default.
+    Threading: pass ``reply_to_message_id`` (the Gmail message ID of the
+    inbound the draft replies to). The gog backend (the only one with a
+    verified CLI shape) sets In-Reply-To / References / threadId from this
+    id; gws/native fall back to ``thread_id`` if given.
+
+    ``backend`` overrides the configured ``ingestion.google_backend``;
+    leave None to use the default.
     """
     from app.core.config import get_ingestion_google_backend
 
     name = (backend or get_ingestion_google_backend()).strip().lower()
     if name == "gog":
         return _gog_create_draft(
-            account=account, thread_id=thread_id,
+            account=account, reply_to_message_id=reply_to_message_id,
             to_email=to_email, subject=subject, body=body,
         )
     if name == "gws":
@@ -103,36 +108,37 @@ def _build_rfc822(
 def _gog_create_draft(
     *,
     account: str,
-    thread_id: str | None,
+    reply_to_message_id: str | None,
     to_email: str,
     subject: str,
     body: str,
 ) -> GmailDraftResult:
-    """Best-effort ``gog gmail drafts create`` invocation.
+    """Verified ``gog gmail drafts create`` invocation (gog 0.17.0).
 
-    Builds an RFC 822 message, base64url-encodes it, and passes via
-    ``--raw`` — the wire-level format Gmail's drafts.create API expects.
-    Thread continuity comes from ``--thread-id``.
+    gog wants the message fields broken out — ``--to`` / ``--subject`` /
+    ``--body-file -`` (body via stdin to avoid shell escaping). Threading
+    is by **message id** (not thread id): ``--reply-to-message-id`` sets
+    In-Reply-To, References, *and* threadId in one shot.
 
-    NOTE: the exact gog subcommand and flag names here are based on the
-    Google API shape; if gog uses different names (e.g. ``drafts.create``
-    instead of ``drafts create``), this is the single function to fix.
-    See ``gog gmail drafts --help`` to verify on your local install.
+    Body is sent on stdin via ``--body-file -`` so multi-line bodies,
+    quotes, backticks, and other shell-hazardous content go through
+    unmangled.
     """
-    rfc = _build_rfc822(to_email=to_email, subject=subject, body=body)
-    raw_b64 = base64.urlsafe_b64encode(rfc).decode("ascii")
-
     cmd: list[str] = [
         "gog", "gmail", "drafts", "create",
         "--account", account,
+        "--to", to_email,
+        "--subject", subject,
+        "--body-file", "-",
         "--json", "--no-input",
-        "--raw", raw_b64,
     ]
-    if thread_id:
-        cmd += ["--thread-id", thread_id]
+    if reply_to_message_id:
+        cmd += ["--reply-to-message-id", reply_to_message_id]
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(
+            cmd, input=body, capture_output=True, text=True, timeout=30,
+        )
     except FileNotFoundError as exc:
         raise GmailWriteError("gog CLI not on PATH — install via Homebrew or set up the native backend") from exc
     except subprocess.TimeoutExpired as exc:
@@ -153,7 +159,10 @@ def _gog_create_draft(
     if not draft_id:
         raise GmailWriteError(f"gog returned no draft id; payload={payload!r}")
 
-    logger.info("created gmail draft %s for account=%s thread=%s", draft_id, account, thread_id)
+    logger.info(
+        "created gmail draft %s for account=%s reply_to=%s",
+        draft_id, account, reply_to_message_id,
+    )
     return GmailDraftResult(draft_id=str(draft_id), raw_response=payload)
 
 

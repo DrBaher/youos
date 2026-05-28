@@ -39,10 +39,16 @@ def test_unknown_backend_raises_value_error(monkeypatch):
 
 
 def test_gog_creates_draft_and_extracts_id(monkeypatch):
+    """Pins the gog call shape verified against gog 0.17.0.
+
+    gog takes broken-out fields (--to / --subject / --body-file -) plus
+    --reply-to-message-id for threading; NOT --raw / --thread-id.
+    """
     captured: dict = {}
 
-    def _fake_run(cmd, capture_output, text, timeout):
+    def _fake_run(cmd, input, capture_output, text, timeout):
         captured["cmd"] = cmd
+        captured["stdin"] = input
         return SimpleNamespace(
             returncode=0,
             stdout=json.dumps({"id": "draft_abc", "message": {"id": "msg_xyz"}}),
@@ -55,45 +61,47 @@ def test_gog_creates_draft_and_extracts_id(monkeypatch):
     from app.ingestion.gmail_write import create_draft
 
     result = create_draft(
-        account="me@medicus.ai", thread_id="thr_42",
-        to_email="alice@partner.com", subject="Re: pricing",
-        body="Confirmed — pricing held.",
+        account="me@medicus.ai",
+        reply_to_message_id="msg_42",
+        to_email="alice@partner.com",
+        subject="Re: pricing",
+        body="Confirmed — pricing held.\nLet me know if you need a written quote.",
     )
 
     assert result.draft_id == "draft_abc"
-    # Command-shape contract — if gog renames any of these we'll see it here.
     cmd = captured["cmd"]
     assert cmd[:4] == ["gog", "gmail", "drafts", "create"]
-    assert "--account" in cmd and cmd[cmd.index("--account") + 1] == "me@medicus.ai"
-    assert "--thread-id" in cmd and cmd[cmd.index("--thread-id") + 1] == "thr_42"
+    assert cmd[cmd.index("--account") + 1] == "me@medicus.ai"
+    assert cmd[cmd.index("--to") + 1] == "alice@partner.com"
+    assert cmd[cmd.index("--subject") + 1] == "Re: pricing"
+    assert cmd[cmd.index("--body-file") + 1] == "-"
+    assert cmd[cmd.index("--reply-to-message-id") + 1] == "msg_42"
     assert "--json" in cmd and "--no-input" in cmd
-    assert "--raw" in cmd
-    # Decode the --raw payload and verify the RFC822 fields landed.
-    raw_b64 = cmd[cmd.index("--raw") + 1]
-    rfc = base64.urlsafe_b64decode(raw_b64).decode("utf-8")
-    assert "To: alice@partner.com" in rfc
-    assert "Subject: Re: pricing" in rfc
-    assert "Confirmed — pricing held." in rfc
+    # Body goes on stdin (so multi-line / shell-hazardous content passes through).
+    assert captured["stdin"] == "Confirmed — pricing held.\nLet me know if you need a written quote."
+    # We don't use --raw or --thread-id anymore — gog wants broken-out fields.
+    assert "--raw" not in cmd
+    assert "--thread-id" not in cmd
 
 
-def test_gog_skips_thread_id_flag_when_none(monkeypatch):
+def test_gog_skips_reply_to_flag_when_none(monkeypatch):
     captured: dict = {}
-    def _fake_run(cmd, capture_output, text, timeout):
+    def _fake_run(cmd, input, capture_output, text, timeout):
         captured["cmd"] = cmd
         return SimpleNamespace(returncode=0, stdout=json.dumps({"id": "d1"}), stderr="")
     monkeypatch.setattr("app.ingestion.gmail_write.subprocess.run", _fake_run)
     monkeypatch.setattr("app.core.config.get_ingestion_google_backend", lambda: "gog")
 
     from app.ingestion.gmail_write import create_draft
-    create_draft(account="me@x.com", thread_id=None, to_email="t@y.com", subject="s", body="b")
-    assert "--thread-id" not in captured["cmd"]
+    create_draft(account="me@x.com", reply_to_message_id=None, to_email="t@y.com", subject="s", body="b")
+    assert "--reply-to-message-id" not in captured["cmd"]
 
 
 # --- gog: error paths ------------------------------------------------------
 
 
 def test_gog_translates_nonzero_exit_to_gmail_write_error(monkeypatch):
-    def _fake_run(cmd, capture_output, text, timeout):
+    def _fake_run(cmd, input, capture_output, text, timeout):
         return SimpleNamespace(
             returncode=1,
             stdout="",
@@ -105,7 +113,7 @@ def test_gog_translates_nonzero_exit_to_gmail_write_error(monkeypatch):
     from app.ingestion.gmail_write import GmailWriteError, create_draft
 
     with pytest.raises(GmailWriteError, match="gmail.compose scope not granted"):
-        create_draft(account="me@x.com", thread_id="t", to_email="them@y.com", subject="s", body="b")
+        create_draft(account="me@x.com", reply_to_message_id="m", to_email="them@y.com", subject="s", body="b")
 
 
 def test_gog_translates_file_not_found_to_gmail_write_error(monkeypatch):
@@ -117,7 +125,7 @@ def test_gog_translates_file_not_found_to_gmail_write_error(monkeypatch):
     from app.ingestion.gmail_write import GmailWriteError, create_draft
 
     with pytest.raises(GmailWriteError, match="gog CLI not on PATH"):
-        create_draft(account="me@x.com", thread_id="t", to_email="them@y.com", subject="s", body="b")
+        create_draft(account="me@x.com", reply_to_message_id="m", to_email="them@y.com", subject="s", body="b")
 
 
 def test_gog_translates_malformed_json_to_gmail_write_error(monkeypatch):
@@ -129,7 +137,7 @@ def test_gog_translates_malformed_json_to_gmail_write_error(monkeypatch):
     from app.ingestion.gmail_write import GmailWriteError, create_draft
 
     with pytest.raises(GmailWriteError, match="non-JSON stdout"):
-        create_draft(account="me@x.com", thread_id="t", to_email="them@y.com", subject="s", body="b")
+        create_draft(account="me@x.com", reply_to_message_id="m", to_email="them@y.com", subject="s", body="b")
 
 
 def test_gog_translates_missing_id_to_gmail_write_error(monkeypatch):
@@ -141,7 +149,7 @@ def test_gog_translates_missing_id_to_gmail_write_error(monkeypatch):
     from app.ingestion.gmail_write import GmailWriteError, create_draft
 
     with pytest.raises(GmailWriteError, match="no draft id"):
-        create_draft(account="me@x.com", thread_id="t", to_email="them@y.com", subject="s", body="b")
+        create_draft(account="me@x.com", reply_to_message_id="m", to_email="them@y.com", subject="s", body="b")
 
 
 # --- gws: call shape + success --------------------------------------------
