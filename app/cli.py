@@ -245,11 +245,24 @@ def status():
     else:
         print("Ollama:      \u274c not configured")
 
-    # Tailscale
+    # Tailscale / remote access
+    server_host = (config.get("server", {}) or {}).get("host", "127.0.0.1")
+    server_pin = (config.get("server", {}) or {}).get("pin", "") or ""
+    exposed = server_host not in ("127.0.0.1", "localhost", "")
     if ts_hostname:
-        print(f"Tailscale:   \u2705 https://{ts_hostname}.ts.net")
+        # Direct access via Tailscale MagicDNS or IP; not behind a TLS
+        # terminator, so http:// + the bound port.
+        print(f"Tailscale:   \u2705 http://{ts_hostname}:{port}  (also http://<tailscale-ip>:{port})")
+    elif exposed:
+        print(f"Remote URL:  \u2705 http://{server_host}:{port}  (server.host is non-loopback)")
     else:
-        print("Tailscale:   not configured")
+        print("Tailscale:   not configured (loopback-only; see docs/REMOTE_ACCESS.md)")
+    if exposed and not server_pin:
+        print(
+            "  \u26a0\ufe0f  server.host is exposed but server.pin is empty. "
+            "Anyone on your network can reach /triage. "
+            "Set a PIN: `youos config set server.pin <PIN>`"
+        )
 
     print()
 
