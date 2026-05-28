@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.2.0-beta.53 — 2026-05-28
+
+### Process hardening: branch protection + verification checklists in CONTRIBUTING
+
+CI was already running the right checks (ruff + pytest matrix on 3.11/3.12). The reason b41–b48 went red on `main` for days without anyone noticing: **`main` had no branch protection**. Red CI didn't block merges; nothing forced anyone to look at the badge.
+
+**Branch protection now active** on `main` (set via `gh api`):
+- Required status checks: `test (3.11)` AND `test (3.12)` must pass before merge
+- `strict: false` (don't force rebases on every PR)
+- `enforce_admins: false` (Baher can still hot-fix in an emergency)
+
+**`CONTRIBUTING.md` extended** with a "Verification checklists" section capturing the 4 bug classes caught this session. Each comes from a real merged commit that broke real things; each has a cheap detection step:
+
+1. **Code that shells out to an external CLI** → run `<cmd> --help` or schema introspection (`gws schema <method>`) on a real machine, isolate the invocation to one function, name the verification command in a top-of-function comment. (b47/b48.)
+2. **Tests that mutate config** → also `monkeypatch.setattr("app.core.config.CONFIG_PATH", ...)` + `load_config.cache_clear()`; check `git diff youos_config.yaml` after running. (b46.)
+3. **Tests that exercise model generation** → stub `model_server.is_enabled` to False when fixture-asserting on subprocess calls. (b50.)
+4. **Anything touching `sqlite:///` URLs** → use `removeprefix("sqlite:///")`, not `urllib.parse.urlparse(...).path` (which silently absolutizes). (b49.)
+
+The checklist is meant to grow as we learn. Not bureaucracy — every entry corresponds to a real bug class with a known cheap detection step.
+
 ## v0.2.0-beta.52 — 2026-05-28
 
 ### Audit-surfacing for auto-promoted senders
