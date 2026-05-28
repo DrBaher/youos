@@ -418,20 +418,31 @@ def main() -> None:
     findings = analyze(db_path, recent_days=recent_days)
     print_report(findings)
 
+    # Resolve output paths from the *active instance* (configs_dir/var_dir).
+    # The previous version hardcoded ROOT_DIR so a YOUOS_DATA_DIR=instance run
+    # wrote findings to the repo, leaving the instance's persona.yaml stale.
+    from app.core.settings import get_settings
+
+    _settings = get_settings()
+    _configs_dir = _settings.configs_dir
+    _persona_path = _configs_dir / "persona.yaml"
+    _analysis_output = _configs_dir / "persona_analysis.json"
+
     if args.dry_run:
-        print("\n[DRY RUN] Would write findings to configs/persona_analysis.json")
+        print(f"\n[DRY RUN] Would write findings to {_analysis_output}")
         # Show what persona merge would do
         from scripts.analyze_persona_merge import merge_persona_analysis
 
         merge_persona_analysis(
             analysis_path=None,
-            persona_path=ROOT_DIR / "configs" / "persona.yaml",
+            persona_path=_persona_path,
             log_path=get_var_dir() / "persona_merge.log",
             dry_run=True,
             findings_dict=findings,
         )
     else:
-        output_path = ROOT_DIR / "configs" / "persona_analysis.json"
+        output_path = _analysis_output
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(findings, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"\nFindings written to {output_path}")
 
