@@ -27,6 +27,12 @@ def mocked_environment(monkeypatch, tmp_path):
     conn.execute(
         "CREATE TABLE reply_pairs (id INTEGER PRIMARY KEY, inbound_author TEXT)"
     )
+    # β: tests use the real agent_pending_drafts schema so persistence is
+    # exercised end-to-end. Call the migration directly rather than copying
+    # the DDL here so the test can't drift from prod.
+    from app.db.bootstrap import _migrate_agent_pending_drafts
+
+    _migrate_agent_pending_drafts(conn)
     conn.commit()
     conn.close()
 
@@ -124,3 +130,45 @@ def test_triage_records_draft_errors_without_crashing(mocked_environment, monkey
     assert "warm server down" in errored[0].error
     # kept counts only successful drafts.
     assert result.kept == 0
+
+
+# --- β: persistence behaviour ---------------------------------------------
+
+
+def test_triage_persists_drafts_and_is_idempotent_on_repeat_run(mocked_environment):
+    """``run_triage`` persists drafts into agent_pending_drafts and is
+    idempotent on the Gmail message_id — a second run with the same inbound
+    must not create duplicates."""
+    from app.agent.triage import run_triage
+    from app.agent.store import list_pending
+
+    env = mocked_environment
+
+    r1 = run_triage(account="you@example.com", database_url=env["database_url"], configs_dir=env["configs_dir"])
+    assert r1.persisted == 1  # the pricing question — newsletter is hard-skipped
+    rows = list_pending(env["database_url"])
+    assert len(rows) == 1
+    assert rows[0]["subject"] == "Pricing question"
+    assert rows[0]["tier"] == "draft"
+    assert rows[0]["status"] == "pending"
+    assert rows[0]["draft"] == "Hi Alice, confirmed — Q3 pricing unchanged."
+
+    # Second run: same message_ids → upsert IGNOREs → no new rows.
+    r2 = run_triage(account="you@example.com", database_url=env["database_url"], configs_dir=env["configs_dir"])
+    assert r2.persisted == 0
+    rows2 = list_pending(env["database_url"])
+    assert len(rows2) == 1, "repeated triage must not duplicate"
+
+
+def test_triage_dry_run_does_not_persist(mocked_environment):
+    from app.agent.triage import run_triage
+    from app.agent.store import list_pending
+
+    env = mocked_environment
+    result = run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+        persist=False,
+    )
+    assert result.persisted == 0
+    assert list_pending(env["database_url"]) == []

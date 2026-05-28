@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.2.0-beta.31 — 2026-05-28
+
+### Agent triage — β.1 (persistence)
+First half of β. Triage results now persist to a new ``agent_pending_drafts`` table, so the loop has memory between runs. Idempotent on the Gmail ``message_id`` — repeated triage runs on the same window don't re-draft the same inbound. The web UI (``/triage``) is the next PR (β.2); for now you inspect via SQL or the CLI summary.
+
+**Schema** (``app/db/bootstrap.py``: new ``_migrate_agent_pending_drafts``):
+- ``message_id`` unique → upserts are no-ops on repeat
+- inbound snapshot (sender / subject / body / received_at)
+- verdict (``needs_reply_score``, ``reasons_json``, ``cold_outreach``, ``tier``)
+- draft (``draft``, ``draft_model``, ``draft_repairs_json``, ``standing_instructions_snapshot``)
+- lifecycle (``status``: pending/amended/sent/dismissed, ``amended_draft``, ``sent_at``, ``dismissed_at``)
+- two indexes (status+tier+created, account+status)
+
+**Two-tier classification** (new ``NeedsReplyVerdict.surface_for_review`` flag): drafts (``tier='draft'``, scored ≥ threshold) and borderline cases (``tier='surface'``, scored 0.30–0.59 with no hard-skip). Tier 2 captures the cases the filter intentionally won't auto-draft but shouldn't silently bury — e.g. the demo-form noreply lead from the b30 medicus QA. Hard-skipped messages (newsletters, automation domains, repo-tag CI mail) are *not* persisted; that's noise.
+
+**`app/agent/store.py`** (new DAL):
+- ``upsert_pending(...)`` — INSERT OR IGNORE on message_id; returns row id or None on duplicate.
+- ``list_pending(account=None, status='pending', tier=None, limit=100)`` — newest+highest-score first; rehydrates JSON columns to Python lists.
+- ``get(row_id)``, ``mark_amended(row_id, amended_draft)``, ``mark_sent(row_id)``, ``mark_dismissed(row_id)``.
+
+**`app/agent/triage.py`** updated: orchestrator now writes both tiers to the table (controlled by ``persist=True`` default). ``TriageResult`` gains ``surfaced`` and ``persisted`` counts.
+
+**CLI ``youos triage``** gains ``--dry-run`` (print only, no DB writes — useful for filter-tuning). Without the flag, drafts are persisted and the operator visits ``/triage`` (β.2) to act. CLI also prints the new "surface for review" tier separately from hard-skipped noise.
+
+### Tests
+- ``tests/test_agent_store.py`` (6 new) — upsert idempotency, list ordering + JSON rehydration, tier filter, state transitions (amend/send/dismiss), pending-only filter.
+- ``tests/test_agent_triage.py`` (2 new) — persistence (rows land, second run is no-op), `--dry-run` skips persistence.
+- 25/25 across agent suites; 1172/1176 full sweep (same 4 pre-existing MLX-integration failures, unrelated).
+
+### Next (β.2)
+- ``app/api/agent_routes.py`` — REST surfaces for the UI.
+- ``templates/triage.html`` — inbound + draft side-by-side, two-tier surfacing, [Edit] [Copy to Gmail] [Dismiss] [Mark sent].
+- Nav link wired into existing pages.
+
 ## v0.2.0-beta.30 — 2026-05-28
 
 ### Agent triage — further filter tuning from the 14-day medicus sample
