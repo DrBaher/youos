@@ -667,6 +667,45 @@ def triage(
         typer.echo("saved to agent_pending_drafts (visit /triage to review). nothing pushed to Gmail.")
 
 
+@app.command(name="digest")
+def digest_cmd(
+    account: str = typer.Option(None, "--account", help="Account email (defaults to the first configured)"),
+    days: int = typer.Option(1, "--days", help="Window in days (default 1 = today)"),
+    fmt: str = typer.Option("text", "--format", help="Output format: text | html | json"),
+):
+    """Print an agent-digest summary for ``account`` over the last ``days``.
+
+    Designed to be piped into ``mail``/``sendmail`` via cron for a daily
+    email when you're away from your terminal. See ``docs/REMOTE_ACCESS.md``
+    for the cron recipe.
+
+    Examples:
+        youos digest                                  # today, plain text
+        youos digest --days 7 --format html           # last week as HTML
+        youos digest --format json | jq .             # JSON for further processing
+    """
+    from app.agent.digest import build_digest, format_digest
+    from app.core.config import get_user_emails
+
+    if fmt not in ("text", "html", "json"):
+        typer.echo(f"unknown --format {fmt!r} (allowed: text, html, json)", err=True)
+        raise typer.Exit(2)
+    if not account:
+        emails = get_user_emails()
+        if not emails:
+            typer.echo("No account configured. Pass --account <email> or set user.emails.", err=True)
+            raise typer.Exit(2)
+        account = emails[0]
+    if days < 1:
+        typer.echo("--days must be ≥ 1", err=True)
+        raise typer.Exit(2)
+
+    settings = get_settings()
+    data = build_digest(database_url=settings.database_url, account=account, days=days)
+    out = format_digest(data, fmt=fmt)
+    typer.echo(out)
+
+
 @app.command()
 def serve():
     """Start the YouOS web server."""

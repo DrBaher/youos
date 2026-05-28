@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.2.0-beta.56 — 2026-05-28
+
+### Daily digest CLI — `youos digest`
+
+Third step in the remote-access series (b54 docs → b55 mobile UI → b56 the remote signal). When you're away from your terminal, `/triage` requires Tailscale and macOS notifications fire on the Mac only. `youos digest` is the poor-man's push notification: a CLI that prints a complete activity summary you can pipe to `mail` via cron for a daily email.
+
+**New `app/agent/digest.py`** — pure formatting on top of existing store helpers (`sweep_aggregate`, `dismissal_stats`, `noise_dismissal_candidates`, `list_pending`, `list_recent_sweeps`). No new DB schema. `DigestData` dataclass + `build_digest()` + `format_digest()` keeps the data layer testable independently from rendering.
+
+**Three output formats**: `text` (default), `html`, `json`.
+
+**What's in the digest**: sweep count + success rate, fetched/hard-skipped/drafted/surfaced totals, pending vs pushed-to-Gmail-Drafts vs dismissed counts, dismissal rate + by-reason breakdown, auto-promoted senders, top 5 dismissed-as-noise senders, clickable Tailscale URL to `/triage` when configured.
+
+**Cron recipe** (in `docs/REMOTE_ACCESS.md`): pipe `youos digest --format html` into `mail` for a daily email.
+
+**Live-tested** on baheros — output rendered cleanly with 8 sweeps / 81 fetched / 75 hard-skipped / 5 drafted in the sample window.
+
+**Tests** (`tests/test_agent_digest.py`) — 5 new: aggregation against seeded state, all 3 format renderers, empty-state edge case.
+
+**Docs**: `docs/REMOTE_ACCESS.md` "Daily digest email" section + `docs/USAGE.md` `youos digest` row.
+
 ## v0.2.0-beta.55 — 2026-05-28
 
 ### Mobile-responsive `/triage`
