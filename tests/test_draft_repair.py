@@ -17,8 +17,18 @@ from app.generation.service import (
     _repair_draft,
 )
 
-OFF = {"enforce_greeting_closing": False, "strip_trailing_signature": False}
-ALL_ON = {"enforce_greeting_closing": True, "strip_trailing_signature": True}
+OFF = {
+    "enforce_greeting_closing": False,
+    "strip_trailing_signature": False,
+    "strip_quote_tail": False,
+    "decode_html_entities": False,
+}
+ALL_ON = {
+    "enforce_greeting_closing": True,
+    "strip_trailing_signature": True,
+    "strip_quote_tail": True,
+    "decode_html_entities": True,
+}
 
 
 # --- length flag (non-mutating, always on) ---------------------------------
@@ -103,17 +113,38 @@ def test_enforce_does_not_double_add_when_present():
 # --- config reader ----------------------------------------------------------
 
 
-def test_repair_config_defaults_off(monkeypatch):
+def test_repair_config_defaults(monkeypatch):
+    """With no config: enforce_greeting_closing is opt-in (False); the three
+    artifact-removal repairs default True."""
     monkeypatch.setattr("app.core.config.load_config", lambda *a, **k: {})
-    assert _get_repair_config() == {"enforce_greeting_closing": False, "strip_trailing_signature": False}
+    cfg = _get_repair_config()
+    assert cfg["enforce_greeting_closing"] is False
+    assert cfg["strip_trailing_signature"] is True
+    assert cfg["strip_quote_tail"] is True
+    assert cfg["decode_html_entities"] is True
 
 
-def test_repair_config_reads_flags(monkeypatch):
+def test_repair_config_explicit_overrides(monkeypatch):
+    """Per-instance YAML can override any flag (turn artifact repairs OFF, or
+    flip greeting/closing enforcement ON)."""
     monkeypatch.setattr(
         "app.core.config.load_config",
-        lambda *a, **k: {"generation": {"repair": {"enforce_greeting_closing": True, "strip_trailing_signature": True}}},
+        lambda *a, **k: {
+            "generation": {
+                "repair": {
+                    "enforce_greeting_closing": True,
+                    "strip_trailing_signature": False,
+                    "strip_quote_tail": False,
+                    "decode_html_entities": False,
+                }
+            }
+        },
     )
-    assert _get_repair_config() == {"enforce_greeting_closing": True, "strip_trailing_signature": True}
+    cfg = _get_repair_config()
+    assert cfg["enforce_greeting_closing"] is True
+    assert cfg["strip_trailing_signature"] is False
+    assert cfg["strip_quote_tail"] is False
+    assert cfg["decode_html_entities"] is False
 
 
 # --- response shape ---------------------------------------------------------
@@ -133,3 +164,81 @@ def test_draft_response_exposes_repair_fields():
         draft="x", detected_mode="m", precedent_used=[], retrieval_method="r",
         confidence="low", confidence_reason="c", model_used="none",
     ).repairs == []
+
+
+# --- regressions for run-on signature / quote-tail / HTML entities ---------
+# QA review (BaherOS) caught all three artifacts in real LoRA output: the model
+# emits a run-on signature inline, hallucinates an email-quote tail, and leaves
+# HTML entities undecoded. These pin the fixes.
+
+
+def test_strip_signature_handles_run_on_inline_role_company():
+    """The LoRA emits 'Cheers, Baher Al Hakim CEO / Medicus AI w: medicus.ai'
+    as a single line. The line-anchored ^Cheers,$ patterns miss this; the
+    inline role+slash+capital and `w: URL` patterns catch it."""
+    from app.generation.service import strip_signature
+
+    draft = "Sure, let's chat. Cheers, Baher Al Hakim CEO / Medicus AI w: medicus.ai e: baher@medicus.ai"
+    out = strip_signature(draft)
+    assert "CEO" not in out
+    assert "medicus.ai" not in out
+    assert "Cheers, Baher Al Hakim" in out  # closing + name kept
+
+
+def test_strip_quote_tail_drops_email_quote_artifact():
+    """The 'On <date>, <X> wrote:' hallucination — quote-tail leakage from the
+    LoRA's training data — must be truncated, including anything after."""
+    from app.generation.service import strip_quote_tail
+
+    draft = (
+        "Sure, sounds good — see you then. Thanks, Baher.\n\n"
+        "On 23. Jul 2025 at 10:17 +0200, Baher Al Hakim <baher@baheros.com> wrote:\n"
+        "Hey, I can do that. Let me know if you want to go to a restaurant or not."
+    )
+    out = strip_quote_tail(draft)
+    assert "wrote:" not in out
+    assert "On 23. Jul" not in out
+    assert "Thanks, Baher." in out
+
+
+def test_decode_html_entities_unescapes_common_artifacts():
+    from app.generation.service import decode_html_entities
+
+    assert decode_html_entities("I&#39;d love that &amp; can do it.") == "I'd love that & can do it."
+    assert decode_html_entities("plain text") == "plain text"
+
+
+def test_get_repair_config_defaults_strip_artifacts_on():
+    """The three artifact-removal repairs default True now (signature,
+    quote-tail, HTML entities) — they catch training-data leakage the user
+    never wants. enforce_greeting_closing stays opt-in (it ADDS content)."""
+    cfg = _get_repair_config()
+    assert cfg["strip_trailing_signature"] is True
+    assert cfg["strip_quote_tail"] is True
+    assert cfg["decode_html_entities"] is True
+    assert cfg["enforce_greeting_closing"] is False
+
+
+def test_repair_pipeline_clears_all_three_artifacts_in_one_pass():
+    """End-to-end: a draft with run-on signature, quote tail, and HTML entity
+    comes out clean after a single _repair_draft pass with ALL_ON."""
+    dirty = (
+        "Hi Alex, I&#39;d be happy to help with that. Cheers, Baher Al Hakim CEO / Medicus AI w: medicus.ai\n\n"
+        "On 23. Jul 2025 at 10:17 +0200, Baher Al Hakim <baher@baheros.com> wrote: previous\n"
+    )
+    text, repairs, _flag = _repair_draft(
+        dirty,
+        greeting="Hi {name},",
+        closing="Cheers,",
+        target_words=40,
+        config=ALL_ON,
+    )
+    assert "&#39;" not in text
+    assert "wrote:" not in text
+    assert "CEO" not in text
+    assert "medicus.ai" not in text
+    assert "Hi Alex, I'd be happy to help with that." in text
+    # Each pass logs what it did, so the operator can audit mutations.
+    assert "stripped_quote_tail" in repairs
+    assert "stripped_trailing_signature" in repairs
+    assert "decoded_html_entities" in repairs

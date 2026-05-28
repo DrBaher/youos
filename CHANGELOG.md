@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.2.0-beta.21 — 2026-05-28
+
+### Draft-quality repairs: kill the three LoRA artifacts that leaked into output
+Running the agent-triage prototype against the live BaherOS instance with synthetic inbounds surfaced three model-output artifacts the existing `_repair_draft` pass *wasn't* catching. These fix them.
+
+- **Run-on inline signature.** The LoRA emits `"Cheers, Baher Al Hakim CEO / Medicus AI w: medicus.ai e: baher@…"` *on a single line*, but the existing signature patterns were line-anchored (`^Cheers,$` with `MULTILINE`) and missed the inline form. Added three inline patterns to `_build_signature_patterns`: role+separator+capital (`CEO / Medicus`), single-letter contact marker followed by URL/email/phone (`w: medicus.ai`), and "Sent from my <device>" inline. Specific enough to avoid eating legitimate prose.
+- **Quote-tail hallucination** (`"On 23. Jul 2025 at 10:17 +0200, X <a@b> wrote:"`). New `strip_quote_tail()` truncates from the match start; bounded to {0,160} so it can't over-eat across paragraphs. Wired in **before** the signature pass so the signature regex sees a smaller, cleaner substring.
+- **HTML entities** (`&#39;` → `'`, `&amp;` → `&`). New `decode_html_entities()` runs `html.unescape` on the output. Pure decode, no semantic change.
+
+### Defaults flipped: the three artifact-removal repairs are now **on**
+Previously all repair flags defaulted False ("behavior-preserving"). The three new artifact-removal repairs (`strip_trailing_signature`, `strip_quote_tail`, `decode_html_entities`) are objectively-correct cleanups — the model emits training-data leakage that the user never wants. They now default **True**. `enforce_greeting_closing` stays opt-in (it *adds* content the model didn't produce; that's a different category). Each fired repair is recorded in `DraftResponse.repairs` so the operator can audit what's been touched.
+
+### Live regression evidence (BaherOS, synthetic inbounds)
+Same four cases the QA review caught artifacts on, drafted again with the new repairs on:
+- Friend draft: `…Thanks, Baher. On 23. Jul 2025 at 10:17 +0200, … wrote: Hey, I can do that…` → **`…Thanks, Baher.`** (`stripped_quote_tail`)
+- Vendor draft: `…I&#39;d love to share… Cheers, Baher Al Hakim CEO / Medicus AI w: medicus.ai e: baher@` → **`…I'd love to share… Cheers, Baher Al Hakim`** (`stripped_trailing_signature`, `decoded_html_entities`)
+- Edge case (no sender name): `…Thanks, Baher Al Hakim CEO / Medicus AI w:` → **`…Thanks, Baher Al Hakim`** (`stripped_trailing_signature`); the beta.20 `Hi,` greeting fix stays clean.
+- Work draft (already clean): unchanged, `repairs: []`.
+
+Five new regression tests pin each fix (and one end-to-end "all three artifacts in one draft → clean" check).
+
+### Out of scope for this PR
+Shallow content semantics from the 1.5B LoRA (e.g., misreading who's offering what to whom, accepting pushy outbounds, occasional self-contradiction) are inherent to the model+corpus and not addressable in a post-process pass. They're a model-quality concern for the autonomous-agent loop, but they're orthogonal to artifact cleanup.
+
 ## v0.2.0-beta.20 — 2026-05-28
 
 ### QA-review fixes (BaherOS live testing)
