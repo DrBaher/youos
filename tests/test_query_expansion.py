@@ -132,3 +132,14 @@ def test_extract_topic_keywords_drops_extra_stopwords():
     assert "baher" not in out.lower()
     # Topic terms still survive.
     assert "Q3" in out and "budget" in out and "pricing" in out
+
+
+def test_extract_email_helper():
+    """The extract_email helper used by retrieval's sender_email_boost path."""
+    from app.core.sender import extract_email
+
+    assert extract_email("Alice Example <alice@example.com>") == "alice@example.com"
+    assert extract_email("bob@DOMAIN.com") == "bob@domain.com"  # lowercased
+    assert extract_email("no email here") is None
+    assert extract_email(None) is None
+    assert extract_email("") is None

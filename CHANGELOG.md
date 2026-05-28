@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.2.0-beta.26 — 2026-05-28
+
+### Retrieval: sender-history boost (exact email > domain)
+QA fix #2/3: same-domain boosting (`@medicus.ai → @medicus.ai`) over-fires for users with a large in-org corpus — recurring-meeting/check-in pairs get amplified over topic matches. Exact-email match is a much sharper signal: "I've corresponded with *this exact person* before" outranks "this is from someone at the same company."
+
+- New `extract_email()` helper in `app/core/sender.py` — pulls the `local@domain` out of an `"Name <email>"` author string, lowercased.
+- New `RetrievalRequest.sender_email_hint` + `RetrievalConfig.sender_email_boost: 0.40` (4× the same-domain boost).
+- `_metadata_score` adds `sender_email_boost` when the pair's `inbound_author` exact-matches the hint.
+- `generate_draft` populates `sender_email_hint = extract_email(request.sender)` and threads it into the `RetrievalRequest`.
+- Live evidence: queries with `sender_email_hint="vanessa@medicus.ai"` (a real recurring correspondent with 259 pairs in BaherOS) surface Vanessa's pairs at `meta=0.40` — the boost fires as designed. Modest leverage vs lexical (~12), but the foundation is in place; weight can be cranked up if the same-email signal needs to outrank topic matches more aggressively.
+
+The same-type / same-domain boosts (`0.15` / `0.10`) stay at the conservative weights — the experiment at `0.20/0.20` regressed the Alex/Stripe case (b24's note).
+
 ## v0.2.0-beta.25 — 2026-05-28
 
 ### Strip trailing-name artifact from exemplars **and** drafts
