@@ -129,6 +129,36 @@ This returns the full FastAPI-generated OpenAPI 3.x document with every endpoint
 
 The `summary`/`description` fields on each route come from the docstrings, so the orchestrator gets human-readable explanations of what each endpoint does.
 
+## Reference Telegram bot — `examples/telegram_bot.py`
+
+A working ~250-line reference bot is shipped in `examples/telegram_bot.py`. Setup at the top of the file. Commands:
+
+| Command | Calls |
+|---|---|
+| `/inbox` | `GET /api/agent/digest?days=1` — summary + top-5 pending with ids |
+| `/push <id>` | `POST /api/agent/pending/<id>/push_to_gmail` |
+| `/dismiss <id> [reason]` | `POST /api/agent/pending/<id>/dismiss {reason}` (defaults to `noise`) |
+| `/find <words>` | `GET /api/agent/resolve?q=<words>` — substring-rank pending rows |
+| `/digest [days]` | extended digest |
+| `/help` | command list |
+
+The bot also accepts free-text — phrases like *"push the Q3 thing"* are routed via `/api/agent/resolve` to a row id, then dispatched. Substring matching only (a real production orchestrator would route through an LLM here).
+
+Only one Telegram user (set via `TELEGRAM_AUTHORIZED_USER` env var) can drive the bot. Anyone else gets silently ignored — without this, every Telegram user on the platform could control your inbox.
+
+Run:
+
+```bash
+pip install 'python-telegram-bot==21.*' requests
+export YOUOS_URL=http://bbots-mac-mini:8901
+export YOUOS_TOKEN=<from `youos token-create`>
+export YOUOS_ACCOUNT=drbaher@gmail.com  # optional; falls back to user.emails[0]
+export TELEGRAM_TOKEN=<from @BotFather>
+export TELEGRAM_AUTHORIZED_USER=<your Telegram numeric id; see @userinfobot>
+
+python examples/telegram_bot.py
+```
+
 ## Example: minimal Telegram bot wiring (sketch)
 
 ```python
