@@ -68,6 +68,7 @@ youos compare-models --limit 30 --semantic
 | `youos draft "text"` | Generate a draft reply |
 | `youos triage [--window 3d] [--limit 8] [--dry-run]` | Sweep unread inbox, filter, draft survivors; persists to `agent_pending_drafts` (view at `/triage`). Background loop opt-in via `agent.enabled`. |
 | `youos digest [--days 1] [--format text\|html\|json]` | Print an agent-activity summary for the last `--days` days. Pipe to `mail` via cron for a daily email when you're away from `/triage`. See `docs/REMOTE_ACCESS.md`. |
+| `youos sync-labels [--label YouOS/skip]` | Process Gmail-label dismissals: apply the label to a thread from any Gmail client to dismiss the queued row as `noise`. Auto-removes the label after processing. Also runs at the start of every triage sweep. |
 | `youos serve` | Start the web server |
 | `youos ui` | Open the web UI in your browser |
 | `youos service install` | Run the server as a background service (starts at login) |

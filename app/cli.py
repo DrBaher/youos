@@ -667,6 +667,46 @@ def triage(
         typer.echo("saved to agent_pending_drafts (visit /triage to review). nothing pushed to Gmail.")
 
 
+@app.command(name="sync-labels")
+def sync_labels_cmd(
+    account: str = typer.Option(None, "--account", help="Account email (defaults to first configured)"),
+    label: str = typer.Option("YouOS/skip", "--label", help="Gmail label to treat as a dismissal signal"),
+):
+    """Process Gmail-label dismissals — `YouOS/skip` → dismiss pending rows.
+
+    The remote-dismissal counterpart to /triage. Apply the configured
+    label to a Gmail thread from any client (phone, web, work laptop)
+    and run this command (or wait for the next sweep — `run_triage` does
+    a label sync at the start). Matching pending rows get marked
+    dismissed-as-noise; the label is removed after processing.
+
+    See docs/REMOTE_ACCESS.md for the full setup.
+    """
+    from app.agent.gmail_label_sync import sync_gmail_label_dismissals
+    from app.core.config import get_user_emails
+
+    if not account:
+        emails = get_user_emails()
+        if not emails:
+            typer.echo("No account configured. Pass --account <email>.", err=True)
+            raise typer.Exit(2)
+        account = emails[0]
+
+    settings = get_settings()
+    result = sync_gmail_label_dismissals(
+        account=account, database_url=settings.database_url, label=label,
+    )
+    typer.echo(
+        f"Label sync (account={account}, label={label}): "
+        f"dismissed={len(result.dismissed)}, "
+        f"skipped={len(result.skipped)}, errors={len(result.errors)}"
+    )
+    for row_id in result.dismissed:
+        typer.echo(f"  · dismissed agent_pending_drafts row #{row_id} (reason=noise)")
+    for err in result.errors:
+        typer.echo(f"  ⚠ {err}", err=True)
+
+
 @app.command(name="digest")
 def digest_cmd(
     account: str = typer.Option(None, "--account", help="Account email (defaults to the first configured)"),
