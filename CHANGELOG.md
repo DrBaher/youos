@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.2.0-beta.20 — 2026-05-28
+
+### QA-review fixes (BaherOS live testing)
+A reviewer hit the live BaherOS instance with synthetic inbound and flagged four real issues; these fix them and back the fixes with regression tests.
+
+- **`Hi ,` greeting bug.** When sender-name extraction returned an empty first name, `_resolve_greeting` rendered `"Hi {name},".replace("{name}", "")` → `"Hi ,"` (dangling space before the comma). Fix collapses the leading-space form of the placeholder first, so the result is `"Hi,"` instead. New regression test asserts `" ,"` is impossible for empty/None names across all sender types.
+- **Per-draft model badge: always renders.** The badge already existed but was conditional on `data.model_used` — if an older code path forgot to populate it, the badge silently disappeared and the public "always shows which model wrote each draft" claim wasn't strictly true. Now falls back to a clearly-marked `model: unknown` (warn-styled), so the badge is always present.
+- **Doctor's `mlx_lm` message** now distinguishes "Python package not importable in this venv" from "global `mlx_lm` binary on PATH". Same failure, but the message no longer reads as contradicting a visible `which mlx_lm`.
+- **Landing wording softened** under the comparison card: "Everything stays on your Mac **by default** — cloud fallback is opt-in; set `model.fallback: none` for strict local-only". Honest about the cold-start/fallback path without diluting the headline contrast.
+
+### Items the reviewer flagged that turned out to be already in place
+- `scripts/install.sh` exists.
+- `compare-models` CLI is wired (`app/cli.py:557` → `scripts/compare_models.py`).
+- `ingestion.google_backend` with `gog` / `gws` / `native` is implemented (`app/ingestion/adapters.py:SUPPORTED_BACKENDS`, `app/core/config.py:get_ingestion_google_backend`, surfaced by `youos doctor`).
+- `youos corpus --json` doesn't crash with `ModuleNotFoundError: No module named 'scripts'` on `main` — `scripts/__init__.py` resolves the import; the reviewer likely hit an older install.
+- `analyze_persona.py` does learn closings from sent emails (`Best,` / `Cheers,` regexes + `closing_patterns` aggregation). Baher's `Best,` closing comes from the formal/default sender-type classification on the test inbounds, not from a missing learning path — re-running `youos persona analyze` against the current corpus will refresh it.
+
 ## v0.2.0-beta.19 — 2026-05-28
 
 ### Review-driven hardening (OpenClaw review)
