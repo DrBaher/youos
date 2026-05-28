@@ -14,6 +14,7 @@ from app.core.data_safety import (
     run_startup_safety_checks,
 )
 from app.core.text_utils import strip_quoted_text
+from app.core.version import get_version
 from app.db.bootstrap import resolve_sqlite_path
 from app.generation.service import DraftRequest, generate_draft
 from app.retrieval.service import RetrievalRequest, retrieve_context
@@ -63,7 +64,24 @@ def _store_trace(
 
 @router.get("/healthz")
 def healthz() -> dict[str, str]:
-    return {"status": "ok"}
+    # Liveness — server is up. Includes the running version so external
+    # checks (and the parity test) can confirm /healthz, /readyz, and
+    # /api/config agree on the same runtime version.
+    return {"status": "ok", "version": get_version()}
+
+
+@router.get("/readyz")
+def readyz(request: Request) -> dict[str, object]:
+    # Readiness — server is up *and* its DB path is resolvable. Useful for
+    # launchd/health probes and CI smoke checks; pairs with /healthz.
+    settings = request.app.state.settings
+    db_path = resolve_sqlite_path(settings.database_url)
+    return {
+        "status": "ok" if db_path.exists() else "starting",
+        "version": get_version(),
+        "db": str(db_path),
+        "db_exists": db_path.exists(),
+    }
 
 
 @router.get("/config-summary")
