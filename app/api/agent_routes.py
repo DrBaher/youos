@@ -203,6 +203,67 @@ def promote_skip_senders(body: PromoteSkipSendersBody) -> dict:
     }
 
 
+@router.get("/api/agent/resolve")
+def resolve(
+    request: Request,
+    q: str = Query(..., min_length=1, description="Substring to match against subject + sender + sender_email"),
+    account: str | None = Query(None),
+    status: str = Query("pending", pattern="^(pending|amended|sent|dismissed)$"),
+    limit: int = Query(5, ge=1, le=50),
+) -> dict:
+    """Find pending rows whose subject or sender matches ``q`` — orchestrator
+    NLU helper (b62).
+
+    The orchestrator vision: when the user says "push the Q3 pricing email
+    to Gmail", the orchestrator hits ``GET /api/agent/resolve?q=Q3 pricing``
+    to get the matching row id, then dispatches the action. If multiple
+    rows match, the orchestrator can disambiguate in the chat bubble
+    ("I found two matches; which one?").
+
+    Ranking: subject-substring match > sender-substring match. Ties broken
+    by most-recent-first. Case-insensitive. Substring (LIKE %q%), not fuzzy.
+    Fuzzy/embedding matching is a future feature — substring covers the
+    "user mentions a real word from the subject" case which is the dominant
+    pattern for short chat instructions.
+    """
+    from app.agent import store
+
+    db_url = _db_url(request)
+    # Pull a generous superset and rank in Python — keeps the query simple
+    # and avoids depending on FTS5 here (which the agent module deliberately
+    # doesn't, per the b49 sqlite-path simplicity).
+    rows = store.list_pending(db_url, account=account, status=status, limit=200)
+    needle = q.strip().lower()
+    matches: list[dict] = []
+    for r in rows:
+        subj = (r.get("subject") or "").lower()
+        sender = (r.get("sender") or "").lower()
+        email = (r.get("sender_email") or "").lower()
+        score = 0
+        where = ""
+        if needle in subj:
+            score = 100 - subj.index(needle)  # earlier match = better
+            where = "subject"
+        elif needle in sender or needle in email:
+            score = 50 - min((sender + email).index(needle), 50)
+            where = "sender"
+        else:
+            continue
+        matches.append({
+            "id": r["id"],
+            "tier": r.get("tier"),
+            "subject": r.get("subject"),
+            "sender": r.get("sender"),
+            "sender_email": r.get("sender_email"),
+            "needs_reply_score": r.get("needs_reply_score"),
+            "match_field": where,
+            "match_score": score,
+        })
+
+    matches.sort(key=lambda m: (m["match_score"], m["id"]), reverse=True)
+    return {"q": q, "count": len(matches), "rows": matches[:limit]}
+
+
 @router.get("/api/agent/digest")
 def digest(
     request: Request,
