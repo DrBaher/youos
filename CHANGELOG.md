@@ -1,5 +1,55 @@
 # Changelog
 
+## v0.2.0-beta.36 — 2026-05-28
+
+### Agent triage — ζ (safety guardrails) — closes Phase 1
+Three guardrails on the autonomous loop, all opt-in. **`agent.skip_senders`** (hard-skip a noisy sender or whole domain), **`agent.daily_draft_cap`** (per-UTC-day quota per account, defends against a runaway loop), **`agent.strict_local`** (refuse cloud fallback during background triage only — interactive `/feedback` is unaffected). With ζ shipped, Phase 1 of the autonomous-agent series is complete.
+
+### Changes
+
+**`app/core/feature_flags.py`** — three new flags surface on ``/settings``:
+- ``agent.skip_senders`` (text, default empty) — comma-separated emails or ``@domain`` entries
+- ``agent.daily_draft_cap`` (int, default 50) — 0 disables; per UTC day, per account
+- ``agent.strict_local`` (bool, default False) — interactive paths unaffected
+
+**`app/agent/scheduler.py`** — ``get_agent_config()`` now surfaces all three; ``_parse_skip_senders`` accepts the textarea (comma-separated) form and a list form, normalises to lowercase, dedupes.
+
+**`app/agent/needs_reply.py`** — ``classify(..., skip_senders=...)`` adds a new hard-skip rule that runs FIRST, before list-unsubscribe. Exact emails (``alice@x.com``) and ``@domain`` prefixes both supported.
+
+**`app/agent/store.py`** — ``count_persisted_today(account)`` returns the count of ``agent_pending_drafts`` rows created since UTC midnight for that account.
+
+**`app/agent/triage.py`** — sweep body now:
+- pulls all three guardrails once at start (stable across the sweep)
+- threads ``skip_senders`` into ``classify_many``
+- computes ``cap_remaining`` from ``count_persisted_today`` and decrements per persisted draft; once exhausted, the rest of the messages are recorded as cap-reached skips (no generation, no persistence)
+- passes ``strict_local`` into ``DraftRequest``
+
+**`app/generation/service.py`** — new ``DraftRequest.strict_local`` field. When True (and no ``backend_override``), ``fallback_model`` is forced to ``"none"`` for *this draft only*. Interactive ``/feedback`` doesn't set it; only the agent triage path does.
+
+### Tests
+- 4 in `test_agent_needs_reply` — skip-list exact match, domain prefix, case-insensitivity, no-match-keeps-original-behaviour
+- 3 in `test_agent_triage` — daily cap stops drafting, skip_senders flows through, strict_local lands on DraftRequest
+- 3 in `test_agent_scheduler` — `_parse_skip_senders` comma + list forms, dedup, empty
+- 59/59 across agent suites; 1209/1213 full sweep (was 1199 in ε; +10 here). Same 4 pre-existing MLX failures.
+
+### How to use
+```bash
+# Silence a specific sender or whole org:
+youos config set agent.skip_senders "ali@noisycorp.com,@autotools.io"
+
+# Cap daily drafts (0 = unlimited):
+youos config set agent.daily_draft_cap 50
+
+# Refuse cloud fallback for background sweeps (interactive /feedback unaffected):
+youos config set agent.strict_local true
+```
+
+### Phase 1 retrospective
+The autonomous-agent series shipped as 11 PRs (β.28–b36): an idea ("table β early; do A/B/C/D first to make drafts good enough") that turned into a fully-formed feature with persistence, a web UI, background scheduling, standing instructions, an audit log, and safety guardrails. Every PR ran the same loop: real-inbox QA → file a specific bug → fix → ship → repeat. The agent never auto-sends, always shows its work, and refuses cloud fallback when asked.
+
+### Remaining (Phase 2, separate track)
+- ``gmail.compose`` OAuth → real Gmail Drafts on **Mark sent**, so the "I sent it manually" signal becomes an actual Gmail draft on the thread.
+
 ## v0.2.0-beta.35 — 2026-05-28
 
 ### Agent triage — ε (audit log + "Recent activity")

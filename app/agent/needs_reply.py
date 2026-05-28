@@ -149,11 +149,30 @@ class SenderHistory:
 # --- Classifier -------------------------------------------------------------
 
 
+def _matches_skip_list(sender_email: str | None, skip_list: list[str]) -> bool:
+    """True if the sender matches any user-configured skip entry. Entries are
+    either exact emails (``alice@x.com``) or ``@domain`` prefixes
+    (``@bigcorp.com``) — the latter skips the whole org. Case-insensitive."""
+    if not sender_email or not skip_list:
+        return False
+    email = sender_email.lower()
+    for entry in skip_list:
+        if not entry:
+            continue
+        if entry.startswith("@"):
+            if email.endswith(entry):
+                return True
+        elif email == entry:
+            return True
+    return False
+
+
 def classify(
     msg: InboxMessage,
     *,
     history: SenderHistory | None = None,
     threshold: float = 0.6,
+    skip_senders: list[str] | None = None,
 ) -> NeedsReplyVerdict:
     """Decide whether this inbound deserves a draft.
 
@@ -178,6 +197,10 @@ def classify(
 
     # 1) Hard skips — sender CANNOT be replied to personally, or content is
     # obviously not user-actionable. Each returns immediately with score=0.
+    # ζ: user-configured `agent.skip_senders` is checked first so a noisy
+    # specific sender can be silenced without waiting for a heuristic.
+    if skip_senders and _matches_skip_list(msg.sender_email, skip_senders):
+        return NeedsReplyVerdict(False, 0.0, [f"skip-list match ({msg.sender_email!r})"])
     if msg.headers.get("list-unsubscribe"):
         return NeedsReplyVerdict(False, 0.0, ["list-unsubscribe (newsletter)"])
     if msg.sender and MAILER_DAEMON_PAT.search(msg.sender):
@@ -279,6 +302,10 @@ def classify_many(
     *,
     history: SenderHistory | None = None,
     threshold: float = 0.6,
+    skip_senders: list[str] | None = None,
 ) -> list[tuple[InboxMessage, NeedsReplyVerdict]]:
     """Vectorised helper. Returns pairs in the input order."""
-    return [(m, classify(m, history=history, threshold=threshold)) for m in messages]
+    return [
+        (m, classify(m, history=history, threshold=threshold, skip_senders=skip_senders))
+        for m in messages
+    ]
