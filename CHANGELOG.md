@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.2.0-beta.49 — 2026-05-28
+
+### Fix: `youos triage` DB path resolution + CI lint cleanup
+
+**`youos triage` CLI was broken** — running it produced `OperationalError: unable to open database file`. Two agent modules (`app/agent/store.py` + `app/agent/needs_reply.py`) parsed `sqlite:///var/youos.db` via `urllib.parse.urlparse(...).path`, which always returns the path as absolute — `/var/youos.db` instead of the intended relative `var/youos.db`. Bootstrap + all ingestion modules use `removeprefix("sqlite:///")` which preserves relative paths correctly. Aligned both agent files to the bootstrap pattern.
+
+Live-verified by running `youos triage --account drbaher@gmail.com --window 3d --limit 8` after the fix — successfully fetched 8 messages, hard-skipped 6 (GitHub CI, Substack), surfaced 1 borderline, drafted 1 (a false positive worth dismissing as `noise`).
+
+### CI was failing on ruff lint (39 errors from b39–b48 PRs)
+
+CI on `main` had been red since b41-ish; the failure landed in main without anyone noticing. Cleaned up:
+- B904 (`raise ... from exc`) — 4 places in `agent_routes.py` + 1 in `cli.py`
+- E501 (line too long) — 4 long `help` strings in `feature_flags.py` reformatted as parenthesised concatenation
+- E702 (multi-statement semicolons) — 3 cases (one fixture, two test method sentinels)
+- F841 (unused variable) — 1 stale `db_url = ...` in `test_push_to_gmail_success_stores_draft_id_and_marks_sent`
+- I001 (import sorting) — auto-fixed in 5 files
+
+All 119 agent + clawhub + gmail_write + scheduler + needs_reply tests pass; `ruff check tests/ app/` reports zero issues. CI should go green on the next push.
+
 ## v0.2.0-beta.48 — 2026-05-28
 
 ### CRITICAL: fix gws `drafts create` call shape — verified against gws schema
