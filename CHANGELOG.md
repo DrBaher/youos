@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.2.0-beta.55 — 2026-05-28
+
+### Mobile-responsive `/triage`
+
+Next step in the remote-access series (b54 documented Tailscale; b55 makes the destination usable on a phone). `/triage` was desktop-first by design — the queue is most efficient when inbound + draft sit side-by-side — but with the agent loop running while you're away, review-from-phone matters more than the original assumption.
+
+**Two media-query breakpoints** in `templates/triage.html`:
+
+- **`@media (max-width: 600px)`** — phone-class viewports (iPhone 12-15 etc., 390×844). Repaints the page for touch:
+  - Container padding 24→12px
+  - Toolbar inputs/selects/buttons stack full-width with 44px min-height (iOS tap-target standard)
+  - All input/select font-sizes set to 16px so iOS Safari doesn't auto-zoom on focus
+  - Bulk-action buttons full-width
+  - Row-actions: every button gets its own row at 44px touch height
+  - Dismiss-group wraps: reason selector full-width on one line, "also skip sender" checkbox below, Dismiss button full-width
+  - Inbound and draft textareas: smaller heights (240/100px), 16px font (still no zoom)
+  - Activity table: horizontally scrollable with momentum (`-webkit-overflow-scrolling: touch`)
+  - Agent health card: 2-column tiles instead of auto-fit
+  - Help overlay: near-full-screen with scrolling
+
+- **`@media (max-width: 380px)`** — extra-narrow (older / smaller phones)
+  - Nav font shrinks
+  - Health card tiles collapse to single column
+  - Toolbar buttons one-per-row
+
+**Critical detail**: every text-input font-size is explicitly `16px` on mobile. Smaller font-sizes cause iOS Safari to zoom in when the input gains focus — a notoriously bad mobile UX that's easy to ship by accident.
+
+No layout changes for desktop — all rules are inside the `@media` blocks, so anything above 600px is unchanged from b54.
+
+**Testing path** (when on Tailscale-connected phone): set up b54's Tailscale remote-access, open `http://<hostname>:8901/triage`, verify each section behaves. Most browsers expose mobile-emulator devtools (Chrome → DevTools → Device Toolbar → iPhone 14) for desktop testing.
+
 ## v0.2.0-beta.54 — 2026-05-28
 
 ### Remote access docs + safer `youos status` / `youos doctor` exposure messaging
