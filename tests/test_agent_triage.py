@@ -304,3 +304,93 @@ def test_run_triage_captures_per_message_errors_in_audit(mocked_environment, mon
     assert len(sweeps) == 1
     assert sweeps[0]["kept"] == 0
     assert any("warm server down" in e for e in sweeps[0]["errors"])
+
+
+# --- ζ: daily cap + strict-local --------------------------------------------
+
+
+def test_daily_cap_stops_drafting_when_quota_hit(mocked_environment, monkeypatch):
+    """When ``agent.daily_draft_cap`` is at or below today's count, the sweep
+    stops drafting (recorded as a skip with the cap-reached reason)."""
+    monkeypatch.setattr(
+        "app.agent.scheduler.get_agent_config",
+        lambda: {
+            "enabled": True, "interval_minutes": 15, "accounts": [],
+            "window": "24h", "limit": 25, "threshold": 0.6, "notify_macos": True,
+            "standing_instructions": "",
+            "skip_senders": [], "daily_draft_cap": 1, "strict_local": False,
+        },
+    )
+    env = mocked_environment
+    from app.agent.triage import run_triage
+
+    # First run uses the only allowed slot.
+    r1 = run_triage(account="you@example.com",
+                    database_url=env["database_url"], configs_dir=env["configs_dir"])
+    assert r1.kept == 1
+    assert r1.persisted == 1
+
+    # Second run hits the cap → no drafts persisted, message recorded as
+    # capped skip.
+    r2 = run_triage(account="you@example.com",
+                    database_url=env["database_url"], configs_dir=env["configs_dir"])
+    assert r2.kept == 0
+    assert any(
+        any("daily cap reached" in r for r in v.reasons)
+        for (_m, v) in r2.skipped
+    )
+
+
+def test_skip_senders_hard_skips_in_triage(mocked_environment, monkeypatch):
+    """``agent.skip_senders`` config flows through ``run_triage`` and hits
+    the classify hard-skip path."""
+    monkeypatch.setattr(
+        "app.agent.scheduler.get_agent_config",
+        lambda: {
+            "enabled": True, "interval_minutes": 15, "accounts": [],
+            "window": "24h", "limit": 25, "threshold": 0.6, "notify_macos": True,
+            "standing_instructions": "",
+            "skip_senders": ["alice@partner.com"],
+            "daily_draft_cap": 0, "strict_local": False,
+        },
+    )
+    env = mocked_environment
+    from app.agent.triage import run_triage
+
+    result = run_triage(account="you@example.com",
+                        database_url=env["database_url"], configs_dir=env["configs_dir"])
+    # Alice was the only draftable inbound; with her on the skip list, kept=0.
+    assert result.kept == 0
+    assert any(
+        any("skip-list" in r for r in v.reasons)
+        for (_m, v) in result.skipped
+    )
+
+
+def test_strict_local_passes_through_to_draft_request(mocked_environment, monkeypatch):
+    """``agent.strict_local: true`` is reflected on the DraftRequest the
+    triage orchestrator builds, so generate_draft enforces no-cloud-fallback
+    for that draft."""
+    monkeypatch.setattr(
+        "app.agent.scheduler.get_agent_config",
+        lambda: {
+            "enabled": True, "interval_minutes": 15, "accounts": [],
+            "window": "24h", "limit": 25, "threshold": 0.6, "notify_macos": True,
+            "standing_instructions": "",
+            "skip_senders": [], "daily_draft_cap": 0, "strict_local": True,
+        },
+    )
+
+    seen: dict = {}
+    def _spy(req, **kw):
+        seen["strict_local"] = getattr(req, "strict_local", None)
+        class _Resp:
+            draft = "ok"; model_used = "stub"; repairs: list[str] = []
+        return _Resp()
+    monkeypatch.setattr("app.generation.service.generate_draft", _spy)
+
+    env = mocked_environment
+    from app.agent.triage import run_triage
+    run_triage(account="you@example.com",
+               database_url=env["database_url"], configs_dir=env["configs_dir"])
+    assert seen["strict_local"] is True

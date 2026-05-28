@@ -245,3 +245,33 @@ def test_prior_history_boost_suppressed_for_transactional_sender():
     assert any("suppressed" in r for r in v.reasons), v.reasons
     # And without the boost, this should fall below threshold.
     assert not v.needs_reply, f"transactional + history boost should not pass: {v}"
+
+
+# --- ζ: user-configured skip-list -----------------------------------------
+
+
+def test_skip_list_exact_email_match_hard_skips():
+    v = classify(_msg(sender_email="alice@partner.com"),
+                 skip_senders=["alice@partner.com"])
+    assert not v.needs_reply
+    assert any("skip-list" in r for r in v.reasons)
+
+
+def test_skip_list_domain_prefix_match_hard_skips():
+    """`@domain` entries skip the whole org."""
+    v = classify(_msg(sender_email="someone@bigcorp.com"),
+                 skip_senders=["@bigcorp.com"])
+    assert not v.needs_reply
+    assert any("skip-list" in r for r in v.reasons)
+
+
+def test_skip_list_case_insensitive():
+    v = classify(_msg(sender_email="Alice@Partner.com"),
+                 skip_senders=["alice@partner.com"])
+    assert not v.needs_reply
+
+
+def test_skip_list_no_match_keeps_existing_behaviour():
+    v = classify(_msg(), skip_senders=["someone@else.com"])
+    # Original Alice case still passes (question + imperative + short body).
+    assert v.needs_reply

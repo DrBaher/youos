@@ -157,6 +157,21 @@ def _update_status(
         return cur.rowcount > 0
 
 
+def count_persisted_today(database_url: str, *, account: str) -> int:
+    """Count rows persisted for ``account`` since UTC midnight. Used by ζ to
+    enforce ``agent.daily_draft_cap`` — defends against a runaway loop on a
+    noisy inbox. Counts both ``tier='draft'`` and ``tier='surface'`` rows."""
+    with closing(_connect(database_url)) as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) FROM agent_pending_drafts
+            WHERE account = ? AND date(created_at) = date('now')
+            """,
+            (account,),
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
 # --- audit log (ε) ---------------------------------------------------------
 
 
