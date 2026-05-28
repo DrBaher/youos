@@ -76,6 +76,34 @@
 
   .yos-badge.cold { color: var(--warn); border-color: var(--warn); }
 
+  /* Visible focus for keyboard navigation — outlined ring around the active card. */
+  .card.focused, .surface-line.focused {
+    outline: 2px solid var(--teal);
+    outline-offset: 2px;
+  }
+
+  /* Help overlay — shown on '?' or the toolbar [?] button. */
+  .help-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    display: none; align-items: center; justify-content: center; z-index: 1000;
+  }
+  .help-overlay.shown { display: flex; }
+  .help-overlay .help-box {
+    background: var(--surface); color: var(--text); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px 24px; max-width: 460px; line-height: 1.6;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+  }
+  .help-overlay kbd {
+    background: var(--surface-2); border: 1px solid var(--border); border-bottom-width: 2px;
+    border-radius: 4px; padding: 1px 6px; font-family: ui-monospace, monospace;
+    font-size: 0.85rem;
+  }
+  .help-overlay h3 { margin-bottom: 10px; color: var(--teal); font-size: 1rem; }
+  .help-overlay table { width: 100%; }
+  .help-overlay td { padding: 3px 0; font-size: 0.88rem; }
+  .help-overlay td:first-child { width: 80px; }
+  .help-overlay .help-close { color: var(--muted-2); font-size: 0.8rem; margin-top: 14px; text-align: center; }
+
   .footer { color: var(--muted-2); font-size: 0.82rem; padding: 24px 0; border-top: 1px solid var(--border); margin-top: 36px; text-align: center; }
   .footer a { color: var(--muted-2); }
 </style>
@@ -110,7 +138,24 @@
     </select>
     <button class="btn" id="runBtn">Run triage now</button>
     <button class="btn secondary" id="refreshBtn">Refresh list</button>
+    <button class="btn secondary" id="helpBtn" title="Keyboard shortcuts">?</button>
     <span class="status-line" id="statusLine">Loading…</span>
+  </div>
+  <div class="toolbar" style="margin-top:-4px">
+    <!-- Client-side filter + bulk-action bar — operates over the rows already
+         returned by /api/agent/pending. Filtering is purely visual; bulk
+         actions iterate the *visible* rows (so a filter narrows the blast). -->
+    <input id="filterSender" type="text" placeholder="filter by sender (substring)" style="min-width:220px" />
+    <select id="filterMinScore" title="show only drafts at or above this score">
+      <option value="0">any score</option>
+      <option value="0.5">≥ 0.50</option>
+      <option value="0.6">≥ 0.60</option>
+      <option value="0.7">≥ 0.70</option>
+      <option value="0.8">≥ 0.80</option>
+    </select>
+    <button class="btn secondary" id="bulkPushBtn" title="Push every visible draft to Gmail Drafts, sequentially.">Push all visible</button>
+    <button class="btn secondary" id="bulkDismissSurfaceBtn" title="Dismiss every visible surface-for-review row as noise. Use this when the agent surfaced obvious newsletters / automation you don't want to keep seeing.">Dismiss all surface as noise</button>
+    <span class="status-line" id="bulkStatus"></span>
   </div>
 
   <details class="standing-banner" id="standingBanner">
@@ -130,6 +175,24 @@
   </style>
 
   <div id="drafts"></div>
+
+  <!-- Keyboard-shortcut help overlay (hidden by default). -->
+  <div class="help-overlay" id="helpOverlay" role="dialog" aria-label="Keyboard shortcuts">
+    <div class="help-box">
+      <h3>Keyboard shortcuts</h3>
+      <table>
+        <tr><td><kbd>j</kbd> / <kbd>k</kbd></td><td>Next / previous draft</td></tr>
+        <tr><td><kbd>p</kbd></td><td>Push focused draft to Gmail Drafts</td></tr>
+        <tr><td><kbd>d</kbd></td><td>Dismiss focused row (no reason)</td></tr>
+        <tr><td><kbd>e</kbd></td><td>Edit (focus the draft textarea)</td></tr>
+        <tr><td><kbd>m</kbd></td><td>Mark sent manually</td></tr>
+        <tr><td><kbd>r</kbd></td><td>Refresh list</td></tr>
+        <tr><td><kbd>?</kbd></td><td>Show this help</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Close help / unfocus input</td></tr>
+      </table>
+      <div class="help-close">Shortcuts are disabled while an input or textarea is focused. Press <kbd>Esc</kbd> to leave the textarea, then shortcuts come back.</div>
+    </div>
+  </div>
 
   <details class="surface-section" id="surfaceSection" style="display:none">
     <summary id="surfaceSummary">Surface for review (borderline — not auto-drafted)</summary>
@@ -170,6 +233,12 @@
   const runBtn = $('runBtn'), refreshBtn = $('refreshBtn'), status = $('statusLine');
   const draftsEl = $('drafts'), surfaceSection = $('surfaceSection');
   const surfaceList = $('surfaceList'), surfaceSummary = $('surfaceSummary');
+  const filterSender = $('filterSender'), filterMinScore = $('filterMinScore');
+  const bulkPushBtn = $('bulkPushBtn'), bulkDismissSurfaceBtn = $('bulkDismissSurfaceBtn');
+  const bulkStatus = $('bulkStatus'), helpBtn = $('helpBtn'), helpOverlay = $('helpOverlay');
+
+  // Cached server response — applyClientFilter() re-renders without refetching.
+  let lastRows = { drafts: [], surface: [] };
 
   // Persist account choice locally so the user doesn't retype it every visit.
   try {
@@ -215,9 +284,12 @@
 
   // Inline reason selector next to each Dismiss button — categorical signal
   // for the agent-tuning loop. Empty value = "no reason given" (legacy path).
+  // The "skip sender" checkbox is one-click maintenance for agent.skip_senders
+  // — checking it adds the row's sender_email to the skip list before posting
+  // the dismissal, so next sweep won't draft from them again.
   function dismissControls(rowId) {
     return `
-      <span class="dismiss-group" style="display:inline-flex;gap:4px;align-items:center">
+      <span class="dismiss-group" style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap">
         <select class="dismiss-reason" data-reason-for="${rowId}" title="Why? Helps the filter learn over time." style="font-size:12px;padding:4px 6px;border-radius:4px;border:1px solid var(--border)">
           <option value="">Why? (optional)</option>
           <option value="noise">Noise — shouldn't have drafted</option>
@@ -226,6 +298,9 @@
           <option value="already_handled">Already handled outside YouOS</option>
           <option value="other">Other</option>
         </select>
+        <label class="skip-sender-label" style="font-size:11px;color:var(--muted-2);display:inline-flex;align-items:center;gap:3px;cursor:pointer" title="Also add this sender to agent.skip_senders so future sweeps skip them.">
+          <input type="checkbox" class="skip-sender-cb" data-skip-for="${rowId}" style="margin:0">also skip sender
+        </label>
         <button class="btn danger" data-action="dismiss" data-id="${rowId}">Dismiss</button>
       </span>`;
   }
@@ -247,27 +322,60 @@
     const url = new URL('/api/agent/pending', window.location.origin);
     if (acct.value) url.searchParams.set('account', acct.value);
     const r = await fetch(url).then(r => r.json());
-    const draftRows   = (r.rows || []).filter(x => x.tier === 'draft');
-    const surfaceRows = (r.rows || []).filter(x => x.tier === 'surface');
+    lastRows.drafts  = (r.rows || []).filter(x => x.tier === 'draft');
+    lastRows.surface = (r.rows || []).filter(x => x.tier === 'surface');
+    applyClientFilter();
+    // ε: keep the activity panel in sync after every refresh + after triage runs.
+    if (typeof loadActivity === 'function') { try { await loadActivity(); } catch (e) {} }
+  }
 
-    if (draftRows.length === 0) {
-      draftsEl.innerHTML = '<div class="empty">No pending drafts. Click <strong>Run triage now</strong> to sweep your unread inbox.</div>';
+  // Visible-only filter — operates on the cached rows so flipping a control
+  // doesn't refetch. Bulk actions read directly from the visible DOM so a
+  // narrower filter == a smaller bulk-action blast radius.
+  function applyClientFilter() {
+    const senderQuery = (filterSender.value || '').trim().toLowerCase();
+    const minScore = parseFloat(filterMinScore.value || '0') || 0;
+    const matches = (row) => {
+      if (Number(row.needs_reply_score || 0) < minScore) return false;
+      if (senderQuery) {
+        const hay = ((row.sender || '') + ' ' + (row.sender_email || '')).toLowerCase();
+        if (!hay.includes(senderQuery)) return false;
+      }
+      return true;
+    };
+    const drafts  = lastRows.drafts.filter(matches);
+    const surface = lastRows.surface.filter(matches);
+
+    if (drafts.length === 0) {
+      const filtered = lastRows.drafts.length > 0;
+      draftsEl.innerHTML = `<div class="empty">${filtered
+        ? 'No drafts match the current filter.'
+        : 'No pending drafts. Click <strong>Run triage now</strong> to sweep your unread inbox.'}</div>`;
     } else {
-      draftsEl.innerHTML = draftRows.map(renderDraft).join('');
+      draftsEl.innerHTML = drafts.map(renderDraft).join('');
     }
 
-    if (surfaceRows.length > 0) {
-      surfaceSummary.textContent = `Surface for review — ${surfaceRows.length} borderline (not auto-drafted)`;
-      surfaceList.innerHTML = surfaceRows.map(renderSurfaceRow).join('');
+    if (surface.length > 0) {
+      surfaceSummary.textContent = `Surface for review — ${surface.length} borderline (not auto-drafted)`;
+      surfaceList.innerHTML = surface.map(renderSurfaceRow).join('');
       surfaceSection.style.display = '';
     } else {
       surfaceSection.style.display = 'none';
     }
 
-    status.textContent = `${draftRows.length} drafts · ${surfaceRows.length} for review`;
-    // ε: keep the activity panel in sync after every refresh + after triage runs.
-    if (typeof loadActivity === 'function') { try { await loadActivity(); } catch (e) {} }
+    const totalDrafts = lastRows.drafts.length, totalSurface = lastRows.surface.length;
+    const filterNote = (drafts.length !== totalDrafts || surface.length !== totalSurface)
+      ? ` (filtered from ${totalDrafts} / ${totalSurface})` : '';
+    status.textContent = `${drafts.length} drafts · ${surface.length} for review${filterNote}`;
+    bulkPushBtn.disabled = drafts.length === 0;
+    bulkDismissSurfaceBtn.disabled = surface.length === 0;
+    // Re-rendering invalidates the focused-card index — drop it. Next j/k
+    // resumes at the top.
+    focusedIdx = -1;
   }
+
+  filterSender.addEventListener('input', applyClientFilter);
+  filterMinScore.addEventListener('change', applyClientFilter);
 
   async function runTriage() {
     if (!acct.value.trim()) { alert('Enter an account email first.'); return; }
@@ -304,6 +412,15 @@
       const sel = card.querySelector(`select.dismiss-reason[data-reason-for="${id}"]`);
       const reason = sel && sel.value ? sel.value : null;
       if (reason) body = { reason };
+      // "Also skip sender" — append the row's sender_email to agent.skip_senders
+      // before the dismissal POST. Done first so even if dismissal fails the
+      // skip-list update sticks (it's the more valuable side-effect).
+      const cb = card.querySelector(`input.skip-sender-cb[data-skip-for="${id}"]`);
+      if (cb && cb.checked) {
+        const row = (lastRows.drafts.concat(lastRows.surface)).find(r => String(r.id) === String(id));
+        const senderEmail = row && row.sender_email;
+        if (senderEmail) { try { await addToSkipSenders(senderEmail); } catch (e) {} }
+      }
     } else if (action === 'copy') {
       const ta = card.querySelector(`#draft-${id}`);
       try { await navigator.clipboard.writeText(ta.value); status.textContent = 'Draft copied — paste into Gmail to send.'; } catch (e) { alert('Copy failed: ' + e); }
@@ -447,6 +564,145 @@
       activitySummary.textContent = 'Recent activity — load failed';
     }
   }
+
+  // --- skip-senders maintenance ----------------------------------------
+  // GET current flag value, append the new email if absent, POST back.
+  // Lives in /api/config so the same machinery as /settings is used; the
+  // user can review the resulting list in /settings any time.
+  async function addToSkipSenders(senderEmail) {
+    const trimmed = (senderEmail || '').trim().toLowerCase();
+    if (!trimmed) return;
+    const flagsResp = await fetch('/api/config/flags').then(r => r.json());
+    const flag = (flagsResp.flags || []).find(f => f.key === 'agent.skip_senders');
+    const current = (flag && flag.value) ? String(flag.value) : '';
+    // Skip list is comma- or newline-separated; preserve whichever the user
+    // had, defaulting to comma-separated on append.
+    const existing = current
+      .split(/[,\n]/).map(s => s.trim().toLowerCase()).filter(Boolean);
+    if (existing.includes(trimmed)) {
+      bulkStatus.textContent = `(already in skip-senders: ${trimmed})`;
+      return;
+    }
+    const sep = current.includes('\n') ? '\n' : ', ';
+    const next = current ? (current + sep + trimmed) : trimmed;
+    const setResp = await fetch('/api/config/set', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'agent.skip_senders', value: next }),
+    });
+    if (!setResp.ok) throw new Error('skip_senders update failed');
+    bulkStatus.textContent = `Added ${trimmed} to skip_senders.`;
+  }
+
+  // --- bulk actions ----------------------------------------------------
+  // Each iterates the currently-visible rows in the DOM and POSTs sequentially
+  // (so failures are surfaced one at a time). The visible filter is the user's
+  // safety mechanism — narrow the filter before bulking.
+  async function bulkPushAll() {
+    const cards = Array.from(draftsEl.querySelectorAll('.card[data-row-id]'));
+    if (cards.length === 0) return;
+    if (!confirm(`Push all ${cards.length} visible drafts to Gmail Drafts? They'll appear in your Gmail Drafts folder; nothing is sent.`)) return;
+    bulkPushBtn.disabled = true;
+    let ok = 0, fail = 0;
+    for (const card of cards) {
+      const id = card.getAttribute('data-row-id');
+      bulkStatus.textContent = `Pushing ${ok + fail + 1}/${cards.length}…`;
+      try {
+        const r = await fetch(`/api/agent/pending/${id}/push_to_gmail`, { method: 'POST' });
+        if (r.ok) { ok++; card.remove(); } else { fail++; }
+      } catch (e) { fail++; }
+    }
+    bulkPushBtn.disabled = false;
+    bulkStatus.textContent = `Bulk push complete: ${ok} ok, ${fail} failed.`;
+    await fetchPending();
+  }
+
+  async function bulkDismissSurface() {
+    const lines = Array.from(surfaceList.querySelectorAll('.surface-line[data-row-id]'));
+    if (lines.length === 0) return;
+    if (!confirm(`Dismiss all ${lines.length} surface-for-review rows as 'noise'? They'll be removed from the queue and counted in the dismissal-signal aggregate.`)) return;
+    bulkDismissSurfaceBtn.disabled = true;
+    let ok = 0, fail = 0;
+    for (const line of lines) {
+      const id = line.getAttribute('data-row-id');
+      try {
+        const r = await fetch(`/api/agent/pending/${id}/dismiss`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: 'noise' }),
+        });
+        if (r.ok) { ok++; line.remove(); } else { fail++; }
+      } catch (e) { fail++; }
+    }
+    bulkDismissSurfaceBtn.disabled = false;
+    bulkStatus.textContent = `Surface cleanup: ${ok} dismissed as noise, ${fail} failed.`;
+    await fetchPending();
+  }
+
+  bulkPushBtn.addEventListener('click', bulkPushAll);
+  bulkDismissSurfaceBtn.addEventListener('click', bulkDismissSurface);
+
+  // --- keyboard navigation ---------------------------------------------
+  // j/k moves the focused card; p/d/e/m act on it. We track focus via a
+  // .focused class on the card div (not native focus) so it works on any
+  // element. Disabled when an input or textarea has actual focus — typing
+  // 'd' into the draft editor shouldn't dismiss the row.
+  let focusedIdx = -1;
+
+  function focusableCards() {
+    return Array.from(draftsEl.querySelectorAll('.card[data-row-id]'));
+  }
+
+  function setFocus(idx) {
+    const cards = focusableCards();
+    if (cards.length === 0) { focusedIdx = -1; return; }
+    if (idx < 0) idx = 0;
+    if (idx >= cards.length) idx = cards.length - 1;
+    cards.forEach(c => c.classList.remove('focused'));
+    cards[idx].classList.add('focused');
+    cards[idx].scrollIntoView({ block: 'center', behavior: 'smooth' });
+    focusedIdx = idx;
+  }
+
+  function focusedCard() {
+    const cards = focusableCards();
+    return focusedIdx >= 0 && focusedIdx < cards.length ? cards[focusedIdx] : null;
+  }
+
+  function isTypingTarget(el) {
+    if (!el) return false;
+    const tag = el.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+  }
+
+  function showHelp(show) { helpOverlay.classList.toggle('shown', !!show); }
+  helpBtn.addEventListener('click', () => showHelp(true));
+  helpOverlay.addEventListener('click', (ev) => { if (ev.target === helpOverlay) showHelp(false); });
+
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') {
+      if (helpOverlay.classList.contains('shown')) { showHelp(false); ev.preventDefault(); return; }
+      if (isTypingTarget(document.activeElement)) { document.activeElement.blur(); ev.preventDefault(); return; }
+    }
+    if (isTypingTarget(document.activeElement)) return;   // typing — let the user type
+    if (ev.ctrlKey || ev.metaKey || ev.altKey) return;     // don't hijack browser shortcuts
+
+    const key = ev.key;
+    if (key === '?') { showHelp(true); ev.preventDefault(); return; }
+    if (key === 'j') { setFocus(focusedIdx + 1); ev.preventDefault(); return; }
+    if (key === 'k') { setFocus(focusedIdx - 1); ev.preventDefault(); return; }
+    if (key === 'r') { fetchPending(); ev.preventDefault(); return; }
+
+    const card = focusedCard();
+    if (!card) return;
+    const id = card.getAttribute('data-row-id');
+    if (key === 'p') { rowAction(id, 'push'); ev.preventDefault(); }
+    else if (key === 'd') { rowAction(id, 'dismiss'); ev.preventDefault(); }
+    else if (key === 'e') {
+      const ta = card.querySelector(`#draft-${id}`);
+      if (ta) { ta.focus(); ev.preventDefault(); }
+    } else if (key === 'm') { rowAction(id, 'sent'); ev.preventDefault(); }
+  });
 
   loadStanding();
   fetchPending();    // fetchPending also kicks off loadActivity at the end

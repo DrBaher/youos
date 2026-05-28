@@ -165,6 +165,28 @@ def test_triage_page_renders_with_nav_and_assets(authed_client):
     html = r.text
     assert "Agent triage" in html
     assert "/static/youos.css" in html
+
+
+def test_triage_page_includes_ux_upgrades(authed_client):
+    """Smoke check: the new b41 UX controls are present in the rendered HTML.
+
+    HTML-level assertion only — we can't actually exercise the JS keyboard
+    handler from pytest, but if any of these IDs vanish the feature is
+    silently broken on the user's screen, so pin them here.
+    """
+    html = authed_client.get("/triage").text
+    # Filter + bulk controls.
+    assert 'id="filterSender"' in html
+    assert 'id="filterMinScore"' in html
+    assert 'id="bulkPushBtn"' in html
+    assert 'id="bulkDismissSurfaceBtn"' in html
+    # Help overlay + entry button.
+    assert 'id="helpBtn"' in html
+    assert 'id="helpOverlay"' in html
+    # Skip-sender checkbox emitted alongside Dismiss.
+    assert "skip-sender-cb" in html
+    # Keyboard handler is registered (sentinel string).
+    assert "keydown" in html
     assert 'id="appVersion"' in html        # shared chrome wiring
     assert "Run triage now" in html         # core action
     # New nav link is present on the page.
