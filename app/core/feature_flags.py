@@ -130,6 +130,13 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "default": False,
         "help": "Refuse cloud fallback during background triage — if the local model is unavailable, the message is logged as an error rather than drafted via Claude. Doesn't affect interactive /feedback or /draft.",
     },
+    {
+        "key": "agent.auto_promote_skip_senders",
+        "label": "Auto-promote senders dismissed as noise 3+ times",
+        "type": "bool",
+        "default": False,
+        "help": "When a sender has been dismissed as 'noise' 3+ times in the last 30 days, automatically add them to skip_senders at the end of each sweep — no click required. Off by default; even with it on, the user can review promotions in the audit log and remove any in /settings.",
+    },
 ]
 
 _BY_KEY: dict[str, dict[str, Any]] = {f["key"]: f for f in KNOWN_FLAGS}
