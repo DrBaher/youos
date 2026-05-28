@@ -1,0 +1,189 @@
+"""Needs-reply classifier.
+
+Combines hard rules (skip newsletters / noreply / empty) with a lightweight
+score (sender history, action verbs, question marks) and the cold-outreach
+detector. The goal isn't perfect precision — it's "filter the obvious noise
+so the agent doesn't draft for every newsletter, and surface what actually
+wants a reply."
+
+Cold outreach gets *flagged* but not auto-skipped: the user may want a
+polite-decline draft (and the generation pipeline's DECLINE_NUDGE handles
+the tone).
+"""
+
+from __future__ import annotations
+
+import re
+import sqlite3
+import urllib.parse
+from dataclasses import dataclass, field
+from typing import Iterable
+
+from app.agent.inbox_fetch import InboxMessage
+
+# --- Hard-skip patterns ----------------------------------------------------
+
+# noreply / mailer-daemon / bounces patterns — automation senders.
+NOREPLY_PAT = re.compile(
+    r"\b(no[-_.]?reply|donotreply|do[-_.]?not[-_.]?reply|mailer[-_.]?daemon|bounces?)\b",
+    re.IGNORECASE,
+)
+
+# Common automation domains. Lighter than the cold-outreach domain set —
+# this is for "obvious bot mail," not for low-confidence sales heuristics.
+AUTOMATION_DOMAIN_PAT = re.compile(
+    r"@(?:notifications?\.|.*\.bounces\.|amazonses\.com|mailgun\.org|sendgrid\.net|mailchimp\.com)",
+    re.IGNORECASE,
+)
+
+# Action verbs in the imperative — strong "the sender wants something from
+# you" signal. Conservative list to avoid false positives.
+ACTION_VERB_PAT = re.compile(
+    r"\b(?:please|could you|can you|would you|let me know|send|share|review|"
+    r"approve|confirm|check|update|fix|investigate|reply|respond|forward)\b",
+    re.IGNORECASE,
+)
+
+
+@dataclass
+class NeedsReplyVerdict:
+    needs_reply: bool
+    score: float                    # 0.0 – 1.0
+    reasons: list[str] = field(default_factory=list)
+    cold_outreach: bool = False
+
+
+# --- Sender history (count of prior reply pairs to a sender) ---------------
+
+
+class SenderHistory:
+    """Counts how many reply pairs the user has with a given inbound author.
+
+    The signal is "have I corresponded with this exact email before" — same
+    spirit as ``sender_email_boost`` in retrieval (b26), used here as a
+    lightweight needs-reply hint rather than a re-ranking weight.
+    """
+
+    def __init__(self, db_path: str):
+        self._db_path = db_path
+        self._cache: dict[str, int] = {}
+
+    def count_for(self, sender_email: str | None) -> int:
+        if not sender_email:
+            return 0
+        key = sender_email.lower()
+        if key in self._cache:
+            return self._cache[key]
+        try:
+            conn = sqlite3.connect(self._db_path)
+            try:
+                row = conn.execute(
+                    # Match either "Name <email>" or bare "email" forms.
+                    "SELECT COUNT(*) FROM reply_pairs "
+                    "WHERE LOWER(inbound_author) LIKE ? OR LOWER(inbound_author) LIKE ?",
+                    (f"%<{key}>%", f"%{key}%"),
+                ).fetchone()
+                n = int(row[0]) if row else 0
+            finally:
+                conn.close()
+        except Exception:
+            n = 0
+        self._cache[key] = n
+        return n
+
+    @classmethod
+    def from_database_url(cls, database_url: str) -> "SenderHistory":
+        path = urllib.parse.urlparse(database_url).path
+        return cls(path)
+
+
+# --- Classifier -------------------------------------------------------------
+
+
+def classify(
+    msg: InboxMessage,
+    *,
+    history: SenderHistory | None = None,
+    threshold: float = 0.6,
+) -> NeedsReplyVerdict:
+    """Decide whether this inbound deserves a draft.
+
+    Hard-skip on automation patterns (`List-Unsubscribe`, noreply, automation
+    domains, empty body) — those return immediately with ``needs_reply=False``.
+    Surviving messages get scored: base 0.5, +0.2 for a question, +0.1 for an
+    imperative verb, +0.2 for prior history with this exact sender, +0.1 if
+    the inbound is short-ish (under ~120 words — long automated digests rarely
+    want a reply). Cold-outreach is flagged but still scored.
+    """
+    reasons: list[str] = []
+
+    # 1) Hard rules — skip immediately.
+    if msg.headers.get("list-unsubscribe"):
+        return NeedsReplyVerdict(False, 0.0, ["list-unsubscribe (newsletter)"])
+    if msg.sender and NOREPLY_PAT.search(msg.sender):
+        return NeedsReplyVerdict(False, 0.0, [f"noreply sender ({msg.sender!r})"])
+    if msg.sender and AUTOMATION_DOMAIN_PAT.search(msg.sender):
+        return NeedsReplyVerdict(False, 0.0, [f"automation domain ({msg.sender!r})"])
+    if not msg.body.strip():
+        return NeedsReplyVerdict(False, 0.0, ["empty body"])
+
+    # 2) Cold-outreach detection (re-uses the b27 detector). Doesn't decide
+    # needs_reply on its own — but does flag for the UI / generation nudge.
+    from app.core.cold_outreach import detect_cold_outbound
+
+    cold = detect_cold_outbound(
+        subject=msg.subject,
+        body=msg.body,
+        sender_email=msg.sender_email,
+    )
+
+    # 3) Lightweight needs-reply score.
+    score = 0.5  # start at the boundary; signals tip it one way or the other
+
+    if "?" in msg.body[-200:]:
+        score += 0.20
+        reasons.append("ends with a question")
+
+    if ACTION_VERB_PAT.search(msg.body):
+        score += 0.10
+        reasons.append("imperative verb present")
+
+    word_count = len(msg.body.split())
+    if word_count <= 120:
+        score += 0.10
+        reasons.append(f"short body ({word_count} words)")
+    elif word_count > 800:
+        score -= 0.20
+        reasons.append(f"very long body ({word_count} words) — likely digest")
+
+    if history is not None and msg.sender_email:
+        prior = history.count_for(msg.sender_email)
+        if prior > 0:
+            score += 0.20
+            reasons.append(f"prior history ({prior} reply pairs)")
+
+    if cold.is_cold:
+        # Cold outreach is *lower* needs-reply priority but still gets a
+        # draft so the user can decline politely. Net effect: a marginal
+        # case (score ~0.55) drops below threshold; a strong case (score
+        # >0.7 from history + question) still surfaces.
+        score -= 0.15
+        reasons.append(f"cold-outreach (heuristic score {cold.score})")
+
+    score = max(0.0, min(1.0, score))
+    return NeedsReplyVerdict(
+        needs_reply=score >= threshold,
+        score=score,
+        reasons=reasons,
+        cold_outreach=cold.is_cold,
+    )
+
+
+def classify_many(
+    messages: Iterable[InboxMessage],
+    *,
+    history: SenderHistory | None = None,
+    threshold: float = 0.6,
+) -> list[tuple[InboxMessage, NeedsReplyVerdict]]:
+    """Vectorised helper. Returns pairs in the input order."""
+    return [(m, classify(m, history=history, threshold=threshold)) for m in messages]
