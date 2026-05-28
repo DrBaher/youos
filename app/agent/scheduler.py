@@ -102,6 +102,7 @@ def _run_one_sweep(account: str, cfg: dict[str, Any]) -> int:
         threshold=cfg["threshold"],
         database_url=s.database_url,
         configs_dir=s.configs_dir,
+        trigger="scheduled",
     )
     return result.persisted
 

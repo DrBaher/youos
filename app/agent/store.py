@@ -157,6 +157,80 @@ def _update_status(
         return cur.rowcount > 0
 
 
+# --- audit log (ε) ---------------------------------------------------------
+
+
+def log_sweep(
+    database_url: str,
+    *,
+    account: str,
+    trigger: str,                          # 'scheduled' | 'manual' | 'api'
+    window: str | None,
+    threshold: float | None,
+    fetched: int,
+    kept: int,
+    surfaced: int,
+    persisted: int,
+    errors: list[str] | None,
+    standing_instructions_snapshot: str | None,
+    started_at: str,                       # ISO timestamp
+    finished_at: str,
+    duration_ms: int,
+) -> int:
+    """Append one ``agent_audit`` row for a completed triage sweep."""
+    with closing(_connect(database_url)) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO agent_audit (
+                account, trigger, window, threshold,
+                fetched, kept, surfaced, persisted,
+                errors_json, standing_instructions_snapshot,
+                started_at, finished_at, duration_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                account, trigger, window, threshold,
+                int(fetched), int(kept), int(surfaced), int(persisted),
+                json.dumps(errors or [], ensure_ascii=False),
+                standing_instructions_snapshot,
+                started_at, finished_at, int(duration_ms),
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid or 0)
+
+
+def list_recent_sweeps(
+    database_url: str,
+    *,
+    account: str | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Return the most-recent sweeps, newest first, with the JSON error list
+    rehydrated. Used by the /triage 'Recent activity' panel."""
+    sql = "SELECT * FROM agent_audit"
+    params: list[Any] = []
+    if account:
+        sql += " WHERE account = ?"
+        params.append(account)
+    sql += " ORDER BY started_at DESC LIMIT ?"
+    params.append(int(limit))
+    with closing(_connect(database_url)) as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [_audit_row_to_dict(r) for r in rows]
+
+
+def _audit_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    d = dict(row)
+    v = d.get("errors_json")
+    if isinstance(v, str):
+        try:
+            d["errors"] = json.loads(v)
+        except json.JSONDecodeError:
+            d["errors"] = []
+    return d
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     d = dict(row)
     # JSON columns are stored as strings; rehydrate for the API.
