@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.2.0-beta.64 — 2026-05-28
+
+### `docs/AGENT_OPERATIONS.md` — runtime contract for LLM-driven orchestrators
+
+Audit gap from b59-b63: we shipped wiring docs (INTEGRATIONS.md), command reference (USAGE.md), security setup (REMOTE_ACCESS.md), and a working Telegram bot. But no **runtime operating contract** for an LLM agent driving YouOS — when to call `/digest` vs `/resolve`, how to handle multi-match disambiguation, HTTP-error → user-facing message mapping, idempotency notes, what NOT to do.
+
+**New `docs/AGENT_OPERATIONS.md`** — 14 sections targeted at LLM agents (Hermes, OpenClaw, a chat bot, Claude in a tool-use loop):
+
+1. **First contact** — probe `/openapi.json`, resolve user's account via `/digest`, cache base URL + token
+2. **Decision tree** — table of user intents → endpoints → follow-ups
+3. **Idempotency** — per-endpoint matrix; `push_to_gmail` and `save_as_feedback_pair` are NOT idempotent (warning)
+4. **HTTP error handling** — code → meaning → user-facing message table
+5. **Disambiguation pattern** — when `/resolve` returns multiple rows
+6. **Paraphrasing the digest** — concrete rewrites of `summary` based on user's question style
+7. **Trust boundaries** — what YouOS won't let you do; what the agent SHOULD NOT do without confirmation
+8. **Per-action side effects** — DB + Gmail changes per endpoint, so confirmations stay honest
+9. **Multi-account** — when to pass `?account=` explicitly
+10. **Conversational patterns** to follow / avoid
+11. **Learning the agent** — feedback_pairs path, standing_instructions, threshold tuning
+12. **Versioning + capability discovery** — `/openapi.json` is canonical; this doc reflects b63 surface
+13. **Worked example** — full multi-turn conversation showing the steady-state shape (each user turn → 1–2 calls → 1 bubble)
+14. **See also** — pointers to INTEGRATIONS.md, REMOTE_ACCESS.md, USAGE.md, ARCHITECTURE.md, SKILL.md, /openapi.json, /docs
+
+**Pointers added** in:
+- `SKILL.md` — after the existing Integrations section (so OpenClaw / ClawHub agents reading the skill land here)
+- `docs/INTEGRATIONS.md` — top-of-page callout (so human integrators direct their LLM at the runtime doc)
+
+No code changes. Pure documentation surface gap closed.
+
 ## v0.2.0-beta.63 — 2026-05-28
 
 ### Reference Telegram bot — `examples/telegram_bot.py`
