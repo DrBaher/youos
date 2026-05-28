@@ -30,9 +30,10 @@ def mocked_environment(monkeypatch, tmp_path):
     # β: tests use the real agent_pending_drafts schema so persistence is
     # exercised end-to-end. Call the migration directly rather than copying
     # the DDL here so the test can't drift from prod.
-    from app.db.bootstrap import _migrate_agent_pending_drafts
+    from app.db.bootstrap import _migrate_agent_audit, _migrate_agent_pending_drafts
 
     _migrate_agent_pending_drafts(conn)
+    _migrate_agent_audit(conn)
     conn.commit()
     conn.close()
 
@@ -240,3 +241,66 @@ def test_standing_instructions_falls_back_to_config(mocked_environment, monkeypa
     rows = list_pending(env["database_url"])
     assert len(rows) == 1
     assert rows[0]["standing_instructions_snapshot"] == "from config"
+
+
+# --- ε: every run writes one agent_audit row -------------------------------
+
+
+def test_run_triage_writes_an_audit_row_with_counts_and_trigger(mocked_environment):
+    from app.agent.triage import run_triage
+    from app.agent import store
+
+    env = mocked_environment
+    run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+        trigger="scheduled",
+    )
+    sweeps = store.list_recent_sweeps(env["database_url"])
+    assert len(sweeps) == 1
+    s = sweeps[0]
+    assert s["account"] == "you@example.com"
+    assert s["trigger"] == "scheduled"
+    assert s["fetched"] == 2          # one pricing question + one newsletter
+    assert s["kept"] == 1
+    assert s["persisted"] == 1
+    assert s["errors"] == []
+    assert s["duration_ms"] is not None and s["duration_ms"] >= 0
+
+
+def test_run_triage_audit_row_written_even_when_persist_false(mocked_environment):
+    """``--dry-run`` (persist=False) doesn't write to agent_pending_drafts,
+    but it DOES leave an audit trail of what was swept and why."""
+    from app.agent.triage import run_triage
+    from app.agent import store
+
+    env = mocked_environment
+    run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+        persist=False, trigger="manual",
+    )
+    sweeps = store.list_recent_sweeps(env["database_url"])
+    assert len(sweeps) == 1
+    assert sweeps[0]["persisted"] == 0   # honest record of the dry-run
+    assert sweeps[0]["trigger"] == "manual"
+
+
+def test_run_triage_captures_per_message_errors_in_audit(mocked_environment, monkeypatch):
+    """Per-message generation errors land in ``errors_json`` so a transient
+    failure shows up in /triage's recent-activity panel."""
+    from app.agent.triage import run_triage
+    from app.agent import store
+
+    def _boom(req, **kw): raise RuntimeError("warm server down")
+    monkeypatch.setattr("app.generation.service.generate_draft", _boom)
+
+    env = mocked_environment
+    run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    sweeps = store.list_recent_sweeps(env["database_url"])
+    assert len(sweeps) == 1
+    assert sweeps[0]["kept"] == 0
+    assert any("warm server down" in e for e in sweeps[0]["errors"])

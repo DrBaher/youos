@@ -12,9 +12,10 @@ import pytest
 def db_url(tmp_path):
     db = tmp_path / "agent.db"
     conn = sqlite3.connect(db)
-    from app.db.bootstrap import _migrate_agent_pending_drafts
+    from app.db.bootstrap import _migrate_agent_audit, _migrate_agent_pending_drafts
 
     _migrate_agent_pending_drafts(conn)
+    _migrate_agent_audit(conn)
     conn.commit()
     conn.close()
     return f"sqlite:///{db}"
@@ -108,3 +109,49 @@ def test_list_pending_default_excludes_non_pending(db_url):
     store.mark_dismissed(db_url, row_id)
     rows = store.list_pending(db_url)  # default status='pending'
     assert {r["message_id"] for r in rows} == {"m-2"}
+
+
+# --- ε: audit log ---------------------------------------------------------
+
+
+def test_log_sweep_inserts_and_list_recent_orders_newest_first(db_url):
+    from app.agent import store
+
+    store.log_sweep(
+        db_url, account="a@x.com", trigger="manual", window="3d", threshold=0.6,
+        fetched=5, kept=2, surfaced=1, persisted=2, errors=[],
+        standing_instructions_snapshot=None,
+        started_at="2026-05-28T10:00:00Z", finished_at="2026-05-28T10:00:02Z",
+        duration_ms=2000,
+    )
+    store.log_sweep(
+        db_url, account="a@x.com", trigger="scheduled", window="24h", threshold=0.6,
+        fetched=12, kept=0, surfaced=2, persisted=0,
+        errors=["gog auth failed"], standing_instructions_snapshot="be brief",
+        started_at="2026-05-28T11:00:00Z", finished_at="2026-05-28T11:00:01Z",
+        duration_ms=1000,
+    )
+
+    sweeps = store.list_recent_sweeps(db_url)
+    assert len(sweeps) == 2
+    # Newest first.
+    assert sweeps[0]["trigger"] == "scheduled"
+    # JSON column rehydrated.
+    assert sweeps[0]["errors"] == ["gog auth failed"]
+    assert sweeps[1]["errors"] == []
+
+
+def test_list_recent_sweeps_filters_by_account(db_url):
+    from app.agent import store
+
+    for acct in ("a@x.com", "b@y.com", "a@x.com"):
+        store.log_sweep(
+            db_url, account=acct, trigger="manual", window="3d", threshold=0.6,
+            fetched=0, kept=0, surfaced=0, persisted=0, errors=[],
+            standing_instructions_snapshot=None,
+            started_at="2026-05-28T10:00:00Z", finished_at="2026-05-28T10:00:01Z",
+            duration_ms=1000,
+        )
+    only_a = store.list_recent_sweeps(db_url, account="a@x.com")
+    assert len(only_a) == 2
+    assert all(s["account"] == "a@x.com" for s in only_a)
