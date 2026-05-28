@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.api.agent_routes import router as agent_router
 from app.api.facts_routes import router as facts_router
 from app.api.feedback_routes import _BOOKMARKLET_ROUTER as bookmarklet_router
 from app.api.feedback_routes import router as feedback_router
@@ -259,6 +260,7 @@ def create_app() -> FastAPI:
     app.include_router(stream_router)
     app.include_router(history_router)
     app.include_router(facts_router)
+    app.include_router(agent_router)
 
     # Shared front-end assets (design system: youos.css + youos.js). The auth
     # middleware already skips the /static prefix.
