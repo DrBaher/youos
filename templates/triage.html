@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouOS — Triage</title>
+<script>(function(){try{var t=localStorage.getItem('youos-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="icon" type="image/svg+xml" href="/static/youos-mark.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
+<link rel="stylesheet" href="/static/youos.css">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 0 24px 48px; }
+
+  .oc-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 0.5rem; }
+  .oc-logo { display: flex; align-items: center; gap: 0.5rem; }
+  .oc-wordmark { color: var(--teal); font-weight: 700; font-size: 1.1rem; }
+  .oc-nav { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+  .oc-nav-link { color: var(--muted-2); text-decoration: none; font-size: 0.85rem; font-weight: 500; transition: color 0.2s; }
+  .oc-nav-link:hover, .oc-nav-link.active { color: var(--teal); }
+
+  h1 { font-size: 1.6rem; margin: 28px 0 4px; color: var(--teal); }
+  .sub { color: var(--muted); font-size: 0.92rem; margin-bottom: 18px; }
+
+  .toolbar { display: flex; gap: 0.6rem; align-items: center; margin: 14px 0 20px; flex-wrap: wrap; }
+  .toolbar input, .toolbar select {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; font-size: 0.88rem;
+  }
+  .btn {
+    background: var(--teal); color: var(--bg); border: none; padding: 7px 14px;
+    border-radius: 6px; font-weight: 600; font-size: 0.88rem; cursor: pointer;
+  }
+  .btn[disabled] { opacity: 0.5; cursor: default; }
+  .btn.secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+  .btn.danger    { background: transparent; color: var(--error); border: 1px solid var(--error); }
+  .btn.ok        { background: var(--success); color: var(--bg); }
+  .btn:hover { filter: brightness(1.05); }
+
+  .status-line { color: var(--muted); font-size: 0.85rem; margin-left: auto; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; margin: 14px 0;
+  }
+  .card h3 { font-size: 1rem; margin: 0 0 4px; color: var(--text); }
+  .meta-line { color: var(--muted); font-size: 0.82rem; margin-bottom: 8px; display: flex; gap: 0.6rem; flex-wrap: wrap; }
+  .reason-list { color: var(--muted-2); font-size: 0.78rem; margin: 4px 0 10px; font-style: italic; }
+
+  .two-col {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: stretch;
+  }
+  @media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } }
+  .col { display: flex; flex-direction: column; }
+  .col-label { color: var(--muted-2); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+  .inbound-body, .draft-edit {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px; font-size: 0.9rem; line-height: 1.45;
+    white-space: pre-wrap; word-wrap: break-word; min-height: 140px; flex: 1; resize: vertical;
+    font-family: inherit;
+  }
+  .inbound-body { overflow-y: auto; max-height: 360px; }
+  .row-actions { display: flex; gap: 0.5rem; margin-top: 10px; flex-wrap: wrap; }
+
+  .empty { color: var(--muted); padding: 28px; text-align: center; background: var(--surface); border: 1px dashed var(--border); border-radius: 10px; }
+
+  details.surface-section { margin-top: 24px; border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; }
+  details.surface-section summary { cursor: pointer; color: var(--muted); font-size: 0.92rem; font-weight: 600; }
+  details.surface-section[open] summary { margin-bottom: 12px; color: var(--text); }
+  .surface-line { padding: 8px 0; border-bottom: 1px solid var(--border-subtle); }
+  .surface-line:last-child { border-bottom: none; }
+  .surface-line .subject { color: var(--text); font-weight: 500; }
+  .surface-line .from { color: var(--muted-2); font-size: 0.82rem; }
+  .surface-line .reasons { color: var(--muted-2); font-size: 0.78rem; font-style: italic; }
+
+  .yos-badge.cold { color: var(--warn); border-color: var(--warn); }
+
+  .footer { color: var(--muted-2); font-size: 0.82rem; padding: 24px 0; border-top: 1px solid var(--border); margin-top: 36px; text-align: center; }
+  .footer a { color: var(--muted-2); }
+</style>
+</head>
+<body>
+<div class="container">
+  <header class="oc-header">
+    <div class="oc-logo">
+      <img src="/static/youos-mark.svg" width="22" height="22" alt="">
+      <span class="oc-wordmark" id="appName">YouOS</span>
+    </div>
+    <nav class="oc-nav">
+      <a href="/feedback" class="oc-nav-link">Draft Email</a>
+      <a href="/triage"   class="oc-nav-link active">Triage</a>
+      <a href="/stats"    class="oc-nav-link">Stats</a>
+      <a href="/settings" class="oc-nav-link">Settings</a>
+      <a href="/bookmarklet" class="oc-nav-link">Gmail</a>
+      <a href="/about"    class="oc-nav-link">About</a>
+    </nav>
+  </header>
+
+  <h1>Agent triage</h1>
+  <p class="sub">Drafts the agent generated against your unread inbox. Never auto-sent — you review, edit, and act.</p>
+
+  <div class="toolbar">
+    <input id="acctInput" type="email" placeholder="account email (e.g. baher@work.example)" />
+    <select id="windowSelect">
+      <option value="24h">last 24h</option>
+      <option value="3d">last 3d</option>
+      <option value="7d" selected>last 7d</option>
+      <option value="14d">last 14d</option>
+    </select>
+    <button class="btn" id="runBtn">Run triage now</button>
+    <button class="btn secondary" id="refreshBtn">Refresh list</button>
+    <span class="status-line" id="statusLine">Loading…</span>
+  </div>
+
+  <div id="drafts"></div>
+
+  <details class="surface-section" id="surfaceSection" style="display:none">
+    <summary id="surfaceSummary">Surface for review (borderline — not auto-drafted)</summary>
+    <div id="surfaceList"></div>
+  </details>
+
+  <div class="footer">
+    YouOS <span id="appVersion"></span> · <a href="https://github.com/DrBaher/youos">GitHub</a> · Your data stays local
+  </div>
+</div>
+
+<script src="/static/youos.js" defer></script>
+<script>
+(function () {
+  const esc = (s) => (window.YouOS && YouOS.esc) ? YouOS.esc(s) : String(s||'').replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"})[c]);
+
+  const $ = (id) => document.getElementById(id);
+  const acct = $('acctInput'), win = $('windowSelect');
+  const runBtn = $('runBtn'), refreshBtn = $('refreshBtn'), status = $('statusLine');
+  const draftsEl = $('drafts'), surfaceSection = $('surfaceSection');
+  const surfaceList = $('surfaceList'), surfaceSummary = $('surfaceSummary');
+
+  // Persist account choice locally so the user doesn't retype it every visit.
+  try {
+    const remembered = localStorage.getItem('youos-triage-account');
+    if (remembered) acct.value = remembered;
+  } catch (e) {}
+  acct.addEventListener('change', () => {
+    try { localStorage.setItem('youos-triage-account', acct.value); } catch (e) {}
+  });
+
+  function renderDraft(row) {
+    const reasons = (row.reasons || []).join(', ') || '(no reasons recorded)';
+    const cold = row.cold_outreach ? '<span class="yos-badge yos-badge--warn cold">⚠ cold outreach</span>' : '';
+    const model = row.draft_model ? `<span class="yos-badge yos-badge--ok">model: ${esc(row.draft_model)}</span>` : '';
+    const score = `<span class="yos-badge">score ${Number(row.needs_reply_score).toFixed(2)}</span>`;
+    return `
+      <div class="card" data-row-id="${row.id}">
+        <div class="meta-line">
+          ${score} ${cold} ${model}
+          <span>from <strong>${esc(row.sender || '(unknown)')}</strong></span>
+        </div>
+        <h3>${esc(row.subject || '(no subject)')}</h3>
+        <div class="reason-list">${esc(reasons)}</div>
+        <div class="two-col">
+          <div class="col">
+            <div class="col-label">Inbound</div>
+            <div class="inbound-body">${esc(row.body || '')}</div>
+          </div>
+          <div class="col">
+            <div class="col-label">Draft</div>
+            <textarea class="draft-edit" id="draft-${row.id}">${esc(row.amended_draft || row.draft || '')}</textarea>
+          </div>
+        </div>
+        <div class="row-actions">
+          <button class="btn"        data-action="save"    data-id="${row.id}">Save edits</button>
+          <button class="btn secondary" data-action="copy" data-id="${row.id}">Copy draft</button>
+          <button class="btn ok"      data-action="sent"    data-id="${row.id}">Mark sent</button>
+          <button class="btn danger"  data-action="dismiss" data-id="${row.id}">Dismiss</button>
+        </div>
+      </div>`;
+  }
+
+  function renderSurfaceRow(row) {
+    const reasons = (row.reasons || []).join(', ');
+    return `
+      <div class="surface-line" data-row-id="${row.id}">
+        <div class="subject">${esc(row.subject || '(no subject)')} <small style="color:var(--muted-2)">[score ${Number(row.needs_reply_score).toFixed(2)}]</small></div>
+        <div class="from">from ${esc(row.sender || '(unknown)')}</div>
+        <div class="reasons">${esc(reasons)}</div>
+        <div class="row-actions" style="margin-top:6px">
+          <button class="btn danger" data-action="dismiss" data-id="${row.id}">Dismiss</button>
+        </div>
+      </div>`;
+  }
+
+  async function fetchPending() {
+    const url = new URL('/api/agent/pending', window.location.origin);
+    if (acct.value) url.searchParams.set('account', acct.value);
+    const r = await fetch(url).then(r => r.json());
+    const draftRows   = (r.rows || []).filter(x => x.tier === 'draft');
+    const surfaceRows = (r.rows || []).filter(x => x.tier === 'surface');
+
+    if (draftRows.length === 0) {
+      draftsEl.innerHTML = '<div class="empty">No pending drafts. Click <strong>Run triage now</strong> to sweep your unread inbox.</div>';
+    } else {
+      draftsEl.innerHTML = draftRows.map(renderDraft).join('');
+    }
+
+    if (surfaceRows.length > 0) {
+      surfaceSummary.textContent = `Surface for review — ${surfaceRows.length} borderline (not auto-drafted)`;
+      surfaceList.innerHTML = surfaceRows.map(renderSurfaceRow).join('');
+      surfaceSection.style.display = '';
+    } else {
+      surfaceSection.style.display = 'none';
+    }
+
+    status.textContent = `${draftRows.length} drafts · ${surfaceRows.length} for review`;
+  }
+
+  async function runTriage() {
+    if (!acct.value.trim()) { alert('Enter an account email first.'); return; }
+    runBtn.disabled = true; status.textContent = 'Triaging…';
+    try {
+      const body = { account: acct.value.trim(), window: win.value, limit: 25, threshold: 0.6 };
+      const r = await fetch('/api/agent/triage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(r => r.json());
+      status.textContent = `fetched ${r.fetched}, kept ${r.kept}, surfaced ${r.surfaced}, persisted ${r.persisted}`;
+      await fetchPending();
+    } catch (e) {
+      status.textContent = 'Triage failed: ' + e;
+    } finally {
+      runBtn.disabled = false;
+    }
+  }
+
+  async function rowAction(id, action) {
+    const card = document.querySelector(`[data-row-id="${id}"]`);
+    let url, body = null;
+    if (action === 'save') {
+      const ta = card.querySelector(`#draft-${id}`);
+      url = `/api/agent/pending/${id}/amend`;
+      body = { amended_draft: ta.value };
+    } else if (action === 'sent') {
+      url = `/api/agent/pending/${id}/mark_sent`;
+    } else if (action === 'dismiss') {
+      url = `/api/agent/pending/${id}/dismiss`;
+    } else if (action === 'copy') {
+      const ta = card.querySelector(`#draft-${id}`);
+      try { await navigator.clipboard.writeText(ta.value); status.textContent = 'Draft copied — paste into Gmail to send.'; } catch (e) { alert('Copy failed: ' + e); }
+      return;
+    } else {
+      return;
+    }
+    const opts = { method: 'POST' };
+    if (body) {
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body = JSON.stringify(body);
+    }
+    const r = await fetch(url, opts);
+    if (!r.ok) {
+      const t = await r.text();
+      alert('Action failed: ' + t);
+      return;
+    }
+    if (action === 'save') {
+      status.textContent = 'Saved.';
+    } else {
+      card.remove();             // dismissed/sent rows drop off the page
+      status.textContent = action === 'sent' ? 'Marked sent.' : 'Dismissed.';
+    }
+  }
+
+  document.addEventListener('click', (ev) => {
+    const t = ev.target;
+    if (t.tagName !== 'BUTTON') return;
+    if (t.id === 'runBtn')     { runTriage(); return; }
+    if (t.id === 'refreshBtn') { fetchPending(); return; }
+    const action = t.getAttribute('data-action');
+    const id = t.getAttribute('data-id');
+    if (action && id) { rowAction(id, action); }
+  });
+
+  fetchPending();
+})();
+</script>
+</body>
+</html>
