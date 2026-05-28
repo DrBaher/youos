@@ -1640,9 +1640,14 @@ def generate_draft(
             account_emails = ()
         sender_type_hint = None
         sender_domain_hint = None
+        sender_email_hint = None
         if request.sender:
             sender_type_hint = classify_sender(request.sender)
             sender_domain_hint = extract_domain(request.sender)
+            # Exact-email hint lets retrieval boost pairs from prior direct
+            # exchanges with this sender — much sharper than same-domain.
+            from app.core.sender import extract_email
+            sender_email_hint = extract_email(request.sender)
 
         # Classify intent (multi-intent support)
         from app.core.intent import classify_intents_multi
@@ -1670,6 +1675,7 @@ def generate_draft(
                 top_k_chunks=request.top_k_chunks,
                 sender_type_hint=sender_type_hint,
                 sender_domain_hint=sender_domain_hint,
+                sender_email_hint=sender_email_hint,
                 language_hint=detected_lang,
                 intent_hint=detected_intent,
                 intent_hint_2=intent_hint_2,

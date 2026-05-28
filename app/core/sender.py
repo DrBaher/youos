@@ -93,6 +93,18 @@ def extract_domain(author: str | None) -> str | None:
     return match.group().split("@", 1)[1].lower()
 
 
+def extract_email(author: str | None) -> str | None:
+    """Extract the full ``local@domain`` email address from an ``author``
+    field that may be ``"Name <email@host>"`` or just an email. Lowercased.
+    Returns ``None`` if no email is found."""
+    if not author:
+        return None
+    match = _EMAIL_RE.search(author)
+    if not match:
+        return None
+    return match.group().lower()
+
+
 def classify_sender(author: str | None) -> SenderType:
     """Classify a sender into a category based on their email address."""
     if not author:
