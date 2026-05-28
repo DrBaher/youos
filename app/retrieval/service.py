@@ -192,10 +192,22 @@ class RetrievalService:
         if not query:
             raise ValueError("Retrieval query must not be empty.")
 
-        # Expand query with synonyms for FTS (keep original for semantic)
-        from app.core.query_expansion import expand_query
+        # Shape the query for FTS: synonyms in, stopword/template noise out,
+        # the user's own name out (every inbound has "Hi Baher" — pure BM25
+        # noise that pulls intro emails to the top). extract_topic_keywords
+        # is a no-op for short queries; the original ``query`` is kept for
+        # the semantic re-ranker.
+        from app.core.config import get_user_names
+        from app.core.query_expansion import expand_query, extract_topic_keywords
 
-        fts_query_text = expand_query(query)
+        user_name_tokens: set[str] = set()
+        for n in get_user_names():
+            for part in n.split():
+                if part:
+                    user_name_tokens.add(part.lower())
+        fts_query_text = extract_topic_keywords(
+            expand_query(query), extra_stopwords=user_name_tokens
+        )
 
         tokens = _tokenize(fts_query_text)
         detected_mode = _detect_mode(query)
