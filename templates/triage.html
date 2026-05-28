@@ -244,6 +244,7 @@
         <th style="padding:6px 6px">Fetched</th><th style="padding:6px 6px">Kept</th>
         <th style="padding:6px 6px">Surfaced</th><th style="padding:6px 6px">Persisted</th>
         <th style="padding:6px 6px">Took</th><th style="padding:6px 6px">Errors</th>
+        <th style="padding:6px 6px" title="Senders auto-added to skip_senders this sweep (requires agent.auto_promote_skip_senders)">Auto-promoted</th>
       </tr></thead>
       <tbody id="activityBody"></tbody>
     </table>
@@ -253,6 +254,7 @@
     .activity-table tr.has-errors td { background: rgba(220, 60, 60, 0.06); }
     .activity-table .trigger { color: var(--muted-2); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
     .activity-table .err { color: var(--error); cursor: pointer; }
+    .activity-table .auto-prom { color: var(--teal); cursor: help; font-weight: 600; }
   </style>
 
   <div class="footer">
@@ -599,6 +601,9 @@
         const errs = (s.errors || []);
         const errCell = errs.length === 0 ? '—'
           : `<span class="err" title="${esc(errs.join('\n'))}">${errs.length}</span>`;
+        const promoted = (s.auto_promoted || []);
+        const promotedCell = promoted.length === 0 ? '—'
+          : `<span class="auto-prom" title="${esc(promoted.join('\n'))}">${promoted.length}</span>`;
         const cls = errs.length ? 'has-errors' : '';
         const took = (s.duration_ms == null) ? '—' : (s.duration_ms < 1000 ? s.duration_ms + 'ms' : (s.duration_ms/1000).toFixed(1) + 's');
         return `<tr class="${cls}">
@@ -611,6 +616,7 @@
           <td>${s.persisted ?? 0}</td>
           <td>${took}</td>
           <td>${errCell}</td>
+          <td>${promotedCell}</td>
         </tr>`;
       }).join('');
     } catch (e) {
