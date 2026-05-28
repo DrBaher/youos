@@ -136,6 +136,25 @@
     <div id="surfaceList"></div>
   </details>
 
+  <details class="surface-section" id="activitySection">
+    <summary id="activitySummary">Recent activity</summary>
+    <table class="activity-table" id="activityTable" style="width:100%;border-collapse:collapse;margin-top:8px">
+      <thead><tr style="text-align:left;color:var(--muted-2);font-size:0.78rem">
+        <th style="padding:6px 6px">When</th><th style="padding:6px 6px">Account</th><th style="padding:6px 6px">Trigger</th>
+        <th style="padding:6px 6px">Fetched</th><th style="padding:6px 6px">Kept</th>
+        <th style="padding:6px 6px">Surfaced</th><th style="padding:6px 6px">Persisted</th>
+        <th style="padding:6px 6px">Took</th><th style="padding:6px 6px">Errors</th>
+      </tr></thead>
+      <tbody id="activityBody"></tbody>
+    </table>
+  </details>
+  <style>
+    .activity-table td { padding: 5px 6px; border-top: 1px solid var(--border-subtle); font-size: 0.85rem; }
+    .activity-table tr.has-errors td { background: rgba(220, 60, 60, 0.06); }
+    .activity-table .trigger { color: var(--muted-2); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .activity-table .err { color: var(--error); cursor: pointer; }
+  </style>
+
   <div class="footer">
     YouOS <span id="appVersion"></span> · <a href="https://github.com/DrBaher/youos">GitHub</a> · Your data stays local
   </div>
@@ -228,6 +247,8 @@
     }
 
     status.textContent = `${draftRows.length} drafts · ${surfaceRows.length} for review`;
+    // ε: keep the activity panel in sync after every refresh + after triage runs.
+    if (typeof loadActivity === 'function') { try { await loadActivity(); } catch (e) {} }
   }
 
   async function runTriage() {
@@ -346,8 +367,60 @@
   standingSaveBtn.addEventListener('click', () => saveStanding(standingInput.value));
   standingClearBtn.addEventListener('click', () => saveStanding(''));
 
+  // ε: 'Recent activity' panel — fetch sweep audit log and render.
+  const activityBody = $('activityBody'), activitySummary = $('activitySummary');
+
+  function fmtRelTime(iso) {
+    if (!iso) return '';
+    const t = Date.parse(iso);
+    if (isNaN(t)) return iso;
+    const secs = Math.round((Date.now() - t) / 1000);
+    if (secs < 90) return secs + 's ago';
+    const mins = Math.round(secs / 60);
+    if (mins < 90) return mins + 'm ago';
+    const hrs = Math.round(mins / 60);
+    if (hrs < 36) return hrs + 'h ago';
+    return Math.round(hrs / 24) + 'd ago';
+  }
+
+  async function loadActivity() {
+    try {
+      const url = new URL('/api/agent/sweeps', window.location.origin);
+      url.searchParams.set('limit', '15');
+      if (acct.value) url.searchParams.set('account', acct.value);
+      const r = await fetch(url).then(r => r.json());
+      const sweeps = r.sweeps || [];
+      if (sweeps.length === 0) {
+        activitySummary.textContent = 'Recent activity — no sweeps logged yet';
+        activityBody.innerHTML = '';
+        return;
+      }
+      activitySummary.textContent = `Recent activity — last ${sweeps.length} sweep${sweeps.length === 1 ? '' : 's'}`;
+      activityBody.innerHTML = sweeps.map(s => {
+        const errs = (s.errors || []);
+        const errCell = errs.length === 0 ? '—'
+          : `<span class="err" title="${esc(errs.join('\n'))}">${errs.length}</span>`;
+        const cls = errs.length ? 'has-errors' : '';
+        const took = (s.duration_ms == null) ? '—' : (s.duration_ms < 1000 ? s.duration_ms + 'ms' : (s.duration_ms/1000).toFixed(1) + 's');
+        return `<tr class="${cls}">
+          <td>${esc(fmtRelTime(s.started_at))}</td>
+          <td>${esc(s.account || '')}</td>
+          <td><span class="trigger">${esc(s.trigger || '')}</span></td>
+          <td>${s.fetched ?? 0}</td>
+          <td>${s.kept ?? 0}</td>
+          <td>${s.surfaced ?? 0}</td>
+          <td>${s.persisted ?? 0}</td>
+          <td>${took}</td>
+          <td>${errCell}</td>
+        </tr>`;
+      }).join('');
+    } catch (e) {
+      activitySummary.textContent = 'Recent activity — load failed';
+    }
+  }
+
   loadStanding();
-  fetchPending();
+  fetchPending();    // fetchPending also kicks off loadActivity at the end
 })();
 </script>
 </body>

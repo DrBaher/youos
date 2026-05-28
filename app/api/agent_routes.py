@@ -29,6 +29,18 @@ def _db_url(request: Request) -> str:
 # --- read --------------------------------------------------------------------
 
 
+@router.get("/api/agent/sweeps")
+def list_agent_sweeps(
+    request: Request,
+    account: str | None = Query(None),
+    limit: int = Query(20, ge=1, le=200),
+) -> dict:
+    """Recent triage sweeps from the audit log — what the agent did, when,
+    by which trigger, with what result + any per-message errors."""
+    sweeps = store.list_recent_sweeps(_db_url(request), account=account, limit=limit)
+    return {"count": len(sweeps), "sweeps": sweeps}
+
+
 @router.get("/api/agent/pending")
 def list_agent_pending(
     request: Request,
@@ -113,6 +125,7 @@ def trigger_triage(body: TriageRunBody, request: Request) -> dict:
         database_url=settings.database_url,
         configs_dir=settings.configs_dir,
         backend=body.backend,
+        trigger="api",
     )
     return {
         "account": account,
