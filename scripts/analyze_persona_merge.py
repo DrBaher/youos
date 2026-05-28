@@ -21,6 +21,34 @@ def _dominant_pattern(counter: dict[str, int], threshold: float = 0.60) -> str |
     return None
 
 
+# Analyzer output is *category labels* ("Hi X", "Statement"), not renderable
+# phrases. Without translation the merge copies "Statement" into persona.yaml
+# and the generator then emits the literal word "Statement" as the closing.
+_GREETING_CATEGORY_PHRASE = {
+    "Hi X": "Hi {name},",
+    "Hey X": "Hey {name},",
+    "Hello X": "Hello {name},",
+    "Dear X": "Dear {name},",
+    "Direct start": "",        # no greeting — model goes straight in
+    "Direct answer": "",
+    "Thanks opener": "",       # model writes the "Thanks for ..." opener itself
+}
+_CLOSING_CATEGORY_PHRASE = {
+    "Statement": "",            # no signoff — reply ends with a statement
+    "Question": "",             # ends with a question, no signoff
+    "Thanks": "Thanks,",
+    "Let me know": "",          # rare and conversational; let model emit it
+}
+
+
+def _translate_category(label: str, *, kind: str) -> str | None:
+    """Map an analyzer category label to the renderable phrase that belongs
+    in persona.yaml. Returns None if the label is unknown (treated as
+    not-yet-supported — better than copying garbage into config)."""
+    table = _GREETING_CATEGORY_PHRASE if kind == "greeting" else _CLOSING_CATEGORY_PHRASE
+    return table.get(label)
+
+
 def merge_persona_analysis(
     *,
     analysis_path: Path | None = None,
@@ -55,25 +83,33 @@ def merge_persona_analysis(
             if not dry_run:
                 persona.setdefault("style", {})["avg_reply_words"] = round(new_avg)
 
-    # Update greeting_patterns if a new dominant pattern emerges (>60%)
+    # Update greeting_patterns if a new dominant pattern emerges (>60%).
+    # Translate the analyzer's category label to a renderable phrase first —
+    # otherwise we'd copy "Hi X" or "Direct start" into persona.yaml verbatim
+    # and the generator would emit those strings literally.
     greeting_patterns = findings.get("greeting_patterns", {})
     dominant_greeting = _dominant_pattern(greeting_patterns)
     if dominant_greeting:
-        current_default = persona.get("greeting_patterns", {}).get("default")
-        if current_default != dominant_greeting:
-            changes.append(f"greeting default: {current_default} -> {dominant_greeting}")
-            if not dry_run:
-                persona.setdefault("greeting_patterns", {})["default"] = dominant_greeting
+        phrase = _translate_category(dominant_greeting, kind="greeting")
+        if phrase is not None:
+            current_default = persona.get("greeting_patterns", {}).get("default")
+            if current_default != phrase:
+                changes.append(f"greeting default: {current_default!r} -> {phrase!r} (from {dominant_greeting!r})")
+                if not dry_run:
+                    persona.setdefault("greeting_patterns", {})["default"] = phrase
 
-    # Update closing_patterns similarly
+    # Update closing_patterns similarly. "Statement"/"Question" → empty string
+    # (Baher's data is ~70% no-signoff) — the renderable form of "no signoff".
     closing_patterns = findings.get("closing_patterns", {})
     dominant_closing = _dominant_pattern(closing_patterns)
     if dominant_closing:
-        current_default = persona.get("closing_patterns", {}).get("default")
-        if current_default != dominant_closing:
-            changes.append(f"closing default: {current_default} -> {dominant_closing}")
-            if not dry_run:
-                persona.setdefault("closing_patterns", {})["default"] = dominant_closing
+        phrase = _translate_category(dominant_closing, kind="closing")
+        if phrase is not None:
+            current_default = persona.get("closing_patterns", {}).get("default")
+            if current_default != phrase:
+                changes.append(f"closing default: {current_default!r} -> {phrase!r} (from {dominant_closing!r})")
+                if not dry_run:
+                    persona.setdefault("closing_patterns", {})["default"] = phrase
 
     # Merge bullet_point_pct into style
     new_bullet_pct = findings.get("bullet_point_pct")

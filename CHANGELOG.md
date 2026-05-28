@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.2.0-beta.22 — 2026-05-28
+
+### Persona pipeline: instance-aware paths + category translation
+Two bugs in the persona-analysis pipeline that together made `analyze_persona` useless for instance setups (BaherOS, etc.):
+
+- **`analyze_persona.py` ignored `YOUOS_DATA_DIR`** — it hardcoded `ROOT_DIR / "configs"` for both the analysis JSON and the merge target. So `YOUOS_DATA_DIR=~/YouOS-Instances/baheros python scripts/analyze_persona.py` analyzed the instance's corpus correctly, then wrote findings to the **repo**'s `configs/`, leaving the instance's persona.yaml stale. Now resolves both paths from `get_settings().configs_dir`.
+- **`merge_persona_analysis` copied category labels into persona.yaml verbatim.** The analyzer emits *labels* like `"Hi X"` / `"Direct start"` / `"Statement"` (high-level patterns), not renderable phrases. The merge then wrote `closing_patterns.default: "Statement"` and the generator emitted the literal word "Statement" as the closing. New `_translate_category()` maps each known label to its renderable form:
+  - Greetings: `Hi X → "Hi {name},"`, `Hey X → "Hey {name},"`, `Hello X → "Hello {name},"`, `Dear X → "Dear {name},"`, `Direct start / Direct answer / Thanks opener → ""`
+  - Closings: `Statement / Question / Let me know → ""`, `Thanks → "Thanks,"`
+  Unknown labels are *skipped* (rather than copied) — better to leave a field unchanged than to corrupt it.
+
+### Live impact on BaherOS
+Applied the merge against the live instance after the fix landed. The corpus (11,758 reply pairs) is **70% no-signoff** ("Statement" dominant) — so the default closing collapsed from `"Best,"` to `""`. Re-running the four QA synthetic inbounds: the Alex/Stripe pricing inquiry now correctly says **"I'm happy with the current pricing and we're not planning to move to the enterprise tier"** (vs the previous misread offering Stripe pricing back at Alex). The persona refresh changed the LoRA's prompt enough to flip the *content*, not just the artifacts — biggest single quality lift in the QA series so far.
+
+### Tests
+Five new regressions in `test_persona_analysis_merge`: Statement→empty closing, Direct start→empty greeting, "Hi X"→"Hi {name},", unknown-label-skipped, and the `_translate_category` helper itself. Updated `test_merge_updates_greeting_pattern` to assert the translated phrase, not the buggy literal "Hey X". 14/14 in the suite.
+
 ## v0.2.0-beta.21 — 2026-05-28
 
 ### Draft-quality repairs: kill the three LoRA artifacts that leaked into output
