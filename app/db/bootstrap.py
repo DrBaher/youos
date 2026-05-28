@@ -46,6 +46,7 @@ def bootstrap_database() -> Path:
         _migrate_review_streaks(connection)
         _migrate_exemplar_cache(connection)
         _migrate_draft_events(connection)
+        _migrate_agent_pending_drafts(connection)
         _populate_fts(connection)
         connection.commit()
     finally:
@@ -216,3 +217,61 @@ def _migrate_draft_events(connection: sqlite3.Connection) -> None:
         )
     """)
     connection.execute("CREATE INDEX IF NOT EXISTS idx_draft_events_created ON draft_events(created_at)")
+
+
+def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
+    """Persistence for the autonomous-agent loop's triage results.
+
+    One row per *inbound* the agent processed — both drafts the user should
+    review (``tier='draft'``) and skipped-but-borderline cases the UI
+    surfaces collapsed for visibility (``tier='surface'``). Hard-skipped
+    inbounds (newsletters / automation domains / etc.) aren't stored;
+    they're noise. ``message_id`` is unique so repeated triage runs are
+    idempotent — the same unread thread won't be drafted twice.
+    """
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS agent_pending_drafts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            -- inbound identification (dedup on message_id)
+            message_id TEXT NOT NULL UNIQUE,
+            thread_id TEXT NOT NULL,
+            account TEXT NOT NULL,
+
+            -- inbound content (kept so the UI can show it without re-fetching)
+            sender TEXT,
+            sender_email TEXT,
+            subject TEXT,
+            body TEXT,
+            received_at TEXT,
+
+            -- needs-reply verdict
+            needs_reply_score REAL NOT NULL,
+            reasons_json TEXT NOT NULL DEFAULT '[]',
+            cold_outreach INTEGER NOT NULL DEFAULT 0,
+            tier TEXT NOT NULL,                          -- 'draft' | 'surface'
+
+            -- the draft (NULL for tier='surface')
+            draft TEXT,
+            draft_model TEXT,
+            draft_repairs_json TEXT NOT NULL DEFAULT '[]',
+            standing_instructions_snapshot TEXT,
+
+            -- lifecycle
+            status TEXT NOT NULL DEFAULT 'pending',      -- 'pending' | 'amended' | 'sent' | 'dismissed'
+            amended_draft TEXT,
+            sent_at TEXT,
+            dismissed_at TEXT,
+
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_pending_drafts_status "
+        "ON agent_pending_drafts(status, tier, created_at DESC)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_pending_drafts_account "
+        "ON agent_pending_drafts(account, status)"
+    )
