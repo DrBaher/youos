@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.2.0-beta.57 — 2026-05-28
+
+### Gmail-label dismissal signal — dismiss from any client
+
+Final piece of the remote-access series (b54 docs → b55 mobile UI → b56 digest → **b57 remote dismissal**). Dismissing a queued draft previously required opening `/triage`. This PR lets you dismiss **from any Gmail client** by applying a Gmail label.
+
+**Convention**: create a Gmail label called `YouOS/skip`. Apply it to the original inbound thread when you see an agent draft you want to dismiss. Next sweep, the matching `agent_pending_drafts` row is dismissed-as-noise; the label is removed.
+
+**New `app/agent/gmail_label_sync.py`** — `sync_gmail_label_dismissals(account, database_url, label)`:
+1. Searches Gmail for `label:YouOS/skip` via gog
+2. For each match, looks up the pending row by `thread_id`
+3. If found in `pending`/`amended`, marks dismissed with `reason='noise'`
+4. Removes the label so subsequent syncs don't re-fire
+
+**`run_triage` hook**: label sync runs at the start of every sweep before fetching unread. Failure-isolated — a label-sync error logs and sweep continues.
+
+**New CLI**: `youos sync-labels [--account] [--label]` — on-demand without waiting for next sweep.
+
+**Verified gog shapes** (live):
+- `gog gmail search 'label:YouOS/skip' ...` returns `{"threads":[...]}` cleanly even when label doesn't exist
+- `gog gmail messages modify <id> ... --remove <label>` confirmed with `--dry-run`
+
+**Failure modes handled**: missing label → empty result; label-removal failure → keep dismissal; missing pending row → skipped; terminal-state row → skipped.
+
+**Tests** — 7 new: clean empty, end-to-end dismiss+remove, skip-no-row, skip-terminal, removal-failure-doesn't-roll-back, invalid-label-edge, `run_triage` calls sync.
+
+**Docs**: `docs/REMOTE_ACCESS.md` "Remote dismissal via Gmail label" section + `docs/USAGE.md` row.
+
+The dismissal flows through the same path as `/triage`'s button — counted in dismissal-feedback aggregate, contributes to `agent.auto_promote_skip_senders`, surfaces on next digest. **The self-tuning loop now works from your phone with zero `/triage` access required.**
+
 ## v0.2.0-beta.56 — 2026-05-28
 
 ### Daily digest CLI — `youos digest`
