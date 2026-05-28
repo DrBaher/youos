@@ -102,6 +102,13 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "default": True,
         "help": "Fire a desktop notification when a triage sweep persists new drafts. Silently no-ops on non-Darwin.",
     },
+    {
+        "key": "agent.standing_instructions",
+        "label": "Standing instructions",
+        "type": "text",
+        "default": "",
+        "help": "Free-form guidance threaded into every triage draft (e.g. \"today I'm out of office; politely decline meetings\"). Snapshotted with each draft for auditability. Empty = none.",
+    },
 ]
 
 _BY_KEY: dict[str, dict[str, Any]] = {f["key"]: f for f in KNOWN_FLAGS}
