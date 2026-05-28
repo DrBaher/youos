@@ -245,6 +245,19 @@ def run_triage(
     kept_count = sum(1 for d in drafts if d.error is None)
     errors_list = [d.error for d in drafts if d.error]
 
+    # b44 / b52: Auto-promote senders dismissed as 'noise' ≥3 times to
+    # agent.skip_senders. Opt-in (off by default). Now runs *before* log_sweep
+    # so the audit row can capture which senders were auto-added in this
+    # sweep (b52 surfaces these in /triage Recent activity). Failure-isolated:
+    # an exception here returns [] and the sweep still gets logged.
+    auto_promoted: list[str] = []
+    try:
+        auto_promoted = _maybe_auto_promote_skip_senders(
+            database_url=database_url, account=account,
+        )
+    except Exception as exc:
+        logger.warning("auto-promote skip_senders failed: %s", exc)
+
     # ε: append one row per sweep — always written, regardless of persist=.
     # The audit log records *attempts*, not outcomes; --dry-run still leaves
     # a trace of what was swept (with persisted=0).
@@ -271,19 +284,12 @@ def run_triage(
             started_at=_started_at_iso,
             finished_at=_finished_at_iso,
             duration_ms=_duration_ms,
+            auto_promoted_senders=auto_promoted,
         )
     except Exception as exc:
         # Audit-log failure must not propagate — the agent loop has higher
         # priorities than its own observability.
         logger.warning("triage audit log failed: %s", exc)
-
-    # b44: Auto-promote senders dismissed as 'noise' ≥3 times to
-    # agent.skip_senders. Opt-in (off by default). Runs at the tail of every
-    # sweep so the next iteration of the loop already sees the new skip-list.
-    try:
-        _maybe_auto_promote_skip_senders(database_url=database_url, account=account)
-    except Exception as exc:
-        logger.warning("auto-promote skip_senders failed: %s", exc)
 
     return TriageResult(
         fetched=len(messages),

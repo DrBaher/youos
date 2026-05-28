@@ -308,8 +308,15 @@ def log_sweep(
     started_at: str,                       # ISO timestamp
     finished_at: str,
     duration_ms: int,
+    auto_promoted_senders: list[str] | None = None,
 ) -> int:
-    """Append one ``agent_audit`` row for a completed triage sweep."""
+    """Append one ``agent_audit`` row for a completed triage sweep.
+
+    ``auto_promoted_senders`` (b52) is the list of senders the loop just
+    auto-added to ``agent.skip_senders`` at the tail of this sweep — empty
+    when ``agent.auto_promote_skip_senders`` is off or no candidates
+    qualified. Surfaces in /triage Recent activity.
+    """
     with closing(_connect(database_url)) as conn:
         cur = conn.execute(
             """
@@ -317,8 +324,9 @@ def log_sweep(
                 account, trigger, window, threshold,
                 fetched, kept, surfaced, persisted,
                 errors_json, standing_instructions_snapshot,
-                started_at, finished_at, duration_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                started_at, finished_at, duration_ms,
+                auto_promoted_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 account, trigger, window, threshold,
@@ -326,6 +334,7 @@ def log_sweep(
                 json.dumps(errors or [], ensure_ascii=False),
                 standing_instructions_snapshot,
                 started_at, finished_at, int(duration_ms),
+                json.dumps(auto_promoted_senders or [], ensure_ascii=False),
             ),
         )
         conn.commit()
@@ -511,12 +520,13 @@ def noise_dismissal_candidates(
 
 def _audit_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     d = dict(row)
-    v = d.get("errors_json")
-    if isinstance(v, str):
-        try:
-            d["errors"] = json.loads(v)
-        except json.JSONDecodeError:
-            d["errors"] = []
+    for src, dst in (("errors_json", "errors"), ("auto_promoted_json", "auto_promoted")):
+        v = d.get(src)
+        if isinstance(v, str):
+            try:
+                d[dst] = json.loads(v)
+            except json.JSONDecodeError:
+                d[dst] = []
     return d
 
 

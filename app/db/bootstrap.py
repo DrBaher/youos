@@ -330,3 +330,10 @@ def _migrate_agent_audit(connection: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_agent_audit_account "
         "ON agent_audit(account, started_at DESC)"
     )
+    # b52: ``auto_promoted_json`` captures senders the loop auto-added to
+    # ``agent.skip_senders`` at the tail of this sweep (when
+    # ``agent.auto_promote_skip_senders`` is on). Surfaces in
+    # /triage Recent activity so the user can trust an autonomous action.
+    _audit_cols = {row[1] for row in connection.execute("PRAGMA table_info(agent_audit)").fetchall()}
+    if "auto_promoted_json" not in _audit_cols:
+        connection.execute("ALTER TABLE agent_audit ADD COLUMN auto_promoted_json TEXT NOT NULL DEFAULT '[]'")
