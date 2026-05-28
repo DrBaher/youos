@@ -144,6 +144,28 @@ def test_dismissal_stats_endpoint_returns_aggregate(authed_client):
     assert 0.0 <= s["dismissal_rate"] <= 1.0
 
 
+def test_observability_endpoint_returns_unified_payload(authed_client):
+    # Generate some signal: dismiss a couple as noise so a hint can fire.
+    rows = authed_client.get("/api/agent/pending").json()["rows"]
+    for row in rows[:3]:
+        authed_client.post(
+            f"/api/agent/pending/{row['id']}/dismiss",
+            json={"reason": "noise"},
+        )
+    body = authed_client.get("/api/agent/observability?days=30").json()
+    # Three aggregates always present, even with zero data.
+    assert set(body.keys()) == {"sweep", "dismissals", "score_histogram", "hints"}
+    assert "sweeps" in body["sweep"]
+    assert "by_reason" in body["dismissals"]
+    assert "buckets" in body["score_histogram"]
+    # Histogram has all five labelled buckets, zero-filled.
+    assert set(body["score_histogram"]["buckets"].keys()) == {
+        "0.0-0.3", "0.3-0.5", "0.5-0.7", "0.7-0.9", "0.9-1.0",
+    }
+    # hints is always a list (may be empty in the test fixture).
+    assert isinstance(body["hints"], list)
+
+
 def test_mark_sent_records_timestamp(authed_client):
     rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
     row_id = rows[0]["id"]
