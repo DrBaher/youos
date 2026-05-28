@@ -87,6 +87,58 @@ def mark_sent(row_id: int, request: Request) -> dict:
     return {"ok": True, "row": store.get(_db_url(request), row_id)}
 
 
+@router.post("/api/agent/pending/{row_id}/push_to_gmail")
+def push_to_gmail(row_id: int, request: Request) -> dict:
+    """Phase 2: create a real Gmail Drafts entry for this pending row.
+
+    Uses the configured ``ingestion.google_backend``; ``gog`` is supported,
+    ``gws`` and ``native`` will raise NotImplementedError until Phase 2.2.
+    On success, marks the row as ``sent`` (the user finishes-and-sends
+    from Gmail) and stores the Gmail draft id for traceability.
+
+    The draft text used is ``amended_draft`` if the user edited it, else the
+    original ``draft`` field. Threading uses the inbound's ``thread_id`` so
+    Gmail shows it as a draft reply on the original conversation.
+    """
+    db_url = _db_url(request)
+    row = store.get(db_url, row_id)
+    if not row:
+        raise HTTPException(404, "pending row not found")
+    if row.get("tier") != "draft" or not (row.get("amended_draft") or row.get("draft")):
+        raise HTTPException(400, "row has no draft to push (tier=surface, or draft is empty)")
+    if not row.get("sender_email"):
+        raise HTTPException(400, "row has no sender_email; cannot route the reply")
+
+    body = row.get("amended_draft") or row.get("draft") or ""
+    raw_subject = row.get("subject") or ""
+    # Gmail handles threading from the thread_id, but we still prepend "Re: "
+    # if missing so the user sees the conventional subject in their Drafts.
+    subject = raw_subject if raw_subject.lower().startswith("re:") else f"Re: {raw_subject}"
+
+    from app.ingestion.gmail_write import GmailWriteError, create_draft
+
+    try:
+        result = create_draft(
+            account=row["account"],
+            thread_id=row.get("thread_id"),
+            to_email=row["sender_email"],
+            subject=subject,
+            body=body,
+        )
+    except NotImplementedError as exc:
+        raise HTTPException(501, str(exc))
+    except GmailWriteError as exc:
+        raise HTTPException(502, f"Gmail write failed: {exc}")
+
+    # Persist the draft id alongside the sent timestamp.
+    store.mark_sent(db_url, row_id, gmail_draft_id=result.draft_id)
+    return {
+        "ok": True,
+        "gmail_draft_id": result.draft_id,
+        "row": store.get(db_url, row_id),
+    }
+
+
 # --- triage trigger ----------------------------------------------------------
 
 
