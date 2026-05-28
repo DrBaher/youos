@@ -275,6 +275,14 @@ def run_triage(
         # priorities than its own observability.
         logger.warning("triage audit log failed: %s", exc)
 
+    # b44: Auto-promote senders dismissed as 'noise' ≥3 times to
+    # agent.skip_senders. Opt-in (off by default). Runs at the tail of every
+    # sweep so the next iteration of the loop already sees the new skip-list.
+    try:
+        _maybe_auto_promote_skip_senders(database_url=database_url, account=account)
+    except Exception as exc:
+        logger.warning("auto-promote skip_senders failed: %s", exc)
+
     return TriageResult(
         fetched=len(messages),
         kept=kept_count,
@@ -283,3 +291,69 @@ def run_triage(
         surfaced=surfaced,
         persisted=persisted,
     )
+
+
+# Threshold for auto-promotion. Higher than the UI's min_count=2 because
+# auto-action without click should require stronger signal than a
+# user-confirmed promotion.
+_AUTO_PROMOTE_MIN_COUNT = 3
+_AUTO_PROMOTE_WINDOW_DAYS = 30
+
+
+def _maybe_auto_promote_skip_senders(*, database_url: str, account: str) -> list[str]:
+    """If ``agent.auto_promote_skip_senders`` is enabled, promote any sender
+    dismissed as 'noise' ≥3 times in the last 30d to ``agent.skip_senders``.
+
+    Returns the list of newly-promoted senders (empty if disabled, or none
+    qualified, or all candidates were already on the list). Errors are
+    swallowed at the caller; the agent loop has higher priorities than its
+    own self-tuning.
+    """
+    from app.core.feature_flags import get_flag, set_flag
+    from app.agent.store import noise_dismissal_candidates
+
+    if not bool(get_flag("agent.auto_promote_skip_senders")):
+        return []
+
+    candidates = noise_dismissal_candidates(
+        database_url,
+        account=account,
+        days=_AUTO_PROMOTE_WINDOW_DAYS,
+        min_count=_AUTO_PROMOTE_MIN_COUNT,
+    )
+    if not candidates:
+        return []
+
+    # Read current value, append any new entries, write back. Mirrors the
+    # /api/agent/skip_senders/promote route's logic — keep these in sync.
+    current = get_flag("agent.skip_senders") or ""
+    sep = "\n" if "\n" in current else ", "
+    existing = {
+        s.strip().lower()
+        for s in current.replace("\n", ",").split(",")
+        if s.strip()
+    }
+    added: list[str] = []
+    new_value = current
+    for c in candidates:
+        s = (c.get("sender_email") or "").strip().lower()
+        if not s or s in existing:
+            continue
+        existing.add(s)
+        added.append(s)
+        new_value = (new_value + sep + s) if new_value else s
+
+    if not added:
+        return []
+
+    try:
+        set_flag("agent.skip_senders", new_value)
+    except (KeyError, ValueError) as exc:
+        logger.warning("auto-promote: set_flag failed (%s)", exc)
+        return []
+
+    logger.info(
+        "auto-promoted %d sender(s) to agent.skip_senders for account=%s: %s",
+        len(added), account, ", ".join(added),
+    )
+    return added

@@ -394,3 +394,105 @@ def test_strict_local_passes_through_to_draft_request(mocked_environment, monkey
     run_triage(account="you@example.com",
                database_url=env["database_url"], configs_dir=env["configs_dir"])
     assert seen["strict_local"] is True
+
+
+# --- b44: auto-promote skip_senders at sweep tail -----------------------
+
+
+def test_auto_promote_skips_when_flag_off(mocked_environment, monkeypatch):
+    """When agent.auto_promote_skip_senders is False (default), the helper
+    is a no-op even if there's noise-dismissal signal in the DB."""
+    env = mocked_environment
+    db_url = env["database_url"]
+
+    # Seed 3 noise-dismissals from the same sender — would qualify if flag on.
+    from app.agent import store
+    for i in range(3):
+        rid = store.upsert_pending(db_url, **{
+            "message_id": f"m-{i}", "thread_id": "t", "account": "you@example.com",
+            "sender": "Spammer", "sender_email": "spam@x.com",
+            "subject": f"buy now {i}", "body": "blah", "received_at": None,
+            "needs_reply_score": 0.6, "reasons": [], "cold_outreach": False,
+            "tier": "draft", "draft": "hi", "draft_model": "m",
+            "draft_repairs": [], "standing_instructions_snapshot": None,
+        })
+        store.mark_dismissed(db_url, rid, reason="noise")
+
+    monkeypatch.setattr("app.core.feature_flags.get_flag", lambda key: False if key == "agent.auto_promote_skip_senders" else "")
+    from app.agent.triage import _maybe_auto_promote_skip_senders
+    added = _maybe_auto_promote_skip_senders(database_url=db_url, account="you@example.com")
+    assert added == []
+
+
+def test_auto_promote_adds_qualifying_senders_when_flag_on(mocked_environment, monkeypatch):
+    """When the flag is on, senders with ≥3 noise dismissals get promoted."""
+    env = mocked_environment
+    db_url = env["database_url"]
+
+    from app.agent import store
+    # spam@x.com: 3 dismissals (qualifies); slow@y.com: 2 (doesn't); mixed@z.com: 4 (qualifies).
+    for sender, n in [("spam@x.com", 3), ("slow@y.com", 2), ("mixed@z.com", 4)]:
+        for i in range(n):
+            rid = store.upsert_pending(db_url, **{
+                "message_id": f"{sender}-{i}", "thread_id": "t", "account": "you@example.com",
+                "sender": sender, "sender_email": sender,
+                "subject": f"x{i}", "body": "y", "received_at": None,
+                "needs_reply_score": 0.6, "reasons": [], "cold_outreach": False,
+                "tier": "draft", "draft": "hi", "draft_model": "m",
+                "draft_repairs": [], "standing_instructions_snapshot": None,
+            })
+            store.mark_dismissed(db_url, rid, reason="noise")
+
+    # Mock the feature-flag read/write so the test doesn't touch the real config.
+    state = {"agent.auto_promote_skip_senders": True, "agent.skip_senders": ""}
+    monkeypatch.setattr("app.core.feature_flags.get_flag", lambda key: state.get(key, ""))
+    saved = {}
+    def _set(key, val):
+        state[key] = val
+        saved[key] = val
+        return val
+    monkeypatch.setattr("app.core.feature_flags.set_flag", _set)
+
+    from app.agent.triage import _maybe_auto_promote_skip_senders
+    added = _maybe_auto_promote_skip_senders(database_url=db_url, account="you@example.com")
+
+    assert set(added) == {"spam@x.com", "mixed@z.com"}
+    assert "slow@y.com" not in added
+    # The flag value reflects both qualifying senders.
+    val = saved["agent.skip_senders"].lower()
+    assert "spam@x.com" in val
+    assert "mixed@z.com" in val
+
+
+def test_auto_promote_skips_senders_already_on_skip_list(mocked_environment, monkeypatch):
+    """If a candidate is already in agent.skip_senders, the helper doesn't
+    re-add — and so doesn't write the flag at all if everyone's already there."""
+    env = mocked_environment
+    db_url = env["database_url"]
+
+    from app.agent import store
+    for i in range(3):
+        rid = store.upsert_pending(db_url, **{
+            "message_id": f"m-{i}", "thread_id": "t", "account": "you@example.com",
+            "sender": "Bot", "sender_email": "bot@noise.com",
+            "subject": f"x{i}", "body": "y", "received_at": None,
+            "needs_reply_score": 0.6, "reasons": [], "cold_outreach": False,
+            "tier": "draft", "draft": "hi", "draft_model": "m",
+            "draft_repairs": [], "standing_instructions_snapshot": None,
+        })
+        store.mark_dismissed(db_url, rid, reason="noise")
+
+    state = {"agent.auto_promote_skip_senders": True, "agent.skip_senders": "bot@noise.com"}
+    monkeypatch.setattr("app.core.feature_flags.get_flag", lambda key: state.get(key, ""))
+    set_calls = []
+    def _set(key, val):
+        set_calls.append((key, val))
+        state[key] = val
+        return val
+    monkeypatch.setattr("app.core.feature_flags.set_flag", _set)
+
+    from app.agent.triage import _maybe_auto_promote_skip_senders
+    added = _maybe_auto_promote_skip_senders(database_url=db_url, account="you@example.com")
+    assert added == []
+    # No flag write when nothing new to add.
+    assert set_calls == []
