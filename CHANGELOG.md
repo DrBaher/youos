@@ -1,5 +1,60 @@
 # Changelog
 
+## v0.2.0-beta.65 — 2026-05-28
+
+### Public docs site — agent discoverability
+
+Closes the discoverability gap: `docs/AGENT_OPERATIONS.md` (b64) only existed in the repo. An LLM agent crawling the public web couldn't find it without scraping GitHub. This PR publishes the docs as `https://youos.drbaher.com/docs/<NAME>.html` (rendered for humans) + `https://youos.drbaher.com/docs/<NAME>.md` (raw markdown for agent tool-use context).
+
+**New `scripts/build_docs.py`** — at GitHub Pages deploy time, walks the curated doc list, renders each `docs/*.md` to HTML using `python-markdown` (fenced code + tables + TOC extensions), copies the raw markdown alongside, and writes:
+
+- `_site/docs/<NAME>.html` — styled to match the landing page (dark/light palette match)
+- `_site/docs/<NAME>.md` — raw markdown (canonical form for LLM agents)
+- `_site/docs/index.html` — docs index with title + blurb for each doc
+- `_site/llms.txt` — emerging convention ([llmstxt.org](https://llmstxt.org)) for LLM-agent discovery; top-level summary + pointers
+- `_site/robots.txt` + `_site/sitemap.xml` — for crawler discovery
+
+5 docs published: `AGENT_OPERATIONS`, `INTEGRATIONS`, `REMOTE_ACCESS`, `USAGE`, `ARCHITECTURE`.
+
+**`.github/workflows/pages.yml`** updated:
+- Trigger paths include `docs/**` (so doc edits redeploy)
+- Sets up Python 3.11
+- `pip install markdown>=3.5`
+- Runs `python scripts/build_docs.py` after the site/ copy step
+
+**`site/index.html`** updated:
+- "Docs" link in hero CTA row
+- "Building an AI agent that handles email?" callout under the CTA pointing at the agent operations playbook (rendered + raw markdown URLs) and the OpenAPI spec
+
+**Each rendered page** carries:
+- Canonical link to itself
+- `rel="alternate" type="text/markdown"` pointing to the raw .md (so LLM tools and content negotiators find the canonical form)
+- "View raw markdown ↓" chip in the header
+- Mirror note in the footer naming the source path in the repo
+
+**`llms.txt`** content (top of root, plain text, by convention):
+
+```
+# YouOS
+
+> Local-first personal email copilot. Background agent sweeps unread inbox,
+> drafts replies, queues for review; exposes REST + OpenAPI for orchestrators
+> (Hermes / OpenClaw / Telegram bot).
+
+## For LLM agents operating YouOS
+
+- [Agent operations playbook](https://youos.drbaher.com/docs/AGENT_OPERATIONS.md): ...
+- [Integrations](https://youos.drbaher.com/docs/INTEGRATIONS.md): ...
+- OpenAPI spec: every YouOS instance serves it at `GET /openapi.json`.
+
+## For humans setting up
+...
+```
+
+**Verified locally**: `python scripts/build_docs.py` produces all 5 rendered HTML pages + matching .md copies + index + llms.txt + sitemap.xml. The index page correctly omits the "raw markdown" chip + alternate link (it has no .md counterpart).
+
+**Why this matters for the orchestrator vision**: an LLM agent encountering YouOS via search engine, an LLM training crawl, or an `llms.txt` probe can immediately find the runtime contract. The agent doesn't need access to the GitHub repo — every operating doc is at a stable public URL with both rendered and raw forms.
+
 ## v0.2.0-beta.64 — 2026-05-28
 
 ### `docs/AGENT_OPERATIONS.md` — runtime contract for LLM-driven orchestrators

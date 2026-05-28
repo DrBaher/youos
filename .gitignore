@@ -29,3 +29,7 @@ fixtures/
 
 # Generated Firefox extension build
 extension/firefox-build/
+
+# Local docs-site build output (produced by scripts/build_docs.py for the
+# Pages workflow; never commit).
+_site/
