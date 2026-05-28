@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.2.0-beta.61 — 2026-05-28
+
+### Multi-label categorical Gmail-label dismissal
+
+b57 shipped one label → one reason (`YouOS/skip` → `noise`). The /triage dismiss selector exposes 5 categorical reasons. This PR closes that gap so chat-side (Gmail-label) dismissal carries the same granularity:
+
+| Gmail label | Dismissal reason |
+|---|---|
+| `YouOS/skip` | `noise` (b57 default; backwards compat) |
+| `YouOS/skip-noise` | `noise` |
+| `YouOS/skip-wrong-sender` | `wrong_sender` |
+| `YouOS/skip-wrong-content` | `wrong_content` |
+| `YouOS/skip-handled` | `already_handled` |
+| `YouOS/skip-other` | `other` |
+
+**Behavior change**: `sync_gmail_label_dismissals(label=None)` (new default) iterates every entry in the map. `label="X"` (explicit) still processes only that one — b57 callers preserved.
+
+**CLI**: `youos sync-labels` (no `--label`) now sweeps all 6 categorical labels. Pass `--label X` to restrict.
+
+**Why this matters for the orchestrator vision**: a Telegram/Slack bot can now say "dismiss the Q3 row as wrong content" → orchestrator routes to `YouOS/skip-wrong-content` OR calls `POST /api/agent/pending/{id}/dismiss` with `{reason: "wrong_content"}`. Either way, `wrong_content` dismissals flow into the LoRA training queue; `noise` continues to feed `skip_senders`. The categorical signal flows end-to-end.
+
+**New `LABEL_TO_REASON` map** in `app/agent/gmail_label_sync.py` — single source of truth.
+
+**Verified**: a completeness test asserts every entry in `store.DISMISSAL_REASONS` has at least one label mapping. Any future reason added without a label fails the test.
+
+**Tests** — 3 new + 4 existing tests updated to pass `label="YouOS/skip"` explicitly (preserving b57 single-label semantics; the new tests cover the iterate-all default).
+
+`docs/REMOTE_ACCESS.md` updated with the full label-to-reason table.
+
 ## v0.2.0-beta.60 — 2026-05-28
 
 ### ClawHub refresh — orchestrator surface visible in the registry
