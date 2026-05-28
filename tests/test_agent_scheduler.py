@@ -79,6 +79,33 @@ def test_resolve_accounts_falls_back_to_user_emails_when_empty(monkeypatch):
     assert _resolve_accounts([]) == ["baher@work.example", "you@gmail.com"]
 
 
+def test_get_agent_config_parses_comma_separated_accounts(monkeypatch):
+    """b58: agent.accounts as a comma-separated string (textarea form via
+    ``youos config set``) gets parsed into a list, same as skip_senders."""
+    monkeypatch.setattr(
+        "app.core.config.load_config",
+        lambda *a, **k: {"agent": {"accounts": "you@gmail.com, baher@work.example"}},
+    )
+    from app.agent.scheduler import get_agent_config
+
+    cfg = get_agent_config()
+    assert cfg["accounts"] == ["you@gmail.com", "baher@work.example"]
+
+
+def test_get_agent_config_accepts_list_accounts(monkeypatch):
+    """YAML-edited list form still works — round-trips through the same
+    parser as the string form."""
+    monkeypatch.setattr(
+        "app.core.config.load_config",
+        lambda *a, **k: {"agent": {"accounts": ["a@x.com", "B@Y.com"]}},
+    )
+    from app.agent.scheduler import get_agent_config
+
+    cfg = get_agent_config()
+    # _parse_skip_senders lowercases + dedupes — same here.
+    assert cfg["accounts"] == ["a@x.com", "b@y.com"]
+
+
 # --- macOS notification ----------------------------------------------------
 
 

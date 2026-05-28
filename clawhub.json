@@ -1,6 +1,6 @@
 {
   "name": "youos",
-  "version": "0.2.0b57",
+  "version": "0.2.0b58",
   "displayName": "YouOS \u2014 Personal Email Copilot",
   "description": "Learns your writing style from Gmail/Docs/WhatsApp and drafts replies in your voice — by default on a local model fine-tuned on you (LoRA, served warm on Apple Silicon), self-improving nightly. Draft from the web UI or inside Gmail via the browser extension. The cloud is only a cold-start/fallback and can be disabled for strict local-only mode.",
   "author": "DrBaher",
