@@ -21,18 +21,53 @@ from typing import Iterable
 
 from app.agent.inbox_fetch import InboxMessage
 
-# --- Hard-skip patterns ----------------------------------------------------
+# --- Hard-skip patterns (sender NEVER wants a personal reply) --------------
 
-# noreply / mailer-daemon / bounces patterns — automation senders.
-NOREPLY_PAT = re.compile(
-    r"\b(no[-_.]?reply|donotreply|do[-_.]?not[-_.]?reply|mailer[-_.]?daemon|bounces?)\b",
+# Bounces / mailer-daemon — actual mail-server replies. Hard-skip.
+MAILER_DAEMON_PAT = re.compile(
+    r"\b(mailer[-_.]?daemon|bounces?)\b",
     re.IGNORECASE,
 )
 
-# Common automation domains. Lighter than the cold-outreach domain set —
-# this is for "obvious bot mail," not for low-confidence sales heuristics.
+# Automation domains that *are* systems (not human-tended). Hard-skip.
+# Tightened from the first cut after seeing real-inbox false-negatives where
+# GitHub/CI notifications passed through and got bad drafts.
 AUTOMATION_DOMAIN_PAT = re.compile(
-    r"@(?:notifications?\.|.*\.bounces\.|amazonses\.com|mailgun\.org|sendgrid\.net|mailchimp\.com)",
+    r"@(?:"
+    r"notifications?\.|.*\.bounces\.|amazonses\.com|mailgun\.org|sendgrid\.net|"
+    r"mailchimp\.com|github\.com|gitlab\.com|bitbucket\.org|"
+    r"[\w-]+\.atlassian\.net|[\w-]+\.circleci\.com|[\w-]+\.travis-ci\.(?:com|org)"
+    r")",
+    re.IGNORECASE,
+)
+
+# Subject patterns specific to service/CI/notification mail. Hard-skip.
+# `[Org/Repo]` prefixes (GitHub, GitLab) and `<X> failed/succeeded` runs.
+SERVICE_SUBJECT_PAT = re.compile(
+    r"^\s*\[[\w./-]+/[\w./-]+\]|"
+    r"\b(?:Build|Run|Pipeline|CI|PR)\s+(?:failed|succeeded|completed|cancelled|started)\b",
+    re.IGNORECASE,
+)
+
+# --- Soft-penalty patterns (might still want a personal reply) -------------
+
+# `noreply@` / `donotreply@` — was hard-skip, now a soft penalty because
+# transactional notifications (demo-form alerts, password resets, lead
+# notifications) come from these addresses but carry real content. Marketing
+# `noreply@` is caught separately by the List-Unsubscribe hard-rule.
+NOREPLY_LOCAL_PAT = re.compile(
+    r"\b(no[-_.]?reply|donotreply|do[-_.]?not[-_.]?reply)\b",
+    re.IGNORECASE,
+)
+
+# Non-human mailbox prefixes (the local part before @). These mailboxes are
+# usually operational — billing alerts, support ticket auto-replies, product
+# notifications, etc. Soft penalty so a human-tended `support@vendor.com`
+# conversation can still surface if other signals are strong.
+NON_HUMAN_MAILBOX_PAT = re.compile(
+    r"^(?:billing|support|help|info|hello|alerts?|notifications?|admin|team|"
+    r"service|automated|webmaster|postmaster|abuse)"
+    r"(?:[-_.][\w-]+)?@",
     re.IGNORECASE,
 )
 
@@ -108,22 +143,35 @@ def classify(
 ) -> NeedsReplyVerdict:
     """Decide whether this inbound deserves a draft.
 
-    Hard-skip on automation patterns (`List-Unsubscribe`, noreply, automation
-    domains, empty body) — those return immediately with ``needs_reply=False``.
-    Surviving messages get scored: base 0.5, +0.2 for a question, +0.1 for an
-    imperative verb, +0.2 for prior history with this exact sender, +0.1 if
-    the inbound is short-ish (under ~120 words — long automated digests rarely
-    want a reply). Cold-outreach is flagged but still scored.
+    Hard skips (return immediately with score 0):
+      - ``List-Unsubscribe`` header (newsletter / mass mail)
+      - mailer-daemon / bounces sender
+      - automation domain (GitHub, GitLab, BitBucket, Atlassian, CircleCI,
+        Travis, ``notifications.*``, ``mailchimp/mailgun/sendgrid/amazonses``)
+      - service subject pattern (``[Org/Repo]`` prefixes, ``Build|Run|CI
+        failed/succeeded``)
+      - empty body
+
+    Surviving messages get scored from base 0.5:
+      +0.20 ending question, +0.10 imperative verb, +0.10 short body,
+      +0.20 prior history with this exact sender, −0.20 very long digest,
+      −0.20 ``noreply@`` / ``donotreply@`` (was a hard skip; softened
+      because transactional ``noreply@`` carries lead/form content),
+      −0.20 operational mailbox prefix (``billing|support|info|hello|
+      notifications|alerts|admin|team|...@``), −0.15 cold-outreach flag.
     """
     reasons: list[str] = []
 
-    # 1) Hard rules — skip immediately.
+    # 1) Hard skips — sender CANNOT be replied to personally, or content is
+    # obviously not user-actionable. Each returns immediately with score=0.
     if msg.headers.get("list-unsubscribe"):
         return NeedsReplyVerdict(False, 0.0, ["list-unsubscribe (newsletter)"])
-    if msg.sender and NOREPLY_PAT.search(msg.sender):
-        return NeedsReplyVerdict(False, 0.0, [f"noreply sender ({msg.sender!r})"])
+    if msg.sender and MAILER_DAEMON_PAT.search(msg.sender):
+        return NeedsReplyVerdict(False, 0.0, [f"mailer-daemon/bounce ({msg.sender!r})"])
     if msg.sender and AUTOMATION_DOMAIN_PAT.search(msg.sender):
         return NeedsReplyVerdict(False, 0.0, [f"automation domain ({msg.sender!r})"])
+    if msg.subject and SERVICE_SUBJECT_PAT.search(msg.subject):
+        return NeedsReplyVerdict(False, 0.0, [f"service subject pattern ({msg.subject!r})"])
     if not msg.body.strip():
         return NeedsReplyVerdict(False, 0.0, ["empty body"])
 
@@ -139,6 +187,21 @@ def classify(
 
     # 3) Lightweight needs-reply score.
     score = 0.5  # start at the boundary; signals tip it one way or the other
+
+    # Soft penalty for `noreply@` / `donotreply@` — was a hard skip, but
+    # transactional notifications (demo-form alerts, password resets) come
+    # from these too. Penalty rather than skip lets strong positive signals
+    # rescue real leads.
+    if msg.sender and NOREPLY_LOCAL_PAT.search(msg.sender):
+        score -= 0.20
+        reasons.append("noreply sender (transactional or marketing)")
+
+    # Soft penalty for operational mailbox prefixes (billing/support/info/
+    # notifications/alerts/etc.). Same idea: usually automation, but a
+    # human-tended `support@` can still surface if other signals fire.
+    if msg.sender_email and NON_HUMAN_MAILBOX_PAT.search(msg.sender_email):
+        score -= 0.20
+        reasons.append(f"operational mailbox ({msg.sender_email})")
 
     if "?" in msg.body[-200:]:
         score += 0.20
