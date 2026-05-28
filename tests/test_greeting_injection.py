@@ -48,6 +48,29 @@ def test_resolve_greeting_name_substitution_empty():
     assert "{name}" not in result
 
 
+def test_resolve_greeting_empty_name_never_produces_hi_comma_artifact():
+    """Regression: when first_name extraction fails (None/empty), the greeting
+    template's leading space + placeholder must collapse cleanly — never
+    "Hi , " or "Hey , " with a dangling space before the comma. Reported by
+    QA review against BaherOS drafts."""
+    persona = _make_persona()
+    for sender_type in ("internal", "external_client", "personal"):
+        for empty in (None, ""):
+            result = _resolve_greeting(persona, sender_type, empty)
+            assert " ," not in result, (
+                f"greeting for sender_type={sender_type!r}, name={empty!r} "
+                f"left a space before the comma: {result!r}"
+            )
+            assert "  " not in result, (
+                f"greeting collapsed to a double space: {result!r}"
+            )
+            # And it doesn't drop the punctuation entirely either — the user
+            # still sees a recognisable greeting like "Hi," / "Hey,".
+            assert result and (result.endswith(",") or result.endswith(":") or "," in result), (
+                f"greeting collapsed to junk: {result!r}"
+            )
+
+
 def test_resolve_closing_mode_preferred():
     persona = _make_persona()
     assert _resolve_closing(persona, "personal") == "Talk soon,"
