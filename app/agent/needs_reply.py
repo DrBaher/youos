@@ -30,13 +30,15 @@ MAILER_DAEMON_PAT = re.compile(
 )
 
 # Automation domains that *are* systems (not human-tended). Hard-skip.
-# Tightened from the first cut after seeing real-inbox false-negatives where
-# GitHub/CI notifications passed through and got bad drafts.
+# Each addition came from a real-inbox false-positive: GitHub/CI in b29,
+# meeting-bot services (Fireflies/Otter/Loom/Calendly/Doodle) in b30.
 AUTOMATION_DOMAIN_PAT = re.compile(
     r"@(?:"
     r"notifications?\.|.*\.bounces\.|amazonses\.com|mailgun\.org|sendgrid\.net|"
     r"mailchimp\.com|github\.com|gitlab\.com|bitbucket\.org|"
-    r"[\w-]+\.atlassian\.net|[\w-]+\.circleci\.com|[\w-]+\.travis-ci\.(?:com|org)"
+    r"[\w-]+\.atlassian\.net|[\w-]+\.circleci\.com|[\w-]+\.travis-ci\.(?:com|org)|"
+    r"fireflies\.ai|otter\.ai|loom\.com|calendly\.com|doodle\.com|fathom\.video|"
+    r"krisp\.ai|grain\.com"
     r")",
     re.IGNORECASE,
 )
@@ -60,14 +62,21 @@ NOREPLY_LOCAL_PAT = re.compile(
     re.IGNORECASE,
 )
 
-# Non-human mailbox prefixes (the local part before @). These mailboxes are
-# usually operational — billing alerts, support ticket auto-replies, product
-# notifications, etc. Soft penalty so a human-tended `support@vendor.com`
-# conversation can still surface if other signals are strong.
+# Operational mailbox indicators in the local part — *anywhere* in the local
+# part, not just at the start. b29 anchored at `^` and missed Google's
+# `workspace-noreply@` / `calendar-notification@` patterns where the
+# operational keyword sits *after* a prefix word. Substring match so any of
+# these embedded keywords trips the penalty. Soft penalty (not hard skip) so
+# a human-tended `support@vendor.com` conversation can still surface if other
+# signals are strong.
 NON_HUMAN_MAILBOX_PAT = re.compile(
-    r"^(?:billing|support|help|info|hello|alerts?|notifications?|admin|team|"
-    r"service|automated|webmaster|postmaster|abuse)"
-    r"(?:[-_.][\w-]+)?@",
+    # noreply/donotreply intentionally left out — NOREPLY_LOCAL_PAT handles
+    # those separately so we don't apply two −0.20 penalties to the same
+    # `noreply@`-style address.
+    r"(?:^|[\w-])(?:"
+    r"notifications?|notify|alerts?|automated|billing|support|help|info|hello|"
+    r"admin|team|service|webmaster|postmaster|abuse"
+    r")(?:[\w-]*)@",
     re.IGNORECASE,
 )
 
@@ -219,11 +228,23 @@ def classify(
         score -= 0.20
         reasons.append(f"very long body ({word_count} words) — likely digest")
 
+    # Prior-history boost — but only for *human* senders. b30 QA: ingest had
+    # captured Wise / Workspace / Calendar notifications into reply_pairs, so
+    # `count_for(noreply@wise.com)` returned 6 and the +0.20 boost lifted pure
+    # automation past threshold. Suppress when noreply / operational pattern
+    # already fired — those prior pairs are corpus noise, not real history.
     if history is not None and msg.sender_email:
         prior = history.count_for(msg.sender_email)
         if prior > 0:
-            score += 0.20
-            reasons.append(f"prior history ({prior} reply pairs)")
+            is_transactional = bool(
+                (msg.sender and NOREPLY_LOCAL_PAT.search(msg.sender)) or
+                (msg.sender_email and NON_HUMAN_MAILBOX_PAT.search(msg.sender_email))
+            )
+            if is_transactional:
+                reasons.append(f"prior history ({prior}) — suppressed (sender is automation)")
+            else:
+                score += 0.20
+                reasons.append(f"prior history ({prior} reply pairs)")
 
     if cold.is_cold:
         # Cold outreach is *lower* needs-reply priority but still gets a
