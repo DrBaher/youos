@@ -31,16 +31,67 @@ def test_list_unsubscribe_header_hard_skips():
     assert any("list-unsubscribe" in r for r in v.reasons)
 
 
-def test_noreply_sender_hard_skips():
-    v = classify(_msg(sender="noreply@bigcorp.com", sender_email="noreply@bigcorp.com"))
+def test_mailer_daemon_hard_skips():
+    """Bounces and mailer-daemon ARE definitively automation; never want a reply."""
+    v = classify(_msg(sender="MAILER-DAEMON <postmaster@x.com>", sender_email="postmaster@x.com"))
     assert not v.needs_reply
+    assert any("mailer-daemon" in r or "bounce" in r for r in v.reasons)
+
+
+def test_noreply_is_soft_penalty_not_hard_skip():
+    """Real-inbox QA: transactional ``noreply@`` carries lead-form content.
+    Now a soft −0.20 penalty so strong positive signals can still surface
+    a real lead, while pure ``noreply@`` newsletters stay skipped (via the
+    List-Unsubscribe rule that catches them separately)."""
+    v = classify(
+        _msg(
+            sender="System <noreply@bigcorp.com>",
+            sender_email="noreply@bigcorp.com",
+            body="Please confirm the meeting time for tomorrow.",  # has imperative + question-ish
+        )
+    )
+    # Penalty applied + reason recorded.
     assert any("noreply" in r for r in v.reasons)
+    # Strong positive signals can rescue it: short body + imperative.
+    assert v.score >= 0.45  # 0.5 base + 0.1 short + 0.1 imperative - 0.2 noreply
 
 
-def test_automation_domain_hard_skips():
-    v = classify(_msg(sender="alerts@notifications.bigcorp.com", sender_email="alerts@notifications.bigcorp.com"))
+def test_automation_domain_hard_skips_github():
+    """GitHub notifications must hard-skip — real-inbox QA found CI mail
+    sneaking past the old filter and getting bad drafts."""
+    v = classify(
+        _msg(
+            sender="DrBaher <notifications@github.com>",
+            sender_email="notifications@github.com",
+            subject="Some subject without service pattern",
+        )
+    )
     assert not v.needs_reply
     assert any("automation" in r for r in v.reasons)
+
+
+def test_service_subject_pattern_hard_skips_repo_tag():
+    """``[Org/Repo]`` subject prefixes (GitHub/GitLab convention) hard-skip
+    even from non-automation senders. Same family of CI/notification mail."""
+    v = classify(_msg(subject="[DrBaher/youos] PR run failed: CI - main"))
+    assert not v.needs_reply
+    assert any("service subject" in r for r in v.reasons)
+
+
+def test_operational_mailbox_prefix_penalty():
+    """`billing-support@`, `support@`, `info@` etc. are usually automation
+    but human-tended ones can still surface — soft −0.20 penalty."""
+    v = classify(
+        _msg(
+            sender="Supabase Billing Team <billing-support@supabase.com>",
+            sender_email="billing-support@supabase.com",
+            body="A short body without question or imperative.",
+        )
+    )
+    # Penalty + reason applied.
+    assert any("operational mailbox" in r for r in v.reasons)
+    # And on a body with no positive signals, the case correctly drops.
+    assert not v.needs_reply
 
 
 def test_empty_body_hard_skips():
