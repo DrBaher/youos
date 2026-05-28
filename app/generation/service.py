@@ -732,7 +732,14 @@ def _resolve_greeting(persona: dict[str, Any], sender_type: str | None, first_na
     elif "default" in greeting_patterns:
         greeting = greeting_patterns["default"]
     if greeting and "{name}" in greeting:
-        greeting = greeting.replace("{name}", first_name or "").replace("  ", " ")
+        if first_name:
+            greeting = greeting.replace("{name}", first_name).replace("  ", " ")
+        else:
+            # No first name available — collapse "Hi {name}," into "Hi," rather
+            # than rendering the embarrassing "Hi ," with a leading space. The
+            # leading-space form of the placeholder is consumed first so the
+            # punctuation around it doesn't leave a dangling " ,".
+            greeting = greeting.replace(" {name}", "").replace("{name}", "")
     return greeting
 
 

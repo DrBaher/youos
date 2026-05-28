@@ -60,11 +60,16 @@ def run_doctor_checks() -> tuple[bool, list[str]]:
     if not backend_ok:
         failures.append(backend_detail)
 
-    # Required: mlx_lm importable
+    # Required: mlx_lm importable in *this* venv. A globally-installed `mlx_lm`
+    # binary on PATH (Homebrew etc.) doesn't help — generation imports the
+    # Python package. Distinguish the two so the error matches reality.
     try:
         importlib.import_module("mlx_lm")
     except ImportError:
-        failures.append('mlx_lm not importable — install the local model engine: pip install -e ".[mlx]"')
+        import shutil
+        bin_present = shutil.which("mlx_lm") is not None
+        hint = ' (a global `mlx_lm` binary on PATH was found, but YouOS needs the Python package in this venv)' if bin_present else ''
+        failures.append(f'mlx_lm Python package not importable in this venv — install the local model engine: pip install -e ".[mlx]"{hint}')
 
     # Required: youos_config.yaml exists (in the active instance, not the repo)
     config_path = get_instance_root() / "youos_config.yaml"
