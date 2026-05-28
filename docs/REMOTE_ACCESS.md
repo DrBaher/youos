@@ -95,9 +95,30 @@ In Safari: tap the Share button → "Add to Home Screen". Names it whatever you 
 
 ## What's not yet supported (gaps to know about)
 
-- **Push notifications to your phone** — the agent loop only fires `display notification` on the Mac. No iOS/Android push integration yet. Workaround: enable a daily digest email (see `agent.digest_email`, planned).
-- **Mobile-responsive `/triage`** — templates are desktop-first. They render on a phone but may need horizontal scrolling for the dismiss-reason selector and bulk-action buttons.
+- **Push notifications to your phone** — the agent loop only fires `display notification` on the Mac. No iOS/Android push integration. **Workaround**: pipe the daily digest (below) to your phone via email.
 - **Remote dismissal without `/triage`** — currently requires opening the page. A Gmail-label-based signal (e.g. apply "YouOS/dismiss" to a thread) is on the roadmap.
+
+## Daily digest email (poor-man's push notification)
+
+`youos digest` prints a summary of the agent's recent activity — sweep counts, drafts pending vs pushed, dismissal rate by reason, auto-promoted senders, top noise-dismissed senders, and a clickable Tailscale link to `/triage`. Pipe it to `mail` via cron and you get a daily email digest of what the agent did while you were away.
+
+```bash
+youos digest                      # today, plain text
+youos digest --days 7             # last week
+youos digest --format html        # HTML for richer email rendering
+youos digest --format json | jq . # structured for further processing
+```
+
+**Cron recipe** (sends an HTML digest every weekday at 7am):
+
+```cron
+# crontab -e
+0 7 * * 1-5  cd ~/YouOS && ~/YouOS/.venv/bin/youos digest --format html | mail -s "$(date '+YouOS daily — %a %b %d')" -a 'Content-Type: text/html; charset=utf-8' you@yourmail.com
+```
+
+The `-a 'Content-Type: text/html'` flag is what makes `mail` send HTML instead of escaping it. Tested on macOS `mail` (which uses `/usr/sbin/sendmail` under the hood).
+
+If you don't have `mail` configured, the digest also works fine piped to `pbcopy` (clipboard) or saved to a file you sync to your phone via iCloud Drive.
 
 ## Troubleshooting
 
