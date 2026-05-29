@@ -62,6 +62,7 @@ def mocked_environment(monkeypatch, tmp_path):
         draft = "Hi Alice, confirmed — Q3 pricing unchanged."
         model_used = "qwen2.5-1.5b-lora"
         repairs: list[str] = []
+        quality_score = 0.8  # a good draft — clears the default quality floor
 
     monkeypatch.setattr(
         "app.generation.service.generate_draft",
@@ -604,6 +605,7 @@ def test_concurrent_sweep_is_skipped_when_account_locked(mocked_environment, mon
 def _autopush_cfg(**over):
     base = {
         "enabled": True, "dry_run": True, "confidence_floor": 0.85,
+        "quality_floor": 0.5,
         "min_pairs": 0, "daily_push_cap": 5, "whitelist": ["@partner.com"],
     }
     base.update(over)
@@ -680,6 +682,61 @@ def test_auto_push_below_floor_is_not_pushed(mocked_environment, monkeypatch):
         database_url=env["database_url"], configs_dir=env["configs_dir"],
     )
     assert result.auto_pushed == []
+
+
+def test_auto_push_below_quality_floor_is_not_pushed(mocked_environment, monkeypatch):
+    """A high needs-reply score with a WEAK draft must be held, not pushed —
+    the gate is on the draft's quality, not just whether it deserves a reply."""
+    from app.agent import store, triage
+
+    env = mocked_environment
+    # The Alice row clears the confidence floor (~0.90) but the draft scores low.
+    class _WeakResp:
+        draft = "Hi Alice, confirmed — Q3 pricing unchanged."
+        model_used = "qwen2.5-1.5b-lora"
+        repairs: list[str] = []
+        quality_score = 0.30
+
+    monkeypatch.setattr("app.generation.service.generate_draft", lambda req, **kw: _WeakResp())
+    monkeypatch.setattr(triage, "_auto_push_config", lambda: _autopush_cfg(dry_run=False, quality_floor=0.5))
+    monkeypatch.setattr(
+        "app.ingestion.gmail_write.create_draft",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("must not push a low-quality draft")),
+    )
+
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    assert result.auto_pushed == []
+    assert store.list_pending(env["database_url"], status="sent") == []
+
+
+def test_auto_push_unscored_draft_is_held(mocked_environment, monkeypatch):
+    """A draft whose quality scoring failed (quality_score is None) is treated
+    as below the floor — auto-push is conservative when it can't judge itself."""
+    from app.agent import store, triage
+
+    env = mocked_environment
+    class _UnscoredResp:
+        draft = "Hi Alice, confirmed — Q3 pricing unchanged."
+        model_used = "qwen2.5-1.5b-lora"
+        repairs: list[str] = []
+        quality_score = None
+
+    monkeypatch.setattr("app.generation.service.generate_draft", lambda req, **kw: _UnscoredResp())
+    monkeypatch.setattr(triage, "_auto_push_config", lambda: _autopush_cfg(dry_run=False))
+    monkeypatch.setattr(
+        "app.ingestion.gmail_write.create_draft",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("must not push an unscored draft")),
+    )
+
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    assert result.auto_pushed == []
+    assert store.list_pending(env["database_url"], status="sent") == []
 
 
 def test_thread_history_threaded_into_draft_request(monkeypatch, tmp_path):

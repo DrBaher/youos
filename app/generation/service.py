@@ -224,6 +224,12 @@ class DraftResponse:
     repairs: list[str] = field(default_factory=list)
     # Ranked alternatives when multi-candidate generation is enabled (else []).
     candidates: list[dict[str, Any]] = field(default_factory=list)
+    # 0–1 estimate of how good THIS draft is (voice fidelity vs the user's
+    # retrieved replies + structural fit, collapsed toward 0 for generic acks /
+    # fallback drafts). Distinct from ``confidence`` (which is retrieval-precedent
+    # strength). This is what an autonomous action should gate on — "is the draft
+    # itself good enough to act on", not just "does this email deserve a reply".
+    quality_score: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -1355,6 +1361,91 @@ def _score_candidate(text: str, *, target_words: int | None, greeting: str, clos
 _VOICE_WEIGHT = 2.0
 
 
+# Bare-acknowledgment phrases — a draft that's just one of these (short, no
+# question, no concrete content) is low-value and must not auto-act. This is
+# the mechanical cause of the live "thanks, I'll check it out" false positives.
+_GENERIC_ACK_PHRASES = (
+    "thanks for the update", "thank you for the update", "thanks for letting me know",
+    "i'll check it out", "i will check it out", "got it, thanks", "got it thanks",
+    "sounds good, thanks", "sounds good", "will do", "noted, thanks", "noted thanks",
+    "great, thanks", "thanks!", "thank you!", "ok, thanks", "okay, thanks",
+)
+
+
+def _is_generic_ack(text: str) -> bool:
+    """True if the draft is essentially a contentless acknowledgement.
+
+    Not mere containment — a real reply may *open* with "thanks for the update"
+    and then commit to something concrete. We test *dominance*: no question,
+    and once the ack phrase(s) are stripped almost nothing of substance is left.
+    These are the live newsletter false positives ("thanks, I'll check it out")
+    and shouldn't be auto-acted."""
+    t = strip_signature(text or "").strip().lower()
+    if not t or "?" in t:
+        return False
+    matched = [p for p in _GENERIC_ACK_PHRASES if p in t]
+    if not matched:
+        return False
+    residual = t
+    for p in matched:
+        residual = residual.replace(p, " ")
+    # Words of real substance left after the ack phrase(s) are removed.
+    content = [w for w in residual.split() if any(c.isalpha() for c in w)]
+    return len(content) <= 3
+
+
+def draft_quality_score(
+    draft: str,
+    *,
+    reply_pairs: list[Any] | None,
+    target_words: int | None,
+    greeting: str = "",
+    closing: str = "",
+    model_used: str | None = None,
+    empty_output_retried: bool = False,
+) -> float:
+    """A 0–1 estimate of whether THIS draft is good enough to act on.
+
+    Blends voice fidelity (averaged ``voice_match`` against the user's top
+    retrieved replies — deterministic, ~0 extra cost) with structural fit
+    (length + greeting/closing, via ``_score_candidate``). Collapses to ~0 for
+    unusable or generic-acknowledgement drafts, and is discounted for
+    empty-output retries and non-LoRA (cloud/base) fallbacks. This is what
+    auto-push / auto-send should gate on — not the needs-reply score."""
+    if not _is_usable_draft(draft):
+        return 0.0
+    struct = _score_candidate(draft, target_words=target_words, greeting=greeting, closing=closing)
+    if struct == float("-inf"):
+        return 0.0
+    struct_norm = max(0.0, min(1.0, struct / 2.0))  # _score_candidate maxes ~2.0–2.5
+
+    refs = [
+        rp.reply_text for rp in (reply_pairs or [])[:3]
+        if getattr(rp, "reply_text", None)
+    ]
+    voice: float | None = None
+    if refs:
+        from app.evaluation.voice_match import voice_match_score
+
+        vals: list[float] = []
+        for r in refs:
+            try:
+                vals.append(float(voice_match_score(draft, r)["voice_match"]))
+            except Exception:
+                continue
+        if vals:
+            voice = sum(vals) / len(vals)
+
+    q = (0.6 * voice + 0.4 * struct_norm) if voice is not None else struct_norm
+    if _is_generic_ack(draft):
+        q = min(q, 0.15)
+    if empty_output_retried:
+        q *= 0.7
+    if model_used and "lora" not in model_used.lower():
+        q *= 0.85  # cloud/base fallback: less likely to match the user's voice
+    return round(max(0.0, min(1.0, q)), 3)
+
+
 def _rank_candidates(
     raw: list[tuple[str, str, float | None]],
     *,
@@ -2101,6 +2192,17 @@ def generate_draft(
             length_flag=length_flag,
         )
 
+    # Per-draft quality: how good is THIS draft (voice + structure, collapsed
+    # for generic acks / fallbacks). Failure-isolated — never blocks the draft.
+    try:
+        _quality = draft_quality_score(
+            draft, reply_pairs=reply_pairs, target_words=avg_reply_words,
+            greeting=repair_greeting, closing=repair_closing,
+            model_used=model_used, empty_output_retried=empty_output_retried,
+        )
+    except Exception:
+        _quality = None
+
     return DraftResponse(
         draft=draft,
         detected_mode=detected_mode,
@@ -2118,4 +2220,5 @@ def generate_draft(
         length_flag=length_flag,
         repairs=repairs,
         candidates=candidates,
+        quality_score=_quality,
     )
