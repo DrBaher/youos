@@ -283,6 +283,32 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.adjudication.enabled",
+        "label": "Borderline LLM adjudication (broadcast veto)",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "On borderline needs-reply scores (just over the threshold), ask "
+            "the warm local model whether the message is personal or a "
+            "broadcast and veto a draft if it's a broadcast. On-device; only "
+            "ever demotes, never promotes. Off by default; needs the warm "
+            "model server."
+        ),
+    },
+    {
+        "key": "agent.adjudication.high",
+        "label": "Adjudication upper band",
+        "type": "float",
+        "default": 0.8,
+        "min": 0.6,
+        "max": 1.0,
+        "help": (
+            "Only adjudicate would-be drafts whose needs-reply score is below "
+            "this — the least-certain passes. Above it the heuristic is "
+            "trusted. Clamped 0.6–1.0."
+        ),
+    },
+    {
         "key": "agent.calendar.enabled",
         "label": "Propose meeting times from your calendar",
         "type": "bool",
