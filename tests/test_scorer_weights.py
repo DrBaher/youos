@@ -12,7 +12,47 @@ from app.autoresearch.scorer import (
     _DEFAULT_WEIGHTS,
     load_composite_weights,
     reset_weight_cache,
+    scorecard_from_eval_result,
 )
+from app.evaluation.service import CaseResult, EvalSuiteResult
+
+
+def _case(pass_fail: str) -> CaseResult:
+    return CaseResult(
+        case_key="k", category="internal", prompt_text="p", draft="d",
+        detected_mode="internal", confidence="medium", precedent_count=1,
+        scores={"keyword_hit_rate": 0.0, "confidence_score": 0.0},
+        pass_fail=pass_fail, notes="",
+    )
+
+
+def _suite(cases):
+    return EvalSuiteResult(
+        config_tag="t", total_cases=len(cases),
+        passed=sum(1 for c in cases if c.pass_fail == "pass"),
+        warned=sum(1 for c in cases if c.pass_fail == "warn"),
+        failed=sum(1 for c in cases if c.pass_fail == "fail"),
+        case_results=cases, run_at="2026-05-29",
+    )
+
+
+def test_warn_cases_get_half_credit_in_composite(tmp_path):
+    """A 'warn' case contributes half the pass-term credit (graded), so the
+    optimizer can see incremental progress instead of a binary cliff."""
+    reset_weight_cache()
+    # Two warns, zero kw/conf. graded_pass = 0 + 0.5*1.0 = 0.5;
+    # composite = pass_weight(0.5) * 0.5 = 0.25 (was 0.0 with binary scoring).
+    sc = scorecard_from_eval_result(_suite([_case("warn"), _case("warn")]), tmp_path)
+    assert sc.pass_rate == 0.0          # display stays strict
+    assert abs(sc.composite - 0.25) < 1e-6
+    reset_weight_cache()
+
+
+def test_fail_cases_get_no_credit(tmp_path):
+    reset_weight_cache()
+    sc = scorecard_from_eval_result(_suite([_case("fail"), _case("fail")]), tmp_path)
+    assert sc.composite == 0.0
+    reset_weight_cache()
 
 
 def test_default_weights():

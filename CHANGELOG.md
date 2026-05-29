@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.76 — 2026-05-29
+
+### Autoresearch: sensitivity + diagnosability
+
+On the live instance autoresearch kept **0 improvements/night** — every mutation logged `composite 0.42 → 0.42` and reverted. Two changes so the loop can register (and we can diagnose) real progress:
+
+- **Graded composite** (`scorer.py`): a `warn` case now gets **half credit** on the pass term instead of zero, so an improvement that lifts a case fail→warn registers instead of being a binary cliff. The displayed `pass_rate` stays the strict passed/total — only the optimization objective is graded. The acceptance bar is unchanged, so it won't accept noise.
+- **Per-component diagnostics** (`optimizer.py`): each iteration now records and prints the baseline→candidate **pass / keyword / confidence** sub-scores (3-decimal composite), and the JSONL run log carries `iteration_components`. This makes a flat run *diagnosable*: if the sub-scores are identical across a mutation, the eval isn't responding to the mutated config (a wiring bug) — as opposed to moving below threshold.
+
++2 tests. (Whether the loop now keeps improvements is verified by running it on the live corpus — the diagnostics tell us which case it is.)
+
 ## v0.2.0-beta.75 — 2026-05-29
 
 ### Adapter-promotion gate — no silent regressions
