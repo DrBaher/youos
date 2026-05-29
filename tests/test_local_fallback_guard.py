@@ -1,0 +1,122 @@
+"""Keep drafting on-device: retry the local model once before the cloud, and
+cap a huge inbound so it can't overflow into a cloud fallback.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+from app.generation.service import _max_inbound_chars
+
+
+def _stub(monkeypatch, *, local_draft_once, fallback="claude", claude="Cloud reply text here."):
+    """Stub generate_draft's I/O so only the local-path + empty-retry branch
+    matters. ``local_draft_once`` is the (draft, model) producer to install."""
+    from app.generation import service as svc
+
+    def _stub_retrieve(*a, **kw):
+        return svc.RetrievalResponse(
+            query="", retrieval_method="x", semantic_search_enabled=False,
+            applied_filters={}, detected_mode=None, documents=[], chunks=[], reply_pairs=[],
+        )
+
+    monkeypatch.setattr("app.core.config.load_config", lambda *a, **k: {})
+    monkeypatch.setattr(svc, "retrieve_context", _stub_retrieve)
+    monkeypatch.setattr(svc, "_load_prompts", lambda _d: {"system_prompt": "S"})
+    monkeypatch.setattr(svc, "_load_persona", lambda _d: {"style": {"avg_reply_words": 30}, "modes": {}})
+    monkeypatch.setattr(svc, "lookup_sender_profile", lambda *a, **kw: None)
+    monkeypatch.setattr(svc, "lookup_facts", lambda **kw: [])
+    monkeypatch.setattr(svc, "_lookup_prior_reply_to_sender", lambda *a, **kw: None)
+    monkeypatch.setattr(svc, "_local_model_available", lambda: True)
+    monkeypatch.setattr(svc, "generate_subject", lambda *a, **kw: None)
+    monkeypatch.setattr(svc, "_log_draft_event", lambda *a, **kw: False)
+    monkeypatch.setattr(svc, "_connect", lambda _p: sqlite3.connect(":memory:"))
+    monkeypatch.setattr(svc, "resolve_sqlite_path", lambda _u: Path("/tmp/x.db"))
+    monkeypatch.setattr(svc, "get_model_fallback", lambda *a, **k: fallback)
+    monkeypatch.setattr(svc, "_multi_candidate_config", lambda: {"enabled": False, "temperatures": [0.7]})
+    monkeypatch.setattr(svc, "_local_draft_once", local_draft_once)
+    monkeypatch.setattr(svc, "_call_claude_cli", lambda *a, **kw: claude)
+    return svc
+
+
+# --- inbound length cap ----------------------------------------------------
+
+
+def test_max_inbound_chars_default():
+    assert _max_inbound_chars() == 4000
+
+
+def test_huge_inbound_is_truncated_before_the_model(monkeypatch):
+    """A very long email is trimmed in the prompt the local model receives, so
+    it can't overflow context and force a cloud fallback."""
+    seen = {}
+
+    def _capture(prompt, **kw):
+        seen["prompt"] = prompt
+        return ("Confirmed, thanks. Best, B", "qwen2.5-1.5b-lora")
+
+    svc = _stub(monkeypatch, local_draft_once=_capture)
+    monkeypatch.setattr(svc, "_max_inbound_chars", lambda: 300)
+
+    huge = "Meeting notes line. " * 500  # ~10k chars
+    svc.generate_draft(
+        svc.DraftRequest(inbound_message=huge, use_local_model=True, use_adapter=True),
+        database_url="sqlite:///x", configs_dir=Path("/tmp"),
+    )
+    assert "message truncated" in seen["prompt"]
+    # The inbound section is bounded, not the full 10k.
+    assert seen["prompt"].count("Meeting notes line.") < 60
+
+
+# --- local-retry-before-cloud (the privacy fix) ----------------------------
+
+
+def test_empty_local_retries_locally_then_recovers(monkeypatch):
+    calls = {"n": 0}
+
+    def _flaky(prompt, **kw):
+        calls["n"] += 1
+        return ("", "qwen2.5-1.5b-lora") if calls["n"] == 1 else ("Hi — confirmed, talk soon. Best, B", "qwen2.5-1.5b-lora")
+
+    svc = _stub(monkeypatch, local_draft_once=_flaky,
+                claude="MUST NOT BE USED")
+    monkeypatch.setattr(svc, "_call_claude_cli",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("cloud must not be hit after a good local retry")))
+
+    resp = svc.generate_draft(
+        svc.DraftRequest(inbound_message="Could you confirm Q3 pricing?", use_local_model=True, use_adapter=True),
+        database_url="sqlite:///x", configs_dir=Path("/tmp"),
+    )
+    assert calls["n"] == 2                      # retried locally exactly once
+    assert "lora" in resp.model_used            # stayed on-device
+    assert resp.empty_output_retried is False
+    assert resp.draft.strip()
+
+
+def test_empty_local_twice_falls_back_to_cloud(monkeypatch):
+    svc = _stub(monkeypatch,
+                local_draft_once=lambda prompt, **kw: ("", "qwen2.5-1.5b-lora"),
+                fallback="claude", claude="Cloud-drafted reply.")
+    resp = svc.generate_draft(
+        svc.DraftRequest(inbound_message="Could you confirm Q3 pricing?", use_local_model=True, use_adapter=True),
+        database_url="sqlite:///x", configs_dir=Path("/tmp"),
+    )
+    assert resp.model_used == "claude"
+    assert resp.empty_output_retried is True
+    assert resp.draft == "Cloud-drafted reply."
+
+
+def test_strict_local_empty_does_not_touch_cloud(monkeypatch):
+    """With strict_local, an empty local draft (even after retry) must NOT fall
+    back to the cloud — it raises instead."""
+    import pytest
+
+    svc = _stub(monkeypatch, local_draft_once=lambda prompt, **kw: ("", "qwen2.5-1.5b-lora"))
+    monkeypatch.setattr(svc, "_call_claude_cli",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("strict_local must never hit cloud")))
+    with pytest.raises(ValueError):
+        svc.generate_draft(
+            svc.DraftRequest(inbound_message="hi", use_local_model=True, use_adapter=True, strict_local=True),
+            database_url="sqlite:///x", configs_dir=Path("/tmp"),
+        )
