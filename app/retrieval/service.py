@@ -199,13 +199,15 @@ def _normalize_pool(matches: list[RetrievalMatch]) -> None:
     [0,1], so the additive metadata boosts (and the downstream semantic blend)
     operate on a comparable scale and can change which results survive
     truncation. Preserves each match's quality/subject multiplier (recovered as
-    ``score / (lexical + metadata)``). In place. No-op for <2 matches."""
-    if len(matches) < 2:
+    ``score / (lexical + metadata)``). In place. No-op for <2 matches. Skips
+    ``None`` placeholders (the pool can carry them before ``_top_matches``)."""
+    real = [m for m in matches if m is not None]
+    if len(real) < 2:
         return
-    lex = [m.lexical_score for m in matches]
+    lex = [m.lexical_score for m in real]
     lo, hi = min(lex), max(lex)
     span = (hi - lo) or 1.0
-    for m in matches:
+    for m in real:
         lex_norm = (m.lexical_score - lo) / span
         raw_combined = m.lexical_score + m.metadata_score
         mult = (m.score / raw_combined) if raw_combined else 1.0
