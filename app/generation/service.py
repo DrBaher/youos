@@ -673,6 +673,33 @@ def _format_facts_context(facts: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+# A specific fact the sender is asking us to supply: address, contact detail,
+# price, availability, a date/time, a link. When the inbound asks for one of
+# these, the model must not invent an answer — it should state only a grounded
+# fact (from the inbound, thread, or FACTS CONTEXT) or else ask/defer. Pairs
+# with verify-before-accept (b89), which catches inventions after the fact.
+_FACT_REQUEST_PAT = re.compile(
+    r"\b(address|email|e-mail|phone|number|contact|price|cost|quote|rate|fee|"
+    r"available|availability|free|when|what time|which day|date|deadline|"
+    r"link|url|website)\b",
+    re.IGNORECASE,
+)
+
+_GROUNDING_RULE = (
+    "This message asks for a specific detail. State only facts that appear in "
+    "the inbound message, the thread, or the facts context above. If you don't "
+    "have the requested detail, ask for it or say you'll follow up — never "
+    "invent an address, date, price, link, or contact."
+)
+
+
+def _inbound_requests_fact(inbound: str) -> bool:
+    """True when the inbound poses a question that asks for a concrete fact."""
+    if not inbound or "?" not in inbound:
+        return False
+    return bool(_FACT_REQUEST_PAT.search(inbound))
+
+
 def lookup_sender_profile(email: str, database_url: str, conn: sqlite3.Connection | None = None) -> dict[str, Any] | None:
     """Look up a sender profile from the database."""
     _own_conn = conn is None
@@ -1199,6 +1226,13 @@ def assemble_prompt(
     if language_hint and language_hint != "en":
         language_block = f"\n[LANGUAGE: {language_hint}] Reply in the same language as the inbound message.\n"
 
+    # Fact-grounding guard — only when the inbound actually asks for a concrete
+    # detail, so the common case keeps the unchanged prompt (minimises any
+    # golden-eval drift) and the guard appears exactly where invention is a risk.
+    grounding_block = ""
+    if _inbound_requests_fact(inbound_message):
+        grounding_block = f"\n[GROUNDING] {_GROUNDING_RULE}\n"
+
     result = (
         f"[SYSTEM]\n"
         f"{system.strip()}\n"
@@ -1208,6 +1242,7 @@ def assemble_prompt(
         f"{sender_block}"
         f"{facts_block}"
         f"{language_block}"
+        f"{grounding_block}"
         f"\n"
         f"[EXEMPLARS — {n} similar past replies]\n"
         f"{exemplars_text}\n"
