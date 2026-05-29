@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.0-beta.73 — 2026-05-29
+
+### Structured standing-instruction rules
+
+`agent.standing_instructions` was one global string prepended to every draft. New `app/agent/rules.py` adds durable, conditional rules so the agent follows policies, not just a hint — "always decline recruiters", "for client X note I'll CC my partner", "for meeting requests propose Tue/Thu", "skip cold outreach".
+
+Rules live under `agent.rules` in `youos_config.yaml` (a list). Each `match` (ANDed) supports `sender` (exact), `domain` (`@x.com`), `intent` (a label), `cold_outreach` (bool); actions are `skip` (don't draft), `decline` (draft a polite decline), `prepend` (inject `value`). The triage loop evaluates rules per message: a `skip` rule drops the message, otherwise the matched instructions fold into that draft's standing instructions (global + per-rule) and are snapshotted on the row so you can see why a draft took a stance. Intent matching only classifies when a rule needs it. All actions stay draft-only. +8 tests.
+
 ## v0.2.0-beta.72 — 2026-05-29
 
 ### Voice-match gating in multi-candidate drafting
