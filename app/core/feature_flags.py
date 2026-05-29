@@ -396,6 +396,36 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.actions.enabled",
+        "label": "Rule-driven mailbox routing (label / archive / star)",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "Let the agent ROUTE inbound mail per agent.rules — apply a Gmail "
+            "label, archive (route out of the inbox), or star. Account-internal "
+            "and reversible (full undo ledger). Off by default; dry-run by "
+            "default even when on (see agent.actions.dry_run)."
+        ),
+    },
+    {
+        "key": "agent.actions.dry_run",
+        "label": "Mailbox routing: dry-run (log only)",
+        "type": "bool",
+        "default": True,
+        "help": (
+            "When on (the default), routing records what it WOULD do without "
+            "touching Gmail — a safe soak. Turn off to actually apply labels / "
+            "archive / star."
+        ),
+    },
+    {
+        "key": "agent.actions.daily_cap",
+        "label": "Mailbox routing daily cap",
+        "type": "int",
+        "default": 50,
+        "help": "Max real routing actions per UTC day across all sweeps. 0 disables the cap.",
+    },
+    {
         "key": "agent.extract_facts.enabled",
         "label": "Harvest facts from drafted mail",
         "type": "bool",

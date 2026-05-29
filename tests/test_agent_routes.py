@@ -550,6 +550,43 @@ def test_push_to_gmail_failure_rolls_back_status_so_retry_works(authed_client, m
     assert r2.json()["gmail_draft_id"] == "gd_retry"
 
 
+# --- agent-action framework: list + undo routing actions --------------------
+
+
+def test_actions_list_and_undo(authed_client, monkeypatch):
+    from app.agent import actions as act
+    from app.ingestion import gmail_write
+
+    db = authed_client.app.state.settings.database_url
+    # Seed an applied 'label' action directly via the executor (live, mocked gog).
+    monkeypatch.setattr(act, "_actions_config", lambda: {"enabled": True, "dry_run": False, "daily_cap": 50})
+    monkeypatch.setattr(gmail_write, "ensure_label", lambda **k: None)
+    reversed_calls = []
+    monkeypatch.setattr(gmail_write, "modify_message_labels",
+                        lambda **k: reversed_calls.append((k.get("add"), k.get("remove"))) or gmail_write.GmailModifyResult(k["message_id"], [], [], {}))
+    from types import SimpleNamespace
+    msg = SimpleNamespace(message_id="am1", thread_id="t", account="acct", sender_email="a@x.com", subject="s")
+    act.apply_mailbox_actions(db, "acct", msg, [{"type": "label", "value": "Recruiting"}])
+
+    # List
+    r = authed_client.get("/api/agent/actions")
+    assert r.status_code == 200, r.text
+    rows = r.json()["actions"]
+    assert rows and rows[0]["action_type"] == "label" and rows[0]["status"] == "applied"
+    aid = rows[0]["id"]
+
+    # Undo → reverses (removes the label that was added)
+    r2 = authed_client.post(f"/api/agent/actions/{aid}/undo")
+    assert r2.status_code == 200, r2.text
+    assert reversed_calls[-1] == ([], ["Recruiting"])   # undo removed the added label
+    assert authed_client.get("/api/agent/actions").json()["actions"][0]["status"] == "undone"
+
+
+def test_undo_unknown_action_404(authed_client):
+    r = authed_client.post("/api/agent/actions/999999/undo")
+    assert r.status_code == 404
+
+
 # --- confirm_send: one-call human-confirmed send (OpenClaw approve action) ---
 
 
