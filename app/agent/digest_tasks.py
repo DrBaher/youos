@@ -86,10 +86,22 @@ def _parse_weekday(val: Any) -> int | None:
     return None
 
 
+# Default summary instruction when a digest doesn't set its own ``prompt``.
+_DEFAULT_PROMPT = (
+    "Write a concise email digest. ONE short bullet per email: the sender's name "
+    "and the gist in at most 12 words. Then a final line 'Worth attention:' "
+    "naming ONLY the genuinely time-sensitive or important ones (or 'nothing "
+    "urgent'). Do NOT repeat yourself, do NOT add a preamble, do NOT invent "
+    "anything. Keep the whole digest under 150 words."
+)
+_MAX_PROMPT_LEN = 2000
+
+
 @dataclass
 class DigestSpec:
     name: str
     query: str
+    prompt: str = ""          # user instruction for the summary; blank → _DEFAULT_PROMPT
     schedule: str = "daily"
     hour: int = 7
     minute: int = 0            # time-of-day minute (with hour), local tz
@@ -121,6 +133,8 @@ def validate_digest(raw: Any) -> tuple[bool, str]:
     acct = str(raw.get("account") or "").strip()
     if acct and not _looks_like_email(acct):
         return False, "account must be a valid email address (or empty for all configured accounts)"
+    if len(str(raw.get("prompt") or "")) > _MAX_PROMPT_LEN:
+        return False, f"prompt is too long (max {_MAX_PROMPT_LEN} characters)"
     try:
         hour = int(raw.get("hour", 7))
     except (TypeError, ValueError):
@@ -153,6 +167,7 @@ def _normalize_digest(raw: Any) -> DigestSpec | None:
     return DigestSpec(
         name=str(raw["name"]).strip(),
         query=str(raw["query"]).strip(),
+        prompt=str(raw.get("prompt") or "").strip(),
         schedule=str(raw.get("schedule") or "daily").strip().lower(),
         hour=int(raw.get("hour", 7)),
         minute=int(raw.get("minute", 0)),
@@ -320,29 +335,25 @@ def _summary_fn(model: str):
     return None
 
 
-def build_digest_body(items: list[dict[str, str]], *, model: str = "local", complete_fn=None) -> str:
-    """Summarize the collected messages into a digest body. ``model`` selects
-    the summarizer ('local' warm model, no egress — the default; or 'cloud' =
-    Claude, which sends the senders/subjects/dates). Always falls back to a plain
-    itemised list so a digest is never empty (model off / errors / disabled)."""
+def build_digest_body(items: list[dict[str, str]], *, model: str = "local",
+                      prompt: str = "", complete_fn=None) -> str:
+    """Summarize the collected messages into a digest body. ``prompt`` is the
+    user's own instruction for what the digest should be (blank → a sensible
+    default). ``model`` selects the summarizer ('local' warm model, no egress —
+    the default; or 'cloud' = Claude, which sends the senders/subjects/dates).
+    Always falls back to a plain itemised list so a digest is never empty (model
+    off / errors / disabled)."""
     listing = "\n".join(f"- From {it['from']} | {it['subject']} | {it['date']}" for it in items)
     header = f"YouOS digest — {len(items)} message(s)\n\n"
 
     fn = complete_fn if complete_fn is not None else _summary_fn(model)
     if fn is not None:
-        # Tight prompt: one line per email, no repetition, bounded — the small
-        # local model otherwise rambles and repeats. The itemised list is
-        # appended separately, so the model only needs to add the gist.
-        prompt = (
-            "Write a concise email digest. ONE short bullet per email: the sender's "
-            "name and the gist in at most 12 words. Then a final line "
-            "'Worth attention:' naming ONLY the genuinely time-sensitive or important "
-            "ones (or 'nothing urgent'). Do NOT repeat yourself, do NOT add a preamble, "
-            "do NOT invent anything. Keep the whole digest under 150 words.\n\n"
-            f"{listing}\n\nDigest:"
-        )
+        # The user's prompt is the instruction; the itemised list is appended so
+        # the model has the source material and only needs to summarize per it.
+        instruction = (prompt or "").strip() or _DEFAULT_PROMPT
+        full_prompt = f"{instruction}\n\n{listing}\n\nDigest:"
         try:
-            out = (fn(prompt) or "").strip()
+            out = (fn(full_prompt) or "").strip()
             if out:
                 return f"{header}{out}\n\n— items —\n{listing}"
         except Exception as exc:
@@ -482,7 +493,7 @@ def run_digest(database_url: str, account: str, spec: DigestSpec, *,
         except Exception as exc:
             return {"status": "error", "name": spec.name, "detail": f"fetch failed: {exc}"}
         items = _undigested(database_url, spec.name, account, items)
-        body = build_digest_body(items, model=spec.summary_model) if items else "(nothing new to digest)"
+        body = build_digest_body(items, model=spec.summary_model, prompt=spec.prompt) if items else "(nothing new to digest)"
         return {"status": "preview", "name": spec.name, "to": to,
                 "count": len(items), "subject": subject, "body": body}
 
@@ -526,7 +537,7 @@ def run_digest(database_url: str, account: str, spec: DigestSpec, *,
     run_id = _claim_period(database_url, spec.name, account, period)
     if run_id is None:
         return {"status": "skipped_done", "name": spec.name, "period": period}
-    body = build_digest_body(items, model=spec.summary_model)
+    body = build_digest_body(items, model=spec.summary_model, prompt=spec.prompt)
     try:
         res = gmail_write.send_email(account=account, to=to, subject=subject, body=body)
     except Exception as exc:

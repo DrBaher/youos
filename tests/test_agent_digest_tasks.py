@@ -179,6 +179,26 @@ def test_validate_account():
 # --- body ------------------------------------------------------------------
 
 
+def test_custom_prompt_drives_the_summary():
+    seen = {}
+    def cap(p):
+        seen["p"] = p
+        return "SUMMARY"
+    # custom prompt is used as the instruction
+    dt.build_digest_body(_ITEMS, prompt="Make a haiku of my inbox.", complete_fn=cap)
+    assert "Make a haiku of my inbox." in seen["p"]
+    assert "Weekly digest" in seen["p"]            # items still appended as source
+    # blank prompt → the default instruction
+    dt.build_digest_body(_ITEMS, prompt="", complete_fn=cap)
+    assert "Worth attention:" in seen["p"] or "ONE short bullet" in seen["p"]
+
+
+def test_validate_and_normalize_prompt():
+    assert dt.validate_digest({"name": "N", "query": "x", "prompt": "focus on deadlines"})[0]
+    assert not dt.validate_digest({"name": "N", "query": "x", "prompt": "z" * 5000})[0]   # too long
+    assert dt._normalize_digest({"name": "N", "query": "x", "prompt": "  hi  "}).prompt == "hi"
+
+
 def test_build_digest_body_uses_model_then_falls_back():
     body = dt.build_digest_body(_ITEMS, complete_fn=lambda p: "SUMMARY HERE")
     assert "SUMMARY HERE" in body and "Weekly digest" in body
