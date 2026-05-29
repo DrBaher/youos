@@ -47,7 +47,14 @@ def _classify_row(row: dict[str, Any]) -> dict[str, Any] | None:
     reason = row.get("dismissal_reason")
 
     # Edited before keeping → correction pair (generated vs the user's edit).
-    if amended and amended.strip() and amended.strip() != draft.strip():
+    # ONLY a human edit is a gold correction. A /regenerate re-draft also lands
+    # in amended_draft (amended_by='machine') but the user never approved it —
+    # mining it would train the model on its own output as a human correction.
+    amended_by = row.get("amended_by")
+    if (
+        amended and amended.strip() and amended.strip() != draft.strip()
+        and amended_by != "machine"
+    ):
         ed = _edit_distance_pct(draft, amended)
         return {
             "generated": draft, "edited": amended,

@@ -26,10 +26,13 @@ from typing import Any
 # Expired/absent Google OAuth — the single most likely silent-death cause.
 _AUTH_PAT = re.compile(
     r"no auth for|gog auth|auth.*expired|invalid_grant|unauthor|401|403|"
-    r"re-?authenticate|credentials|token.*expired",
+    r"re-?authenticate|re-?auth|credentials|token.*expired|refresh.?error|"
+    r"insufficient.{0,40}(scope|permission)|access.?denied",
     re.IGNORECASE,
 )
-_RATE_PAT = re.compile(r"rate.?limit|quota|429|too many requests", re.IGNORECASE)
+_RATE_PAT = re.compile(
+    r"rate.?limit|quota|429|too many requests|resource.?exhausted", re.IGNORECASE
+)
 _NETWORK_PAT = re.compile(
     r"timed out|timeout|connection|network|unreachable|temporarily|dns|getaddrinfo",
     re.IGNORECASE,
@@ -40,6 +43,11 @@ _NETWORK_PAT = re.compile(
 # few drafts — see ``min_drafts``.
 DEFAULT_FALLBACK_SPIKE = 0.5
 DEFAULT_EMPTY_SPIKE = 0.5
+
+# Sentinel model markers + placeholder draft prefixes that mean "no real model
+# produced this" — these are broken-output, not a cloud fallback.
+_BROKEN_MODELS = frozenset({"none", "error", "", "unavailable"})
+_PLACEHOLDER_PREFIXES = ("[no model", "[draft generat", "[error", "[unavailable")
 
 
 @dataclass
@@ -96,14 +104,16 @@ def sweep_health(
     empty = 0
     for d in drafts:
         model = (getattr(d, "model_used", None) or "")
-        # A real draft produced by something other than the local LoRA = cloud
-        # / base fallback. No model + no draft (an errored draft) isn't a
-        # fallback, it's an empty.
         body = (getattr(d, "draft", None) or "").strip()
         err = getattr(d, "error", None)
-        if not body or err:
+        body_l = body.lower()
+        is_placeholder = any(body_l.startswith(p) for p in _PLACEHOLDER_PREFIXES)
+        # Broken output (empty, errored, sentinel model, or a placeholder body)
+        # counts as EMPTY — the model failed. Only a real, substantive draft
+        # produced by something other than the local LoRA is a cloud fallback.
+        if not body or err or model.lower() in _BROKEN_MODELS or is_placeholder:
             empty += 1
-        elif model and "lora" not in model.lower():
+        elif "lora" not in model.lower():
             cloud += 1
     fallback_rate = round(cloud / total, 4) if total else 0.0
     empty_rate = round(empty / total, 4) if total else 0.0
