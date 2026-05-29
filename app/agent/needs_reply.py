@@ -61,17 +61,26 @@ SERVICE_SUBJECT_PAT = re.compile(
 # auto-drafted. Even though replying is technically fine, the agent shouldn't
 # spend its budget on transactional acknowledgements.
 TRANSACTIONAL_TEMPLATE_PAT = re.compile(
-    r"\b(?:"
-    # Common confirmation/receipt subject lines.
+    r"(?:\b(?:"
+    # Common confirmation/receipt subject lines (English).
     r"booking confirmation|order confirmation|appointment confirmation|"
     r"reservation confirmation|receipt for|payment (?:received|confirmation)|"
-    r"delivery scheduled|order (?:placed|received|shipped)|"
+    r"delivery scheduled|order (?:placed|received|shipped|confirmed)|"
+    r"your order|order number|order #|tracking number|out for delivery|has shipped|"
+    # German — a real-inbox false positive (b84): "Ordered: …" from
+    # bestellbestaetigung@amazon.de got drafted because the detector was
+    # English-only. Cover the common Amazon/retailer German transactional terms.
+    r"bestellbest[äa]tigung|auftragsbest[äa]tigung|versandbest[äa]tigung|"
+    r"zahlungsbest[äa]tigung|ihre bestellung|rechnungsnummer|"
     # Common body openings, e.g. "Your appointment is confirmed".
     r"your\s+(?:appointment|booking|order|reservation|payment|purchase|delivery|"
     r"subscription|trip|flight|hotel)\s+"
     r"(?:is\s+(?:confirmed|booked|scheduled|ready)|"
     r"has\s+been\s+(?:confirmed|received|placed|scheduled|shipped|processed))"
-    r")\b",
+    r")\b)"
+    # "Ordered:" / "Bestellt:" subject prefixes (Amazon-style) — colon-anchored
+    # so it doesn't fire on prose like "I ordered the report".
+    r"|(?:^\s*(?:ordered|bestellt)\s*:)",
     re.IGNORECASE,
 )
 
@@ -349,6 +358,7 @@ def classify(
         prior = history.count_for(msg.sender_email)
         if prior > 0:
             is_transactional = bool(
+                transactional or
                 (msg.sender and NOREPLY_LOCAL_PAT.search(msg.sender)) or
                 (msg.sender_email and NON_HUMAN_MAILBOX_PAT.search(msg.sender_email))
             )
