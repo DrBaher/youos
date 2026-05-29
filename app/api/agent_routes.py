@@ -235,6 +235,31 @@ def skip_sender_candidates(
     }
 
 
+@router.get("/api/agent/actions")
+def list_mailbox_actions(
+    request: Request,
+    account: str | None = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+) -> dict:
+    """The agent-action ledger: recent label/archive/star routing actions
+    (applied / dry_run / error / undone) for accountability + the undo UI."""
+    from app.agent.actions import list_actions
+
+    return {"actions": list_actions(_db_url(request), account=account, limit=limit)}
+
+
+@router.post("/api/agent/actions/{action_id}/undo")
+def undo_mailbox_action(action_id: int, request: Request) -> dict:
+    """Reverse a previously-applied routing action (re-add INBOX / remove the
+    label / unstar). Only 'applied' actions can be undone."""
+    from app.agent.actions import undo_action
+
+    res = undo_action(_db_url(request), action_id)
+    if not res.get("ok"):
+        raise HTTPException(res.get("http_status", 500), res.get("detail", "undo failed"))
+    return res
+
+
 class PromoteSkipSendersBody(BaseModel):
     """Bulk-append senders to ``agent.skip_senders``.
 
