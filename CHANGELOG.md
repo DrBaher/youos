@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.120 — 2026-05-29
+
+### Digest hardening: per-account scoping + bounded catch-up
+
+Two gaps that surfaced the moment digests went live (an evening enable fired the morning daily *and* that-Friday weekly immediately, to *both* configured accounts):
+
+- **Per-digest `account`** — a digest can now target a specific account (e.g. only `you@gmail.com`); empty = all configured accounts (prior behavior). The scheduler skips a digest whose `account` is set and ≠ the account it's running for, so a scoped digest can't fan out to other inboxes. Authorable via the `/digests` UI + API.
+- **Bounded catch-up** — `_is_due` now fires only within a 3h window *after* the target (`_CATCH_UP_HOURS`), and weekly fires only on its configured weekday. A missed tick / brief restart still catches up shortly after the time, but **enabling a digest long after its time no longer fires immediately** — it waits for the next scheduled slot. (Tradeoff: a >3h outage spanning the target skips that period — a missed digest, never a duplicate.)
+
+A focused review confirmed at-most-once is unaffected (tightening `_is_due` can only make a fire less likely, never more) and a scoped digest can't bypass its account. +4 tests. Digests remain off by default.
+
 ## v0.2.0-beta.119 — 2026-05-29
 
 ### Digest authoring UI — build/edit/preview digests in the browser
