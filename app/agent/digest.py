@@ -116,6 +116,7 @@ def build_digest(
             "sender": r.get("sender") or r.get("sender_email"),
             "sender_email": r.get("sender_email"),
             "subject": (r.get("subject") or "")[:80],
+            "thread_summary": r.get("thread_summary"),
         }
         for r in pending_rows[:5]
     ]

@@ -822,3 +822,39 @@ def test_calendar_proposes_slots_for_meeting_requests(monkeypatch, tmp_path):
     triage.run_triage(account="you@example.com", database_url=f"sqlite:///{db}", configs_dir=tmp_path)
     assert "You are free at:" in (seen["si"] or "")
     assert "Tue Jun 2" in (seen["si"] or "")
+
+
+def test_thread_summary_persisted_for_long_threads(monkeypatch, tmp_path):
+    """When summarize_threads is on and the inbound is on a long thread, the
+    catch-up summary is generated and persisted on the row."""
+    import sqlite3
+
+    from app.agent import store, triage
+    from app.agent.inbox_fetch import InboxMessage
+
+    db = tmp_path / "ts.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE reply_pairs (id INTEGER PRIMARY KEY, inbound_author TEXT)")
+    from app.db.bootstrap import _migrate_agent_audit, _migrate_agent_pending_drafts
+    _migrate_agent_pending_drafts(conn); _migrate_agent_audit(conn); conn.commit(); conn.close()
+
+    msg = InboxMessage(
+        message_id="m1", thread_id="t1", account="you@example.com",
+        sender="Alice <alice@x.com>", sender_email="alice@x.com",
+        subject="Q3", body="So where did we land?", headers={},
+        thread_history=[{"sender": f"P{i}", "text": f"point {i}"} for i in range(5)],
+    )
+    monkeypatch.setattr("app.agent.triage.fetch_unread", lambda *a, **k: [msg])
+    monkeypatch.setattr("app.core.config.load_config",
+                        lambda *a, **k: {"agent": {"summarize_threads": {"enabled": True, "min_messages": 3}}})
+    monkeypatch.setattr("app.agent.thread_summary.summarize_thread",
+                        lambda hist, **kw: "Pricing agreed; start date open.")
+
+    class _Resp:
+        draft = "ok"; model_used = "m"; repairs: list[str] = []
+    monkeypatch.setattr("app.generation.service.generate_draft", lambda req, **kw: _Resp())
+
+    triage.run_triage(account="you@example.com", database_url=f"sqlite:///{db}", configs_dir=tmp_path)
+    rows = store.list_pending(f"sqlite:///{db}", status="pending", tier="draft")
+    assert len(rows) == 1
+    assert rows[0]["thread_summary"] == "Pricing agreed; start date open."

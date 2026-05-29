@@ -259,6 +259,17 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "help": "Throttle: at most one webhook push per account per this many minutes, and only when the queue state changed.",
     },
     {
+        "key": "agent.summarize_threads.enabled",
+        "label": "Summarize long threads",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "For a reply on a long thread, generate a 2-3 line 'what changed' "
+            "catch-up (on-device, via the warm local model) and store it on the "
+            "queued row. Off by default; needs the warm model server."
+        ),
+    },
+    {
         "key": "agent.calendar.enabled",
         "label": "Propose meeting times from your calendar",
         "type": "bool",
