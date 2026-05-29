@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.86 — 2026-05-29
+
+### Borderline LLM adjudication — a broadcast veto (autonomy Phase A2)
+
+The needs-reply classifier is a fast additive heuristic; on scores just over the threshold it can't reliably tell a personal note that looks automated from a broadcast that looks personal — the live false positives ("thanks, I'll check it out" to a newsletter) live exactly in this band. The warm local model is right there, so we now ask it.
+
+- New `app/agent/adjudicate.py`: for a would-be draft whose needs-reply score is in a narrow band just over the threshold, `adjudicate()` asks the warm model one constrained question — PERSONAL or BROADCAST — and returns a verdict. On-device (no egress), temperature 0, failure-isolated (model unavailable / unparseable answer ⇒ no veto, the heuristic stands).
+- Wired into the sweep right after classification (`_maybe_adjudicate`): a BROADCAST verdict **demotes** the message to surface-for-review (it still shows under "Review skipped", never silently buried). Adjudication only ever **demotes** — it can't promote a message the heuristic rejected — and never touches VIP senders.
+- New flags: `agent.adjudication.enabled` (bool, default false; needs the warm model server) and `agent.adjudication.high` (float, default 0.8, clamped 0.6–1.0 — the upper edge of the band; above it the heuristic is trusted).
+
++12 tests (`test_adjudicate.py` for the parse/verdict helpers + veto/keep/no-op cases in `test_agent_triage.py`). Never-send boundary unchanged.
+
 ## v0.2.0-beta.85 — 2026-05-29
 
 ### Per-draft quality gate (autonomy Phase A1)
