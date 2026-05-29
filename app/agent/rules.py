@@ -34,9 +34,13 @@ A rule's ``match`` conditions are ANDed. Supported keys:
   ``known_contact`` (bool — do I have prior reply pairs with this sender), and
   the recency predicates ``older_than_days`` / ``newer_than_days`` (message age
   in days from its ``Date`` header).
-Actions: ``skip`` (don't draft), ``decline`` (draft a polite decline),
-``prepend`` (inject ``value`` into that draft's standing instructions), and
-``hold`` (draft + queue for review, but **never auto-act** — the human decides).
+Draft-shaping actions: ``skip`` (don't draft), ``decline`` (draft a polite
+decline), ``prepend`` (inject ``value`` into that draft's standing instructions),
+and ``hold`` (draft + queue for review, but **never auto-act** — the human
+decides). Mailbox-routing actions (applied by the agent-action framework to
+every fetched message): ``label`` / ``archive`` / ``star`` / ``mark_read`` /
+``mark_important`` / ``mark_unimportant`` — each a reversible Gmail label
+mutation, gated + dry-run by default + undoable.
 
     agent:
       rules:
@@ -63,11 +67,20 @@ DECLINE_INSTRUCTION = "Politely decline this request. Keep it short, courteous, 
 # Draft-shaping actions (operate on the reply / whether to draft).
 _DRAFT_ACTIONS = ("skip", "decline", "prepend", "hold")
 # Mailbox-routing actions (operate on the inbound message itself — applied by
-# the agent-action framework to EVERY fetched message, not just drafts):
-#   label  — add a Gmail label (value = label name; created if missing)
-#   archive — remove it from the inbox (route out)
-#   star   — flag it
-_MAILBOX_ACTIONS = ("label", "archive", "star")
+# the agent-action framework to EVERY fetched message, not just drafts). Each
+# maps to a reversible Gmail label add/remove (see actions._action_to_labels):
+#   label            — add a Gmail label (value = label name; created if missing)
+#   archive          — remove it from the inbox (route out)
+#   star             — flag it (add STARRED)
+#   mark_read        — clear the unread flag (remove UNREAD)
+#   mark_important   — add to the Important tab (add IMPORTANT)
+#   mark_unimportant — remove from the Important tab (remove IMPORTANT)
+# (Outbound tasks like forward stay behind the send frontier; destructive ones
+# like trash are intentionally not exposed here.)
+_MAILBOX_ACTIONS = ("label", "archive", "star", "mark_read", "mark_important", "mark_unimportant")
+# Public alias so callers (e.g. triage's routing-enable gate) test membership
+# against the single source of truth instead of a hand-copied tuple that drifts.
+MAILBOX_ACTIONS = _MAILBOX_ACTIONS
 _VALID_ACTIONS = _DRAFT_ACTIONS + _MAILBOX_ACTIONS
 
 # Reserved label namespace owned by gmail_label_sync (label→dismissal feedback).

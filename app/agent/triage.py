@@ -710,13 +710,14 @@ def run_triage(
 def _maybe_apply_mailbox_actions(
     database_url: str | None, account: str, messages: list[InboxMessage],
 ) -> list[dict[str, Any]]:
-    """Apply agent.rules label/archive/star routing to every fetched message.
-    No-op unless ``agent.actions.enabled`` and at least one mailbox-routing rule
-    exists. Enforces the daily cap across the sweep; dry-run records intent."""
+    """Apply agent.rules mailbox routing (label/archive/star/mark_read/
+    mark_important/mark_unimportant) to every fetched message. No-op unless
+    ``agent.actions.enabled`` and at least one mailbox-routing rule exists.
+    Enforces the daily cap across the sweep; dry-run records intent."""
     if not database_url or not messages:
         return []
     from app.agent import actions as act
-    from app.agent.rules import evaluate_mailbox_actions, load_rules
+    from app.agent.rules import MAILBOX_ACTIONS, evaluate_mailbox_actions, load_rules
 
     cfg = act._actions_config()
     if not cfg["enabled"]:
@@ -726,7 +727,9 @@ def _maybe_apply_mailbox_actions(
     if cfg["daily_cap"] <= 0:
         return []
     rules = load_rules()
-    if not any(r["action"] in ("label", "archive", "star") for r in rules):
+    # Test against the single source of truth (rules.MAILBOX_ACTIONS) so a new
+    # action type can't silently no-op here for a rule set that uses only it.
+    if not any(r["action"] in MAILBOX_ACTIONS for r in rules):
         return []
 
     from app.agent.inbox_fetch import message_age_days
@@ -815,10 +818,10 @@ def _run_sweep(
     # 1) Fetch unread inbox threads.
     messages = fetch_unread(account, window=window, limit=limit, backend=backend)
 
-    # 1b) Mailbox routing (the agent-action framework): apply label/archive/star
-    # rules to EVERY fetched message — routing isn't tied to drafting. Off by
-    # default + dry-run by default; failure-isolated so a routing error can't
-    # break the sweep.
+    # 1b) Mailbox routing (the agent-action framework): apply label / archive /
+    # star / mark_read / mark_important / mark_unimportant rules to EVERY fetched
+    # message — routing isn't tied to drafting. Off by default + dry-run by
+    # default; failure-isolated so a routing error can't break the sweep.
     mailbox_actions: list[dict[str, Any]] = []
     try:
         mailbox_actions = _maybe_apply_mailbox_actions(database_url, account, messages)
