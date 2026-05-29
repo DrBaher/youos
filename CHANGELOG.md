@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0-beta.79 — 2026-05-29
+
+### Autoresearch optimizes the draft-changing surfaces first
+
+`pass=20%` is a generation/prompt problem, but `get_mutable_surfaces` listed the prompt template **last** — after ~20 retrieval surfaces — so a short run (`--max-iter 6`) never reached it, and the nightly spent most of its budget on retrieval knobs that (per b78) rarely change exemplar selection.
+
+Surfaces are now ordered by what actually moves the draft: **prompt template → per-mode reply length → retrieval → composite weights**. Combined with the b77 cache bypass, prompt/length mutations now change the draft and the eval can respond, so autoresearch targets the surface with real headroom. +1 test.
+
+(Decoding params — `generation.decoding.temperature`/`top_p` — live in `youos_config.yaml` behind the `load_config` lru-cache; mutating them needs cache-invalidation plumbing to avoid a silent no-op, so that's a deliberate follow-up rather than a rushed addition.)
+
 ## v0.2.0-beta.78 — 2026-05-29
 
 ### Score normalization — make boosts + semantic actually reorder (and let autoresearch optimize)
