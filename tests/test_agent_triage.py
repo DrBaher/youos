@@ -841,6 +841,54 @@ def test_auto_push_unscored_draft_is_held(mocked_environment, monkeypatch):
     assert store.list_pending(env["database_url"], status="sent") == []
 
 
+def test_auto_push_holds_high_stakes_mail(monkeypatch, tmp_path):
+    """A whitelisted, high-confidence, high-quality draft is still held when the
+    inbound is high-stakes (money/legal) — escalation never auto-acts on these."""
+    import sqlite3
+
+    from app.agent import store, triage
+    from app.agent.inbox_fetch import InboxMessage
+    from app.db.bootstrap import _migrate_agent_audit, _migrate_agent_pending_drafts
+
+    db = tmp_path / "t.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE reply_pairs (id INTEGER PRIMARY KEY, inbound_author TEXT)")
+    _migrate_agent_pending_drafts(conn)
+    _migrate_agent_audit(conn)
+    conn.commit()
+    conn.close()
+
+    msg = InboxMessage(
+        message_id="hs1", thread_id="t1", account="you@example.com",
+        sender="Alice <alice@partner.com>", sender_email="alice@partner.com",
+        subject="Contract for countersignature",
+        body="Please review and sign the attached agreement — payment is due on signing.",
+        headers={},
+    )
+    monkeypatch.setattr("app.agent.triage.fetch_unread", lambda *a, **k: [msg])
+
+    class _Resp:
+        draft = "Hi Alice, happy to review and get back to you."
+        model_used = "qwen2.5-1.5b-lora"
+        repairs: list[str] = []
+        quality_score = 0.9
+
+    monkeypatch.setattr("app.generation.service.generate_draft", lambda req, **kw: _Resp())
+    monkeypatch.setattr(triage, "_auto_push_config", lambda: _autopush_cfg(dry_run=True))
+    monkeypatch.setattr(
+        "app.ingestion.gmail_write.create_draft",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("high-stakes mail must not auto-push")),
+    )
+
+    result = triage.run_triage(
+        account="you@example.com", database_url=f"sqlite:///{db}", configs_dir=tmp_path,
+    )
+    # Drafted (so the human can review) but NOT auto-pushed.
+    assert result.kept == 1
+    assert result.auto_pushed == []
+    assert store.list_pending(f"sqlite:///{db}", status="sent") == []
+
+
 def test_thread_history_threaded_into_draft_request(monkeypatch, tmp_path):
     """The agent passes the inbound's thread_history to generate_draft so the
     drafter has conversation context."""
