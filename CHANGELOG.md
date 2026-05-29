@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0-beta.104 — 2026-05-29
+
+### Theme-aware, brand-correct landing-page screenshots + `?theme` deep-link
+
+- **Light *and* dark screenshots.** The landing page now serves light screenshots in light mode and dark in dark mode — driven by CSS keyed on both `prefers-color-scheme` and the manual `:root[data-theme]` toggle. Added `01-draft-reply-light.png` / `02-stats-light.png` alongside the dark defaults.
+- **Fixed the personal brand leaking into public screenshots.** The captures showed the maintainer's instance brand ("BaherOS" — the `<First>OS` personalization) in the header and "BaherOS Stats" title. Re-rendered them generically as "YouOS" (the brand was swapped to the generic name only for capture, then restored).
+- **New `?theme=light|dark` deep-link** honored by the app pages and the landing page (pre-paint, no flash; doesn't persist), and **`/feedback?notour`** to suppress the first-run tour. Both make reproducible headless captures possible (documented in `screenshots/CAPTURE.md`) and double as shareable theme-pinned links.
+
+No app-behavior change beyond the opt-in `?theme` / `?notour` query params. Full suite green.
+
 ## v0.2.0-beta.103 — 2026-05-29
 
 ### One-call confirmed send + draft-in-notification (orchestrator/OpenClaw flow)
