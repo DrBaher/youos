@@ -379,6 +379,25 @@ def digest(
     return _data_to_dict(data)
 
 
+@router.get("/api/agent/followups")
+def followups(
+    request: Request,
+    account: str | None = Query(None),
+) -> dict:
+    """Open loops the agent is tracking: inbound you owe a reply to (aging
+    pending rows) and replies you're awaiting (sent rows with no newer thread
+    activity). Read-only; drives the digest nudge and an orchestrator's
+    "anything I'm forgetting?" answer.
+    """
+    from app.agent.followups import build_followups
+    from app.core.config import get_user_emails
+
+    if not account:
+        emails = get_user_emails()
+        account = emails[0] if emails else None
+    return build_followups(_db_url(request), account=account)
+
+
 @router.get("/api/agent/observability")
 def observability(
     request: Request,

@@ -19,7 +19,7 @@ dismissal stats from b39/b42/b52). No new tables — pure formatting layer.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -55,6 +55,12 @@ class DigestData:
     # the formatter re-querying the DB. Up to 5 pending rows, each with
     # just the fields a chat bubble surfaces. Keeps the formatter pure.
     pending_preview: list[dict[str, Any]]
+    # Follow-up open loops (defaults keep older callers/tests constructing
+    # DigestData by position working).
+    owed_count: int = 0
+    awaiting_count: int = 0
+    owed_preview: list[dict[str, Any]] = field(default_factory=list)
+    awaiting_preview: list[dict[str, Any]] = field(default_factory=list)
 
 
 def build_digest(
@@ -123,6 +129,19 @@ def build_digest(
     # Construct the Tailscale-aware triage URL if configured. Falls back to None.
     triage_url = _resolve_triage_url()
 
+    # Follow-up open loops (owed inbound + awaiting reply). Failure-isolated so a
+    # follow-up query problem can't break the whole digest.
+    owed: list[dict[str, Any]] = []
+    awaiting: list[dict[str, Any]] = []
+    try:
+        from app.agent.followups import build_followups
+
+        fu = build_followups(database_url, account=account)
+        owed = fu["owed"]
+        awaiting = fu["awaiting"]
+    except Exception:
+        owed, awaiting = [], []
+
     return DigestData(
         account=account,
         days=days,
@@ -143,6 +162,10 @@ def build_digest(
         top_noise_senders=top,
         triage_url=triage_url,
         pending_preview=pending_preview,
+        owed_count=len(owed),
+        awaiting_count=len(awaiting),
+        owed_preview=owed[:5],
+        awaiting_preview=awaiting[:5],
     )
 
 
@@ -196,6 +219,23 @@ def _format_text(d: DigestData) -> str:
         for k, v in d.dismissal_by_reason.items():
             lines.append(f"    {k}: {v}")
     lines.append("")
+    if d.owed_count or d.awaiting_count:
+        lines.append("Follow-ups:")
+        if d.owed_count:
+            lines.append(f"  Owed a reply ({d.owed_count}):")
+            for r in d.owed_preview:
+                lines.append(
+                    f"    • #{r['id']} {(r.get('subject') or '(no subject)')[:50]}  ←  "
+                    f"{r.get('sender') or r.get('sender_email')}  ({r['age_days']}d)"
+                )
+        if d.awaiting_count:
+            lines.append(f"  Awaiting their reply ({d.awaiting_count}):")
+            for r in d.awaiting_preview:
+                lines.append(
+                    f"    • #{r['id']} {(r.get('subject') or '(no subject)')[:50]}  →  "
+                    f"{r.get('sender') or r.get('sender_email')}  ({r['age_days']}d)"
+                )
+        lines.append("")
     if d.auto_promoted:
         lines.append(f"Auto-promoted to skip_senders ({len(d.auto_promoted)}):")
         for s in d.auto_promoted:
@@ -241,6 +281,15 @@ def _format_chat(d: DigestData) -> str:
             # Row id = orchestrator's action handle:
             # POST /api/agent/pending/<id>/{push_to_gmail,dismiss,save_as_feedback_pair}
             lines.append(f"  #{r['id']} [{tier} {score:.2f}] {subject}  ←  {sender[:40]}")
+
+    if d.owed_count or d.awaiting_count:
+        bits = []
+        if d.owed_count:
+            bits.append(f"{d.owed_count} awaiting your reply")
+        if d.awaiting_count:
+            bits.append(f"{d.awaiting_count} awaiting theirs")
+        lines.append("")
+        lines.append("Follow-ups: " + ", ".join(bits))
 
     if d.auto_promoted:
         lines.append("")
@@ -324,6 +373,11 @@ def _data_to_dict(d: DigestData) -> dict[str, Any]:
         # b59: chat / orchestrator surface — top-5 pending rows with
         # action handles. Mirrors what `_format_chat` would render.
         "pending_preview": d.pending_preview,
+        # Follow-up open loops.
+        "owed_count": d.owed_count,
+        "awaiting_count": d.awaiting_count,
+        "owed_preview": d.owed_preview,
+        "awaiting_preview": d.awaiting_preview,
     }
 
 
