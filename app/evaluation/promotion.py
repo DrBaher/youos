@@ -26,10 +26,18 @@ def should_promote(
     baseline: float | None,
     *,
     tolerance: float = DEFAULT_TOLERANCE,
+    eval_degenerate: bool = False,
 ) -> tuple[bool, str]:
     """Promote when the candidate composite holds or improves within
     ``tolerance`` of the baseline. Missing values ⇒ promote (no basis to
-    reject — first run, or eval unavailable)."""
+    reject — first run, or eval unavailable).
+
+    ``eval_degenerate`` is a HARD refuse that overrides everything: when the
+    golden eval is untrustworthy (the model returned mostly empty drafts), its
+    composite is meaningless, so we must NOT keep a new adapter "validated" by
+    it — even on a first run where there's no baseline to compare against."""
+    if eval_degenerate:
+        return False, "golden eval degenerate (mostly empty drafts) — refusing to promote on an untrustworthy eval"
     if candidate is None or baseline is None:
         return True, "no baseline/candidate composite — keeping new adapter"
     if candidate >= baseline - tolerance:
@@ -86,11 +94,16 @@ def gate_after_eval(
     latest_dir: Path | str,
     previous_dir: Path | str,
     tolerance: float = DEFAULT_TOLERANCE,
+    eval_degenerate: bool = False,
 ) -> dict[str, Any]:
     """Decide keep-vs-rollback after the post-finetune eval. ``previous_dir``
     must already hold the pre-finetune snapshot. Returns an action dict for the
-    nightly log: ``action`` ∈ {kept, rolled_back, rollback_failed}."""
-    ok, reason = should_promote(candidate_composite, baseline_composite, tolerance=tolerance)
+    nightly log: ``action`` ∈ {kept, rolled_back, rollback_failed}. A degenerate
+    eval forces a rollback (the new adapter can't be trusted as validated)."""
+    ok, reason = should_promote(
+        candidate_composite, baseline_composite,
+        tolerance=tolerance, eval_degenerate=eval_degenerate,
+    )
     if ok:
         return {"action": "kept", "reason": reason,
                 "candidate": candidate_composite, "baseline": baseline_composite}
