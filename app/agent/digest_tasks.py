@@ -294,6 +294,22 @@ def run_digest(database_url: str, account: str, spec: DigestSpec, *,
     from app.ingestion import gmail_write
 
     cfg = _digest_config()
+    to = spec.deliver_to or account
+    subject = f"YouOS digest: {spec.name}"
+
+    # Preview is READ-ONLY (fetch + summarize; no send, no DB write, no claim),
+    # so it works regardless of the master flag — you can preview a digest before
+    # turning the feature on.
+    if dry_run:
+        try:
+            items = _fetch_for_digest(account, spec.query, spec.max_messages)
+        except Exception as exc:
+            return {"status": "error", "name": spec.name, "detail": f"fetch failed: {exc}"}
+        body = build_digest_body(items) if items else "(no matching messages)"
+        return {"status": "preview", "name": spec.name, "to": to,
+                "count": len(items), "subject": subject, "body": body}
+
+    # A REAL run requires the digest master switch.
     if not cfg["enabled"]:
         return {"status": "disabled", "name": spec.name}
 
@@ -305,19 +321,6 @@ def run_digest(database_url: str, account: str, spec: DigestSpec, *,
         ensure_agent_schema(database_url)
     except Exception as exc:
         logger.info("digest schema self-heal skipped: %s", exc)
-
-    to = spec.deliver_to or account
-    subject = f"YouOS digest: {spec.name}"
-
-    # Preview: fetch + build, but DON'T claim the period or send.
-    if dry_run:
-        try:
-            items = _fetch_for_digest(account, spec.query, spec.max_messages)
-        except Exception as exc:
-            return {"status": "error", "name": spec.name, "detail": f"fetch failed: {exc}"}
-        body = build_digest_body(items) if items else "(no matching messages)"
-        return {"status": "preview", "name": spec.name, "to": to,
-                "count": len(items), "subject": subject, "body": body}
 
     # Real run. Fetch + gates are checked BEFORE claiming the period, so a
     # blocked / empty / transient-fetch-error run does NOT permanently consume
