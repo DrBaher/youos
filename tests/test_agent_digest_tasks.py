@@ -118,6 +118,18 @@ def test_run_digest_disabled(db, monkeypatch):
     assert calls == []
 
 
+def test_dry_run_preview_works_even_when_feature_disabled(db, monkeypatch):
+    """Preview is read-only, so it must work before the master flag is on —
+    you can preview a digest while it stays fully gated off."""
+    monkeypatch.setattr(dt, "_digest_config", lambda: _cfg(enabled=False, send_enabled=False))
+    _stub_fetch(monkeypatch, _ITEMS)
+    calls = _stub_send(monkeypatch)
+    monkeypatch.setattr(dt, "build_digest_body", lambda items, **k: "PREVIEW BODY")
+    res = dt.run_digest(db, "me@x.com", _spec(), dry_run=True)
+    assert res["status"] == "preview" and res["count"] == 2
+    assert calls == [] and dt.list_digest_runs(db) == []
+
+
 def test_run_digest_dry_run_previews_without_send_or_claim(db, monkeypatch):
     monkeypatch.setattr(dt, "_digest_config", lambda: _cfg())
     _stub_fetch(monkeypatch, _ITEMS)
