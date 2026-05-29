@@ -298,6 +298,10 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
     # Per-draft quality score (0–1) — what auto-push/auto-send gate on.
     if "quality_score" not in _cols:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN quality_score REAL")
+    # Calibrated P(deserved a reply) for this row's raw score (Phase A2). Stored
+    # so auto-send can gate on the calibrated probability, not the raw heuristic.
+    if "calibrated_score" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN calibrated_score REAL")
     # Phase B (send frontier): an HONEST send state, kept separate from the
     # overloaded ``status='sent'`` (which means either "user resolved it
     # elsewhere" or "we pushed a Gmail draft"). send_state is explicit:

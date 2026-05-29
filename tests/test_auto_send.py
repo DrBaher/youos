@@ -51,14 +51,16 @@ def seeded(tmp_path, monkeypatch):
 
 
 def _trust_rows(database_url, sender_email, n):
-    """Seed n kept (amended) rows to give a recipient trust >= n."""
+    """Seed n CONFIRMED-sent rows to give a recipient trust >= n. Trust counts
+    confirmed sends only — status='sent' with send_state NULL is the manual
+    mark_sent path (the user sent it themselves)."""
     conn = sqlite3.connect(database_url.removeprefix("sqlite:///"))
     for i in range(n):
         conn.execute(
             "INSERT INTO agent_pending_drafts "
             "(message_id, thread_id, account, sender_email, needs_reply_score, "
-            " reasons_json, cold_outreach, tier, draft, status) "
-            "VALUES (?, ?, 'me@x.com', ?, 0.9, '[]', 0, 'draft', 'x', 'amended')",
+            " reasons_json, cold_outreach, tier, draft, status, send_state) "
+            "VALUES (?, ?, 'me@x.com', ?, 0.9, '[]', 0, 'draft', 'x', 'sent', NULL)",
             (f"trust{sender_email}{i}", f"tt{i}", sender_email),
         )
     conn.commit()
@@ -73,7 +75,7 @@ def test_auto_send_noop_when_disabled(seeded, monkeypatch):
     insert()
     monkeypatch.setattr(triage, "_auto_send_config", lambda: {
         "enabled": False, "mode": "shadow", "delay_minutes": 60,
-        "min_recipient_trust": 0, "max_per_sweep": 5,
+        "min_recipient_trust": 0, "max_per_sweep": 5, "daily_send_cap": 5,
     })
     out = triage._maybe_auto_send(database_url=database_url, account="me@x.com")
     assert out == []
@@ -85,7 +87,7 @@ def test_recent_draft_inside_delay_window_is_not_sent(seeded, monkeypatch):
     _trust_rows(database_url, "a@x.com", 3)
     monkeypatch.setattr(triage, "_auto_send_config", lambda: {
         "enabled": True, "mode": "shadow", "delay_minutes": 60,
-        "min_recipient_trust": 0, "max_per_sweep": 5,
+        "min_recipient_trust": 0, "max_per_sweep": 5, "daily_send_cap": 5,
     })
     out = triage._maybe_auto_send(database_url=database_url, account="me@x.com")
     assert out == []  # not yet due
@@ -96,7 +98,7 @@ def test_low_trust_recipient_held(seeded, monkeypatch):
     rid = insert(sender_email="stranger@x.com")  # no trust history
     monkeypatch.setattr(triage, "_auto_send_config", lambda: {
         "enabled": True, "mode": "shadow", "delay_minutes": 60,
-        "min_recipient_trust": 3, "max_per_sweep": 5,
+        "min_recipient_trust": 3, "max_per_sweep": 5, "daily_send_cap": 5,
     })
     out = triage._maybe_auto_send(database_url=database_url, account="me@x.com")
     assert len(out) == 1
@@ -111,7 +113,7 @@ def test_high_stakes_draft_held(seeded, monkeypatch):
     _trust_rows(database_url, "a@x.com", 5)
     monkeypatch.setattr(triage, "_auto_send_config", lambda: {
         "enabled": True, "mode": "shadow", "delay_minutes": 60,
-        "min_recipient_trust": 3, "max_per_sweep": 5,
+        "min_recipient_trust": 3, "max_per_sweep": 5, "daily_send_cap": 5,
     })
     out = triage._maybe_auto_send(database_url=database_url, account="me@x.com")
     assert out[0]["id"] == rid
@@ -128,7 +130,7 @@ def test_shadow_send_records_shadow_without_network(seeded, monkeypatch):
     _trust_rows(database_url, "a@x.com", 3)
     monkeypatch.setattr(triage, "_auto_send_config", lambda: {
         "enabled": True, "mode": "shadow", "delay_minutes": 60,
-        "min_recipient_trust": 3, "max_per_sweep": 5,
+        "min_recipient_trust": 3, "max_per_sweep": 5, "daily_send_cap": 5,
     })
     from app.ingestion import gmail_write
     monkeypatch.setattr(
@@ -146,7 +148,7 @@ def test_live_send_actually_sends(seeded, monkeypatch):
     _trust_rows(database_url, "a@x.com", 3)
     monkeypatch.setattr(triage, "_auto_send_config", lambda: {
         "enabled": True, "mode": "live", "delay_minutes": 60,
-        "min_recipient_trust": 3, "max_per_sweep": 5,
+        "min_recipient_trust": 3, "max_per_sweep": 5, "daily_send_cap": 5,
     })
     from app.ingestion import gmail_write
     monkeypatch.setattr(
@@ -166,7 +168,7 @@ def test_live_send_blocked_by_kill_switch(seeded, monkeypatch):
     _trust_rows(database_url, "a@x.com", 3)
     monkeypatch.setattr(triage, "_auto_send_config", lambda: {
         "enabled": True, "mode": "live", "delay_minutes": 60,
-        "min_recipient_trust": 3, "max_per_sweep": 5,
+        "min_recipient_trust": 3, "max_per_sweep": 5, "daily_send_cap": 5,
     })
     # Kill-switch on → send path refuses.
     monkeypatch.setattr(send_mod, "_send_config", lambda: {"enabled": True, "kill_switch": True})
@@ -201,3 +203,145 @@ def test_due_for_auto_send_respects_window_and_state(seeded):
     insert(send_state="sent", pushed_minutes_ago=200)  # already sent
     due = store.due_for_auto_send(database_url, account="me@x.com", delay_minutes=60)
     assert [r["id"] for r in due] == [due_id]
+
+
+def test_daily_send_cap_holds_excess(seeded, monkeypatch):
+    database_url, insert = seeded
+    insert(sender_email="vip@x.com")
+    insert(sender_email="vip@x.com")
+    _trust_rows(database_url, "vip@x.com", 3)
+    monkeypatch.setattr(triage, "_auto_send_config", lambda: {
+        "enabled": True, "mode": "live", "delay_minutes": 60,
+        "min_recipient_trust": 0, "max_per_sweep": 5, "daily_send_cap": 1,
+    })
+    from app.ingestion import gmail_write
+    monkeypatch.setattr(
+        gmail_write, "send_draft",
+        lambda **kw: gmail_write.GmailSendResult(message_id="m", raw_response={}),
+    )
+    out = triage._maybe_auto_send(database_url=database_url, account="me@x.com")
+    sent = [r for r in out if r["action"] == "sent"]
+    capped = [r for r in out if r["action"] == "held" and "cap" in r.get("reason", "")]
+    assert len(sent) == 1
+    assert len(capped) == 1
+
+
+def test_high_stakes_draft_text_is_held(seeded, monkeypatch):
+    """Even when the inbound is benign, a draft that itself states money/legal
+    content is held — escalation must scan the draft, not just the inbound."""
+    database_url, insert = seeded
+    insert(subject="Re: hello", body="Just saying hi!",
+           # the DRAFT carries the high-stakes content the inbound lacks
+           )
+    # Overwrite the seeded draft with high-stakes text.
+    conn = sqlite3.connect(database_url.removeprefix("sqlite:///"))
+    conn.execute("UPDATE agent_pending_drafts SET draft = 'I will wire you the $5,000 deposit today.'")
+    conn.commit()
+    conn.close()
+    _trust_rows(database_url, "a@x.com", 3)
+    monkeypatch.setattr(triage, "_auto_send_config", lambda: {
+        "enabled": True, "mode": "live", "delay_minutes": 60,
+        "min_recipient_trust": 0, "max_per_sweep": 5, "daily_send_cap": 5,
+    })
+    from app.ingestion import gmail_write
+    monkeypatch.setattr(
+        gmail_write, "send_draft",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("high-stakes draft must not send")),
+    )
+    out = triage._maybe_auto_send(database_url=database_url, account="me@x.com")
+    assert out[0]["action"] == "held"
+    assert "high-stakes draft" in out[0]["reason"]
+
+
+def test_dismiss_between_select_and_claim_is_not_sent(seeded, monkeypatch):
+    """TOCTOU guard: a row dismissed after begin_send's pre-read must not send."""
+    database_url, insert = seeded
+    rid = insert()
+    # Simulate the dismiss landing right before the atomic claim.
+    conn = sqlite3.connect(database_url.removeprefix("sqlite:///"))
+    conn.execute("UPDATE agent_pending_drafts SET status = 'dismissed' WHERE id = ?", (rid,))
+    conn.commit()
+    conn.close()
+    state, _ = store.begin_send(database_url, rid)
+    assert state == "dismissed"
+
+
+def test_reaper_frees_stale_sending_rows(seeded):
+    database_url, insert = seeded
+    rid = insert()
+    conn = sqlite3.connect(database_url.removeprefix("sqlite:///"))
+    conn.execute(
+        "UPDATE agent_pending_drafts SET send_state = 'sending', "
+        "updated_at = datetime('now', '-30 minutes') WHERE id = ?", (rid,))
+    conn.commit()
+    conn.close()
+    assert store.reap_stale_sending(database_url, older_than_minutes=10) == 1
+    assert store.get(database_url, rid)["send_state"] == "draft_created"
+    # A fresh 'sending' row (just claimed) must NOT be reaped.
+    store.begin_send(database_url, rid)
+    assert store.reap_stale_sending(database_url, older_than_minutes=10) == 0
+
+
+def test_run_triage_wires_auto_send_and_respects_delay(tmp_path, monkeypatch):
+    """End-to-end through run_triage: an OLD pushed+trusted draft auto-sends
+    (shadow), while the draft created in THIS sweep does not (delay window)."""
+    from app.agent.inbox_fetch import InboxMessage
+    from app.db.bootstrap import _migrate_agent_audit, _migrate_agent_pending_drafts
+
+    db = tmp_path / "rt.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE reply_pairs (id INTEGER PRIMARY KEY, inbound_author TEXT)")
+    _migrate_agent_pending_drafts(conn)
+    _migrate_agent_audit(conn)
+    # An OLD pushed draft to a trusted recipient, eligible for auto-send.
+    conn.execute(
+        "INSERT INTO agent_pending_drafts "
+        "(message_id, thread_id, account, sender_email, subject, body, "
+        " needs_reply_score, reasons_json, cold_outreach, tier, draft, status, "
+        " gmail_draft_id, send_state, quality_score, sent_at) "
+        "VALUES ('old','told','you@example.com','vip@partner.com','Coffee','Thursday?',"
+        " 0.95,'[]',0,'draft','Sure, Thursday works.','sent','gd_old','draft_created',0.9,"
+        " datetime('now','-120 minutes'))"
+    )
+    # Trust for vip@partner.com (3 manual-sent rows).
+    for i in range(3):
+        conn.execute(
+            "INSERT INTO agent_pending_drafts "
+            "(message_id, thread_id, account, sender_email, needs_reply_score, "
+            " reasons_json, cold_outreach, tier, draft, status, send_state) "
+            "VALUES (?,?, 'you@example.com','vip@partner.com',0.9,'[]',0,'draft','x','sent',NULL)",
+            (f"tr{i}", f"ttr{i}"),
+        )
+    conn.commit()
+    conn.close()
+    db_url = f"sqlite:///{db}"
+
+    new_msg = InboxMessage(
+        message_id="new1", thread_id="tnew", account="you@example.com",
+        sender="Bob <bob@new.com>", sender_email="bob@new.com",
+        subject="Quick q", body="Could you confirm the time?", headers={},
+    )
+    monkeypatch.setattr("app.agent.triage.fetch_unread", lambda *a, **k: [new_msg])
+
+    class _Resp:
+        draft = "Yes, that works."
+        model_used = "qwen2.5-1.5b-lora"
+        repairs: list[str] = []
+        quality_score = 0.9
+
+    monkeypatch.setattr("app.generation.service.generate_draft", lambda req, **kw: _Resp())
+    monkeypatch.setattr(triage, "_auto_send_config", lambda: {
+        "enabled": True, "mode": "shadow", "delay_minutes": 60,
+        "min_recipient_trust": 3, "max_per_sweep": 5, "daily_send_cap": 5,
+    })
+    monkeypatch.setattr(send_mod, "_send_config", lambda: {"enabled": True, "kill_switch": False})
+
+    result = triage.run_triage(
+        account="you@example.com", database_url=db_url, configs_dir=tmp_path,
+    )
+    actions = {(a["id"], a["action"]) for a in result.auto_sent}
+    # The OLD eligible row was shadow-sent...
+    assert any(a == "shadow" for _, a in actions), result.auto_sent
+    # ...and nothing else (the new sweep draft has no Gmail draft + is too recent).
+    assert all(a == "shadow" for _, a in actions)
+    assert store.get(db_url, 1)["send_state"] == "shadow"

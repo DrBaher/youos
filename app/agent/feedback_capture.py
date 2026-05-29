@@ -55,8 +55,14 @@ def _classify_row(row: dict[str, Any]) -> dict[str, Any] | None:
             "note": "agent-queue: edited before keep",
         }
 
-    # Sent unchanged by us → strong positive (good enough to send as-is).
-    if send_state == "sent" and not (amended and amended.strip()):
+    # Sent unchanged → strong positive (good enough to send as-is). Two
+    # confirmed-send paths count: we auto-sent it (send_state='sent'), OR the
+    # user marked it sent themselves — store.mark_sent sets status='sent' and
+    # leaves send_state NULL. A pushed-but-unconfirmed Gmail draft
+    # (send_state='draft_created') is deliberately NOT counted here: we can't
+    # confirm it actually went out, and it's handled as in-flight by the caller.
+    sent_confirmed = send_state == "sent" or (status == "sent" and send_state is None)
+    if sent_confirmed and not (amended and amended.strip()):
         return {
             "generated": draft, "edited": draft,
             "rating": 5, "edit_distance_pct": 0.0,
@@ -73,6 +79,13 @@ def _classify_row(row: dict[str, Any]) -> dict[str, Any] | None:
 
     # noise / wrong_sender / already_handled / other → not a drafting signal.
     return None
+
+
+def _in_flight(row: dict[str, Any]) -> bool:
+    """A pushed Gmail draft awaiting send-or-dismiss (send_state='draft_created',
+    not yet dismissed). Its outcome isn't known yet, so it must NOT be mined or
+    burned — a later sweep captures it once it resolves to sent/dismissed."""
+    return row.get("send_state") == "draft_created" and row.get("status") != "dismissed"
 
 
 def capture_queue_feedback(
@@ -95,9 +108,15 @@ def capture_queue_feedback(
             "ORDER BY id ASC LIMIT ?",
             (int(limit),),
         ).fetchall()
-        scanned = len(rows)
+        scanned = 0
         for r in rows:
             row = dict(r)
+            # Don't burn a pushed draft that hasn't resolved yet — revisit it on
+            # a later sweep once it's sent or dismissed, so its outcome isn't
+            # lost to the feedback_captured marker.
+            if _in_flight(row):
+                continue
+            scanned += 1
             pair = _classify_row(row)
             if pair is None:
                 skipped += 1

@@ -41,6 +41,47 @@ def pushed_row(tmp_path, monkeypatch):
     return database_url, 1
 
 
+# --- the never-send invariant under REAL default config --------------------
+
+
+def test_send_blocked_under_real_default_config(tmp_path, monkeypatch):
+    """The invariant that matters: with a real, default config (nothing
+    monkeypatched), a send is refused. Proves the gate isn't an artifact of the
+    other tests stubbing _send_config."""
+    import app.core.config as config_mod
+
+    # Point config at a temp instance with a default config that does NOT set
+    # agent.send.enabled (the shipped default).
+    cfg_dir = tmp_path / "configs"
+    cfg_dir.mkdir()
+    (cfg_dir / "youos_config.yaml").write_text("agent:\n  enabled: true\n", encoding="utf-8")
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", cfg_dir / "youos_config.yaml")
+    config_mod.load_config.cache_clear()
+
+    db = tmp_path / "t.db"
+    conn = sqlite3.connect(db)
+    _migrate_agent_pending_drafts(conn)
+    conn.execute(
+        "INSERT INTO agent_pending_drafts "
+        "(message_id, thread_id, account, sender_email, needs_reply_score, "
+        " reasons_json, cold_outreach, tier, draft, status, gmail_draft_id, send_state) "
+        "VALUES ('m1','t1','me@x.com','a@x.com',0.9,'[]',0,'draft','Hi','sent','gd_1','draft_created')"
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(
+        gmail_write, "send_draft",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("default config must never send")),
+    )
+    try:
+        out = send_mod.send_pending_row(f"sqlite:///{db}", 1)
+        assert not out.ok
+        assert out.http_status == 403
+        assert "disabled" in (out.detail or "")
+    finally:
+        config_mod.load_config.cache_clear()
+
+
 # --- gating ----------------------------------------------------------------
 
 
