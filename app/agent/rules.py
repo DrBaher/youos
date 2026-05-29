@@ -24,9 +24,22 @@ directly — not a scalar feature flag):
 
 A rule's ``match`` conditions are ANDed. Supported keys: ``sender`` (exact
 email), ``domain`` (``@x.com``), ``intent`` (an intent label), ``cold_outreach``
-(bool). Actions: ``skip`` (don't draft), ``decline`` (draft a polite decline),
-``prepend`` (inject ``value`` into that draft's standing instructions). All
-actions stay draft-only — the human still finishes-and-sends.
+(bool), and the content predicates ``subject_contains`` / ``body_contains`` (a
+keyword or list of keywords, case-insensitive substring; matches if ANY hits).
+Actions: ``skip`` (don't draft), ``decline`` (draft a polite decline),
+``prepend`` (inject ``value`` into that draft's standing instructions), and
+``hold`` (draft + queue for review, but **never auto-act** — the human decides).
+
+    agent:
+      rules:
+        - match: {body_contains: [legal, contract, lawsuit]}
+          action: hold
+        - match: {subject_contains: invoice}
+          action: hold
+
+All actions stay within the never-act boundary: ``hold`` still drafts (so the
+reply is ready) but excludes the row from auto-push/auto-send, so a person
+always finishes-and-sends anything matching a hold rule.
 """
 
 from __future__ import annotations
@@ -36,7 +49,7 @@ from typing import Any
 # Canned instruction for the common "decline" action.
 DECLINE_INSTRUCTION = "Politely decline this request. Keep it short, courteous, and clear."
 
-_VALID_ACTIONS = ("skip", "decline", "prepend")
+_VALID_ACTIONS = ("skip", "decline", "prepend", "hold")
 
 
 def load_rules() -> list[dict[str, Any]]:
@@ -69,6 +82,14 @@ def rules_need_intent(rules: list[dict[str, Any]]) -> bool:
     return any("intent" in (r.get("match") or {}) for r in rules)
 
 
+def _any_keyword_in(value: Any, haystack: str) -> bool:
+    """True if any keyword (a string or list of strings) is a case-insensitive
+    substring of ``haystack``."""
+    h = (haystack or "").lower()
+    needles = value if isinstance(value, (list, tuple)) else [value]
+    return any(str(n).strip().lower() in h for n in needles if str(n).strip())
+
+
 def _rule_matches(
     match: dict[str, Any],
     *,
@@ -76,6 +97,8 @@ def _rule_matches(
     domain: str | None,
     intents: list[str] | None,
     cold_outreach: bool,
+    subject: str | None = None,
+    body: str | None = None,
 ) -> bool:
     se = (sender_email or "").lower()
     dom = (domain or "").lower()
@@ -92,6 +115,10 @@ def _rule_matches(
             return False
     if "cold_outreach" in match and bool(match["cold_outreach"]) != bool(cold_outreach):
         return False
+    if "subject_contains" in match and not _any_keyword_in(match["subject_contains"], subject or ""):
+        return False
+    if "body_contains" in match and not _any_keyword_in(match["body_contains"], body or ""):
+        return False
     return True
 
 
@@ -103,26 +130,33 @@ def apply_rules(
     intents: list[str] | None,
     cold_outreach: bool,
     base_instructions: str | None,
+    subject: str | None = None,
+    body: str | None = None,
 ) -> dict[str, Any]:
     """Evaluate ``rules`` for one message.
 
-    Returns ``{skip: bool, instructions: str|None, matched: list}``.
+    Returns ``{skip: bool, hold: bool, instructions: str|None, matched: list}``.
     ``instructions`` folds the global ``base_instructions`` together with any
-    matched rules' instructions (so it's the complete per-message standing
-    instruction). ``skip`` is True if any matched rule says skip.
+    matched rules' instructions. ``skip`` is True if any matched rule says skip
+    (don't draft). ``hold`` is True if any matched rule says hold (draft, but
+    never auto-act — the row is excluded from auto-push/auto-send).
     """
     extra: list[str] = []
     skip = False
+    hold = False
     matched: list[dict[str, Any]] = []
     for r in rules:
         if not _rule_matches(
             r["match"], sender_email=sender_email, domain=domain,
             intents=intents, cold_outreach=cold_outreach,
+            subject=subject, body=body,
         ):
             continue
         matched.append(r)
         if r["action"] == "skip":
             skip = True
+        elif r["action"] == "hold":
+            hold = True
         elif r["action"] == "decline":
             extra.append(DECLINE_INSTRUCTION)
         elif r["action"] == "prepend":
@@ -132,6 +166,7 @@ def apply_rules(
     combined = [s for s in ([base_instructions] if base_instructions else []) + extra if s]
     return {
         "skip": skip,
+        "hold": hold,
         "instructions": "\n".join(combined) if combined else None,
         "matched": matched,
     }
