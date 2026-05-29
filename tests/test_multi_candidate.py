@@ -157,6 +157,42 @@ def test_multi_candidate_generates_per_temperature_and_picks_best(monkeypatch):
     assert resp.draft == " ".join(["w"] * 30)         # best chosen
 
 
+def test_exemplar_cache_bypassed_when_flag_false(monkeypatch):
+    """use_exemplar_cache=False (the autoresearch eval path) must NOT consult or
+    apply the exemplar cache — otherwise it pins exemplars across candidates and
+    retrieval-param mutations become no-ops."""
+    seen: list = []
+    _stub(monkeypatch, load_config={}, persona={"style": {"avg_reply_words": 30}, "modes": {}}, once_seen=seen)
+
+    calls = {"get": 0, "apply": 0}
+
+    def _fake_get(*a, **k):
+        calls["get"] += 1
+        return [], False, None
+
+    def _fake_apply(reply_pairs, cached_ids):
+        calls["apply"] += 1
+        return reply_pairs
+
+    monkeypatch.setattr(svc, "_get_cached_exemplar_ids", _fake_get)
+    monkeypatch.setattr(svc, "_apply_cached_order", _fake_apply)
+    monkeypatch.setattr(svc, "_update_exemplar_cache", lambda *a, **k: None)
+
+    # Default (True): cache consulted.
+    svc.generate_draft(svc.DraftRequest(inbound_message="hi"), database_url="sqlite:///x", configs_dir=Path("/tmp"))
+    assert calls["get"] == 1
+    assert calls["apply"] == 1
+
+    # Bypassed: neither read nor applied.
+    calls["get"] = calls["apply"] = 0
+    svc.generate_draft(
+        svc.DraftRequest(inbound_message="hi", use_exemplar_cache=False),
+        database_url="sqlite:///x", configs_dir=Path("/tmp"),
+    )
+    assert calls["get"] == 0
+    assert calls["apply"] == 0
+
+
 def test_single_candidate_path_when_disabled(monkeypatch):
     seen: list = []
     _stub(
