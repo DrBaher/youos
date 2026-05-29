@@ -531,11 +531,14 @@ def _maybe_auto_send(*, database_url: str | None, account: str) -> list[dict[str
     except Exception as exc:
         logger.info("auto-send reaper skipped: %s", exc)
 
+    # Daily send cap (UTC) — a blast-radius bound mirroring the auto-push cap:
+    # 0 (or less) DISABLES auto-send entirely (matches daily_push_cap semantics),
+    # never "unlimited".
+    if cfg["daily_send_cap"] <= 0:
+        return []
     esc = escalation_config()
     shadow = cfg["mode"] != "live"
-    # Daily send cap (UTC) — a blast-radius bound mirroring the auto-push cap.
-    remaining = cfg["daily_send_cap"] - store.count_sent_today(database_url, account=account) \
-        if cfg["daily_send_cap"] > 0 else float("inf")
+    remaining: int | float = cfg["daily_send_cap"] - store.count_sent_today(database_url, account=account)
     due = store.due_for_auto_send(
         database_url, account=account,
         delay_minutes=cfg["delay_minutes"], limit=cfg["max_per_sweep"],
@@ -563,8 +566,10 @@ def _maybe_auto_send(*, database_url: str | None, account: str) -> list[dict[str
             continue
         # Stakes guard on the DRAFT too — escalation scans the inbound, but a
         # draft can itself state money/legal/commitment the inbound didn't.
-        # Never auto-send a high-stakes draft (e.g. one that invented a price).
-        if esc["high_stakes_blocks"] and assess_stakes(row.get("subject"), row.get("draft")) == "high":
+        # Scan the body that will ACTUALLY be sent (push uses amended_draft or
+        # draft), so an edited/regenerated draft that invents a price is caught.
+        body_to_send = row.get("amended_draft") or row.get("draft")
+        if esc["high_stakes_blocks"] and assess_stakes(row.get("subject"), body_to_send) == "high":
             results.append({"id": row_id, "action": "held", "reason": "high-stakes draft content"})
             continue
         trust = store.recipient_trust(database_url, row.get("sender_email"), account=account)
@@ -973,6 +978,7 @@ def _run_sweep(
                 thread_summary=d.thread_summary,
                 quality_score=d.quality_score,
                 calibrated_score=getattr(d.verdict, "calibrated_score", None),
+                hold=getattr(d, "hold", False),
             )
             if row_id is not None:
                 persisted += 1

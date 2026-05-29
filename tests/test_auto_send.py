@@ -266,6 +266,65 @@ def test_dismiss_between_select_and_claim_is_not_sent(seeded, monkeypatch):
     assert state == "dismissed"
 
 
+def test_daily_send_cap_zero_disables_auto_send(seeded, monkeypatch):
+    """daily_send_cap <= 0 DISABLES auto-send (mirrors the auto-push cap), not
+    'unlimited'."""
+    database_url, insert = seeded
+    insert()
+    _trust_rows(database_url, "a@x.com", 3)
+    monkeypatch.setattr(triage, "_auto_send_config", lambda: {
+        "enabled": True, "mode": "live", "delay_minutes": 60,
+        "min_recipient_trust": 0, "max_per_sweep": 5, "daily_send_cap": 0,
+    })
+    from app.ingestion import gmail_write
+    monkeypatch.setattr(
+        gmail_write, "send_draft",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("cap=0 must disable sending")),
+    )
+    assert triage._maybe_auto_send(database_url=database_url, account="me@x.com") == []
+
+
+def test_held_row_excluded_from_due_for_auto_send(seeded):
+    """A persisted hold row is never returned for auto-send, even if pushed and
+    past the delay window."""
+    database_url, insert = seeded
+    normal = insert()
+    held = insert()
+    conn = sqlite3.connect(database_url.removeprefix("sqlite:///"))
+    conn.execute("UPDATE agent_pending_drafts SET hold = 1 WHERE id = ?", (held,))
+    conn.commit()
+    conn.close()
+    due_ids = [r["id"] for r in store.due_for_auto_send(database_url, account="me@x.com", delay_minutes=60)]
+    assert normal in due_ids
+    assert held not in due_ids
+
+
+def test_amended_draft_high_stakes_is_caught(seeded, monkeypatch):
+    """The veto scans the body that's actually sent (amended_draft) — a benign
+    original draft with a money-inventing amendment is held."""
+    database_url, insert = seeded
+    rid = insert(body="just saying hi", subject="hi")
+    conn = sqlite3.connect(database_url.removeprefix("sqlite:///"))
+    conn.execute(
+        "UPDATE agent_pending_drafts SET draft = 'Sounds good!', "
+        "amended_draft = 'I will wire the $5,000 deposit today.' WHERE id = ?", (rid,))
+    conn.commit()
+    conn.close()
+    _trust_rows(database_url, "a@x.com", 3)
+    monkeypatch.setattr(triage, "_auto_send_config", lambda: {
+        "enabled": True, "mode": "live", "delay_minutes": 60,
+        "min_recipient_trust": 0, "max_per_sweep": 5, "daily_send_cap": 5,
+    })
+    from app.ingestion import gmail_write
+    monkeypatch.setattr(
+        gmail_write, "send_draft",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("high-stakes amended draft must not send")),
+    )
+    out = triage._maybe_auto_send(database_url=database_url, account="me@x.com")
+    assert out[0]["action"] == "held"
+    assert "high-stakes draft" in out[0]["reason"]
+
+
 def test_reaper_frees_stale_sending_rows(seeded):
     database_url, insert = seeded
     rid = insert()
