@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.2.0-beta.113 — 2026-05-29
+
+### `forward` action — the first outbound routing action, hard-gated
+
+A rule can now **forward** a matching message to another address (`{match: {...}, action: forward, value: "dest@example.com"}`) via the native `gog gmail forward` (attachments preserved). Forwarding *sends mail*, so unlike the reversible label actions it lives on a **separate, maximally-gated path**:
+
+- **Five independent gates, all defaulting to never-forward.** A real forward requires `agent.actions.enabled` AND routing not in dry-run AND the new `agent.actions.allow_forward` (default **off**) AND `agent.send.enabled` (the existing send frontier) AND the outbound kill-switch off. Any closed gate records the action as `blocked` and sends nothing. In dry-run it records intent only.
+- **Irreversible — no undo.** A sent forward can't be recalled, so `undo_action` refuses any `forward` row.
+- **At-most-once.** A message+destination already applied/errored/in-flight is never re-sent; the ledger row is claimed as `forwarding` *before* the gog call so a crash mid-send can't cause a re-forward, and an errored forward is not auto-retried (it surfaces in the ledger for manual handling).
+- Authorable everywhere: the `/rules` builder (with an inline irreversibility/gating warning), the NL box ("forward any invoice to jane@books.com"), and the REST API. `validate_rule` requires a well-formed destination email and rejects the `intent` predicate (routing runs before classification).
+
+This is the only outbound routing action and it stays **off by default** — the never-send boundary is unchanged unless you explicitly open all the gates.
+
+An adversarial multi-agent audit (gate-bypass / double-send / undo-refusal lenses) caught a real **TOCTOU race** before merge: the `forwarding` claim was a non-atomic check-then-insert, so two concurrent sweeps in *separate* processes (e.g. the in-server scheduler overlapping a manual `youos triage`) could both pass the dedup read and double-send. Fixed with a DB-enforced atomic claim — a partial `UNIQUE` index scoped to live forward rows (`idx_agent_actions_forward_claim`), with the claim insert catching `IntegrityError` (the loser doesn't send) — mirroring how `store.begin_send` serializes the draft-send frontier. Scoped to `forward` so the retryable label actions are untouched.
+
++11 tests (incl. the cross-process atomic-claim regression).
+
 ## v0.2.0-beta.112 — 2026-05-29
 
 ### Natural-language rule authoring — describe a rule, the local model drafts it (framework, 5/N)
