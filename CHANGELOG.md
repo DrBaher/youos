@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.0-beta.105 — 2026-05-29
+
+### Cap the Stats "pairs reviewed" bar at 100%
+
+Feedback pairs can exceed reply pairs (organic + correction rows accumulate), so the Corpus-Health "reviewed" coverage showed e.g. **"(399%)"** with an overflowing bar — reads like a bug. Clamped the displayed percentage (and the bar width) to 100% in `templates/stats.html`. Re-captured the Stats landing-page screenshots (dark + light) so they now show 100%.
+
 ## v0.2.0-beta.104 — 2026-05-29
 
 ### Theme-aware, brand-correct landing-page screenshots + `?theme` deep-link
