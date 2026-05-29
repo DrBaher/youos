@@ -13,6 +13,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.agent.escalation import assess_stakes
 from app.agent.inbox_fetch import InboxMessage, fetch_unread
 from app.agent.needs_reply import NeedsReplyVerdict, SenderHistory, classify_many
 
@@ -420,6 +421,12 @@ def _maybe_auto_push(
                 "auto-push: row %s held — draft quality %s < floor %.2f",
                 row_id, d.quality_score, quality_floor,
             )
+            continue
+        # High-stakes mail (money / legal / firm commitments) is held for human
+        # review even when it would otherwise auto-push — the escalation policy
+        # never lets these through without a person deciding.
+        if assess_stakes(d.message.subject, d.message.body) == "high":
+            logger.info("auto-push: row %s held — high-stakes content", row_id)
             continue
         sender_email = d.message.sender_email
         if not _sender_in_whitelist(sender_email, whitelist):
