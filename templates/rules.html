@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouOS — Rules</title>
+<script>(function(){try{var p=new URLSearchParams(location.search).get('theme');var t=(p==='light'||p==='dark')?p:localStorage.getItem('youos-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="icon" type="image/svg+xml" href="/static/youos-mark.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+  .container { max-width: 860px; margin: 0 auto; padding: 0 24px 48px; }
+  .oc-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 0.5rem; }
+  .oc-logo { display: flex; align-items: center; gap: 0.5rem; }
+  .oc-wordmark { color: var(--teal); font-weight: 700; font-size: 1.1rem; }
+  .oc-nav { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+  .oc-nav-link { color: var(--muted-2); text-decoration: none; font-size: 0.85rem; font-weight: 500; transition: color 0.2s; }
+  .oc-nav-link:hover, .oc-nav-link.active { color: var(--teal); }
+  h1 { font-size: 1.6rem; margin: 28px 0 4px; color: var(--teal); }
+  h2 { font-size: 1.05rem; margin: 28px 0 10px; color: var(--text); }
+  .sub { color: var(--muted-2); font-size: 0.9rem; margin-bottom: 20px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+  label.fld { display: block; font-size: 0.78rem; color: var(--muted-2); font-weight: 600; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.03em; }
+  select, input[type=text], input[type=number] { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font-size: 0.88rem; font-family: inherit; }
+  input[type=text], input[type=number] { width: 100%; }
+  .cond-row { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 10px; }
+  .cond-row .k { flex: 0 0 190px; }
+  .cond-row .v { flex: 1 1 auto; }
+  .cond-row .x { flex: 0 0 auto; }
+  .icon-btn { background: none; border: 1px solid var(--border); color: var(--muted-2); border-radius: 6px; width: 34px; height: 34px; cursor: pointer; font-size: 1rem; line-height: 1; }
+  .icon-btn:hover { border-color: var(--error); color: var(--error); }
+  .btn { background: var(--teal); color: #04201c; border: none; border-radius: 7px; padding: 9px 16px; font-size: 0.88rem; font-weight: 600; cursor: pointer; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-ghost { background: none; border: 1px solid var(--border); color: var(--muted-2); }
+  .btn-ghost:hover { color: var(--teal); border-color: var(--teal); }
+  .row2 { display: flex; gap: 14px; flex-wrap: wrap; margin: 6px 0 12px; }
+  .row2 > div { flex: 1 1 200px; }
+  .actions-bar { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+  .preview { font-size: 0.88rem; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 7px; padding: 10px 12px; margin: 4px 0 12px; }
+  .preview .miss { color: var(--muted-2); }
+  .vstatus { font-size: 0.82rem; }
+  .vstatus.ok { color: var(--success); }
+  .vstatus.err { color: var(--error); }
+  .rule-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--surface); }
+  .rule-item:last-child { border-bottom: none; }
+  .rule-text { font-size: 0.9rem; }
+  .rule-text .when { color: var(--muted-2); }
+  .rule-text .then { color: var(--teal); font-weight: 600; }
+  .rule-btns { display: flex; gap: 6px; white-space: nowrap; }
+  .lnk { background: none; border: none; color: var(--muted-2); cursor: pointer; font-size: 0.82rem; padding: 4px 6px; }
+  .lnk:hover { color: var(--teal); }
+  .lnk.del:hover { color: var(--error); }
+  .badge { font-size: 0.72rem; padding: 2px 7px; border-radius: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+  .badge.applied { background: rgba(0,196,167,0.18); color: var(--teal); }
+  .badge.dry_run { background: var(--surface-2); color: var(--muted-2); }
+  .badge.undone { background: var(--surface-2); color: var(--faint); }
+  .badge.error { background: rgba(220,80,80,0.16); color: var(--error); }
+  .led-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--surface); font-size: 0.84rem; }
+  .led-item:last-child { border-bottom: none; }
+  .led-main { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .led-sub { color: var(--muted-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .note { color: var(--faint); font-size: 0.8rem; margin-top: 16px; }
+  .note code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+  .oc-footer { border-top: 1px solid var(--border); margin-top: 32px; padding: 20px 0; display: flex; gap: 0.6rem; justify-content: center; color: var(--faint); font-size: 0.82rem; }
+  .oc-footer a { color: var(--faint); }
+</style>
+<link rel="stylesheet" href="/static/youos.css">
+<script src="/static/youos.js" defer></script>
+</head>
+<body>
+<div class="container">
+  <header class="oc-header">
+    <div class="oc-logo">
+      <span>&#x2709;&#xFE0F;</span>
+      <span class="oc-wordmark" id="appName">YouOS</span>
+    </div>
+    <nav class="oc-nav">
+      <a href="/feedback" class="oc-nav-link">Draft Email</a>
+      <a href="/triage" class="oc-nav-link">Triage</a>
+      <a href="/rules" class="oc-nav-link active">Rules</a>
+      <a href="/stats" class="oc-nav-link">Stats</a>
+      <a href="/settings" class="oc-nav-link">Settings</a>
+      <a href="/bookmarklet" class="oc-nav-link">Gmail</a>
+      <a href="/about" class="oc-nav-link">About</a>
+    </nav>
+  </header>
+
+  <h1>Rules</h1>
+  <p class="sub">Filter&rarr;action rules. When a sweep fetches a message, every rule whose conditions all match
+  shapes the draft (skip / decline / prepend / hold) or routes the message (label / archive / star / mark read / mark important).
+  Routing is gated behind <a href="/settings" class="oc-nav-link" style="font-size:inherit">Settings &rarr; agent actions</a> and dry-run by default.</p>
+
+  <h2 id="formTitle">Add a rule</h2>
+  <div class="card">
+    <label class="fld">When&hellip; (all conditions must match)</label>
+    <div id="conds"></div>
+    <button class="btn btn-ghost" id="addCond" type="button">+ condition</button>
+
+    <div class="row2" style="margin-top:16px;">
+      <div>
+        <label class="fld" for="action">Then&hellip;</label>
+        <select id="action" style="width:100%;"></select>
+      </div>
+      <div id="valueWrap" style="display:none;">
+        <label class="fld" for="value" id="valueLabel">Value</label>
+        <input type="text" id="value" placeholder="">
+      </div>
+    </div>
+
+    <div class="preview" id="preview"><span class="miss">Build a rule above&hellip;</span></div>
+
+    <div class="actions-bar">
+      <button class="btn" id="saveBtn" type="button" disabled>Save rule</button>
+      <button class="btn btn-ghost" id="cancelBtn" type="button" style="display:none;">Cancel edit</button>
+      <span class="vstatus" id="vstatus"></span>
+    </div>
+  </div>
+
+  <h2>Your rules</h2>
+  <div class="card" id="rulesList"><p class="sub" style="padding:8px 0;">Loading&hellip;</p></div>
+
+  <h2>Recent routing actions</h2>
+  <div class="card" id="ledger"><p class="sub" style="padding:8px 0;">Loading&hellip;</p></div>
+
+  <p class="note">Prefer the terminal or an orchestrator? The same rules are available over the REST API
+  (<code>GET/POST/PUT/DELETE /api/agent/rules</code>, <code>POST /api/agent/rules/validate</code>).</p>
+
+  <footer class="oc-footer">
+    <span>YouOS <span id="appVersion"></span></span>
+    <span>&middot;</span>
+    <a href="https://github.com/DrBaher/youos" target="_blank">GitHub</a>
+    <span>&middot;</span>
+    <span>Your data stays local</span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  // --- vocab -----------------------------------------------------------------
+  // kind drives the value control + how the value is read back.
+  const KEYS = [
+    ["sender",          "from (exact email)",   "text"],
+    ["domain",          "from domain",          "text"],
+    ["intent",          "intent is",            "text"],
+    ["subject_contains","subject contains",     "keywords"],
+    ["body_contains",   "body contains",        "keywords"],
+    ["to_contains",     "To contains",          "keywords"],
+    ["cc_contains",     "Cc contains",          "keywords"],
+    ["subject_regex",   "subject matches regex","text"],
+    ["body_regex",      "body matches regex",   "text"],
+    ["has_attachment",  "has attachment",       "bool"],
+    ["known_contact",   "known contact",        "bool"],
+    ["cold_outreach",   "cold outreach",        "bool"],
+    ["older_than_days", "older than (days)",    "number"],
+    ["newer_than_days", "newer than (days)",    "number"],
+  ];
+  const KEY_LABEL = Object.fromEntries(KEYS.map((k) => [k[0], k[1]]));
+  const KEY_KIND = Object.fromEntries(KEYS.map((k) => [k[0], k[2]]));
+
+  const ACTIONS = [
+    ["", "— pick an action —"],
+    ["skip", "skip (don't draft)"],
+    ["decline", "draft a polite decline"],
+    ["prepend", "prepend to draft instructions"],
+    ["hold", "hold for review (never auto-act)"],
+    ["label", "label"],
+    ["archive", "archive (out of inbox)"],
+    ["star", "star"],
+    ["mark_read", "mark read"],
+    ["mark_important", "mark important"],
+    ["mark_unimportant", "mark not important"],
+  ];
+  const ACTION_LABEL = Object.fromEntries(ACTIONS.map((a) => [a[0], a[1]]));
+  const VALUE_ACTIONS = { label: "Label name (e.g. Receipts)", prepend: "Instruction to add to the draft…" };
+
+  // --- elements --------------------------------------------------------------
+  const condsEl = document.getElementById("conds");
+  const actionEl = document.getElementById("action");
+  const valueWrap = document.getElementById("valueWrap");
+  const valueLabel = document.getElementById("valueLabel");
+  const valueEl = document.getElementById("value");
+  const previewEl = document.getElementById("preview");
+  const saveBtn = document.getElementById("saveBtn");
+  const cancelBtn = document.getElementById("cancelBtn");
+  const vstatus = document.getElementById("vstatus");
+  const formTitle = document.getElementById("formTitle");
+  const rulesList = document.getElementById("rulesList");
+  const ledger = document.getElementById("ledger");
+
+  let editIndex = null; // null = adding; integer = editing that rule index
+
+  ACTIONS.forEach((a) => {
+    const o = document.createElement("option");
+    o.value = a[0]; o.textContent = a[1];
+    actionEl.appendChild(o);
+  });
+
+  // --- condition rows --------------------------------------------------------
+  function valueControl(kind, val) {
+    if (kind === "bool") {
+      const s = document.createElement("select");
+      [["true", "true"], ["false", "false"]].forEach(([v, t]) => {
+        const o = document.createElement("option"); o.value = v; o.textContent = t;
+        if (String(val) === v) o.selected = true; s.appendChild(o);
+      });
+      s.style.width = "100%";
+      return { el: s, read: () => s.value === "true" };
+    }
+    if (kind === "number") {
+      const i = document.createElement("input");
+      i.type = "number"; i.min = "0"; i.step = "1";
+      if (val != null) i.value = val;
+      return { el: i, read: () => (i.value === "" ? null : Number(i.value)) };
+    }
+    if (kind === "keywords") {
+      const i = document.createElement("input");
+      i.type = "text"; i.placeholder = "keyword, or comma-separated list";
+      if (Array.isArray(val)) i.value = val.join(", "); else if (val != null) i.value = val;
+      return { el: i, read: () => {
+        const parts = i.value.split(",").map((s) => s.trim()).filter(Boolean);
+        return parts.length <= 1 ? (parts[0] || "") : parts;
+      } };
+    }
+    const i = document.createElement("input");
+    i.type = "text";
+    if (val != null) i.value = val;
+    return { el: i, read: () => i.value };
+  }
+
+  function makeCondRow(key, val) {
+    const row = document.createElement("div");
+    row.className = "cond-row";
+
+    const kWrap = document.createElement("div"); kWrap.className = "k";
+    const kSel = document.createElement("select"); kSel.style.width = "100%";
+    KEYS.forEach((k) => {
+      const o = document.createElement("option"); o.value = k[0]; o.textContent = k[1];
+      if (k[0] === key) o.selected = true; kSel.appendChild(o);
+    });
+    kWrap.appendChild(kSel);
+
+    const vWrap = document.createElement("div"); vWrap.className = "v";
+    const xWrap = document.createElement("div"); xWrap.className = "x";
+    const x = document.createElement("button");
+    x.type = "button"; x.className = "icon-btn"; x.textContent = "×"; x.title = "remove condition";
+    xWrap.appendChild(x);
+
+    let ctrl;
+    function rebuild(curVal) {
+      const k = kSel.value;
+      ctrl = valueControl(KEY_KIND[k], curVal);
+      ctrl.el.style.width = "100%";
+      vWrap.innerHTML = "";
+      vWrap.appendChild(ctrl.el);
+      ctrl.el.addEventListener("input", schedulePreview);
+      ctrl.el.addEventListener("change", schedulePreview);
+    }
+    rebuild(val);
+    kSel.addEventListener("change", () => { rebuild(null); schedulePreview(); });
+    x.addEventListener("click", () => { row.remove(); schedulePreview(); });
+
+    row._read = () => [kSel.value, ctrl.read()];
+    row.append(kWrap, vWrap, xWrap);
+    condsEl.appendChild(row);
+    return row;
+  }
+
+  document.getElementById("addCond").addEventListener("click", () => { makeCondRow("subject_contains", null); schedulePreview(); });
+
+  // --- action / value --------------------------------------------------------
+  function syncValueField() {
+    const a = actionEl.value;
+    if (VALUE_ACTIONS[a]) {
+      valueWrap.style.display = "";
+      valueLabel.textContent = a === "label" ? "Label name" : "Text";
+      valueEl.placeholder = VALUE_ACTIONS[a];
+    } else {
+      valueWrap.style.display = "none";
+    }
+  }
+  actionEl.addEventListener("change", () => { syncValueField(); schedulePreview(); });
+  valueEl.addEventListener("input", schedulePreview);
+
+  // --- assemble + validate + preview ----------------------------------------
+  function buildRule() {
+    const match = {};
+    condsEl.querySelectorAll(".cond-row").forEach((r) => {
+      const [k, v] = r._read();
+      if (v === "" || v === null || (Array.isArray(v) && !v.length)) return;
+      match[k] = v;
+    });
+    const action = actionEl.value;
+    const value = VALUE_ACTIONS[action] ? (valueEl.value || null) : null;
+    return { match, action, value };
+  }
+
+  const NUM_PHRASE = { older_than_days: "older than", newer_than_days: "newer than" };
+  function humanize(rule) {
+    const conds = Object.entries(rule.match || {}).map(([k, v]) => {
+      const lab = KEY_LABEL[k] || k;
+      if (KEY_KIND[k] === "bool") return v ? lab : "not " + lab;
+      if (KEY_KIND[k] === "number") return (NUM_PHRASE[k] || lab) + " " + v + " days";
+      const shown = Array.isArray(v) ? v.map((x) => "“" + x + "”").join(" / ") : "“" + v + "”";
+      return lab + " " + shown;
+    });
+    const when = conds.length ? conds.join(" AND ") : "(any message)";
+    const act = ACTION_LABEL[rule.action] || rule.action || "(no action)";
+    const av = rule.value ? " “" + rule.value + "”" : "";
+    return { when, then: act + av };
+  }
+
+  let previewTimer = null;
+  function schedulePreview() { clearTimeout(previewTimer); previewTimer = setTimeout(runValidate, 180); }
+
+  function runValidate() {
+    const rule = buildRule();
+    const h = humanize(rule);
+    previewEl.innerHTML = '<span class="when">When ' + escapeHtml(h.when) + '</span> &rarr; <span class="then">' + escapeHtml(h.then) + "</span>";
+    if (!rule.action || !Object.keys(rule.match).length) {
+      saveBtn.disabled = true;
+      vstatus.className = "vstatus"; vstatus.textContent = "";
+      return;
+    }
+    fetch("/api/agent/rules/validate", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(rule),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.ok) {
+          saveBtn.disabled = false;
+          vstatus.className = "vstatus ok"; vstatus.textContent = "valid ✓";
+        } else {
+          saveBtn.disabled = true;
+          vstatus.className = "vstatus err"; vstatus.textContent = "✕ " + d.error;
+        }
+      })
+      .catch(() => { saveBtn.disabled = true; vstatus.className = "vstatus err"; vstatus.textContent = "could not validate"; });
+  }
+
+  // --- save / edit / cancel --------------------------------------------------
+  saveBtn.addEventListener("click", () => {
+    const rule = buildRule();
+    const editing = editIndex !== null;
+    const url = editing ? "/api/agent/rules/" + editIndex : "/api/agent/rules";
+    saveBtn.disabled = true; vstatus.className = "vstatus"; vstatus.textContent = "saving…";
+    fetch(url, {
+      method: editing ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(rule),
+    })
+      .then((r) => (r.ok ? r.json() : r.json().then((e) => Promise.reject(e.detail || "error"))))
+      .then(() => { resetForm(); loadRules(); })
+      .catch((err) => { vstatus.className = "vstatus err"; vstatus.textContent = "✕ " + err; saveBtn.disabled = false; });
+  });
+
+  cancelBtn.addEventListener("click", resetForm);
+
+  function resetForm() {
+    editIndex = null;
+    condsEl.innerHTML = "";
+    makeCondRow("subject_contains", null);
+    actionEl.value = "";
+    valueEl.value = "";
+    syncValueField();
+    formTitle.textContent = "Add a rule";
+    cancelBtn.style.display = "none";
+    saveBtn.textContent = "Save rule";
+    runValidate();
+  }
+
+  function loadEditor(rule, index) {
+    editIndex = index;
+    condsEl.innerHTML = "";
+    const entries = Object.entries(rule.match || {});
+    if (!entries.length) makeCondRow("subject_contains", null);
+    entries.forEach(([k, v]) => makeCondRow(k, v));
+    actionEl.value = rule.action || "";
+    syncValueField();
+    valueEl.value = rule.value || "";
+    formTitle.textContent = "Edit rule #" + index;
+    cancelBtn.style.display = "";
+    saveBtn.textContent = "Update rule";
+    runValidate();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  // --- rules list ------------------------------------------------------------
+  function loadRules() {
+    fetch("/api/agent/rules").then((r) => r.json()).then((d) => {
+      const rules = d.rules || [];
+      rulesList.innerHTML = "";
+      if (!rules.length) { rulesList.innerHTML = '<p class="sub" style="padding:8px 0;">No rules yet. Add one above.</p>'; return; }
+      rules.forEach((rule) => {
+        const h = humanize(rule);
+        const item = document.createElement("div"); item.className = "rule-item";
+        const txt = document.createElement("div"); txt.className = "rule-text";
+        txt.innerHTML = '<span class="when">When ' + escapeHtml(h.when) + '</span> &rarr; <span class="then">' + escapeHtml(h.then) + "</span>";
+        const btns = document.createElement("div"); btns.className = "rule-btns";
+        const edit = document.createElement("button"); edit.className = "lnk"; edit.textContent = "Edit";
+        edit.addEventListener("click", () => loadEditor(rule, rule.index));
+        const del = document.createElement("button"); del.className = "lnk del"; del.textContent = "Delete";
+        del.addEventListener("click", () => {
+          if (!confirm("Delete this rule?")) return;
+          fetch("/api/agent/rules/" + rule.index, { method: "DELETE" })
+            .then((r) => (r.ok ? r.json() : Promise.reject())).then(() => loadRules()).catch(() => alert("Delete failed"));
+        });
+        btns.append(edit, del);
+        item.append(txt, btns);
+        rulesList.appendChild(item);
+      });
+    }).catch(() => { rulesList.textContent = "Could not load rules."; });
+  }
+
+  // --- ledger ----------------------------------------------------------------
+  function loadLedger() {
+    fetch("/api/agent/actions?limit=25").then((r) => r.json()).then((d) => {
+      const acts = d.actions || [];
+      ledger.innerHTML = "";
+      if (!acts.length) { ledger.innerHTML = '<p class="sub" style="padding:8px 0;">No routing actions recorded yet (enable agent actions in Settings to start routing).</p>'; return; }
+      acts.forEach((a) => {
+        const item = document.createElement("div"); item.className = "led-item";
+        const main = document.createElement("div"); main.className = "led-main";
+        const badge = document.createElement("span"); badge.className = "badge " + (a.status || ""); badge.textContent = a.status || "?";
+        const what = document.createElement("span");
+        const av = a.action_value ? " " + a.action_value : "";
+        what.innerHTML = "<strong>" + escapeHtml((a.action_type || "") + av) + "</strong> <span class=\"led-sub\">" + escapeHtml(a.subject || a.sender_email || a.message_id || "") + "</span>";
+        main.append(badge, what);
+        const right = document.createElement("div"); right.className = "rule-btns";
+        if (a.status === "applied") {
+          const undo = document.createElement("button"); undo.className = "lnk"; undo.textContent = "Undo";
+          undo.addEventListener("click", () => {
+            undo.disabled = true; undo.textContent = "…";
+            fetch("/api/agent/actions/" + a.id + "/undo", { method: "POST" })
+              .then((r) => (r.ok ? r.json() : r.json().then((e) => Promise.reject(e.detail || "undo failed"))))
+              .then(() => loadLedger())
+              .catch((err) => { undo.disabled = false; undo.textContent = "Undo"; alert(err); });
+          });
+          right.appendChild(undo);
+        }
+        item.append(main, right);
+        ledger.appendChild(item);
+      });
+    }).catch(() => { ledger.textContent = "Could not load routing actions."; });
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  // --- init ------------------------------------------------------------------
+  resetForm();
+  loadRules();
+  loadLedger();
+})();
+</script>
+</body>
+</html>
