@@ -54,6 +54,13 @@ logger = logging.getLogger(__name__)
 
 _MAX_MESSAGES = 50
 _VALID_SCHEDULES = ("daily", "weekly")
+# Bounded catch-up: a digest fires only within this many hours AFTER its target
+# time (covers a missed tick / brief restart), NOT "any time later that day".
+# This is why enabling a digest long after its time doesn't blast immediately —
+# it waits for the next scheduled slot. Must be < the smallest gap you'd want to
+# distinguish (kept at 3h: long enough for restarts, short enough that an
+# evening enable doesn't fire a morning digest).
+_CATCH_UP_HOURS = 3
 
 
 _VALID_SUMMARY_MODELS = ("local", "cloud")
@@ -87,6 +94,7 @@ class DigestSpec:
     hour: int = 7
     minute: int = 0            # time-of-day minute (with hour), local tz
     weekday: int = 0           # weekly only: which day fires (Mon=0 … Sun=6)
+    account: str = ""         # empty → run for every configured account; set → only that one
     deliver_to: str = ""      # empty → deliver to the account's own inbox
     then_archive: bool = False
     max_messages: int = _MAX_MESSAGES
@@ -110,6 +118,9 @@ def validate_digest(raw: Any) -> tuple[bool, str]:
     dest = str(raw.get("deliver_to") or "").strip()
     if dest and not _looks_like_email(dest):
         return False, "deliver_to must be a valid email address (or empty for your own inbox)"
+    acct = str(raw.get("account") or "").strip()
+    if acct and not _looks_like_email(acct):
+        return False, "account must be a valid email address (or empty for all configured accounts)"
     try:
         hour = int(raw.get("hour", 7))
     except (TypeError, ValueError):
@@ -146,6 +157,7 @@ def _normalize_digest(raw: Any) -> DigestSpec | None:
         hour=int(raw.get("hour", 7)),
         minute=int(raw.get("minute", 0)),
         weekday=(_parse_weekday(raw.get("weekday")) or 0),
+        account=str(raw.get("account") or "").strip(),
         deliver_to=str(raw.get("deliver_to") or "").strip(),
         then_archive=bool(raw.get("then_archive", False)),
         max_messages=int(raw.get("max_messages", _MAX_MESSAGES)),
@@ -234,13 +246,19 @@ def _is_due(spec: DigestSpec, now: datetime) -> bool:
     """Whether ``spec`` may fire at local time ``now`` (the per-period claim then
     guarantees it fires at most once that period).
 
-    Daily: at/after ``hour:minute`` today. Weekly: at/after ``weekday`` +
-    ``hour:minute`` within the current ISO week — so it fires on the chosen day,
-    and if a tick was missed it still catches up later that week (the comparison
-    is ``>=``, and a fresh ISO week resets it)."""
-    if spec.schedule == "weekly":
-        return (now.weekday(), now.hour, now.minute) >= (spec.weekday, spec.hour, spec.minute)
-    return (now.hour, now.minute) >= (spec.hour, spec.minute)
+    BOUNDED catch-up: fires only in the window ``[target, target + CATCH_UP)`` —
+    so a missed tick / brief restart still sends shortly after the target, but
+    enabling the digest long after its time does NOT fire immediately (it waits
+    for the next scheduled slot). Weekly additionally requires the configured
+    weekday — it fires on that day around its time, not on later days."""
+    if spec.schedule == "weekly" and now.weekday() != spec.weekday:
+        return False
+    now_min = now.hour * 60 + now.minute
+    target_min = spec.hour * 60 + spec.minute
+    # No midnight wrap: for a late hour (e.g. 23:00) the window is truncated at
+    # 23:59 rather than spilling into the next day/period. That only SHORTENS the
+    # catch-up (safe direction) and a normal sub-3h tick still fires.
+    return target_min <= now_min < target_min + _CATCH_UP_HOURS * 60
 
 
 def _period_key(schedule: str, now: datetime) -> str:
@@ -535,10 +553,11 @@ def run_digest(database_url: str, account: str, spec: DigestSpec, *,
 
 
 def run_due_digests(database_url: str, account: str, *, now: datetime | None = None) -> list[dict[str, Any]]:
-    """Run every enabled digest that is due now (see ``_is_due``: daily at/after
-    its hour:minute, weekly on its weekday at/after hour:minute) and not yet run
-    this period. Called from the scheduler each tick; the period claim makes
-    repeated ticks idempotent. No-op unless ``agent.digests.enabled``."""
+    """Run every enabled digest that is scoped to ``account`` (or unscoped) and
+    due now (see ``_is_due``: within the bounded catch-up window after its
+    daily/weekly target) and not yet run this period. Called from the scheduler
+    each tick per account; the period claim makes repeated ticks idempotent.
+    No-op unless ``agent.digests.enabled``."""
     cfg = _digest_config()
     if not cfg["enabled"]:
         return []
@@ -550,6 +569,8 @@ def run_due_digests(database_url: str, account: str, *, now: datetime | None = N
     for spec in specs:
         if not spec.enabled:
             continue
+        if spec.account and spec.account != account:
+            continue  # this digest is scoped to a different account
         if not _is_due(spec, now_local):
             continue  # not yet its scheduled day/time
         try:
