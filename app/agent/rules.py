@@ -44,6 +44,7 @@ always finishes-and-sends anything matching a hold rule.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 # Canned instruction for the common "decline" action.
@@ -80,23 +81,73 @@ def load_rules() -> list[dict[str, Any]]:
         return []
     out: list[dict[str, Any]] = []
     for r in raw:
-        if not isinstance(r, dict):
-            continue
-        match = r.get("match")
-        action = str(r.get("action", "")).strip().lower()
-        if not isinstance(match, dict) or not match or action not in _VALID_ACTIONS:
-            continue
-        value = r.get("value")
-        if action == "label":
-            name = str(value or "").strip()
-            # A label name can't contain a comma — gog's --add is comma-delimited,
-            # so "a,b" would become two labels. And it can't live in the reserved
-            # YouOS/ namespace (would fight the dismissal-label sync). Drop such
-            # rules rather than silently corrupt the mailbox.
-            if "," in name or name.lower().startswith(_RESERVED_LABEL_PREFIX):
-                continue
-        out.append({"match": match, "action": action, "value": value})
+        norm = normalize_rule(r)
+        if norm is not None:
+            out.append(norm)
     return out
+
+
+# Recognised match keys (so the authoring API can reject typos with a clear
+# error instead of silently never matching).
+MATCH_KEYS = ("sender", "domain", "intent", "cold_outreach", "subject_contains", "body_contains")
+
+
+def validate_rule(raw: Any) -> tuple[bool, str]:
+    """Validate a single rule dict for the authoring API. Returns (ok, error)."""
+    if not isinstance(raw, dict):
+        return False, "rule must be an object"
+    match = raw.get("match")
+    if not isinstance(match, dict) or not match:
+        return False, "rule.match must be a non-empty object"
+    unknown = [k for k in match if k not in MATCH_KEYS]
+    if unknown:
+        return False, f"unknown match key(s): {unknown}; allowed: {list(MATCH_KEYS)}"
+    action = str(raw.get("action", "")).strip().lower()
+    if action not in _VALID_ACTIONS:
+        return False, f"unknown action {action!r}; allowed: {list(_VALID_ACTIONS)}"
+    if action == "label":
+        name = str(raw.get("value") or "").strip()
+        if not name:
+            return False, "a 'label' rule needs a non-empty 'value' (the label name)"
+        if "," in name:
+            return False, "a label name cannot contain a comma"
+        if name.lower().startswith(_RESERVED_LABEL_PREFIX):
+            return False, f"label names starting with {_RESERVED_LABEL_PREFIX!r} are reserved"
+    return True, ""
+
+
+def normalize_rule(raw: Any) -> dict[str, Any] | None:
+    """Validate + canonicalise one rule, or None if invalid (load_rules drops
+    invalid rules silently; the API uses validate_rule for errors)."""
+    ok, _ = validate_rule(raw)
+    if not ok:
+        return None
+    return {
+        "match": raw["match"],
+        "action": str(raw["action"]).strip().lower(),
+        "value": raw.get("value"),
+    }
+
+
+def save_rules(rules: list[dict[str, Any]], *, config_path: Path | None = None) -> list[dict[str, Any]]:
+    """Persist the full ``agent.rules`` list to config (validated). Returns the
+    saved (normalised) rules. The single write path the authoring API uses."""
+    import copy
+
+    from app.core.config import load_config, save_config
+
+    normalised = [normalize_rule(r) for r in rules]
+    if any(n is None for n in normalised):
+        bad = next(i for i, n in enumerate(normalised) if n is None)
+        raise ValueError(f"rule at index {bad} is invalid")
+    cfg = copy.deepcopy(load_config(config_path) or {})
+    agent = cfg.setdefault("agent", {})
+    if not isinstance(agent, dict):
+        agent = {}
+        cfg["agent"] = agent
+    agent["rules"] = normalised
+    save_config(cfg, config_path)
+    return normalised
 
 
 def rules_need_intent(rules: list[dict[str, Any]]) -> bool:
