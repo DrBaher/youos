@@ -369,6 +369,27 @@ def test_triage_page_renders_with_nav_and_assets(authed_client):
     assert "/static/youos.css" in html
 
 
+def test_rules_page_renders_with_builder_and_ledger(authed_client):
+    r = authed_client.get("/rules")
+    assert r.status_code == 200
+    html = r.text
+    assert "/static/youos.css" in html
+    # the builder + the two list panels
+    assert 'id="conds"' in html
+    assert 'id="rulesList"' in html
+    assert 'id="ledger"' in html
+    # it talks to the existing CRUD + validate + actions endpoints
+    assert "/api/agent/rules/validate" in html
+    assert "/api/agent/actions" in html
+    # the richer action vocabulary is offered in the builder
+    assert "mark_important" in html
+
+
+def test_rules_link_in_nav(authed_client):
+    """The Rules page must be reachable from the shared nav."""
+    assert 'href="/rules"' in authed_client.get("/triage").text
+
+
 def test_triage_page_includes_ux_upgrades(authed_client):
     """Smoke check: the new b41 UX controls are present in the rendered HTML.
 
