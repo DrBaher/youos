@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.2.0-beta.96 — 2026-05-29
+
+### Fix 11 bugs found by an adversarial audit of the autonomy + send frontier (b85–b95)
+
+A 30-agent adversarial review of the autonomy work confirmed 11 real bugs (13 other findings refuted). All fixed here:
+
+**Correctness**
+- **Feedback capture missed the most common positive.** `_classify_row` keyed the "sent unchanged" positive on `send_state='sent'` (the auto-send path, off by default), but the normal manual-send path (`mark_sent`) sets `status='sent'` and leaves `send_state` NULL — so kept-and-sent drafts were silently skipped *and burned* (`feedback_captured=1`), permanently losing the signal. Now recognizes the manual-send positive, and leaves in-flight pushed drafts (`send_state='draft_created'`) un-burned so a later sweep captures their real outcome.
+- **`recipient_trust` counted unreviewed re-drafts.** The `/regenerate` endpoint writes `status='amended'` (persist defaults true) for a machine-only re-draft the user never approved, inflating auto-send trust. Trust now counts confirmed sends only (`send_state='sent'`, or manual `status='sent'`+NULL `send_state`) — never `amended`.
+- **Auto-send TOCTOU.** A dismiss landing between `due_for_auto_send` selection and `begin_send` could still send. `begin_send` now requires `status != 'dismissed'` in its atomic claim and reports a `dismissed` state.
+- **High-stakes drafts could auto-send.** `assess_stakes` scanned only the inbound; a draft that *itself* invents a price/commitment slipped through (verify treats money as warning-only). Auto-send now runs `assess_stakes` on the draft text too and holds it.
+- **`delay_minutes=0` voided the undo window** — auto-send could fire on a draft created earlier in the same sweep. Clamped to ≥ 1.
+- **Auto-send gated on the raw score, not the calibrated probability** — calibration could never tighten the act decision. `calibrated_score` is now persisted on the row and passed to `decide_action`.
+
+**Safety / survivability**
+- **No daily auto-send cap** (only `max_per_sweep`). Added `agent.auto_send.daily_send_cap` (default 5) + `store.count_sent_today` — a real blast-radius bound mirroring auto-push.
+- **`max_per_sweep` (and the new daily cap) weren't in the flag whitelist** — now settable via the safe config surface.
+- **No reaper for rows stuck in `send_state='sending'`** after a crash. Added `store.reap_stale_sending` (bounded by age), run at the start of each auto-send pass.
+
+**Tests**
+- Added a test proving send is **blocked under real default config** (no `_send_config` stub), and an **end-to-end `run_triage`** test that auto-sends an eligible past draft (shadow) while leaving the same-sweep draft untouched (delay window). Plus daily-cap, draft-stakes, TOCTOU, and reaper tests.
+
+Never-send boundary unchanged; every fix makes autonomy *more* conservative.
+
 ## v0.2.0-beta.95 — 2026-05-29
 
 ### Harden the golden-eval gate against a broken model (autonomy Phase C)
