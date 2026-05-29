@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.2.0-beta.111 — 2026-05-29
+
+### Rule builder UI — author filters/actions without editing YAML (framework, 4/N)
+
+Fourth step toward user-composable filters + actions: a `/rules` page (plain HTML/vanilla-JS, on the shared design system) that drives the existing CRUD/validate API, so rules can be built in the browser instead of by hand-editing config.
+
+- **Condition builder** — add/remove ANDed `match` conditions; each picks a predicate from the full 13-key vocabulary and renders the right control (text / keyword-list / true-false / number / regex).
+- **Action picker** — all 10 actions (skip / decline / prepend / hold + label / archive / star / mark_read / mark_important / mark_unimportant); the value field appears only for `label` (label name) and `prepend` (instruction text).
+- **Live validation + plain-English preview** — every change re-validates against `POST /api/agent/rules/validate` and shows the rule as a sentence ("When older than 30 days AND has attachment → mark important"); Save is disabled until valid.
+- **Your rules** — the saved list, each editable/deletable in place.
+- **Recent routing actions** — the agent-action ledger (status badges) with one-click **Undo** for applied actions.
+
+A "Rules" link is now in the shared nav across the app pages. Verified in both light and dark themes via headless render.
+
++2 tests. No new backend surface (reuses the b108 CRUD + b106 actions endpoints); never-send/never-act boundary unchanged.
+
 ## v0.2.0-beta.110 — 2026-05-29
 
 ### Richer mailbox actions — mark read / important (framework, 3/N)
