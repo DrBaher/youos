@@ -232,6 +232,18 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.vip_senders",
+        "label": "VIP senders (prioritized)",
+        "type": "text",
+        "default": "",
+        "help": (
+            "Comma-separated emails or @domains whose mail is prioritized — a "
+            "strong needs-reply boost so it clears the threshold and sorts to "
+            "the top of the queue. Their automation/newsletters are still "
+            "hard-skipped. Use exact emails (cofounder@x.com) or @domain."
+        ),
+    },
+    {
         "key": "agent.followup_owed_days",
         "label": "Follow-up: flag unanswered inbound after N days",
         "type": "int",

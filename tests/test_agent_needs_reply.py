@@ -375,3 +375,36 @@ def test_real_new_question_on_thread_still_surfaces():
     )
     v = classify(_msg(body=body))
     assert v.needs_reply, f"a real new question should be drafted (score={v.score}, reasons={v.reasons})"
+
+
+# --- VIP routing (audit Tier 2) -------------------------------------------
+
+
+def test_vip_sender_gets_boost_and_flag():
+    # A bland message that would normally sit near the boundary.
+    v = classify(_msg(body="FYI, see below.", subject="update"), vip_senders=["@partner.com"])
+    assert v.vip is True
+    assert any("VIP" in r for r in v.reasons)
+    assert v.needs_reply  # +0.25 boost lifts it over the 0.6 threshold
+
+
+def test_vip_match_by_exact_email():
+    v = classify(_msg(sender_email="cofounder@startup.dev"), vip_senders=["cofounder@startup.dev"])
+    assert v.vip is True
+
+
+def test_non_vip_sender_not_boosted():
+    v = classify(_msg(body="FYI, see below.", subject="update"), vip_senders=["@other.com"])
+    assert v.vip is False
+    assert not any("VIP" in r for r in v.reasons)
+
+
+def test_vip_automation_still_hard_skipped():
+    # A VIP domain's newsletter is still hard-skipped — the VIP boost never runs
+    # because hard-skips return first.
+    v = classify(
+        _msg(headers={"list-unsubscribe": "<mailto:u@partner.com>"}),
+        vip_senders=["@partner.com"],
+    )
+    assert not v.needs_reply
+    assert v.vip is False

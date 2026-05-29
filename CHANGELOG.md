@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.0-beta.71 — 2026-05-29
+
+### VIP sender routing
+
+Autonomy is prioritization, not just filtering — the one email from your co-founder matters more than ten from strangers. New `agent.vip_senders` flag (comma-separated emails / `@domains`): mail from a VIP gets a strong needs-reply boost (+0.25) so it clears the threshold even if it carried a penalty, and ranks to the top of the score-ordered queue. The verdict carries a `vip` flag and a "VIP sender (prioritized)" reason (visible on the row).
+
+VIPs don't bypass the noise filters: hard-skips (newsletters, automation domains, CI, mailer-daemon) run first and return, so a VIP domain's newsletter is still skipped — only mail that survives to scoring gets the boost. Threaded through `classify` / `classify_many` / `get_agent_config` / the triage sweep. +4 tests.
+
 ## v0.2.0-beta.70 — 2026-05-29
 
 ### Triage accuracy is now measurable

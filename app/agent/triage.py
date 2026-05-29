@@ -413,13 +413,15 @@ def _run_sweep(
 
         _cfg = get_agent_config()
         skip_senders = _cfg.get("skip_senders") or []
+        vip_senders = _cfg.get("vip_senders") or []
         daily_cap = int(_cfg.get("daily_draft_cap") or 0)
         strict_local = bool(_cfg.get("strict_local") or False)
     except Exception:
-        skip_senders, daily_cap, strict_local = [], 0, False
+        skip_senders, vip_senders, daily_cap, strict_local = [], [], 0, False
 
     classified = classify_many(
-        messages, history=history, threshold=threshold, skip_senders=skip_senders,
+        messages, history=history, threshold=threshold,
+        skip_senders=skip_senders, vip_senders=vip_senders,
     )
 
     # ζ: daily cap — count already-persisted rows for this account today, then
