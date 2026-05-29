@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.2.0-beta.68 — 2026-05-29
+
+### Follow-up tracking — the two open loops
+
+A real assistant never lets a thread fall through the cracks. New `app/agent/followups.py` tracks both:
+
+- **Owed inbound** — queued mail you haven't acted on, aging past `agent.followup_owed_days` (default 2). "Bob's email from Tuesday is still unanswered."
+- **Awaiting reply** — replies you pushed/sent with no newer activity on the thread after `agent.followup_wait_days` (default 4). "You emailed Alice 4 days ago, no reply."
+
+Read-only over the existing `agent_pending_drafts` table — no new writes, no Gmail egress. Surfaced via:
+- `GET /api/agent/followups` (per-account; orchestrator's "anything I'm forgetting?" answer)
+- the digest (text, chat, and JSON) — `owed_count` / `awaiting_count` + previews, so the Telegram/OpenClaw bot can nudge you.
+
+Timestamps are parsed in Python (tolerating email-style `...Z` ISO and SQLite's space format). The awaiting-reply check is a DB-only heuristic (infers "they replied" from newer thread activity) — a soft nudge, not a guarantee. +4 tests.
+
 ## v0.2.0-beta.67 — 2026-05-29
 
 ### Tiered auto-push to Gmail Drafts (opt-in, dry-run first)
