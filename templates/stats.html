@@ -338,7 +338,10 @@ body {
       var totalPairs = d.corpus.total_reply_pairs || 0;
       var feedbackPairs = d.corpus.total_feedback_pairs || 0;
       if (totalPairs > 0) {
-        var pct = Math.round((feedbackPairs / totalPairs) * 100);
+        // Feedback pairs can exceed reply pairs (organic + correction rows),
+        // so cap the displayed coverage at 100% — the bar shouldn't overflow
+        // and "399%" reads like a bug.
+        var pct = Math.min(100, Math.round((feedbackPairs / totalPairs) * 100));
         document.getElementById('reviewProgressSection').style.display = 'block';
         document.getElementById('reviewProgressFill').style.width = pct + '%';
         document.getElementById('reviewProgressLabel').textContent =
