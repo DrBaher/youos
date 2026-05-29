@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.78 — 2026-05-29
+
+### Score normalization — make boosts + semantic actually reorder (and let autoresearch optimize)
+
+A retrieval-only diagnostic settled it: even a *drastic* config (recency/account → 0.9, semantic_weight → 0.0 vs 0.4) returned the **identical** top-5 reply-pairs — scores shifted but ranking never did. Cause: raw BM25 lexical scores (~5–12, big gaps) dwarf the additive metadata boosts (tenths) and the [0,1] semantic blend, so `recency/account/sender` boosts and `semantic_weight` are **near-inert in production**, and autoresearch's retrieval mutations can't change which exemplars are selected → it could never move the eval.
+
+- **`retrieval.normalize_scores`** (new config, default **false**): min-max normalizes the lexical score to [0,1] across each candidate pool **before truncation**, so the metadata boosts and the semantic blend operate on a comparable scale and can change which results survive. `_normalize_pool` preserves each match's quality/subject multiplier. Applied at all five retrieval truncation points. Off by default → zero production change until opted in per instance (A/B draft quality first).
+- **top_k pinning fixed in the autoresearch eval**: retrieval uses `request.top_k or config.top_k`, and the eval's `DraftRequest` default `top_k=5` was overriding the config — so top_k mutations were silent no-ops. The eval now reads top_k from the (mutated) config.
+
++3 tests. To validate on an instance: set `normalize_scores: true` in its `configs/retrieval/defaults.yaml`, re-run autoresearch, and confirm the per-component deltas now move (and improvements get kept).
+
 ## v0.2.0-beta.77 — 2026-05-29
 
 ### Root-cause fix: autoresearch was blind to its own mutations
