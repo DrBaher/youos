@@ -1,6 +1,6 @@
 {
   "name": "youos",
-  "version": "0.2.0b86",
+  "version": "0.2.0b87",
   "displayName": "YouOS \u2014 Personal Email Copilot",
   "description": "Learns your writing style from Gmail/Docs/WhatsApp and drafts replies in your voice — by default on a local model fine-tuned on you (LoRA, served warm on Apple Silicon), self-improving nightly. Background agent sweeps unread inbox, drafts replies, queues for review (opt-in; never auto-sends). Exposes a REST + OpenAPI surface (`/api/agent/*`) so orchestrators like Hermes / OpenClaw / a Telegram/Slack bot can drive email triage from your existing chat app. The cloud is only a cold-start/fallback and can be disabled for strict local-only mode.",
   "author": "DrBaher",
