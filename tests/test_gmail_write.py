@@ -163,8 +163,9 @@ def test_gws_creates_draft_and_extracts_id(monkeypatch):
     """
     captured: dict = {}
 
-    def _fake_run(cmd, capture_output, text, timeout):
+    def _fake_run(cmd, capture_output, text, timeout, env=None):
         captured["cmd"] = cmd
+        captured["env"] = env
         return SimpleNamespace(
             returncode=0,
             stdout=json.dumps({"id": "draft_gws_99", "message": {"id": "msg_gws_42", "threadId": "thr_99"}}),
@@ -200,10 +201,34 @@ def test_gws_creates_draft_and_extracts_id(monkeypatch):
     assert "Paid — confirmation attached." in rfc
 
 
+def test_gws_uses_per_account_credentials_file(monkeypatch):
+    """Multi-account safety: the write must select the per-account credentials
+    file (GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE) so a draft for account B isn't
+    written to account A's mailbox. Mirrors the ingestion read path."""
+    captured: dict = {}
+
+    def _fake_run(cmd, capture_output, text, timeout, env=None):
+        captured["env"] = env
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"id": "d_b"}), stderr="")
+
+    monkeypatch.setattr("app.ingestion.gmail_write.subprocess.run", _fake_run)
+    monkeypatch.setattr("app.core.config.get_ingestion_google_backend", lambda: "gws")
+    # Map account → credentials file (what ingestion.gws_credentials provides).
+    monkeypatch.setattr(
+        "app.ingestion.adapters._load_gws_credentials",
+        lambda: {"b@medicus.ai": "/creds/b.json", "a@medicus.ai": "/creds/a.json"},
+    )
+
+    from app.ingestion.gmail_write import create_draft
+
+    create_draft(account="b@medicus.ai", thread_id="t", to_email="x@y.com", subject="s", body="b")
+    assert captured["env"]["GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE"] == "/creds/b.json"
+
+
 def test_gws_omits_thread_id_in_body_when_none(monkeypatch):
     """No threadId field when starting a brand-new thread."""
     captured: dict = {}
-    def _fake_run(cmd, capture_output, text, timeout):
+    def _fake_run(cmd, capture_output, text, timeout, env=None):
         captured["cmd"] = cmd
         return SimpleNamespace(returncode=0, stdout=json.dumps({"id": "d1"}), stderr="")
     monkeypatch.setattr("app.ingestion.gmail_write.subprocess.run", _fake_run)
@@ -219,7 +244,7 @@ def test_gws_omits_thread_id_in_body_when_none(monkeypatch):
 
 
 def test_gws_translates_nonzero_exit_to_gmail_write_error(monkeypatch):
-    def _fake_run(cmd, capture_output, text, timeout):
+    def _fake_run(cmd, capture_output, text, timeout, env=None):
         return SimpleNamespace(
             returncode=2,
             stdout="",

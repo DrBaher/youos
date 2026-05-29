@@ -528,3 +528,71 @@ def test_auto_promote_skips_senders_already_on_skip_list(mocked_environment, mon
     assert added == []
     # No flag write when nothing new to add.
     assert set_calls == []
+
+
+# --- Tier-0 hardening: failed-sweep visibility (#4) + concurrency guard (#6) ---
+
+
+def test_failed_sweep_logs_audit_row_and_reraises(mocked_environment, monkeypatch):
+    """A sweep that raises during fetch (the #1 unattended failure: expired gog
+    auth) must STILL write an agent_audit row with the error and re-raise — so
+    the failure is visible and the observability success-rate reflects it,
+    instead of staying green while the agent is dead."""
+    import pytest
+
+    from app.agent import store
+    from app.agent.triage import run_triage
+
+    env = mocked_environment
+
+    def _boom(*a, **k):
+        raise RuntimeError("gog auth expired")
+
+    monkeypatch.setattr("app.agent.triage.fetch_unread", _boom)
+
+    with pytest.raises(RuntimeError, match="gog auth expired"):
+        run_triage(
+            account="you@example.com",
+            database_url=env["database_url"],
+            configs_dir=env["configs_dir"],
+        )
+
+    sweeps = store.list_recent_sweeps(env["database_url"], account="you@example.com", limit=5)
+    assert len(sweeps) == 1, "a failed sweep must still log one audit row"
+    assert any("gog auth expired" in e for e in sweeps[0]["errors"])
+
+    agg = store.sweep_aggregate(env["database_url"], account="you@example.com")
+    assert agg["sweeps"] == 1
+    assert agg["successful"] == 0
+    assert agg["success_rate"] == 0.0
+
+
+def test_concurrent_sweep_is_skipped_when_account_locked(mocked_environment, monkeypatch):
+    """If a sweep for the account is already in progress, a second run is a
+    no-op (it must not fetch or draft) — so two overlapping sweeps can't each
+    consume the daily cap budget."""
+    from app.agent import triage
+
+    env = mocked_environment
+    calls = {"fetch": 0}
+
+    def _count_fetch(*a, **k):
+        calls["fetch"] += 1
+        return []
+
+    monkeypatch.setattr("app.agent.triage.fetch_unread", _count_fetch)
+
+    lock = triage._account_lock("you@example.com")
+    assert lock.acquire(blocking=False)
+    try:
+        result = triage.run_triage(
+            account="you@example.com",
+            database_url=env["database_url"],
+            configs_dir=env["configs_dir"],
+        )
+    finally:
+        lock.release()
+
+    assert result.fetched == 0
+    assert result.persisted == 0
+    assert calls["fetch"] == 0, "the locked-out sweep must not run the body"

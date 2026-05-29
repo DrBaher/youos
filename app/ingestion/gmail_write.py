@@ -189,11 +189,21 @@ def _gws_create_draft(
 
     Schema source-of-truth: ``gws schema gmail.users.drafts.create``.
 
-    Note: the ``account`` arg is passed as ``userId`` (the Gmail API
-    accepts the actual email or ``"me"``). The credentials file gws uses
-    determines which mailbox it actually writes to — for a multi-account
-    setup, ``ingestion.gws_credentials`` should map account → file.
+    Mailbox selection: ``gws`` is single-account per credential — the
+    ``userId`` in ``--params`` does NOT pick the mailbox, the credentials file
+    does. So for a multi-account setup we MUST set
+    ``GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE`` for ``account`` (from the
+    ``ingestion.gws_credentials`` map), exactly as the read path
+    (``adapters.GwsSource._run_json``) does. Without this, a draft for account
+    B — containing B's private inbound content — lands in whatever mailbox the
+    ambient gws credentials point at (often account A): a cross-account leak.
+    With no mapping for the account, the ambient credentials are used as-is
+    (correct for the single-account case).
     """
+    import os
+
+    from app.ingestion.adapters import _load_gws_credentials
+
     rfc = _build_rfc822(to_email=to_email, subject=subject, body=body)
     raw_b64 = base64.urlsafe_b64encode(rfc).decode("ascii")
 
@@ -207,8 +217,15 @@ def _gws_create_draft(
         "--json", json.dumps(request_body),
     ]
 
+    # Mirror the read path: select the per-account credentials file so the
+    # draft is written to the intended mailbox, not the ambient default.
+    env = os.environ.copy()
+    creds = _load_gws_credentials().get(account)
+    if creds:
+        env["GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE"] = str(creds)
+
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env)
     except FileNotFoundError as exc:
         raise GmailWriteError(
             "gws CLI not on PATH — switch ingestion.google_backend to gog or install gws"
