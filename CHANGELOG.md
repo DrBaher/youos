@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.99 — 2026-05-29
+
+### Daily accountability report surfaces what the agent sent (autonomy Phase D)
+
+The agent digest — the "what I did / what needs you" report (text/chat/html/json, pushable to a webhook) — predated the send frontier, so it never showed what was actually *sent*. Now it does, closing the accountability loop.
+
+- `DigestData` gains `auto_sent_count` and `shadow_sent_count`, derived from the honest `send_state` on already-loaded rows (no new query). The text report shows "Auto-sent: N" and "Shadow-sent (soak, not actually sent): N" (each only when non-zero); both surface in the JSON payload for orchestrators.
+- Updated `docs/AUTONOMY_ROADMAP.md` with the Phases A–D shipped status (b85–b99) and the rationale for the two deliberately-deferred items (the agent-action framework — YAGNI until a second action type exists; approval-by-reply — belongs in the orchestrator/chat layer, not YouOS core).
+
++1 test (`test_agent_digest.py`). Read-only; never-send boundary unchanged.
+
 ## v0.2.0-beta.98 — 2026-05-29
 
 ### Richer policy grammar: content rules + a `hold` action (autonomy Phase D)
