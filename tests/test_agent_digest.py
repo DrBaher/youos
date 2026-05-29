@@ -179,3 +179,35 @@ def test_empty_state_produces_clean_digest(db_url):
     assert "Agent digest for empty@x.com" in text
     parsed = json.loads(format_digest(d, fmt="json"))
     assert parsed["sweeps"] == 0
+
+
+def test_digest_reports_auto_sent_and_shadow_counts(db_url):
+    """The accountability report surfaces what the send frontier actually did:
+    auto-sent vs shadow-sent (soak), derived from send_state."""
+    import sqlite3
+
+    from app.agent.digest import build_digest, format_digest
+
+    path = db_url.removeprefix("sqlite:///")
+    conn = sqlite3.connect(path)
+    for i, send_state in enumerate(["sent", "shadow"]):
+        conn.execute(
+            "INSERT INTO agent_pending_drafts "
+            "(message_id, thread_id, account, sender_email, needs_reply_score, "
+            " reasons_json, cold_outreach, tier, draft, status, gmail_draft_id, "
+            " send_state, actually_sent_at) "
+            "VALUES (?, ?, 'you@x.com', 's@x.com', 0.9, '[]', 0, 'draft', 'hi', "
+            " 'sent', ?, ?, datetime('now'))",
+            (f"as{i}", f"ast{i}", f"gd{i}", send_state),
+        )
+    conn.commit()
+    conn.close()
+
+    d = build_digest(database_url=db_url, account="you@x.com", days=7)
+    assert d.auto_sent_count == 1
+    assert d.shadow_sent_count == 1
+    text = format_digest(d, fmt="text")
+    assert "Auto-sent: 1" in text
+    assert "Shadow-sent" in text
+    parsed = json.loads(format_digest(d, fmt="json"))
+    assert parsed["auto_sent_count"] == 1 and parsed["shadow_sent_count"] == 1
