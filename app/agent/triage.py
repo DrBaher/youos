@@ -166,6 +166,35 @@ def _auto_push_config() -> dict[str, Any]:
     }
 
 
+def _calendar_config() -> dict[str, Any]:
+    """Read ``agent.calendar.*`` config + the user's timezone. Safe defaults."""
+    from app.core.config import load_config
+
+    cfg = load_config() or {}
+    a = (cfg.get("agent") or {}) if isinstance(cfg, dict) else {}
+    cal = (a.get("calendar") or {}) if isinstance(a, dict) else {}
+    if not isinstance(cal, dict):
+        cal = {}
+    user = (cfg.get("user") or {}) if isinstance(cfg, dict) else {}
+    tz = (user.get("timezone") if isinstance(user, dict) else None) or "UTC"
+
+    def _i(key, default):
+        try:
+            return int(cal.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "enabled": bool(cal.get("enabled", False)),
+        "tz": str(tz),
+        "business_days": _i("business_days", 5),
+        "work_start_hour": _i("work_start_hour", 9),
+        "work_end_hour": _i("work_end_hour", 17),
+        "slot_minutes": _i("slot_minutes", 30),
+        "max_slots": _i("max_slots", 3),
+    }
+
+
 def _parse_autopush_whitelist(raw: Any) -> list[str]:
     """Normalise the whitelist (comma/newline string or list) to lowercase entries."""
     if not raw:
@@ -431,6 +460,11 @@ def _run_sweep(
     rules = load_rules()
     _rules_need_intent = rules_need_intent(rules)
 
+    # Calendar: when drafting a reply to a meeting request, offer real open
+    # slots. Reads free/busy per meeting-request message (gog CLI). Opt-in.
+    cal_cfg = _calendar_config()
+    _need_intent = _rules_need_intent or cal_cfg["enabled"]
+
     classified = classify_many(
         messages, history=history, threshold=threshold,
         skip_senders=skip_senders, vip_senders=vip_senders,
@@ -476,19 +510,20 @@ def _run_sweep(
             skipped.append((msg, verdict_capped))
             continue
 
-        # Per-message standing-instruction rules. Compute the effective
-        # instructions (global + matched rules); a 'skip' rule drops the
-        # message from drafting entirely.
+        # Per-message standing-instruction rules + calendar slot proposals.
+        # Compute the effective instructions (global + matched rules + meeting
+        # slots); a 'skip' rule drops the message from drafting entirely.
         effective_instructions = standing_instructions
-        if rules:
-            _intents: list[str] | None = None
-            if _rules_need_intent:
-                try:
-                    from app.core.intent import classify_intents_multi
+        _intents: list[str] | None = None
+        if _need_intent:
+            try:
+                from app.core.intent import classify_intents_multi
 
-                    _intents = classify_intents_multi(msg.body)
-                except Exception:
-                    _intents = None
+                _intents = classify_intents_multi(msg.body)
+            except Exception:
+                _intents = None
+
+        if rules:
             from app.core.sender import extract_domain
 
             _rr = apply_rules(
@@ -509,6 +544,27 @@ def _run_sweep(
                 skipped.append((msg, verdict_ruleskip))
                 continue
             effective_instructions = _rr["instructions"]
+
+        # Calendar: a meeting request → propose real open slots so the draft
+        # offers concrete times. Failure-isolated; never creates events.
+        if cal_cfg["enabled"] and _intents and "meeting_request" in _intents:
+            try:
+                from app.agent.calendar import propose_open_slots
+
+                slots = propose_open_slots(
+                    account, tz=cal_cfg["tz"], business_days=cal_cfg["business_days"],
+                    work_start_hour=cal_cfg["work_start_hour"], work_end_hour=cal_cfg["work_end_hour"],
+                    slot_minutes=cal_cfg["slot_minutes"], max_slots=cal_cfg["max_slots"],
+                )
+                if slots:
+                    note = (
+                        f"The sender is asking to meet. You are free at: {slots}. "
+                        f"Offer 2–3 of these specific times (times are in {cal_cfg['tz']}); "
+                        "do not invent any other availability."
+                    )
+                    effective_instructions = f"{effective_instructions}\n{note}" if effective_instructions else note
+            except Exception as exc:
+                logger.warning("calendar slot proposal failed: %s", exc)
 
         try:
             resp = generate_draft(
