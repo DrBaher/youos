@@ -232,6 +232,20 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.followup_owed_days",
+        "label": "Follow-up: flag unanswered inbound after N days",
+        "type": "int",
+        "default": 2,
+        "help": "A queued email you haven't acted on for this many days is flagged as 'owed' in the digest + /api/agent/followups.",
+    },
+    {
+        "key": "agent.followup_wait_days",
+        "label": "Follow-up: flag awaiting-reply after N days",
+        "type": "int",
+        "default": 4,
+        "help": "A reply you pushed/sent with no newer thread activity for this many days is flagged as 'awaiting reply'.",
+    },
+    {
         "key": "agent.auto_promote_skip_senders",
         "label": "Auto-promote senders dismissed as noise 3+ times",
         "type": "bool",
