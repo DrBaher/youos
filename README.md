@@ -10,6 +10,11 @@
 
 YouOS is a local-first AI email copilot that learns from your sent Gmail history and drafts replies that sound like *you* — not a generic AI. It runs entirely on your Mac. No cloud. No subscriptions. Your data never leaves your machine. **During setup it becomes _your_ OS** — YouOS → BaherOS.
 
+<p align="center">
+  <img src="site/chat-demo.gif" width="380" alt="Chat with your YouOS agent: it flags an email, drafts a reply in your voice using your free calendar slots, you tweak a word and confirm, and it sends — never without your OK.">
+</p>
+<p align="center"><em>It checks your inbox, drafts replies in your voice, and sends only when you confirm.</em></p>
+
 ```
 Gmail (sent mail)          Your feedback
        │                        │
