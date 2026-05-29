@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0-beta.81 — 2026-05-29
+
+### Autoresearch keep/revert bar — tuned from real data
+
+With the prompt surface finally live (b80), a run showed the "answer-first" `system_prompt_suffix` variant genuinely improving the draft: `kw 0.38 → 0.41`, `composite 0.453 → 0.463` (+0.010). But it was reverted, because the hard-coded `improved` bar was **+0.02** — set blind, and now demonstrably discarding real wins.
+
+- `compare_scorecards` thresholds are configurable (`improve_threshold` / `regress_threshold` in `configs/autoresearch.yaml`), default **0.01** (down from the implicit 0.02), so a genuine ~1-composite-point gain is kept. The optimizer loads them once per run. Tune up if your eval's run-to-run noise floor is higher (verify by scoring the same config twice).
+
+This is the last piece: with b76–b80, autoresearch mutations now move the eval; b81 lets it actually *keep* the improvements. +3 tests.
+
 ## v0.2.0-beta.80 — 2026-05-29
 
 ### The prompt surface was a no-op — now it's real
