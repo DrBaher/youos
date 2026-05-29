@@ -345,3 +345,33 @@ def test_order_receipt_pattern():
     ))
     assert "transactional template (subject)" in " ".join(v.reasons)
     assert not v.needs_reply
+
+
+# --- Thread-reply quoted-history handling (audit Tier 1) -------------------
+
+
+def test_trivial_ack_on_thread_does_not_inherit_quoted_question():
+    """A 'thanks' reply on a thread whose quoted history contains a question +
+    imperative must NOT be drafted — the signals must come from the NEW
+    content, not the quoted block. This was a large false-positive class."""
+    body = (
+        "Sounds good, thanks!\n\n"
+        "On Mon, May 26, 2026 at 9:00 AM Alice <alice@partner.com> wrote:\n"
+        "> Could you please confirm the Q3 pricing and send the updated numbers?\n"
+        "> Would Thursday work for a call?\n"
+        "> Best, Alice\n"
+    )
+    v = classify(_msg(body=body))
+    assert not v.needs_reply, f"trivial ack should not be drafted (score={v.score}, reasons={v.reasons})"
+
+
+def test_real_new_question_on_thread_still_surfaces():
+    """A genuine new question in the reply (above the quoted history) still
+    scores as needs-reply — we strip the quote, not the new content."""
+    body = (
+        "Thanks! One more thing — can you also share the onboarding timeline?\n\n"
+        "On Mon, May 26, 2026 at 9:00 AM Alice <alice@partner.com> wrote:\n"
+        "> Here is the pricing deck.\n"
+    )
+    v = classify(_msg(body=body))
+    assert v.needs_reply, f"a real new question should be drafted (score={v.score}, reasons={v.reasons})"

@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 _STOP_EVENT_ATTR = "_agent_loop_stop"
 _TASK_ATTR = "_agent_loop_task"
+_FAILURES_ATTR = "_agent_sweep_failures"
 
 
 def get_agent_config() -> dict[str, Any]:
@@ -150,16 +151,41 @@ async def _loop(app) -> None:
         if cfg["enabled"]:
             accounts = _resolve_accounts(cfg["accounts"])
             total_persisted = 0
+            # Per-account consecutive-failure tracking persists across ticks so
+            # a silently-dying agent gets exactly one notification on the first
+            # failure (debounced), not spam every tick and not silence.
+            failures: dict[str, int] = getattr(app.state, _FAILURES_ATTR, {})
             for account in accounts:
                 try:
                     n = await asyncio.get_event_loop().run_in_executor(
                         None, partial(_run_one_sweep, account, cfg)
                     )
                     total_persisted += int(n)
+                    # Recovery: announce once if it had been failing.
+                    if failures.get(account, 0) > 0 and cfg["notify_macos"]:
+                        _notify_macos(
+                            title="YouOS",
+                            message=f"Agent recovered — sweeps for {account} are working again.",
+                        )
+                    failures[account] = 0
                 except Exception as exc:
-                    # Log at info — most failures here are transient (gog
-                    # auth, network blip) and the next tick retries.
-                    logger.info("agent loop: sweep for %s failed: %s", account, exc)
+                    prev = failures.get(account, 0)
+                    failures[account] = prev + 1
+                    # First failure → warn loudly + notify so a dead agent is
+                    # visible. Subsequent consecutive failures stay quiet.
+                    if prev == 0:
+                        logger.warning("agent loop: sweep for %s failed: %s", account, exc)
+                        if cfg["notify_macos"]:
+                            _notify_macos(
+                                title="YouOS agent stopped drafting",
+                                message=f"Sweep for {account} failed: {exc}. Check youos doctor.",
+                            )
+                    else:
+                        logger.warning(
+                            "agent loop: sweep for %s still failing (%dx): %s",
+                            account, prev + 1, exc,
+                        )
+            setattr(app.state, _FAILURES_ATTR, failures)
 
             if total_persisted > 0 and cfg["notify_macos"]:
                 s = "s" if total_persisted != 1 else ""

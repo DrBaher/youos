@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.2.0-beta.66 — 2026-05-29
+
+### Autonomy hardening — trust + turn-it-on sprint
+
+Acts on the verified findings in `docs/AUDIT_2026-05.md` (a 55-agent audit of the agent loop, accuracy, and robustness). Closes every Tier-0 correctness/safety bug that blocked trusting the autonomous agent unattended, plus the highest-value bounded accuracy/observability wins. Full suite green; +14 tests.
+
+**Send-safety (the only paths that touch the mailbox):**
+- `push_to_gmail` is now **idempotent**. Each backend call creates a *new* Gmail draft, so a retry, double-click, or two concurrent orchestrators previously left duplicate drafts. New atomic claim (`store.begin_push` / `finalize_push` / `abort_push`) serializes the write; a re-push returns the existing `gmail_draft_id` with `pushed_already: true`, and a backend failure rolls the claim back so retries work. Logic lives in one shared place (`app/agent/push.py`) so the route and future auto-push can't diverge.
+- **gws multi-account fix**: `gmail_write._gws_create_draft` now sets `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` per account (mirroring the read path), preventing a draft for one account landing in another account's Drafts.
+
+**Don't-die-silently:**
+- A sweep that raises (expired gog auth, network down) now **always logs an `agent_audit` row** with the error and re-raises — previously it logged nothing and the observability success-rate stayed green while the agent was dead. The scheduler tracks consecutive failures and notifies once on the first failure transition (and on recovery).
+- **Heartbeat**: `sweep_aggregate` exposes `last_sweep_at` / `last_successful_sweep_at` / `seconds_since_last_sweep`; `/api/agent/observability` adds a staleness hint and surfaces which model is actually drafting.
+- `doctor` now checks gog **auth validity** (bounded `gog auth list` probe), not just that the binary is on PATH — the #1 cause of an unattended agent silently stopping.
+
+**Concurrency / locking:**
+- Agent DB connections use the tuned `bootstrap.connect` (busy_timeout + WAL) instead of a raw `sqlite3.connect`, so a sweep colliding with the nightly or a manual run no longer hits immediate `database is locked`.
+- Per-account sweep lock: a scheduled tick overlapping a manual/API triage is now skipped rather than both running and each consuming the daily-draft-cap budget.
+- Gmail-label sync dismisses **all** pending rows for a labelled thread (not just the newest), so "skip this thread" isn't silently partial.
+
+**Accuracy:**
+- The needs-reply classifier scores the **new content only** — quoted reply history and the trailing signature are stripped before looking for questions/imperatives/length, and trivial acknowledgements ("thanks", "will do") are penalized rather than drafted. Kills the biggest thread-reply false-positive class.
+
+**Learning loop:**
+- The nightly **golden eval now scores real drafts**. It was calling `run_golden_eval()` with no generator, so every case scored against an empty string — the one quality checkpoint after fine-tuning was a no-op. Now instance-aware (resolves DB + configs from settings).
+
+**API / config:**
+- New `GET /api/agent/pending/{id}` (the retry-safety check `AGENT_OPERATIONS.md` mandates was previously impossible to perform).
+- New `POST /api/agent/pending/{id}/regenerate` — re-draft a queued row *in your voice* with a free-form instruction (e.g. "shorter; decline the meeting"), instead of pasting verbatim replacement text.
+- `agent.threshold` is now a whitelisted flag (float, clamped 0.4–0.85) so the documented `/api/config/set` tuning actually works.
+- The auth middleware re-reads config per request, so a PIN / origin allowlist set after startup takes effect without a server restart (closing an exposure window on remote-reachable instances).
+
 ## v0.2.0-beta.65 — 2026-05-28
 
 ### Public docs site — agent discoverability
