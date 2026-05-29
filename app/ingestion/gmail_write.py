@@ -48,6 +48,16 @@ class GmailDraftResult:
     raw_response: dict[str, Any]
 
 
+@dataclass
+class GmailSendResult:
+    """Outcome of a successful draft SEND. ``message_id`` is the Gmail id of
+    the sent message (distinct from the draft id); ``raw_response`` is the
+    backend's full payload."""
+
+    message_id: str
+    raw_response: dict[str, Any]
+
+
 def create_draft(
     *,
     account: str,
@@ -87,6 +97,77 @@ def create_draft(
             to_email=to_email, subject=subject, body=body,
         )
     raise ValueError(f"unknown ingestion.google_backend: {name!r}")
+
+
+def send_draft(
+    *,
+    account: str,
+    draft_id: str,
+    dry_run: bool = False,
+    backend: str | None = None,
+) -> GmailSendResult:
+    """Send an EXISTING Gmail draft by id — the actual outbound action.
+
+    Sends the exact draft already in Gmail (no body re-marshaling, so what the
+    user reviewed is what goes out). ``dry_run`` passes the backend's own
+    no-change flag so the call exercises the real CLI path without sending.
+
+    This is the only function in YouOS that can send mail. Its callers gate it
+    behind explicit, default-off flags + a kill-switch; it performs no gating
+    itself. Only the ``gog`` backend has a verified send shape today.
+    """
+    from app.core.config import get_ingestion_google_backend
+
+    name = (backend or get_ingestion_google_backend()).strip().lower()
+    if name == "gog":
+        return _gog_send_draft(account=account, draft_id=draft_id, dry_run=dry_run)
+    raise NotImplementedError(
+        f"send_draft is only implemented for the gog backend (got {name!r})"
+    )
+
+
+def _gog_send_draft(*, account: str, draft_id: str, dry_run: bool) -> GmailSendResult:
+    """Verified ``gog gmail drafts send <draftId>`` invocation (gog 0.17.0).
+
+    Shape (confirmed via ``gog gmail drafts send --help``):
+        gog gmail drafts send <draftId> --account <email> --json --no-input --force
+    ``--force`` skips the interactive confirmation (we're non-interactive);
+    ``--no-input`` makes a missing confirmation fail rather than hang;
+    ``--dry-run`` (when requested) makes gog print the intended action and exit
+    0 without sending. On a real send the Google API returns the sent Message
+    resource ``{ "id": "...", "threadId": "...", ... }``.
+    """
+    cmd: list[str] = [
+        "gog", "gmail", "drafts", "send", draft_id,
+        "--account", account,
+        "--json", "--no-input", "--force",
+    ]
+    if dry_run:
+        cmd.append("--dry-run")
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except FileNotFoundError as exc:
+        raise GmailWriteError("gog CLI not on PATH — install via Homebrew or set up the native backend") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise GmailWriteError("gog gmail drafts send timed out (30s)") from exc
+
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        raise GmailWriteError(f"gog send returned exit {result.returncode}: {stderr or 'no stderr'}")
+
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise GmailWriteError(f"gog send returned non-JSON stdout: {result.stdout[:200]!r}") from exc
+
+    # dry-run may return an empty/intent payload; tolerate a missing id there.
+    message_id = str(payload.get("id") or payload.get("messageId") or "")
+    if not message_id and not dry_run:
+        raise GmailWriteError(f"gog send returned no message id; payload={payload!r}")
+
+    logger.info("sent gmail draft %s for account=%s (dry_run=%s)", draft_id, account, dry_run)
+    return GmailSendResult(message_id=message_id, raw_response=payload)
 
 
 # --- gog backend -----------------------------------------------------------

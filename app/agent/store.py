@@ -220,12 +220,87 @@ def begin_push(database_url: str, row_id: int) -> tuple[str, str | None, str | N
 
 def finalize_push(database_url: str, row_id: int, *, gmail_draft_id: str) -> None:
     """Record the Gmail draft id after a successful write (status already
-    flipped to ``sent`` by :func:`begin_push`)."""
+    flipped to ``sent`` by :func:`begin_push`). Sets the honest send_state to
+    ``'draft_created'`` — a Gmail draft now exists; nothing has been sent."""
     with closing(_connect(database_url)) as conn:
         conn.execute(
             "UPDATE agent_pending_drafts SET gmail_draft_id = ?, "
-            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            "send_state = 'draft_created', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (gmail_draft_id, row_id),
+        )
+        conn.commit()
+
+
+# --- send-to-recipient atomic claim (Phase B: the send frontier) -----------
+
+
+def begin_send(database_url: str, row_id: int) -> tuple[str, str | None]:
+    """Atomically claim a pushed row for an actual SEND.
+
+    A send is only valid on a row that already has a Gmail draft
+    (``gmail_draft_id`` set, ``send_state='draft_created'``) — we send the exact
+    draft that exists, never a re-marshaled body. The conditional UPDATE flips
+    ``send_state`` ``'draft_created'`` → ``'sending'`` as the serialization
+    point so two callers can't double-send. Returns ``(state, gmail_draft_id)``:
+
+      * ``"missing"``       — no such row
+      * ``"not_pushed"``    — no Gmail draft to send (push first)
+      * ``"already_sent"``  — send_state already 'sent' or 'shadow'
+      * ``"race_lost"``     — another send is in flight
+      * ``"claimed"``       — caller won; follow with finalize_send/abort_send
+    """
+    with closing(_connect(database_url)) as conn:
+        row = conn.execute(
+            "SELECT gmail_draft_id, send_state FROM agent_pending_drafts WHERE id = ?",
+            (row_id,),
+        ).fetchone()
+        if row is None:
+            return ("missing", None)
+        if not row["gmail_draft_id"]:
+            return ("not_pushed", None)
+        if row["send_state"] in ("sent", "shadow"):
+            return ("already_sent", row["gmail_draft_id"])
+        cur = conn.execute(
+            """UPDATE agent_pending_drafts
+               SET send_state = 'sending', updated_at = CURRENT_TIMESTAMP
+               WHERE id = ? AND gmail_draft_id IS NOT NULL
+                 AND (send_state = 'draft_created' OR send_state IS NULL)""",
+            (row_id,),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            return ("race_lost", row["gmail_draft_id"])
+        return ("claimed", row["gmail_draft_id"])
+
+
+def finalize_send(
+    database_url: str,
+    row_id: int,
+    *,
+    sent_message_id: str | None = None,
+    shadow: bool = False,
+) -> None:
+    """Record a completed send. ``shadow=True`` marks a simulated (soak) send
+    that did NOT touch the recipient; otherwise it's a real send."""
+    state = "shadow" if shadow else "sent"
+    with closing(_connect(database_url)) as conn:
+        conn.execute(
+            "UPDATE agent_pending_drafts SET send_state = ?, sent_message_id = ?, "
+            "actually_sent_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ?",
+            (state, sent_message_id, row_id),
+        )
+        conn.commit()
+
+
+def abort_send(database_url: str, row_id: int) -> None:
+    """Roll back a claimed-but-failed send: restore ``send_state`` to
+    ``'draft_created'`` (the draft still exists) so the caller can retry."""
+    with closing(_connect(database_url)) as conn:
+        conn.execute(
+            "UPDATE agent_pending_drafts SET send_state = 'draft_created', "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND send_state = 'sending'",
+            (row_id,),
         )
         conn.commit()
 
