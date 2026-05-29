@@ -192,6 +192,28 @@ def dismissal_stats(
     return store.dismissal_stats(_db_url(request), account=account, days=days)
 
 
+@router.get("/api/agent/precision")
+def triage_precision(
+    request: Request,
+    account: str | None = Query(None),
+    days: int = Query(30, ge=1, le=365),
+    history_limit: int = Query(30, ge=1, le=365),
+) -> dict:
+    """Draft-decision precision/recall on real mail (autonomy Phase A2).
+
+    Returns the live metric computed now (from the user's verdicts on queued
+    rows) plus the recorded nightly history so the trend is visible. The live
+    block is recomputed on demand; the history comes from the nightly
+    snapshots in ``triage_precision_history``.
+    """
+    from app.evaluation.real_mail_eval import evaluate_real_mail, precision_history
+
+    return {
+        "live": evaluate_real_mail(_db_url(request), account=account, days=days),
+        "history": precision_history(_db_url(request), account=account, limit=history_limit),
+    }
+
+
 @router.get("/api/agent/skip_sender_candidates")
 def skip_sender_candidates(
     request: Request,
