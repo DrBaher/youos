@@ -139,6 +139,41 @@ def _post_webhook(url: str, payload: dict[str, Any], secret: str) -> bool:
         return False
 
 
+# Per-(kind, account) last-alert monotonic timestamp, so a recurring condition
+# (auth expired every tick) alerts once per debounce window, not every sweep.
+_LAST_ALERT_TS: dict[str, float] = {}
+
+
+def _alert(cfg: dict[str, Any], *, kind: str, account: str, title: str, message: str) -> bool:
+    """Fire a proactive alert on every configured channel (macOS + webhook),
+    debounced per (kind, account). Returns True if it actually fired.
+
+    This is the "not just a WARN in a log" path — a dead/degraded agent reaches
+    the user. Best-effort; never raises."""
+    import time
+
+    key = f"{kind}:{account}"
+    interval_s = max(0, int(cfg.get("notify_min_interval_minutes", 10))) * 60
+    now = time.monotonic()
+    last = _LAST_ALERT_TS.get(key)
+    if last is not None and interval_s and (now - last) < interval_s:
+        return False
+    _LAST_ALERT_TS[key] = now
+    fired = False
+    if cfg.get("notify_macos"):
+        _notify_macos(title=title, message=message)
+        fired = True
+    url = cfg.get("notify_webhook_url") or ""
+    if url:
+        _post_webhook(
+            url,
+            {"type": "alert", "kind": kind, "account": account, "title": title, "message": message},
+            cfg.get("notify_webhook_secret") or "",
+        )
+        fired = True
+    return fired
+
+
 def _maybe_push_webhook(app, account: str, cfg: dict[str, Any]) -> None:
     """After a sweep, push a digest summary to the configured webhook — but only
     when there's something actionable, the state CHANGED since the last push,
@@ -226,6 +261,33 @@ def _run_one_sweep(account: str, cfg: dict[str, Any]) -> int:
         configs_dir=s.configs_dir,
         trigger="scheduled",
     )
+    # Sweep-health alarm: a "successful" sweep is still unhealthy if most drafts
+    # fell back to the cloud (local model down) or came back empty. Alert on a
+    # spike — these are silent-degradation modes the persisted-count never shows.
+    try:
+        from app.agent.alerts import sweep_health
+
+        health = sweep_health(result.drafts)
+        if health["spike"]["fallback"]:
+            _alert(
+                cfg, kind="fallback_spike", account=account,
+                title="YouOS agent: local model may be down",
+                message=(
+                    f"{health['cloud_fallbacks']}/{health['total']} drafts used the cloud "
+                    f"fallback this sweep — the local model server may be down."
+                ),
+            )
+        elif health["spike"]["empty"]:
+            _alert(
+                cfg, kind="empty_spike", account=account,
+                title="YouOS agent: drafts coming back empty",
+                message=(
+                    f"{health['empties']}/{health['total']} drafts were empty this sweep — "
+                    f"the model/adapter may be broken. Check `youos doctor`."
+                ),
+            )
+    except Exception as exc:
+        logger.info("sweep-health check skipped: %s", exc)
     return result.persisted
 
 
@@ -266,20 +328,20 @@ async def _loop(app) -> None:
                 except Exception as exc:
                     prev = failures.get(account, 0)
                     failures[account] = prev + 1
-                    # First failure → warn loudly + notify so a dead agent is
-                    # visible. Subsequent consecutive failures stay quiet.
-                    if prev == 0:
-                        logger.warning("agent loop: sweep for %s failed: %s", account, exc)
-                        if cfg["notify_macos"]:
-                            _notify_macos(
-                                title="YouOS agent stopped drafting",
-                                message=f"Sweep for {account} failed: {exc}. Check youos doctor.",
-                            )
-                    else:
-                        logger.warning(
-                            "agent loop: sweep for %s still failing (%dx): %s",
-                            account, prev + 1, exc,
-                        )
+                    # Classify the failure into an actionable alert (auth /
+                    # rate-limit / network / unknown) and fire on every channel
+                    # — not just a log line. _alert debounces per (kind,
+                    # account), so a recurring cause (expired auth every tick)
+                    # alerts once per window rather than spamming.
+                    from app.agent.alerts import classify_sweep_failure
+
+                    fc = classify_sweep_failure(str(exc))
+                    logger.warning(
+                        "agent loop: sweep for %s failed (%s, %dx): %s",
+                        account, fc.kind, prev + 1, exc,
+                    )
+                    _alert(cfg, kind=f"sweep_fail:{fc.kind}", account=account,
+                           title=fc.title, message=fc.message)
             setattr(app.state, _FAILURES_ATTR, failures)
 
             if total_persisted > 0 and cfg["notify_macos"]:
