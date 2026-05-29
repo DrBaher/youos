@@ -987,6 +987,31 @@ def test_rules_skip_drops_message_from_drafting(mocked_environment, monkeypatch)
     )
 
 
+def test_hold_rule_drafts_but_blocks_auto_push(mocked_environment, monkeypatch):
+    """A 'hold' rule (content predicate) still drafts the reply, but the row is
+    excluded from auto-push — so it can never be auto-sent either."""
+    from app.agent import store, triage
+
+    env = mocked_environment
+    monkeypatch.setattr("app.agent.rules.load_rules", lambda: [
+        {"match": {"body_contains": "pricing"}, "action": "hold", "value": None},
+    ])
+    monkeypatch.setattr("app.agent.rules.rules_need_intent", lambda rules: False)
+    # Auto-push otherwise WOULD push this whitelisted, high-quality draft.
+    monkeypatch.setattr(triage, "_auto_push_config", lambda: _autopush_cfg(dry_run=True))
+
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    # Drafted (the reply is ready for the human)...
+    assert result.kept == 1
+    drafts = store.list_pending(env["database_url"], status="pending", tier="draft")
+    assert any("partner.com" in (r.get("sender_email") or "") for r in drafts)
+    # ...but held back from auto-push (and therefore auto-send).
+    assert result.auto_pushed == []
+
+
 def test_calendar_proposes_slots_for_meeting_requests(monkeypatch, tmp_path):
     """When calendar is enabled and the inbound is a meeting request, the
     agent injects real open slots into the draft instructions."""
