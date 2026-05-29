@@ -346,13 +346,53 @@ def list_mailbox_actions(
 @router.post("/api/agent/actions/{action_id}/undo")
 def undo_mailbox_action(action_id: int, request: Request) -> dict:
     """Reverse a previously-applied routing action (re-add INBOX / remove the
-    label / unstar). Only 'applied' actions can be undone."""
+    label / unstar). Only 'applied' actions can be undone; a forward cannot."""
     from app.agent.actions import undo_action
 
     res = undo_action(_db_url(request), action_id)
     if not res.get("ok"):
         raise HTTPException(res.get("http_status", 500), res.get("detail", "undo failed"))
     return res
+
+
+class DigestRunBody(BaseModel):
+    """Manually run (or preview) a configured digest task."""
+
+    name: str
+    account: str | None = None
+    dry_run: bool = True   # default to a safe preview (build body, don't send)
+
+
+@router.get("/api/agent/digests")
+def list_digests(request: Request, account: str | None = Query(None)) -> dict:
+    """The configured digest tasks + recent run history (for the UI / an
+    orchestrator). Read-only; never sends."""
+    from app.agent.digest_tasks import list_digest_runs, load_digests
+
+    specs = [vars(s) for s in load_digests()]
+    runs = list_digest_runs(_db_url(request), account=account, limit=50)
+    return {"digests": specs, "runs": runs}
+
+
+@router.post("/api/agent/digests/run")
+def run_digest_now(body: DigestRunBody, request: Request) -> dict:
+    """Run one configured digest by name. ``dry_run`` (default true) previews the
+    digest body without sending or consuming the period; ``dry_run=false`` does a
+    real run (gated by the digest + send-frontier flags, at-most-once per period)."""
+    from app.agent.digest_tasks import load_digests, run_digest
+    from app.core.config import get_user_emails
+
+    account = body.account
+    if not account:
+        emails = get_user_emails()
+        if not emails:
+            raise HTTPException(400, "no account configured (user.emails empty)")
+        account = emails[0]
+
+    spec = next((s for s in load_digests() if s.name == body.name), None)
+    if spec is None:
+        raise HTTPException(404, f"no digest named {body.name!r} (configure it under agent.digests.items)")
+    return run_digest(_db_url(request), account, spec, dry_run=body.dry_run)
 
 
 class PromoteSkipSendersBody(BaseModel):

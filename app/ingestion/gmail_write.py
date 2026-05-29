@@ -247,6 +247,65 @@ def _gog_forward(*, account: str, message_id: str, to: str, note: str | None) ->
     return GmailForwardResult(message_id=sent_id, to=to, raw_response=payload)
 
 
+def send_email(
+    *,
+    account: str,
+    to: str,
+    subject: str,
+    body: str,
+    backend: str | None = None,
+) -> GmailSendResult:
+    """Compose and send a NEW email (not a reply or forward) — an OUTBOUND send,
+    used by the digest task to deliver a summary. Crosses the never-send
+    boundary, so callers MUST gate it behind the send frontier
+    (``agent.send.enabled`` + outbound kill-switch). Only the ``gog`` backend
+    has a verified shape today."""
+    from app.core.config import get_ingestion_google_backend
+
+    name = (backend or get_ingestion_google_backend()).strip().lower()
+    if name == "gog":
+        return _gog_send_email(account=account, to=to, subject=subject, body=body)
+    raise NotImplementedError(
+        f"send_email is only implemented for the gog backend (got {name!r})"
+    )
+
+
+def _gog_send_email(*, account: str, to: str, subject: str, body: str) -> GmailSendResult:
+    """Verified ``gog gmail send --to --subject --body`` invocation (gog 0.17.0).
+
+    Shape (confirmed via ``gog gmail send --help``):
+        gog gmail send --to <addr> --subject <s> --body <b> --account <email> --json --no-input
+    On success the Google API returns the sent Message resource ``{"id": ...}``.
+    """
+    cmd: list[str] = [
+        "gog", "gmail", "send",
+        "--to", to,
+        "--subject", subject,
+        "--body", body,
+        "--account", account,
+        "--json", "--no-input",
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except FileNotFoundError as exc:
+        raise GmailWriteError("gog CLI not on PATH — install via Homebrew or set up the native backend") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise GmailWriteError("gog gmail send timed out (30s)") from exc
+
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        raise GmailWriteError(f"gog send returned exit {result.returncode}: {stderr or 'no stderr'}")
+
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise GmailWriteError(f"gog send returned non-JSON stdout: {result.stdout[:200]!r}") from exc
+
+    sent_id = str(payload.get("id") or payload.get("messageId") or "")
+    logger.info("sent new email to %s for account=%s", to, account)
+    return GmailSendResult(message_id=sent_id, raw_response=payload)
+
+
 # --- gog backend -----------------------------------------------------------
 
 
