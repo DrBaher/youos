@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.2.0-beta.91 — 2026-05-29
+
+### The send path + honest state model + kill-switch (autonomy Phase B, hard-gated)
+
+The first step across the never-send boundary — built so it **cannot send by default**. This adds the *capability* to send a queued draft; autonomous auto-send (with confidence×stakes escalation and a delay/undo window) is a later, separately-gated step.
+
+- New `gmail_write.send_draft()` — sends an **existing** Gmail draft by id (the exact draft the user could have reviewed, no body re-marshaling). Verified `gog` shape (`gog gmail drafts send <id> --account … --json --no-input --force`, confirmed against gog 0.17.0 `--help`); `dry_run` passes gog's `--dry-run`. Only the gog backend is implemented.
+- New `app/agent/send.py` `send_pending_row()` — the one gated send path. **Two gates checked before any Gmail call**: `agent.outbound_kill_switch` (when on, blocks everything) and `agent.send.enabled` (master switch, default **false** — a real send requires it). `shadow=True` runs the full path but records a soak-only send without touching Gmail. Requires an already-pushed draft; idempotent (atomic `begin_send`/`finalize_send`/`abort_send` claim mirrors the push guard); a backend error rolls back to `draft_created`.
+- **Honest send state** — new `send_state` column (migration), explicit instead of the overloaded `status='sent'`: `draft_created` (a Gmail draft exists) / `shadow` (simulated send) / `sent` (actually sent), plus `sent_message_id` + `actually_sent_at`. Existing pushed rows backfill to `draft_created`.
+- New endpoint `POST /api/agent/pending/{id}/send` (`shadow` / `dry_run` options). New flags `agent.send.enabled` + `agent.outbound_kill_switch`.
+
++12 tests (`test_send_frontier.py`: gating, kill-switch, shadow, real send, requires-pushed-draft, idempotency, rollback, state machine, verified gog command). **Default behavior unchanged: with `agent.send.enabled` off (the default), YouOS still only ever creates drafts.**
+
 ## v0.2.0-beta.90 — 2026-05-29
 
 ### Fact grounding in the sweep (autonomy Phase A3)
