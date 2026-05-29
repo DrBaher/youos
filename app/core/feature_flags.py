@@ -175,6 +175,63 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.auto_push.enabled",
+        "label": "Auto-push high-confidence drafts to Gmail Drafts",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "After a sweep, automatically create a Gmail DRAFT (never sends) for "
+            "high-confidence replies to known, whitelisted senders. The human "
+            "still finishes-and-sends from Gmail. Off by default; even when on, "
+            "it stays in dry-run until you turn dry-run off."
+        ),
+    },
+    {
+        "key": "agent.auto_push.dry_run",
+        "label": "Auto-push dry-run (log only)",
+        "type": "bool",
+        "default": True,
+        "help": (
+            "When on, auto-push only LOGS what it would push (no Gmail write) so "
+            "you can watch it for a week before trusting it. Turn off to actually "
+            "create the drafts."
+        ),
+    },
+    {
+        "key": "agent.auto_push.confidence_floor",
+        "label": "Auto-push confidence floor",
+        "type": "float",
+        "default": 0.85,
+        "min": 0.6,
+        "max": 1.0,
+        "help": "Only auto-push drafts whose needs-reply score is at least this. Clamped 0.6–1.0.",
+    },
+    {
+        "key": "agent.auto_push.known_sender_min_pairs",
+        "label": "Auto-push: min prior reply pairs with the sender",
+        "type": "int",
+        "default": 3,
+        "help": "Only auto-push to senders you've already corresponded with at least this many times.",
+    },
+    {
+        "key": "agent.auto_push.daily_push_cap",
+        "label": "Auto-push daily cap (per account)",
+        "type": "int",
+        "default": 5,
+        "help": "Maximum drafts auto-pushed per UTC day per account. Bounds blast radius. 0 disables auto-push.",
+    },
+    {
+        "key": "agent.auto_push.whitelist",
+        "label": "Auto-push sender whitelist",
+        "type": "text",
+        "default": "",
+        "help": (
+            "Comma-separated emails or @domains eligible for auto-push. REQUIRED "
+            "— with an empty whitelist nothing is auto-pushed (safety). Use exact "
+            "emails (alice@x.com) or @domain (@partner.com)."
+        ),
+    },
+    {
         "key": "agent.auto_promote_skip_senders",
         "label": "Auto-promote senders dismissed as noise 3+ times",
         "type": "bool",

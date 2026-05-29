@@ -596,3 +596,87 @@ def test_concurrent_sweep_is_skipped_when_account_locked(mocked_environment, mon
     assert result.fetched == 0
     assert result.persisted == 0
     assert calls["fetch"] == 0, "the locked-out sweep must not run the body"
+
+
+# --- Tiered auto-push (audit Tier 2) ---------------------------------------
+
+
+def _autopush_cfg(**over):
+    base = {
+        "enabled": True, "dry_run": True, "confidence_floor": 0.85,
+        "min_pairs": 0, "daily_push_cap": 5, "whitelist": ["@partner.com"],
+    }
+    base.update(over)
+    return base
+
+
+def test_auto_push_dry_run_logs_would_push_without_writing(mocked_environment, monkeypatch):
+    from app.agent import store, triage
+
+    env = mocked_environment
+    monkeypatch.setattr(triage, "_auto_push_config", lambda: _autopush_cfg(dry_run=True))
+
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    actions = {(a["id"], a["action"]) for a in result.auto_pushed}
+    assert any(a == "would_push" for _, a in actions), result.auto_pushed
+    # Dry-run must NOT have created any Gmail draft.
+    sent = store.list_pending(env["database_url"], status="sent")
+    assert sent == []
+
+
+def test_auto_push_live_creates_gmail_draft_for_whitelisted_high_confidence(mocked_environment, monkeypatch):
+    from app.agent import store, triage
+    from app.ingestion import gmail_write
+
+    env = mocked_environment
+    monkeypatch.setattr(triage, "_auto_push_config", lambda: _autopush_cfg(dry_run=False))
+    monkeypatch.setattr(
+        gmail_write, "create_draft",
+        lambda **kw: gmail_write.GmailDraftResult(draft_id="gd_auto", raw_response={"id": "gd_auto"}),
+    )
+
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    pushed = [a for a in result.auto_pushed if a["action"] == "pushed"]
+    assert len(pushed) == 1, result.auto_pushed
+    assert pushed[0]["gmail_draft_id"] == "gd_auto"
+
+    sent = store.list_pending(env["database_url"], status="sent")
+    assert len(sent) == 1
+    assert sent[0]["gmail_draft_id"] == "gd_auto"
+
+
+def test_auto_push_empty_whitelist_pushes_nothing(mocked_environment, monkeypatch):
+    from app.agent import store, triage
+
+    env = mocked_environment
+    monkeypatch.setattr(triage, "_auto_push_config", lambda: _autopush_cfg(dry_run=False, whitelist=[]))
+    monkeypatch.setattr(
+        "app.ingestion.gmail_write.create_draft",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("must not push with empty whitelist")),
+    )
+
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    assert result.auto_pushed == []
+    assert store.list_pending(env["database_url"], status="sent") == []
+
+
+def test_auto_push_below_floor_is_not_pushed(mocked_environment, monkeypatch):
+    from app.agent import triage
+
+    env = mocked_environment
+    # Floor above the Alice row's ~0.90 score → nothing qualifies.
+    monkeypatch.setattr(triage, "_auto_push_config", lambda: _autopush_cfg(dry_run=True, confidence_floor=0.99))
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    assert result.auto_pushed == []
