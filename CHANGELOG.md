@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0-beta.77 — 2026-05-29
+
+### Root-cause fix: autoresearch was blind to its own mutations
+
+The b76 per-component diagnostics paid off immediately. A live run showed every retrieval-param mutation producing **byte-identical** sub-scores (`pass 0.20→0.20  kw 0.38→0.38  conf 0.85→0.85`) — proof the mutated config had *zero* effect on the eval, not that it moved below threshold.
+
+Cause: the **exemplar cache**. `generate_draft` calls `_apply_cached_order`, which reorders retrieval's output to put previously-cached exemplars first. Populated on the baseline eval, it then pinned the same exemplars into every candidate's prompt — so changing `top_k`, recency/account weights, etc. re-ranked retrieval but the cache forced identical exemplars → identical drafts → identical scores. **This is why autoresearch had kept 0 improvements.**
+
+Fix: `DraftRequest.use_exemplar_cache` (default True = production behavior). The autoresearch eval (`scripts/run_autoresearch.py`) now sets it False, so `generate_draft` skips the cache read/apply/write and each candidate's retrieval config actually drives the exemplars — and the eval. Production drafting is unchanged (cache still on). +1 test.
+
 ## v0.2.0-beta.76 — 2026-05-29
 
 ### Autoresearch: sensitivity + diagnosability

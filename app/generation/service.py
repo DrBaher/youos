@@ -187,6 +187,13 @@ class DraftRequest:
     # an error placeholder rather than falling back. Interactive /feedback
     # is unaffected; this is strictly per-request.
     strict_local: bool = False
+    # When False, bypass the exemplar cache so this draft reflects the CURRENT
+    # retrieval config rather than a previously-cached exemplar selection. The
+    # autoresearch eval sets this False — otherwise the cache pins the same
+    # exemplars across every candidate and retrieval-param mutations become
+    # no-ops (the eval scores identically and nothing is ever kept). Production
+    # drafting leaves it True for consistency + speed.
+    use_exemplar_cache: bool = True
     # Pin the generation backend regardless of config/use_local_model. Used by
     # the cross-model comparison (app/evaluation/model_compare.py) to draft the
     # same case under each engine. One of "mlx" | "ollama" | "claude" | "none";
@@ -1778,14 +1785,22 @@ def generate_draft(
         detected_mode = request.mode or retrieval_response.detected_mode
         reply_pairs = retrieval_response.reply_pairs
 
-        cached_ids, exemplar_cache_hit, exemplar_cache_key = _get_cached_exemplar_ids(detected_intent, sender_type_hint, database_url=database_url)
-        reply_pairs = _apply_cached_order(reply_pairs, cached_ids)
+        if request.use_exemplar_cache:
+            cached_ids, exemplar_cache_hit, exemplar_cache_key = _get_cached_exemplar_ids(detected_intent, sender_type_hint, database_url=database_url)
+            reply_pairs = _apply_cached_order(reply_pairs, cached_ids)
 
-        selected_ids = _top_exemplar_source_ids(reply_pairs)
-        # Only persist on a cache miss or when the selection actually changed —
-        # otherwise every hit triggered a redundant DB write of the same row.
-        if not exemplar_cache_hit or selected_ids != cached_ids[: len(selected_ids)]:
-            _update_exemplar_cache(detected_intent, sender_type_hint, selected_ids, database_url=database_url)
+            selected_ids = _top_exemplar_source_ids(reply_pairs)
+            # Only persist on a cache miss or when the selection actually changed —
+            # otherwise every hit triggered a redundant DB write of the same row.
+            if not exemplar_cache_hit or selected_ids != cached_ids[: len(selected_ids)]:
+                _update_exemplar_cache(detected_intent, sender_type_hint, selected_ids, database_url=database_url)
+        else:
+            # Cache bypassed (autoresearch eval): use retrieval's own ordering so
+            # the current config actually determines the exemplars. No read, no
+            # write — the cache stays untouched for production drafting.
+            exemplar_cache_hit = False
+            exemplar_cache_key = None
+            selected_ids = _top_exemplar_source_ids(reply_pairs)
 
         # Build score stats dict from retrieval response
         score_stats = None

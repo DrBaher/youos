@@ -131,9 +131,15 @@ def _generate_for_eval(
     database_url: str,
     configs_dir: Path,
 ) -> dict[str, Any]:
-    """Wrap generate_draft for the eval runner interface."""
+    """Wrap generate_draft for the eval runner interface.
+
+    ``use_exemplar_cache=False`` is critical: with the cache on, the exemplar
+    selection is pinned across every candidate, so mutating retrieval params
+    changes nothing the eval can see and autoresearch keeps 0 improvements.
+    Bypassing the cache lets each config actually drive the draft.
+    """
     response = generate_draft(
-        DraftRequest(inbound_message=prompt_text),
+        DraftRequest(inbound_message=prompt_text, use_exemplar_cache=False),
         database_url=database_url,
         configs_dir=configs_dir,
     )
