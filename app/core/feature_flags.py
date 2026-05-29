@@ -438,6 +438,19 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.digests.enabled",
+        "label": "Digest tasks (collect → summarize → email)",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "Master switch for scheduled digest tasks (configured under "
+            "agent.digests.items): each runs a Gmail query, summarizes the "
+            "matches with the local model, and sends ONE digest email. OFF by "
+            "default; a real send also requires agent.send.enabled + the "
+            "outbound kill-switch off (delivery defaults to your own inbox)."
+        ),
+    },
+    {
         "key": "agent.extract_facts.enabled",
         "label": "Harvest facts from drafted mail",
         "type": "bool",
