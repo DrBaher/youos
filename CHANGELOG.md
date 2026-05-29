@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.2.0-beta.114 — 2026-05-29
+
+### Digest tasks — collect → summarize → deliver one email (scheduled)
+
+A new abstraction beyond per-message rules: a **digest task** runs a Gmail query, summarizes the matching messages *together* with the warm local model, and sends **one** digest email — optionally archiving the collected messages afterward. This is the "pull a collection, summarise, deliver in one digest" workflow that the per-message rule engine (and the NL box) structurally couldn't express.
+
+Configured under `agent.digests` (a dict so the master flag and specs coexist):
+```yaml
+agent:
+  digests:
+    enabled: false
+    items:
+      - name: Newsletters
+        query: "label:Newsletters newer_than:7d"   # any Gmail query
+        schedule: daily            # daily | weekly
+        hour: 7                    # local-tz hour at/after which it may run
+        deliver_to: ""             # empty = your own inbox
+        then_archive: false
+        max_messages: 50
+```
+
+- **Outbound, so hard-gated** like `forward`: a real send needs `agent.digests.enabled` **and** `agent.send.enabled` **and** the outbound kill-switch off. Any closed gate records `blocked` and sends nothing. Delivery defaults to your own inbox.
+- **At-most-once per period** — each run atomically claims `(name, account, period_key)` via a UNIQUE index (`agent_digest_runs`), the same cross-process claim that fixed the forward double-send, so overlapping sweeps can't double-send a daily/weekly digest.
+- **Summarized by the local model** (no egress), always falling back to a plain itemised list so a digest is never empty.
+- Runs from the scheduler each tick (no-op until due: local hour ≥ `hour`, not yet run this period). New `POST /api/agent/digests/run` (default a safe **dry-run preview** — builds the body without sending or consuming the period) and `GET /api/agent/digests` (specs + run history). New compose-and-send primitive `gmail_write.send_email` (verified `gog gmail send`).
+
+An adversarial multi-agent audit (gate-bypass / double-send / robustness lenses) confirmed two reliability bugs (both *never*-send, not over-send), fixed before merge: (1) the period was claimed *before* the gate/fetch checks, so a closed send-gate (or an empty inbox at the digest hour, or a transient fetch error) **permanently consumed the period** — now fetch + gates are checked first and the period is claimed only immediately before the actual send, so a blocked/empty/error run stays re-runnable; (2) the digest path never called `ensure_agent_schema`, so an API-triggered run on a schema-stale instance could 500 on a missing table — `run_digest` now self-heals the schema like `run_triage`.
+
++17 tests. Never-send boundary unchanged — digests stay off until both the digest and send gates are explicitly opened.
+
 ## v0.2.0-beta.113 — 2026-05-29
 
 ### `forward` action — the first outbound routing action, hard-gated
