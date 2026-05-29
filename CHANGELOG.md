@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.90 — 2026-05-29
+
+### Fact grounding in the sweep (autonomy Phase A3)
+
+The model dodged or invented availability / addresses because (a) the sweep never populated the facts table — `extract_and_save` only ran on manual paths — and (b) nothing told the model to ground its answer. Two complementary fixes:
+
+- **Prompt grounding rule** — when the inbound poses a question that asks for a concrete detail (address, email, phone, price, availability, date/time, link), `assemble_prompt` adds a `[GROUNDING]` rule: state only facts from the inbound / thread / facts context, else ask or follow up — never invent. Gated on `_inbound_requests_fact`, so ordinary replies keep the unchanged prompt (minimising golden-eval drift) and the guard appears exactly where invention is a risk. Pairs with verify-before-accept (b89): the prompt prevents inventions, verify catches any that slip through.
+- **Harvest facts during the sweep** — when the agent drafts a reply to real mail, it can now extract concrete facts the sender stated into your memory (`extract_and_save`, rule-based, on-device), so this and future replies are grounded. New flag `agent.extract_facts.enabled` (bool, default false — it writes to your memory table); runs only for drafted messages (not everything fetched), failure-isolated.
+
++8 tests (`test_fact_grounding.py` + sweep extraction cases). Never-send boundary unchanged.
+
 ## v0.2.0-beta.89 — 2026-05-29
 
 ### Verify-before-accept — catch hallucinated specifics before acting (autonomy Phase A3)
