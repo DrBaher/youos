@@ -176,6 +176,33 @@ def load_digests() -> list[DigestSpec]:
     return out
 
 
+def save_digests(items: list[Any], *, config_path=None) -> list[dict[str, Any]]:
+    """Persist the full ``agent.digests.items`` list to config (validated),
+    preserving the ``agent.digests.enabled`` master flag. Returns the saved
+    (normalised) digest dicts. The single validated write path the authoring API
+    uses — mirrors ``rules.save_rules``."""
+    import copy
+
+    from app.core.config import load_config, save_config
+
+    normalised = [_normalize_digest(d) for d in items]
+    if any(n is None for n in normalised):
+        bad = next(i for i, n in enumerate(normalised) if n is None)
+        raise ValueError(f"digest at index {bad} is invalid")
+    cfg = copy.deepcopy(load_config(config_path) or {})
+    agent = cfg.setdefault("agent", {})
+    if not isinstance(agent, dict):
+        agent = {}
+        cfg["agent"] = agent
+    digests = agent.get("digests")
+    if not isinstance(digests, dict):
+        digests = {}
+        agent["digests"] = digests
+    digests["items"] = [vars(n) for n in normalised]
+    save_config(cfg, config_path)
+    return digests["items"]
+
+
 def _digest_config() -> dict[str, Any]:
     """Gates for sending a digest: the digest master switch + the shared send
     frontier. Every gate defaults to the safe (no-send) value."""

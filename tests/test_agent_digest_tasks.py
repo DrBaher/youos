@@ -69,6 +69,38 @@ def test_validate_digest():
     assert not dt.validate_digest({"name": "N", "query": "x", "hour": 99})[0]
 
 
+def test_save_digests_round_trips_and_preserves_master_flag(tmp_path, monkeypatch):
+    import app.core.config as config_mod
+
+    cfg = tmp_path / "youos_config.yaml"
+    cfg.write_text("agent:\n  digests:\n    enabled: true\n", encoding="utf-8")
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", cfg)
+    config_mod.load_config.cache_clear()
+    try:
+        dt.save_digests([{"name": "N", "query": "label:X", "schedule": "weekly", "weekday": "friday", "hour": 17}])
+        loaded = dt.load_digests()
+        assert len(loaded) == 1 and loaded[0].name == "N"
+        assert loaded[0].weekday == 4 and loaded[0].schedule == "weekly" and loaded[0].hour == 17
+        # the master flag (agent.digests.enabled) must be preserved across the write
+        assert (config_mod.load_config() or {})["agent"]["digests"]["enabled"] is True
+    finally:
+        config_mod.load_config.cache_clear()
+
+
+def test_save_digests_rejects_invalid(tmp_path, monkeypatch):
+    import app.core.config as config_mod
+
+    cfg = tmp_path / "youos_config.yaml"
+    cfg.write_text("user: {}\n", encoding="utf-8")
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", cfg)
+    config_mod.load_config.cache_clear()
+    try:
+        with pytest.raises(ValueError):
+            dt.save_digests([{"name": "", "query": "x"}])   # no name
+    finally:
+        config_mod.load_config.cache_clear()
+
+
 def test_load_digests_drops_invalid(monkeypatch):
     monkeypatch.setattr("app.core.config.load_config", lambda *a, **k: {"agent": {"digests": {"items": [
         {"name": "Good", "query": "label:A"},
