@@ -117,24 +117,31 @@ def sync_gmail_label_dismissals(
             if not thread_id or not message_id:
                 continue
             try:
-                row = _find_pending_row_for_thread(
+                rows = _find_pending_rows_for_thread(
                     database_url, account=account, thread_id=thread_id,
                 )
-                if row is None:
+                if not rows:
                     skipped.append(thread_id)
                     continue
-                store.mark_dismissed(database_url, row["id"], reason=reason)
-                dismissed_ids.append(row["id"])
-                # Remove the label so the next sync doesn't re-fire.
+                # Dismiss every actionable row for the thread — a 'skip this'
+                # gesture means the whole thread, not just the newest row.
+                for row in rows:
+                    store.mark_dismissed(database_url, row["id"], reason=reason)
+                    dismissed_ids.append(row["id"])
+                # Remove the label so the next sync doesn't re-fire. If this
+                # fails, the label stays and the NEXT sweep would re-find the
+                # thread — but every row is already dismissed (mark_dismissed is
+                # idempotent on status), so re-processing is a harmless no-op
+                # rather than the old behaviour of dismissing a different row.
                 try:
                     _gog_modify_remove_label(
                         account=account, message_id=message_id, label=lbl,
                     )
                 except Exception as exc:
-                    # Don't roll back the dismissal — user signalled intent.
+                    # Don't roll back the dismissals — user signalled intent.
                     logger.warning(
-                        "label-sync: dismissed row %s but failed to remove %r from thread %s: %s",
-                        row["id"], lbl, thread_id, exc,
+                        "label-sync: dismissed %d row(s) but failed to remove %r from thread %s: %s",
+                        len(rows), lbl, thread_id, exc,
                     )
             except Exception as exc:
                 errors.append(f"thread {thread_id} (label {lbl!r}): {exc}")
@@ -154,17 +161,20 @@ def sync_gmail_label_dismissals(
 # --- DB lookup -------------------------------------------------------------
 
 
-def _find_pending_row_for_thread(
+def _find_pending_rows_for_thread(
     database_url: str, *, account: str, thread_id: str,
-) -> dict | None:
-    """Find the (only) actionable row for a given Gmail thread.
+) -> list[dict]:
+    """Find ALL actionable rows for a given Gmail thread.
 
-    Returns the highest-id pending/amended row for the thread+account pair,
-    or None. The 'highest id' tiebreaker matters if the same thread came
-    through multiple sweeps and produced multiple rows (rare but possible
-    when message_id changes between sweeps for the same thread).
+    Returns every pending/amended row for the thread+account pair, newest
+    first (empty list if none). A single thread can legitimately produce
+    multiple rows across sweeps (message_id changes between sweeps for the
+    same thread); the user's 'skip this thread' gesture should dismiss all of
+    them, not just the newest — otherwise the others get re-surfaced.
     """
     import sqlite3
+
+    from app.db.bootstrap import connect
 
     # Use the same removeprefix path as the rest of the agent module —
     # b49 lesson, urllib.parse absolutizes sqlite:/// relative paths.
@@ -172,18 +182,20 @@ def _find_pending_row_for_thread(
     if not database_url.startswith(prefix):
         raise ValueError(f"Only sqlite:/// URLs are supported (got {database_url!r})")
     db_path = database_url.removeprefix(prefix)
-    conn = sqlite3.connect(db_path)
+    # bootstrap.connect applies busy_timeout + WAL so a label-sync read during
+    # a concurrent sweep/nightly write doesn't hit 'database is locked'.
+    conn = connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        row = conn.execute(
+        rows = conn.execute(
             """SELECT * FROM agent_pending_drafts
                WHERE account = ? AND thread_id = ? AND status IN ('pending', 'amended')
-               ORDER BY id DESC LIMIT 1""",
+               ORDER BY id DESC""",
             (account, thread_id),
-        ).fetchone()
+        ).fetchall()
     finally:
         conn.close()
-    return dict(row) if row else None
+    return [dict(r) for r in rows]
 
 
 # --- gog wire-shape (verified b57) -----------------------------------------

@@ -345,3 +345,66 @@ def test_order_receipt_pattern():
     ))
     assert "transactional template (subject)" in " ".join(v.reasons)
     assert not v.needs_reply
+
+
+# --- Thread-reply quoted-history handling (audit Tier 1) -------------------
+
+
+def test_trivial_ack_on_thread_does_not_inherit_quoted_question():
+    """A 'thanks' reply on a thread whose quoted history contains a question +
+    imperative must NOT be drafted — the signals must come from the NEW
+    content, not the quoted block. This was a large false-positive class."""
+    body = (
+        "Sounds good, thanks!\n\n"
+        "On Mon, May 26, 2026 at 9:00 AM Alice <alice@partner.com> wrote:\n"
+        "> Could you please confirm the Q3 pricing and send the updated numbers?\n"
+        "> Would Thursday work for a call?\n"
+        "> Best, Alice\n"
+    )
+    v = classify(_msg(body=body))
+    assert not v.needs_reply, f"trivial ack should not be drafted (score={v.score}, reasons={v.reasons})"
+
+
+def test_real_new_question_on_thread_still_surfaces():
+    """A genuine new question in the reply (above the quoted history) still
+    scores as needs-reply — we strip the quote, not the new content."""
+    body = (
+        "Thanks! One more thing — can you also share the onboarding timeline?\n\n"
+        "On Mon, May 26, 2026 at 9:00 AM Alice <alice@partner.com> wrote:\n"
+        "> Here is the pricing deck.\n"
+    )
+    v = classify(_msg(body=body))
+    assert v.needs_reply, f"a real new question should be drafted (score={v.score}, reasons={v.reasons})"
+
+
+# --- VIP routing (audit Tier 2) -------------------------------------------
+
+
+def test_vip_sender_gets_boost_and_flag():
+    # A bland message that would normally sit near the boundary.
+    v = classify(_msg(body="FYI, see below.", subject="update"), vip_senders=["@partner.com"])
+    assert v.vip is True
+    assert any("VIP" in r for r in v.reasons)
+    assert v.needs_reply  # +0.25 boost lifts it over the 0.6 threshold
+
+
+def test_vip_match_by_exact_email():
+    v = classify(_msg(sender_email="cofounder@startup.dev"), vip_senders=["cofounder@startup.dev"])
+    assert v.vip is True
+
+
+def test_non_vip_sender_not_boosted():
+    v = classify(_msg(body="FYI, see below.", subject="update"), vip_senders=["@other.com"])
+    assert v.vip is False
+    assert not any("VIP" in r for r in v.reasons)
+
+
+def test_vip_automation_still_hard_skipped():
+    # A VIP domain's newsletter is still hard-skipped — the VIP boost never runs
+    # because hard-skips return first.
+    v = classify(
+        _msg(headers={"list-unsubscribe": "<mailto:u@partner.com>"}),
+        vip_senders=["@partner.com"],
+    )
+    assert not v.needs_reply
+    assert v.vip is False

@@ -96,6 +96,20 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "help": "How often the background loop sweeps unread mail. Minimum 1; the loop enforces a 60-second floor for safety.",
     },
     {
+        "key": "agent.threshold",
+        "label": "Needs-reply threshold",
+        "type": "float",
+        "default": 0.6,
+        "min": 0.4,
+        "max": 0.85,
+        "help": (
+            "Score cutoff for drafting a reply. Higher = stricter (fewer "
+            "false positives, but more real mail missed); lower = looser. "
+            "Clamped to 0.4–0.85. Prefer feedback-driven tuning over manual "
+            "tweaks. Read by the background scheduler and /api/agent/triage."
+        ),
+    },
+    {
         "key": "agent.notify_macos",
         "label": "macOS notification on new drafts",
         "type": "bool",
@@ -161,6 +175,139 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.auto_push.enabled",
+        "label": "Auto-push high-confidence drafts to Gmail Drafts",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "After a sweep, automatically create a Gmail DRAFT (never sends) for "
+            "high-confidence replies to known, whitelisted senders. The human "
+            "still finishes-and-sends from Gmail. Off by default; even when on, "
+            "it stays in dry-run until you turn dry-run off."
+        ),
+    },
+    {
+        "key": "agent.auto_push.dry_run",
+        "label": "Auto-push dry-run (log only)",
+        "type": "bool",
+        "default": True,
+        "help": (
+            "When on, auto-push only LOGS what it would push (no Gmail write) so "
+            "you can watch it for a week before trusting it. Turn off to actually "
+            "create the drafts."
+        ),
+    },
+    {
+        "key": "agent.auto_push.confidence_floor",
+        "label": "Auto-push confidence floor",
+        "type": "float",
+        "default": 0.85,
+        "min": 0.6,
+        "max": 1.0,
+        "help": "Only auto-push drafts whose needs-reply score is at least this. Clamped 0.6–1.0.",
+    },
+    {
+        "key": "agent.auto_push.known_sender_min_pairs",
+        "label": "Auto-push: min prior reply pairs with the sender",
+        "type": "int",
+        "default": 3,
+        "help": "Only auto-push to senders you've already corresponded with at least this many times.",
+    },
+    {
+        "key": "agent.auto_push.daily_push_cap",
+        "label": "Auto-push daily cap (per account)",
+        "type": "int",
+        "default": 5,
+        "help": "Maximum drafts auto-pushed per UTC day per account. Bounds blast radius. 0 disables auto-push.",
+    },
+    {
+        "key": "agent.auto_push.whitelist",
+        "label": "Auto-push sender whitelist",
+        "type": "text",
+        "default": "",
+        "help": (
+            "Comma-separated emails or @domains eligible for auto-push. REQUIRED "
+            "— with an empty whitelist nothing is auto-pushed (safety). Use exact "
+            "emails (alice@x.com) or @domain (@partner.com)."
+        ),
+    },
+    {
+        "key": "agent.notify_webhook_url",
+        "label": "Proactive push webhook URL",
+        "type": "text",
+        "default": "",
+        "help": (
+            "When set, the agent POSTs a digest summary here after a sweep that "
+            "has something actionable (change-detected + throttled) so you/your "
+            "bot are nudged without polling. The ONE place YouOS makes an "
+            "outbound request — metadata only (counts + truncated subjects), "
+            "never message bodies. Empty = no push (default)."
+        ),
+    },
+    {
+        "key": "agent.notify_webhook_secret",
+        "label": "Proactive push webhook secret",
+        "type": "text",
+        "default": "",
+        "help": "Optional shared secret sent as the X-YouOS-Secret header so your receiver can verify the push is from YouOS.",
+    },
+    {
+        "key": "agent.notify_min_interval_minutes",
+        "label": "Min minutes between webhook pushes",
+        "type": "int",
+        "default": 10,
+        "help": "Throttle: at most one webhook push per account per this many minutes, and only when the queue state changed.",
+    },
+    {
+        "key": "agent.summarize_threads.enabled",
+        "label": "Summarize long threads",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "For a reply on a long thread, generate a 2-3 line 'what changed' "
+            "catch-up (on-device, via the warm local model) and store it on the "
+            "queued row. Off by default; needs the warm model server."
+        ),
+    },
+    {
+        "key": "agent.calendar.enabled",
+        "label": "Propose meeting times from your calendar",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "When the agent drafts a reply to a meeting request, read your "
+            "calendar free/busy (via the gog CLI) and offer concrete open slots "
+            "in the draft. Never creates events — proposes times you send. "
+            "Off by default; needs the gog calendar scope authorized."
+        ),
+    },
+    {
+        "key": "agent.vip_senders",
+        "label": "VIP senders (prioritized)",
+        "type": "text",
+        "default": "",
+        "help": (
+            "Comma-separated emails or @domains whose mail is prioritized — a "
+            "strong needs-reply boost so it clears the threshold and sorts to "
+            "the top of the queue. Their automation/newsletters are still "
+            "hard-skipped. Use exact emails (cofounder@x.com) or @domain."
+        ),
+    },
+    {
+        "key": "agent.followup_owed_days",
+        "label": "Follow-up: flag unanswered inbound after N days",
+        "type": "int",
+        "default": 2,
+        "help": "A queued email you haven't acted on for this many days is flagged as 'owed' in the digest + /api/agent/followups.",
+    },
+    {
+        "key": "agent.followup_wait_days",
+        "label": "Follow-up: flag awaiting-reply after N days",
+        "type": "int",
+        "default": 4,
+        "help": "A reply you pushed/sent with no newer thread activity for this many days is flagged as 'awaiting reply'.",
+    },
+    {
         "key": "agent.auto_promote_skip_senders",
         "label": "Auto-promote senders dismissed as noise 3+ times",
         "type": "bool",
@@ -219,6 +366,17 @@ def coerce_value(flag: dict, raw: Any) -> Any:
         if s not in flag["choices"]:
             raise ValueError(f"expected one of {flag['choices']}, got {raw!r}")
         return s
+    if flag["type"] == "float":
+        try:
+            v = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"expected a number, got {raw!r}") from exc
+        lo, hi = flag.get("min"), flag.get("max")
+        if lo is not None:
+            v = max(float(lo), v)
+        if hi is not None:
+            v = min(float(hi), v)
+        return v
     return raw
 
 

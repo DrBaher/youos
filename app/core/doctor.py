@@ -43,6 +43,52 @@ def _google_backend_status() -> tuple[str, bool, str]:
     return backend, True, "gog CLI installed"
 
 
+def _gog_auth_warning() -> str | None:
+    """Probe whether the gog backend actually has a valid, authenticated
+    account — not just whether the binary is installed.
+
+    Expired Google OAuth is the single most likely reason an unattended agent
+    silently stops drafting, yet ``_google_backend_status`` only checks that
+    ``gog`` is on PATH (reports all-green while logged out). This runs a bounded
+    ``gog auth list --json`` and warns when no account is authenticated. Only
+    applies to the gog backend; bounded timeout so a hung auth prompt can't
+    hang the doctor. Returns a warning string or None.
+    """
+    import json
+    import subprocess
+
+    from app.core.config import get_ingestion_google_backend
+
+    try:
+        if get_ingestion_google_backend() != "gog":
+            return None
+        if shutil.which("gog") is None:
+            return None  # already reported as a required failure
+    except Exception:
+        return None
+
+    try:
+        result = subprocess.run(
+            ["gog", "auth", "list", "--json", "--no-input"],
+            capture_output=True, text=True, timeout=8,
+        )
+    except subprocess.TimeoutExpired:
+        return "gog auth check timed out — `gog auth list` may be prompting; run it manually to re-authenticate."
+    except Exception:
+        return None
+
+    if result.returncode != 0:
+        return "gog reports no usable auth (`gog auth list` failed) — run: gog auth login"
+    try:
+        payload = json.loads(result.stdout or "[]")
+        accounts = payload if isinstance(payload, list) else (payload.get("accounts") or payload.get("auths") or [])
+    except json.JSONDecodeError:
+        return None  # unknown shape — don't false-alarm
+    if not accounts:
+        return "gog has no authenticated Google accounts — the agent can't fetch mail. Run: gog auth login"
+    return None
+
+
 def run_doctor_checks() -> tuple[bool, list[str]]:
     """Run system health checks.
 
@@ -131,6 +177,15 @@ def run_doctor_checks_full() -> tuple[bool, list[str], list[str]]:
         drafting = get_drafting_model_status(get_settings().database_url)
         if not drafting.get("healthy", True):
             warnings.append(f"Drafting: {drafting.get('label')} — {drafting.get('detail')}")
+    except Exception:
+        pass
+
+    # Warning: gog is installed but not authenticated — the #1 reason an
+    # unattended agent silently stops drafting. Binary-present is not enough.
+    try:
+        gog_warn = _gog_auth_warning()
+        if gog_warn:
+            warnings.append(gog_warn)
     except Exception:
         pass
 

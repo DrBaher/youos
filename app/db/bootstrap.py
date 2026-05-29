@@ -290,6 +290,10 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
     # 'other' (free-text in a separate column if we ever add one).
     if "dismissal_reason" not in _cols:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN dismissal_reason TEXT")
+    # Long-thread "what changed" summary (opt-in agent.summarize_threads) so a
+    # reviewer can catch up on a long thread without reading it.
+    if "thread_summary" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN thread_summary TEXT")
 
 
 def _migrate_agent_audit(connection: sqlite3.Connection) -> None:

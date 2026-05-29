@@ -86,6 +86,26 @@ def test_rank_candidates_orders_best_first():
     assert ranked[0]["temperature"] == 0.7
     assert [c["temperature"] for c in ranked] == [0.7, 0.3, 1.0]
     assert all("score" in c for c in ranked)
+    # No exemplars → voice_match is None (backward compatible).
+    assert all(c["voice_match"] is None for c in ranked)
+
+
+def test_rank_candidates_prefers_voice_match_when_exemplars_given():
+    """With the user's real replies as exemplars, the candidate that sounds
+    more like them wins over an equally-long but stylistically-foreign one —
+    voice, not length, decides."""
+    exemplar = "Hi Alice, confirmed the pricing is unchanged. Let me know if you need anything else. Best, Baher"
+    cand_a = "Hi Alice, confirmed the pricing is unchanged. Reach out if you need more. Best, Baher"
+    n = len(cand_a.split())
+    cand_b = " ".join(["lorem"] * n)  # same length, zero stylistic/lexical overlap
+    # Feed B first so a stable sort can't accidentally favour A by position.
+    raw = [(cand_b, "m", 0.7), (cand_a, "m", 0.3)]
+    ranked = _rank_candidates(
+        raw, target_words=n, greeting="", closing="", exemplar_replies=[exemplar],
+    )
+    assert ranked[0]["draft"] == cand_a
+    assert ranked[0]["voice_match"] is not None
+    assert (ranked[0]["voice_match"] or 0) > (ranked[1]["voice_match"] or 0)
 
 
 # --- end-to-end wiring -----------------------------------------------------
@@ -135,6 +155,42 @@ def test_multi_candidate_generates_per_temperature_and_picks_best(monkeypatch):
     assert len(resp.candidates) == 3                  # alternatives surfaced
     assert resp.candidates[0]["temperature"] == 0.7   # on-target ranked first
     assert resp.draft == " ".join(["w"] * 30)         # best chosen
+
+
+def test_exemplar_cache_bypassed_when_flag_false(monkeypatch):
+    """use_exemplar_cache=False (the autoresearch eval path) must NOT consult or
+    apply the exemplar cache — otherwise it pins exemplars across candidates and
+    retrieval-param mutations become no-ops."""
+    seen: list = []
+    _stub(monkeypatch, load_config={}, persona={"style": {"avg_reply_words": 30}, "modes": {}}, once_seen=seen)
+
+    calls = {"get": 0, "apply": 0}
+
+    def _fake_get(*a, **k):
+        calls["get"] += 1
+        return [], False, None
+
+    def _fake_apply(reply_pairs, cached_ids):
+        calls["apply"] += 1
+        return reply_pairs
+
+    monkeypatch.setattr(svc, "_get_cached_exemplar_ids", _fake_get)
+    monkeypatch.setattr(svc, "_apply_cached_order", _fake_apply)
+    monkeypatch.setattr(svc, "_update_exemplar_cache", lambda *a, **k: None)
+
+    # Default (True): cache consulted.
+    svc.generate_draft(svc.DraftRequest(inbound_message="hi"), database_url="sqlite:///x", configs_dir=Path("/tmp"))
+    assert calls["get"] == 1
+    assert calls["apply"] == 1
+
+    # Bypassed: neither read nor applied.
+    calls["get"] = calls["apply"] = 0
+    svc.generate_draft(
+        svc.DraftRequest(inbound_message="hi", use_exemplar_cache=False),
+        database_url="sqlite:///x", configs_dir=Path("/tmp"),
+    )
+    assert calls["get"] == 0
+    assert calls["apply"] == 0
 
 
 def test_single_candidate_path_when_disabled(monkeypatch):

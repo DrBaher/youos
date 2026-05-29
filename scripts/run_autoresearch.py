@@ -131,9 +131,28 @@ def _generate_for_eval(
     database_url: str,
     configs_dir: Path,
 ) -> dict[str, Any]:
-    """Wrap generate_draft for the eval runner interface."""
+    """Wrap generate_draft for the eval runner interface.
+
+    ``use_exemplar_cache=False`` is critical: with the cache on, the exemplar
+    selection is pinned across every candidate, so mutating retrieval params
+    changes nothing the eval can see and autoresearch keeps 0 improvements.
+    Bypassing the cache lets each config actually drive the draft.
+
+    top_k is read from the (mutated) config and passed explicitly: retrieval
+    uses ``request.top_k or config.top_k``, and DraftRequest's default top_k=5
+    is truthy, so without this the config's top_k mutations would be silently
+    overridden by the default and never take effect in the eval.
+    """
+    from app.retrieval.service import _load_retrieval_config
+
+    rc = _load_retrieval_config(configs_dir)
     response = generate_draft(
-        DraftRequest(inbound_message=prompt_text),
+        DraftRequest(
+            inbound_message=prompt_text,
+            use_exemplar_cache=False,
+            top_k_reply_pairs=rc.top_k_reply_pairs,
+            top_k_chunks=rc.top_k_chunks,
+        ),
         database_url=database_url,
         configs_dir=configs_dir,
     )

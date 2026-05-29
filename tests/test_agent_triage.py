@@ -528,3 +528,343 @@ def test_auto_promote_skips_senders_already_on_skip_list(mocked_environment, mon
     assert added == []
     # No flag write when nothing new to add.
     assert set_calls == []
+
+
+# --- Tier-0 hardening: failed-sweep visibility (#4) + concurrency guard (#6) ---
+
+
+def test_failed_sweep_logs_audit_row_and_reraises(mocked_environment, monkeypatch):
+    """A sweep that raises during fetch (the #1 unattended failure: expired gog
+    auth) must STILL write an agent_audit row with the error and re-raise — so
+    the failure is visible and the observability success-rate reflects it,
+    instead of staying green while the agent is dead."""
+    import pytest
+
+    from app.agent import store
+    from app.agent.triage import run_triage
+
+    env = mocked_environment
+
+    def _boom(*a, **k):
+        raise RuntimeError("gog auth expired")
+
+    monkeypatch.setattr("app.agent.triage.fetch_unread", _boom)
+
+    with pytest.raises(RuntimeError, match="gog auth expired"):
+        run_triage(
+            account="you@example.com",
+            database_url=env["database_url"],
+            configs_dir=env["configs_dir"],
+        )
+
+    sweeps = store.list_recent_sweeps(env["database_url"], account="you@example.com", limit=5)
+    assert len(sweeps) == 1, "a failed sweep must still log one audit row"
+    assert any("gog auth expired" in e for e in sweeps[0]["errors"])
+
+    agg = store.sweep_aggregate(env["database_url"], account="you@example.com")
+    assert agg["sweeps"] == 1
+    assert agg["successful"] == 0
+    assert agg["success_rate"] == 0.0
+
+
+def test_concurrent_sweep_is_skipped_when_account_locked(mocked_environment, monkeypatch):
+    """If a sweep for the account is already in progress, a second run is a
+    no-op (it must not fetch or draft) — so two overlapping sweeps can't each
+    consume the daily cap budget."""
+    from app.agent import triage
+
+    env = mocked_environment
+    calls = {"fetch": 0}
+
+    def _count_fetch(*a, **k):
+        calls["fetch"] += 1
+        return []
+
+    monkeypatch.setattr("app.agent.triage.fetch_unread", _count_fetch)
+
+    lock = triage._account_lock("you@example.com")
+    assert lock.acquire(blocking=False)
+    try:
+        result = triage.run_triage(
+            account="you@example.com",
+            database_url=env["database_url"],
+            configs_dir=env["configs_dir"],
+        )
+    finally:
+        lock.release()
+
+    assert result.fetched == 0
+    assert result.persisted == 0
+    assert calls["fetch"] == 0, "the locked-out sweep must not run the body"
+
+
+# --- Tiered auto-push (audit Tier 2) ---------------------------------------
+
+
+def _autopush_cfg(**over):
+    base = {
+        "enabled": True, "dry_run": True, "confidence_floor": 0.85,
+        "min_pairs": 0, "daily_push_cap": 5, "whitelist": ["@partner.com"],
+    }
+    base.update(over)
+    return base
+
+
+def test_auto_push_dry_run_logs_would_push_without_writing(mocked_environment, monkeypatch):
+    from app.agent import store, triage
+
+    env = mocked_environment
+    monkeypatch.setattr(triage, "_auto_push_config", lambda: _autopush_cfg(dry_run=True))
+
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    actions = {(a["id"], a["action"]) for a in result.auto_pushed}
+    assert any(a == "would_push" for _, a in actions), result.auto_pushed
+    # Dry-run must NOT have created any Gmail draft.
+    sent = store.list_pending(env["database_url"], status="sent")
+    assert sent == []
+
+
+def test_auto_push_live_creates_gmail_draft_for_whitelisted_high_confidence(mocked_environment, monkeypatch):
+    from app.agent import store, triage
+    from app.ingestion import gmail_write
+
+    env = mocked_environment
+    monkeypatch.setattr(triage, "_auto_push_config", lambda: _autopush_cfg(dry_run=False))
+    monkeypatch.setattr(
+        gmail_write, "create_draft",
+        lambda **kw: gmail_write.GmailDraftResult(draft_id="gd_auto", raw_response={"id": "gd_auto"}),
+    )
+
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    pushed = [a for a in result.auto_pushed if a["action"] == "pushed"]
+    assert len(pushed) == 1, result.auto_pushed
+    assert pushed[0]["gmail_draft_id"] == "gd_auto"
+
+    sent = store.list_pending(env["database_url"], status="sent")
+    assert len(sent) == 1
+    assert sent[0]["gmail_draft_id"] == "gd_auto"
+
+
+def test_auto_push_empty_whitelist_pushes_nothing(mocked_environment, monkeypatch):
+    from app.agent import store, triage
+
+    env = mocked_environment
+    monkeypatch.setattr(triage, "_auto_push_config", lambda: _autopush_cfg(dry_run=False, whitelist=[]))
+    monkeypatch.setattr(
+        "app.ingestion.gmail_write.create_draft",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("must not push with empty whitelist")),
+    )
+
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    assert result.auto_pushed == []
+    assert store.list_pending(env["database_url"], status="sent") == []
+
+
+def test_auto_push_below_floor_is_not_pushed(mocked_environment, monkeypatch):
+    from app.agent import triage
+
+    env = mocked_environment
+    # Floor above the Alice row's ~0.90 score → nothing qualifies.
+    monkeypatch.setattr(triage, "_auto_push_config", lambda: _autopush_cfg(dry_run=True, confidence_floor=0.99))
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    assert result.auto_pushed == []
+
+
+def test_thread_history_threaded_into_draft_request(monkeypatch, tmp_path):
+    """The agent passes the inbound's thread_history to generate_draft so the
+    drafter has conversation context."""
+    import sqlite3
+
+    from app.agent.inbox_fetch import InboxMessage
+
+    db = tmp_path / "th.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE reply_pairs (id INTEGER PRIMARY KEY, inbound_author TEXT)")
+    from app.db.bootstrap import _migrate_agent_audit, _migrate_agent_pending_drafts
+    _migrate_agent_pending_drafts(conn)
+    _migrate_agent_audit(conn)
+    conn.commit()
+    conn.close()
+
+    msg = InboxMessage(
+        message_id="m1", thread_id="t1", account="you@example.com",
+        sender="Alice <alice@x.com>", sender_email="alice@x.com",
+        subject="Re: Q3", body="Any update on pricing?", headers={},
+        thread_history=[{"sender": "Alice <alice@x.com>", "text": "Here's the deck."}],
+    )
+    monkeypatch.setattr("app.agent.triage.fetch_unread", lambda *a, **k: [msg])
+
+    seen = {}
+
+    class _Resp:
+        draft = "Hi Alice, pricing is unchanged."
+        model_used = "m"
+        repairs: list[str] = []
+
+    def _spy(req, **kw):
+        seen["thread_history"] = req.thread_history
+        return _Resp()
+
+    monkeypatch.setattr("app.generation.service.generate_draft", _spy)
+
+    from app.agent.triage import run_triage
+    run_triage(
+        account="you@example.com",
+        database_url=f"sqlite:///{db}", configs_dir=tmp_path,
+    )
+    assert seen["thread_history"] == [{"sender": "Alice <alice@x.com>", "text": "Here's the deck."}]
+
+
+def test_rules_prepend_reaches_generate_draft(mocked_environment, monkeypatch):
+    """A prepend rule for the sender injects its instruction into the draft's
+    standing_instructions."""
+    from app.agent import triage
+
+    env = mocked_environment
+    monkeypatch.setattr("app.agent.rules.load_rules", lambda: [
+        {"match": {"domain": "@partner.com"}, "action": "prepend",
+         "value": "Confirm the timeline and CC Jane."},
+    ])
+    monkeypatch.setattr("app.agent.rules.rules_need_intent", lambda rules: False)
+
+    seen = {}
+
+    class _Resp:
+        draft = "ok"
+        model_used = "m"
+        repairs: list[str] = []
+
+    def _spy(req, **kw):
+        seen["si"] = req.standing_instructions
+        return _Resp()
+
+    monkeypatch.setattr("app.generation.service.generate_draft", _spy)
+
+    triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    assert "Confirm the timeline and CC Jane." in (seen["si"] or "")
+
+
+def test_rules_skip_drops_message_from_drafting(mocked_environment, monkeypatch):
+    from app.agent import store, triage
+
+    env = mocked_environment
+    monkeypatch.setattr("app.agent.rules.load_rules", lambda: [
+        {"match": {"domain": "@partner.com"}, "action": "skip", "value": None},
+    ])
+    monkeypatch.setattr("app.agent.rules.rules_need_intent", lambda rules: False)
+
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    # The Alice (@partner.com) message must not be drafted.
+    drafts = store.list_pending(env["database_url"], status="pending", tier="draft")
+    assert all("partner.com" not in (r.get("sender_email") or "") for r in drafts)
+    assert result.persisted == 0 or all(
+        "partner.com" not in (r.get("sender_email") or "") for r in drafts
+    )
+
+
+def test_calendar_proposes_slots_for_meeting_requests(monkeypatch, tmp_path):
+    """When calendar is enabled and the inbound is a meeting request, the
+    agent injects real open slots into the draft instructions."""
+    import sqlite3
+
+    from app.agent import triage
+    from app.agent.inbox_fetch import InboxMessage
+
+    db = tmp_path / "cal.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE reply_pairs (id INTEGER PRIMARY KEY, inbound_author TEXT)")
+    from app.db.bootstrap import _migrate_agent_audit, _migrate_agent_pending_drafts
+    _migrate_agent_pending_drafts(conn)
+    _migrate_agent_audit(conn)
+    conn.commit()
+    conn.close()
+
+    msg = InboxMessage(
+        message_id="m1", thread_id="t1", account="you@example.com",
+        sender="Bob <bob@x.com>", sender_email="bob@x.com",
+        subject="Sync", body="Can we schedule a call to sync next week?", headers={},
+    )
+    monkeypatch.setattr("app.agent.triage.fetch_unread", lambda *a, **k: [msg])
+    monkeypatch.setattr("app.agent.triage._calendar_config", lambda: {
+        "enabled": True, "tz": "Europe/Vienna", "business_days": 5,
+        "work_start_hour": 9, "work_end_hour": 17, "slot_minutes": 30, "max_slots": 3,
+    })
+    monkeypatch.setattr("app.agent.rules.load_rules", lambda: [])
+    monkeypatch.setattr("app.agent.calendar.propose_open_slots",
+                        lambda account, **kw: "Tue Jun 2, 2:00 PM–2:30 PM; Wed Jun 3, 10:00 AM–10:30 AM")
+
+    seen = {}
+
+    class _Resp:
+        draft = "ok"
+        model_used = "m"
+        repairs: list[str] = []
+
+    def _spy(req, **kw):
+        seen["si"] = req.standing_instructions
+        return _Resp()
+
+    monkeypatch.setattr("app.generation.service.generate_draft", _spy)
+
+    triage.run_triage(account="you@example.com", database_url=f"sqlite:///{db}", configs_dir=tmp_path)
+    assert "You are free at:" in (seen["si"] or "")
+    assert "Tue Jun 2" in (seen["si"] or "")
+
+
+def test_thread_summary_persisted_for_long_threads(monkeypatch, tmp_path):
+    """When summarize_threads is on and the inbound is on a long thread, the
+    catch-up summary is generated and persisted on the row."""
+    import sqlite3
+
+    from app.agent import store, triage
+    from app.agent.inbox_fetch import InboxMessage
+
+    db = tmp_path / "ts.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE reply_pairs (id INTEGER PRIMARY KEY, inbound_author TEXT)")
+    from app.db.bootstrap import _migrate_agent_audit, _migrate_agent_pending_drafts
+    _migrate_agent_pending_drafts(conn)
+    _migrate_agent_audit(conn)
+    conn.commit()
+    conn.close()
+
+    msg = InboxMessage(
+        message_id="m1", thread_id="t1", account="you@example.com",
+        sender="Alice <alice@x.com>", sender_email="alice@x.com",
+        subject="Q3", body="So where did we land?", headers={},
+        thread_history=[{"sender": f"P{i}", "text": f"point {i}"} for i in range(5)],
+    )
+    monkeypatch.setattr("app.agent.triage.fetch_unread", lambda *a, **k: [msg])
+    monkeypatch.setattr("app.core.config.load_config",
+                        lambda *a, **k: {"agent": {"summarize_threads": {"enabled": True, "min_messages": 3}}})
+    monkeypatch.setattr("app.agent.thread_summary.summarize_thread",
+                        lambda hist, **kw: "Pricing agreed; start date open.")
+
+    class _Resp:
+        draft = "ok"
+        model_used = "m"
+        repairs: list[str] = []
+    monkeypatch.setattr("app.generation.service.generate_draft", lambda req, **kw: _Resp())
+
+    triage.run_triage(account="you@example.com", database_url=f"sqlite:///{db}", configs_dir=tmp_path)
+    rows = store.list_pending(f"sqlite:///{db}", status="pending", tier="draft")
+    assert len(rows) == 1
+    assert rows[0]["thread_summary"] == "Pricing agreed; start date open."

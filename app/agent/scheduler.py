@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 _STOP_EVENT_ATTR = "_agent_loop_stop"
 _TASK_ATTR = "_agent_loop_task"
+_FAILURES_ATTR = "_agent_sweep_failures"
+_WEBHOOK_ATTR = "_agent_webhook_state"
 
 
 def get_agent_config() -> dict[str, Any]:
@@ -62,8 +64,16 @@ def get_agent_config() -> dict[str, Any]:
         # time. ``daily_draft_cap`` is per-UTC-day per-account; 0 = unlimited.
         # ``strict_local`` refuses cloud fallback during triage only.
         "skip_senders": _parse_skip_senders(a.get("skip_senders")),
+        "vip_senders": _parse_skip_senders(a.get("vip_senders")),
         "daily_draft_cap": max(0, int(a.get("daily_draft_cap", 50))),
         "strict_local": bool(a.get("strict_local", False)),
+        # Proactive push: POST a digest summary to a user-configured webhook
+        # after a sweep so an absent user (or their Telegram/OpenClaw bot) is
+        # nudged without polling. Off unless a URL is set — the one place YouOS
+        # makes an outbound request, metadata-only.
+        "notify_webhook_url": str(a.get("notify_webhook_url") or "").strip(),
+        "notify_webhook_secret": str(a.get("notify_webhook_secret") or "").strip(),
+        "notify_min_interval_minutes": max(0, int(a.get("notify_min_interval_minutes", 10))),
     }
 
 
@@ -108,6 +118,84 @@ def _notify_macos(*, title: str, message: str) -> None:
         pass
 
 
+def _post_webhook(url: str, payload: dict[str, Any], secret: str) -> bool:
+    """POST a JSON payload to ``url``. Best-effort, bounded, never raises.
+
+    The ``secret`` (if set) goes in an ``X-YouOS-Secret`` header so the
+    receiver can verify it's really YouOS. Returns True on a 2xx response."""
+    import json as _json
+    import urllib.request
+
+    try:
+        body = _json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=body, method="POST")
+        req.add_header("Content-Type", "application/json")
+        if secret:
+            req.add_header("X-YouOS-Secret", secret)
+        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 — user-configured URL
+            return 200 <= getattr(resp, "status", 200) < 300
+    except Exception as exc:
+        logger.info("agent webhook push failed: %s", exc)
+        return False
+
+
+def _maybe_push_webhook(app, account: str, cfg: dict[str, Any]) -> None:
+    """After a sweep, push a digest summary to the configured webhook — but only
+    when there's something actionable, the state CHANGED since the last push,
+    and the min-interval has elapsed (so a quiet or unchanged inbox stays
+    quiet). Metadata-only: counts + truncated subjects/senders, never bodies."""
+    import time as _time
+
+    url = cfg.get("notify_webhook_url") or ""
+    if not url:
+        return
+    try:
+        from app.agent.digest import build_digest, summary_line
+        from app.core.settings import get_settings
+
+        data = build_digest(database_url=get_settings().database_url, account=account, days=1)
+    except Exception as exc:
+        logger.info("agent webhook: digest build failed: %s", exc)
+        return
+
+    # Nothing worth interrupting the user for.
+    if data.pending_count == 0 and data.owed_count == 0 and data.awaiting_count == 0:
+        return
+
+    sig = (
+        f"{data.pending_count}:{data.owed_count}:{data.awaiting_count}:"
+        + ",".join(str(r.get("id")) for r in data.pending_preview)
+    )
+    state: dict[str, dict[str, Any]] = getattr(app.state, _WEBHOOK_ATTR, {})
+    prev = state.get(account, {})
+    now = _time.monotonic()
+    min_interval = cfg.get("notify_min_interval_minutes", 10) * 60
+
+    last_ts = prev.get("ts")
+    # Throttle only relative to a PRIOR push. ``monotonic()`` is seconds since an
+    # arbitrary point (often small on a freshly-booted host), so comparing
+    # against a 0.0 default would wrongly throttle the very first push.
+    if last_ts is not None and (now - last_ts) < min_interval:
+        return  # throttle — don't flap
+    if prev.get("sig") == sig:
+        return  # nothing changed since the last push
+
+    payload = {
+        "summary": summary_line(data),
+        "account": account,
+        "pending_count": data.pending_count,
+        "owed_count": data.owed_count,
+        "awaiting_count": data.awaiting_count,
+        # pending_preview already carries only id/tier/score/sender/truncated
+        # subject — no message bodies.
+        "pending_preview": data.pending_preview,
+        "triage_url": data.triage_url,
+    }
+    if _post_webhook(url, payload, cfg.get("notify_webhook_secret") or ""):
+        state[account] = {"ts": now, "sig": sig}
+        setattr(app.state, _WEBHOOK_ATTR, state)
+
+
 def _resolve_accounts(configured: list[str]) -> list[str]:
     """Use the explicit ``agent.accounts`` list if set; otherwise fall back
     to ``user.emails``. Returns an empty list if neither is configured."""
@@ -150,16 +238,49 @@ async def _loop(app) -> None:
         if cfg["enabled"]:
             accounts = _resolve_accounts(cfg["accounts"])
             total_persisted = 0
+            # Per-account consecutive-failure tracking persists across ticks so
+            # a silently-dying agent gets exactly one notification on the first
+            # failure (debounced), not spam every tick and not silence.
+            failures: dict[str, int] = getattr(app.state, _FAILURES_ATTR, {})
             for account in accounts:
                 try:
                     n = await asyncio.get_event_loop().run_in_executor(
                         None, partial(_run_one_sweep, account, cfg)
                     )
                     total_persisted += int(n)
+                    # Recovery: announce once if it had been failing.
+                    if failures.get(account, 0) > 0 and cfg["notify_macos"]:
+                        _notify_macos(
+                            title="YouOS",
+                            message=f"Agent recovered — sweeps for {account} are working again.",
+                        )
+                    failures[account] = 0
+                    # Proactive push (opt-in, off unless a webhook URL is set).
+                    if cfg.get("notify_webhook_url"):
+                        try:
+                            await asyncio.get_event_loop().run_in_executor(
+                                None, partial(_maybe_push_webhook, app, account, cfg)
+                            )
+                        except Exception as exc:
+                            logger.info("agent webhook push errored: %s", exc)
                 except Exception as exc:
-                    # Log at info — most failures here are transient (gog
-                    # auth, network blip) and the next tick retries.
-                    logger.info("agent loop: sweep for %s failed: %s", account, exc)
+                    prev = failures.get(account, 0)
+                    failures[account] = prev + 1
+                    # First failure → warn loudly + notify so a dead agent is
+                    # visible. Subsequent consecutive failures stay quiet.
+                    if prev == 0:
+                        logger.warning("agent loop: sweep for %s failed: %s", account, exc)
+                        if cfg["notify_macos"]:
+                            _notify_macos(
+                                title="YouOS agent stopped drafting",
+                                message=f"Sweep for {account} failed: {exc}. Check youos doctor.",
+                            )
+                    else:
+                        logger.warning(
+                            "agent loop: sweep for %s still failing (%dx): %s",
+                            account, prev + 1, exc,
+                        )
+            setattr(app.state, _FAILURES_ATTR, failures)
 
             if total_persisted > 0 and cfg["notify_macos"]:
                 s = "s" if total_persisted != 1 else ""

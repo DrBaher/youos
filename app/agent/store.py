@@ -34,7 +34,15 @@ def _db_path(database_url: str) -> Path:
 
 
 def _connect(database_url: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(_db_path(database_url))
+    # Use the shared, concurrency-tuned connector (busy_timeout + WAL) rather
+    # than a raw sqlite3.connect. The agent loop, manual /triage runs, and the
+    # nightly pipeline can all write concurrently; without busy_timeout a
+    # colliding writer raises 'database is locked' immediately and the sweep
+    # silently drops its (expensive) drafts. bootstrap.connect mirrors what the
+    # rest of the app already standardized on.
+    from app.db.bootstrap import connect
+
+    conn = connect(_db_path(database_url))
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -58,6 +66,7 @@ def upsert_pending(
     draft_model: str | None,
     draft_repairs: list[str] | None,
     standing_instructions_snapshot: str | None,
+    thread_summary: str | None = None,
 ) -> int | None:
     """Insert a triage result if the ``message_id`` isn't already stored.
 
@@ -72,8 +81,9 @@ def upsert_pending(
                 message_id, thread_id, account,
                 sender, sender_email, subject, body, received_at,
                 needs_reply_score, reasons_json, cold_outreach, tier,
-                draft, draft_model, draft_repairs_json, standing_instructions_snapshot
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                draft, draft_model, draft_repairs_json, standing_instructions_snapshot,
+                thread_summary
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 message_id, thread_id, account,
@@ -85,6 +95,7 @@ def upsert_pending(
                 draft, draft_model,
                 json.dumps(draft_repairs or [], ensure_ascii=False),
                 standing_instructions_snapshot,
+                thread_summary,
             ),
         )
         conn.commit()
@@ -146,6 +157,89 @@ def mark_sent(
         database_url, row_id, status="sent", sent_at_now=True,
         gmail_draft_id=gmail_draft_id,
     )
+
+
+# --- push-to-Gmail atomic claim (idempotency / concurrency guard) ----------
+
+
+def begin_push(database_url: str, row_id: int) -> tuple[str, str | None, str | None]:
+    """Atomically claim a row for a push-to-Gmail write.
+
+    ``push_to_gmail`` creates a *new* Gmail draft on each backend call, so a
+    retry, a double-click, or two concurrent orchestrators acting on the same
+    digest would each materialize a duplicate draft in the user's Drafts
+    folder. This guards the only path that writes to the real mailbox.
+
+    The single conditional UPDATE is the serialization point: at most one
+    caller flips ``pending``/``amended`` → ``sent`` while ``gmail_draft_id``
+    is still NULL; every other caller loses the race. Returns
+    ``(state, existing_draft_id, prev_status)`` where ``state`` is:
+
+      * ``"missing"``      — no such row
+      * ``"already"``      — already pushed; ``existing_draft_id`` is set
+      * ``"not_pushable"`` — terminal/unexpected status; ``prev_status`` set
+      * ``"race_lost"``    — a concurrent push claimed it first (not yet final)
+      * ``"claimed"``      — caller won; ``prev_status`` is kept for rollback
+
+    On ``"claimed"`` the caller MUST follow with :func:`finalize_push` on a
+    successful write or :func:`abort_push` (with ``prev_status``) on failure.
+    """
+    with closing(_connect(database_url)) as conn:
+        row = conn.execute(
+            "SELECT status, gmail_draft_id FROM agent_pending_drafts WHERE id = ?",
+            (row_id,),
+        ).fetchone()
+        if row is None:
+            return ("missing", None, None)
+        if row["gmail_draft_id"]:
+            return ("already", row["gmail_draft_id"], row["status"])
+        prev = row["status"]
+        if prev not in ("pending", "amended"):
+            return ("not_pushable", None, prev)
+        cur = conn.execute(
+            """UPDATE agent_pending_drafts
+               SET status = 'sent', sent_at = CURRENT_TIMESTAMP,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = ? AND status = ? AND gmail_draft_id IS NULL""",
+            (row_id, prev),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            # Lost the race: re-read to see if the winner already finalized.
+            r2 = conn.execute(
+                "SELECT gmail_draft_id FROM agent_pending_drafts WHERE id = ?",
+                (row_id,),
+            ).fetchone()
+            if r2 and r2["gmail_draft_id"]:
+                return ("already", r2["gmail_draft_id"], prev)
+            return ("race_lost", None, prev)
+        return ("claimed", None, prev)
+
+
+def finalize_push(database_url: str, row_id: int, *, gmail_draft_id: str) -> None:
+    """Record the Gmail draft id after a successful write (status already
+    flipped to ``sent`` by :func:`begin_push`)."""
+    with closing(_connect(database_url)) as conn:
+        conn.execute(
+            "UPDATE agent_pending_drafts SET gmail_draft_id = ?, "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (gmail_draft_id, row_id),
+        )
+        conn.commit()
+
+
+def abort_push(database_url: str, row_id: int, *, prev_status: str) -> None:
+    """Roll back a claimed-but-failed push: restore the prior status and clear
+    ``sent_at`` so the user can retry. No-op if a draft id slipped in
+    (shouldn't happen, but stays safe under concurrency)."""
+    with closing(_connect(database_url)) as conn:
+        conn.execute(
+            """UPDATE agent_pending_drafts
+               SET status = ?, sent_at = NULL, updated_at = CURRENT_TIMESTAMP
+               WHERE id = ? AND gmail_draft_id IS NULL""",
+            (prev_status, row_id),
+        )
+        conn.commit()
 
 
 # Recognised dismissal-reason buckets — kept here (not in the DB) so the API
@@ -274,6 +368,23 @@ def dismissal_stats(
     }
 
 
+def count_pushed_today(database_url: str, *, account: str) -> int:
+    """Count rows for ``account`` pushed to Gmail today (UTC) — any row with a
+    ``gmail_draft_id`` and a ``sent_at`` dated today. Used to enforce the
+    auto-push daily cap. Conservatively counts manual pushes too, so the cap is
+    an upper bound on total Gmail-draft writes per day."""
+    with closing(_connect(database_url)) as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) FROM agent_pending_drafts
+            WHERE account = ? AND gmail_draft_id IS NOT NULL
+              AND date(sent_at) = date('now')
+            """,
+            (account,),
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
 def count_persisted_today(database_url: str, *, account: str) -> int:
     """Count rows persisted for ``account`` since UTC midnight. Used by ζ to
     enforce ``agent.daily_draft_cap`` — defends against a runaway loop on a
@@ -394,7 +505,11 @@ def sweep_aggregate(
                 COALESCE(SUM(kept), 0)      AS kept,
                 COALESCE(SUM(surfaced), 0)  AS surfaced,
                 COALESCE(SUM(persisted), 0) AS persisted,
-                COALESCE(AVG(duration_ms), 0) AS avg_ms
+                COALESCE(AVG(duration_ms), 0) AS avg_ms,
+                MAX(started_at) AS last_sweep,
+                MAX(CASE WHEN errors_json IN ('[]','') OR errors_json IS NULL
+                         THEN started_at END) AS last_ok_sweep,
+                CAST((julianday('now') - julianday(MAX(started_at))) * 86400 AS INTEGER) AS secs_since
             FROM agent_audit WHERE {where}
             """,
             params,
@@ -404,6 +519,7 @@ def sweep_aggregate(
     ok = int(row["ok"] or 0)
     fetched = int(row["fetched"] or 0)
     kept = int(row["kept"] or 0)
+    secs_since = row["secs_since"]
     return {
         "sweeps": sweeps,
         "successful": ok,
@@ -414,6 +530,12 @@ def sweep_aggregate(
         "surfaced": int(row["surfaced"] or 0),
         "persisted": int(row["persisted"] or 0),
         "avg_duration_ms": int(row["avg_ms"] or 0),
+        # Heartbeat: lets the user / orchestrator answer "is the agent still
+        # alive and on-schedule?" — there was no positive liveness signal
+        # before, only the absence of new drafts.
+        "last_sweep_at": row["last_sweep"],
+        "last_successful_sweep_at": row["last_ok_sweep"],
+        "seconds_since_last_sweep": int(secs_since) if secs_since is not None else None,
         "window_days": int(days),
         "account": account,
     }
