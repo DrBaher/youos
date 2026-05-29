@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.116 — 2026-05-29
+
+### Digest tuning + hardening: choose local or cloud summary, and the fetch-cap fix
+
+Fine-tuning the digest task before it goes live:
+
+- **Configurable summary model (per digest).** New `summary_model: local | cloud` on a digest spec. `local` (default) uses the warm on-device model — **no egress**. `cloud` uses Claude (via the existing `_call_claude_cli`) for a sharper summary; note it sends the matched messages' **senders/subjects/dates** (not bodies) off-device. The summary model never affects the send gates — it only shapes the digest body, and falls back to a plain itemised list if the chosen model is unavailable.
+- **Tighter summary prompt.** The small local model was rambling and repeating itself; the prompt now asks for one short bullet per email + a single "Worth attention" line, no preamble, no repetition, under 150 words.
+- **Hardening — the fetch cap.** `gog gmail messages search` defaults to `--max=10`, and the digest fetch wasn't passing `--max` — so a `max_messages: 50` digest silently only ever saw 10. It now passes `--max <max_messages>`, so the configured cap actually applies.
+
+A focused review confirmed the cloud path is summary-only (no send-gate/at-most-once/dry-run impact), errors fall back safely, and the subject/sender text is passed as a single argv element (no shell injection). +3 tests. Digests remain off by default.
+
 ## v0.2.0-beta.115 — 2026-05-29
 
 ### Digest preview works before the feature is enabled
