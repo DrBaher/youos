@@ -370,6 +370,7 @@ class DigestBody(BaseModel):
 
     name: str
     query: str
+    prompt: str = ""
     schedule: str = "daily"
     weekday: object | None = None
     hour: int = 7

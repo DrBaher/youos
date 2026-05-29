@@ -92,8 +92,10 @@
       <div><label class="fld" for="model">Summary model</label>
         <select id="model"><option value="local">local (on-device, private)</option><option value="cloud">cloud (Claude, sharper)</option></select></div>
     </div>
-    <div style="margin-top:12px;"><label class="fld" for="query">Gmail query</label>
+    <div style="margin-top:12px;"><label class="fld" for="query">Gmail query (which emails)</label>
       <input type="text" id="query" placeholder="category:promotions newer_than:1d"></div>
+    <div style="margin-top:12px;"><label class="fld" for="prompt">Summary prompt (what to make of them — blank = default)</label>
+      <textarea id="prompt" rows="2" placeholder="e.g. What needs my attention? Flag anything time-sensitive; one line per email." style="background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:7px 9px;font-size:0.88rem;font-family:inherit;width:100%;resize:vertical;"></textarea></div>
     <div class="grid" style="margin-top:12px;">
       <div class="narrow"><label class="fld" for="schedule">Schedule</label>
         <select id="schedule"><option value="daily">daily</option><option value="weekly">weekly</option></select></div>
@@ -139,7 +141,7 @@
 <script>
 (function () {
   const $ = (id) => document.getElementById(id);
-  const F = { name: $("name"), query: $("query"), schedule: $("schedule"), weekday: $("weekday"),
+  const F = { name: $("name"), query: $("query"), prompt: $("prompt"), schedule: $("schedule"), weekday: $("weekday"),
               hour: $("hour"), minute: $("minute"), maxmsg: $("maxmsg"), model: $("model"),
               account: $("account"), deliver: $("deliver"), archive: $("archive"), enabled: $("enabled") };
   const saveBtn = $("saveBtn"), cancelBtn = $("cancelBtn"), vstatus = $("vstatus");
@@ -151,7 +153,7 @@
 
   function readForm() {
     const b = {
-      name: F.name.value.trim(), query: F.query.value.trim(),
+      name: F.name.value.trim(), query: F.query.value.trim(), prompt: F.prompt.value.trim(),
       schedule: F.schedule.value, hour: parseInt(F.hour.value, 10) || 0,
       minute: parseInt(F.minute.value, 10) || 0, max_messages: parseInt(F.maxmsg.value, 10) || 50,
       summary_model: F.model.value, account: F.account.value.trim(), deliver_to: F.deliver.value.trim(),
@@ -191,7 +193,7 @@
 
   function resetForm() {
     editIndex = null;
-    F.name.value = ""; F.query.value = ""; F.schedule.value = "daily"; F.weekday.value = "monday";
+    F.name.value = ""; F.query.value = ""; F.prompt.value = ""; F.schedule.value = "daily"; F.weekday.value = "monday";
     F.hour.value = "7"; F.minute.value = "0"; F.maxmsg.value = "50"; F.model.value = "local";
     F.account.value = ""; F.deliver.value = ""; F.archive.checked = false; F.enabled.checked = true;
     syncWeekday(); formTitle.textContent = "Add a digest"; cancelBtn.style.display = "none";
@@ -200,7 +202,7 @@
 
   function editDigest(d) {
     editIndex = d.index;
-    F.name.value = d.name || ""; F.query.value = d.query || ""; F.schedule.value = d.schedule || "daily";
+    F.name.value = d.name || ""; F.query.value = d.query || ""; F.prompt.value = d.prompt || ""; F.schedule.value = d.schedule || "daily";
     F.weekday.value = WD[d.weekday || 0] || "monday"; F.hour.value = d.hour ?? 7; F.minute.value = d.minute ?? 0;
     F.maxmsg.value = d.max_messages ?? 50; F.model.value = d.summary_model || "local";
     F.account.value = d.account || ""; F.deliver.value = d.deliver_to || ""; F.archive.checked = !!d.then_archive; F.enabled.checked = d.enabled !== false;
