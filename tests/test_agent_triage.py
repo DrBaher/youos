@@ -599,6 +599,65 @@ def test_concurrent_sweep_is_skipped_when_account_locked(mocked_environment, mon
     assert calls["fetch"] == 0, "the locked-out sweep must not run the body"
 
 
+# --- Borderline LLM adjudication (Phase A2) --------------------------------
+
+
+def test_adjudication_vetoes_broadcast_borderline_draft(mocked_environment, monkeypatch):
+    """A would-be draft the heuristic accepts is demoted when the model calls
+    it a broadcast. The veto only ever demotes — the message surfaces for
+    review instead of being drafted."""
+    from app.agent import triage
+    from app.core import model_server
+
+    env = mocked_environment
+    monkeypatch.setattr(triage, "_adjudication_config", lambda: {"enabled": True, "high": 0.95})
+    monkeypatch.setattr(model_server, "is_enabled", lambda: True)
+    monkeypatch.setattr(model_server, "complete", lambda *a, **k: "BROADCAST")
+
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    # Alice (the only non-newsletter) is vetoed → nothing drafted.
+    assert result.kept == 0, f"expected the broadcast veto to suppress the draft, got {result.drafts}"
+
+
+def test_adjudication_keeps_personal_borderline_draft(mocked_environment, monkeypatch):
+    """A PERSONAL verdict leaves the heuristic decision intact — the draft stands."""
+    from app.agent import triage
+    from app.core import model_server
+
+    env = mocked_environment
+    monkeypatch.setattr(triage, "_adjudication_config", lambda: {"enabled": True, "high": 0.95})
+    monkeypatch.setattr(model_server, "is_enabled", lambda: True)
+    monkeypatch.setattr(model_server, "complete", lambda *a, **k: "PERSONAL")
+
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    assert result.kept == 1
+
+
+def test_adjudication_noop_when_disabled(mocked_environment, monkeypatch):
+    """Flag off → the model is never consulted and the draft stands."""
+    from app.agent import triage
+    from app.core import model_server
+
+    env = mocked_environment
+    monkeypatch.setattr(triage, "_adjudication_config", lambda: {"enabled": False, "high": 0.95})
+    monkeypatch.setattr(
+        model_server, "complete",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("model must not be called when disabled")),
+    )
+
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    assert result.kept == 1
+
+
 # --- Tiered auto-push (audit Tier 2) ---------------------------------------
 
 
