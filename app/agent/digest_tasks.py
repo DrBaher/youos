@@ -22,8 +22,10 @@ Config shape (a dict so the master flag and the specs coexist)::
         items:
           - name: Newsletters
             query: "label:Newsletters newer_than:7d"
-            schedule: daily        # daily | weekly
-            hour: 7                # local-tz hour at/after which it may run
+            schedule: weekly       # daily | weekly
+            weekday: monday        # weekly only: day it fires (name or 0-6, Mon=0)
+            hour: 7                # local-tz time-of-day…
+            minute: 0              # …at/after which it may run
             deliver_to: ""         # empty = your own inbox
             then_archive: false
             max_messages: 50
@@ -50,6 +52,26 @@ _VALID_SCHEDULES = ("daily", "weekly")
 
 _VALID_SUMMARY_MODELS = ("local", "cloud")
 
+# Weekday names → Python's datetime.weekday() index (Monday=0 … Sunday=6).
+_WEEKDAYS = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6,
+    "mon": 0, "tue": 1, "tues": 1, "wed": 2, "thu": 3, "thur": 3, "thurs": 3, "fri": 4, "sat": 5, "sun": 6,
+}
+
+
+def _parse_weekday(val: Any) -> int | None:
+    """A weekday as a name ('friday'/'fri') or int 0-6 (Mon=0) → index, or None."""
+    if isinstance(val, bool):
+        return None
+    if isinstance(val, int):
+        return val if 0 <= val <= 6 else None
+    s = str(val).strip().lower()
+    if s in _WEEKDAYS:
+        return _WEEKDAYS[s]
+    if s.isdigit() and 0 <= int(s) <= 6:
+        return int(s)
+    return None
+
 
 @dataclass
 class DigestSpec:
@@ -57,6 +79,8 @@ class DigestSpec:
     query: str
     schedule: str = "daily"
     hour: int = 7
+    minute: int = 0            # time-of-day minute (with hour), local tz
+    weekday: int = 0           # weekly only: which day fires (Mon=0 … Sun=6)
     deliver_to: str = ""      # empty → deliver to the account's own inbox
     then_archive: bool = False
     max_messages: int = _MAX_MESSAGES
@@ -87,6 +111,14 @@ def validate_digest(raw: Any) -> tuple[bool, str]:
     if not 0 <= hour <= 23:
         return False, "hour must be between 0 and 23"
     try:
+        minute = int(raw.get("minute", 0))
+    except (TypeError, ValueError):
+        return False, "minute must be an integer 0-59"
+    if not 0 <= minute <= 59:
+        return False, "minute must be between 0 and 59"
+    if "weekday" in raw and _parse_weekday(raw.get("weekday")) is None:
+        return False, "weekday must be a day name (e.g. 'monday') or 0-6 (Mon=0 … Sun=6)"
+    try:
         if int(raw.get("max_messages", _MAX_MESSAGES)) <= 0:
             return False, "max_messages must be a positive integer"
     except (TypeError, ValueError):
@@ -106,6 +138,8 @@ def _normalize_digest(raw: Any) -> DigestSpec | None:
         query=str(raw["query"]).strip(),
         schedule=str(raw.get("schedule") or "daily").strip().lower(),
         hour=int(raw.get("hour", 7)),
+        minute=int(raw.get("minute", 0)),
+        weekday=(_parse_weekday(raw.get("weekday")) or 0),
         deliver_to=str(raw.get("deliver_to") or "").strip(),
         then_archive=bool(raw.get("then_archive", False)),
         max_messages=int(raw.get("max_messages", _MAX_MESSAGES)),
@@ -161,6 +195,19 @@ def _user_tz():
         return ZoneInfo(str(name))
     except Exception:
         return ZoneInfo("UTC")
+
+
+def _is_due(spec: DigestSpec, now: datetime) -> bool:
+    """Whether ``spec`` may fire at local time ``now`` (the per-period claim then
+    guarantees it fires at most once that period).
+
+    Daily: at/after ``hour:minute`` today. Weekly: at/after ``weekday`` +
+    ``hour:minute`` within the current ISO week — so it fires on the chosen day,
+    and if a tick was missed it still catches up later that week (the comparison
+    is ``>=``, and a fresh ISO week resets it)."""
+    if spec.schedule == "weekly":
+        return (now.weekday(), now.hour, now.minute) >= (spec.weekday, spec.hour, spec.minute)
+    return (now.hour, now.minute) >= (spec.hour, spec.minute)
 
 
 def _period_key(schedule: str, now: datetime) -> str:
@@ -408,9 +455,10 @@ def run_digest(database_url: str, account: str, spec: DigestSpec, *,
 
 
 def run_due_digests(database_url: str, account: str, *, now: datetime | None = None) -> list[dict[str, Any]]:
-    """Run every enabled digest that is due now (local hour ≥ its hour and not
-    yet run this period). Called from the scheduler each tick; the period claim
-    makes repeated ticks idempotent. No-op unless ``agent.digests.enabled``."""
+    """Run every enabled digest that is due now (see ``_is_due``: daily at/after
+    its hour:minute, weekly on its weekday at/after hour:minute) and not yet run
+    this period. Called from the scheduler each tick; the period claim makes
+    repeated ticks idempotent. No-op unless ``agent.digests.enabled``."""
     cfg = _digest_config()
     if not cfg["enabled"]:
         return []
@@ -422,8 +470,8 @@ def run_due_digests(database_url: str, account: str, *, now: datetime | None = N
     for spec in specs:
         if not spec.enabled:
             continue
-        if now_local.hour < spec.hour:
-            continue  # not yet the digest hour today
+        if not _is_due(spec, now_local):
+            continue  # not yet its scheduled day/time
         try:
             out.append(run_digest(database_url, account, spec, now=now_local))
         except Exception as exc:  # never let one digest break the loop
