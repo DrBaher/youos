@@ -619,6 +619,47 @@ def push_to_gmail(row_id: int, request: Request) -> dict:
     }
 
 
+class SendBody(BaseModel):
+    """Options for sending a pushed draft. ``shadow`` runs the full path but
+    records a soak-only send (never touches Gmail); ``dry_run`` exercises the
+    real backend with its no-change flag."""
+
+    shadow: bool = False
+    dry_run: bool = False
+    backend: str | None = None
+
+
+@router.post("/api/agent/pending/{row_id}/send")
+def send_pending(row_id: int, request: Request, body: SendBody | None = None) -> dict:
+    """Phase B (send frontier): SEND the Gmail draft attached to this row.
+
+    The one route that crosses the never-send boundary. It is hard-gated:
+    ``agent.outbound_kill_switch`` blocks everything; a real send additionally
+    requires ``agent.send.enabled`` (default false). With sending disabled you
+    can still ``shadow`` send (soak: records the intent, never touches Gmail).
+
+    The row must already be pushed to Gmail (have a ``gmail_draft_id``) — we
+    send the exact draft, not a re-marshaled body. Idempotent: a re-send of an
+    already-sent row returns the prior result.
+    """
+    from app.agent.send import send_pending_row
+
+    b = body or SendBody()
+    outcome = send_pending_row(
+        _db_url(request), row_id, shadow=b.shadow, dry_run=b.dry_run, backend=b.backend,
+    )
+    if not outcome.ok:
+        raise HTTPException(outcome.http_status or 500, outcome.detail or "send failed")
+    return {
+        "ok": True,
+        "sent_message_id": outcome.sent_message_id,
+        "shadow": outcome.shadow,
+        "sent_already": outcome.sent_already,
+        "detail": outcome.detail,
+        "row": outcome.row,
+    }
+
+
 # --- triage trigger ----------------------------------------------------------
 
 

@@ -309,6 +309,28 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.send.enabled",
+        "label": "Allow the agent to SEND drafts (master switch)",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "Master switch for any programmatic send (manual API or autonomous "
+            "auto-send). Default OFF — with it off, YouOS only ever creates "
+            "Gmail drafts, never sends. Crossing this is outward-facing and "
+            "hard to reverse; turn it on deliberately."
+        ),
+    },
+    {
+        "key": "agent.outbound_kill_switch",
+        "label": "Outbound kill-switch (block ALL sends)",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "When ON, blocks every send regardless of other flags — one switch "
+            "to stop all outbound instantly. Does not affect draft creation."
+        ),
+    },
+    {
         "key": "agent.extract_facts.enabled",
         "label": "Harvest facts from drafted mail",
         "type": "bool",

@@ -298,6 +298,26 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
     # Per-draft quality score (0–1) — what auto-push/auto-send gate on.
     if "quality_score" not in _cols:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN quality_score REAL")
+    # Phase B (send frontier): an HONEST send state, kept separate from the
+    # overloaded ``status='sent'`` (which means either "user resolved it
+    # elsewhere" or "we pushed a Gmail draft"). send_state is explicit:
+    #   NULL            — not pushed/sent
+    #   'draft_created' — a Gmail DRAFT exists (we pushed it; never sent)
+    #   'shadow'        — a real send was simulated (soak mode) but NOT sent
+    #   'sent'          — actually sent to the recipient via Gmail
+    # sent_message_id is the Gmail *message* id from a real send (distinct from
+    # the draft id); actually_sent_at timestamps the real send.
+    if "send_state" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN send_state TEXT")
+        # Backfill: existing rows that hold a Gmail draft id were 'draft_created'.
+        connection.execute(
+            "UPDATE agent_pending_drafts SET send_state = 'draft_created' "
+            "WHERE gmail_draft_id IS NOT NULL AND send_state IS NULL"
+        )
+    if "sent_message_id" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN sent_message_id TEXT")
+    if "actually_sent_at" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN actually_sent_at TEXT")
 
 
 def _migrate_triage_precision_history(connection: sqlite3.Connection) -> None:
