@@ -88,6 +88,38 @@ def test_run_golden_eval_without_generate():
     summary = run_golden_eval()
     assert summary["total"] == 10
     assert summary["failed"] == 10  # all fail with empty drafts
+    # An all-empty eval is degenerate — the gate must be able to see this.
+    assert summary["empty_count"] == 10
+    assert summary["empty_rate"] == 1.0
+    assert summary["degenerate"] is True
+
+
+def test_empty_draft_is_a_hard_fail_even_without_keywords():
+    """An empty draft must fail, not slip to 'warn' via the 0-word brevity pass
+    when a case has no expected_keywords."""
+    case = {"id": "no-kw", "expected_mode": "work", "max_words": 50}
+    result = score_case(case, "", "work")  # empty draft, mode even matches
+    assert result["status"] == "fail"
+    assert result["empty"] is True
+
+
+def test_non_degenerate_when_most_cases_have_content(tmp_path):
+    golden_path = tmp_path / "golden.yaml"
+    golden_path.write_text(
+        yaml.dump({"cases": [
+            {"id": "c1", "inbound": "Hi", "expected_mode": "work", "max_words": 50},
+            {"id": "c2", "inbound": "Yo", "expected_mode": "work", "max_words": 50},
+        ]})
+    )
+    drafts = iter(["Sounds good, talk soon.", ""])  # one real, one empty (50%)
+
+    def gen(prompt, *, database_url, configs_dir):
+        return {"draft": next(drafts), "detected_mode": "work"}
+
+    summary = run_golden_eval(generate_fn=gen, golden_path=golden_path)
+    assert summary["empty_count"] == 1
+    assert summary["empty_rate"] == 0.5
+    assert summary["degenerate"] is False  # exactly 50% is not > 50%
 
 
 def test_run_golden_eval_with_mock_generate(tmp_path):
