@@ -68,6 +68,7 @@ def upsert_pending(
     standing_instructions_snapshot: str | None,
     thread_summary: str | None = None,
     quality_score: float | None = None,
+    calibrated_score: float | None = None,
 ) -> int | None:
     """Insert a triage result if the ``message_id`` isn't already stored.
 
@@ -83,8 +84,8 @@ def upsert_pending(
                 sender, sender_email, subject, body, received_at,
                 needs_reply_score, reasons_json, cold_outreach, tier,
                 draft, draft_model, draft_repairs_json, standing_instructions_snapshot,
-                thread_summary, quality_score
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                thread_summary, quality_score, calibrated_score
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 message_id, thread_id, account,
@@ -98,6 +99,7 @@ def upsert_pending(
                 standing_instructions_snapshot,
                 thread_summary,
                 quality_score,
+                calibrated_score,
             ),
         )
         conn.commit()
@@ -264,11 +266,20 @@ def begin_send(database_url: str, row_id: int) -> tuple[str, str | None]:
             """UPDATE agent_pending_drafts
                SET send_state = 'sending', updated_at = CURRENT_TIMESTAMP
                WHERE id = ? AND gmail_draft_id IS NOT NULL
+                 AND status != 'dismissed'
                  AND (send_state = 'draft_created' OR send_state IS NULL)""",
             (row_id,),
         )
         conn.commit()
         if cur.rowcount == 0:
+            # Lost the race OR the row was dismissed between selection and claim
+            # (TOCTOU): re-read so a dismissed row isn't sent.
+            r2 = conn.execute(
+                "SELECT status, send_state FROM agent_pending_drafts WHERE id = ?",
+                (row_id,),
+            ).fetchone()
+            if r2 and r2["status"] == "dismissed":
+                return ("dismissed", row["gmail_draft_id"])
             return ("race_lost", row["gmail_draft_id"])
         return ("claimed", row["gmail_draft_id"])
 
@@ -305,6 +316,44 @@ def abort_send(database_url: str, row_id: int) -> None:
         conn.commit()
 
 
+def reap_stale_sending(database_url: str, *, older_than_minutes: int = 10) -> int:
+    """Reset rows stranded in ``send_state='sending'`` (a process died between
+    begin_send and finalize_send) back to ``'draft_created'`` so they aren't
+    stuck forever. Bounded by ``older_than_minutes`` so an in-flight send isn't
+    yanked mid-flight. Returns the number reaped.
+
+    Safe because begin_send re-claims atomically and won't double-send a row
+    that was actually delivered (that row is ``send_state='sent'``, not
+    ``'sending'``)."""
+    with closing(_connect(database_url)) as conn:
+        cur = conn.execute(
+            "UPDATE agent_pending_drafts SET send_state = 'draft_created', "
+            "updated_at = CURRENT_TIMESTAMP "
+            "WHERE send_state = 'sending' "
+            "AND datetime(updated_at) <= datetime('now', ?)",
+            (f"-{int(older_than_minutes)} minutes",),
+        )
+        conn.commit()
+        return cur.rowcount or 0
+
+
+def count_sent_today(database_url: str, *, account: str | None = None) -> int:
+    """How many drafts were actually sent (``send_state='sent'``) today (UTC) —
+    the daily auto-send cap counts against this, mirroring the auto-push cap."""
+    sql = (
+        "SELECT COUNT(*) FROM agent_pending_drafts "
+        "WHERE send_state = 'sent' AND actually_sent_at IS NOT NULL "
+        "AND date(actually_sent_at) = date('now')"
+    )
+    params: list[Any] = []
+    if account:
+        sql += " AND account = ?"
+        params.append(account)
+    with closing(_connect(database_url)) as conn:
+        row = conn.execute(sql, params).fetchone()
+    return int(row[0]) if row else 0
+
+
 def abort_push(database_url: str, row_id: int, *, prev_status: str) -> None:
     """Roll back a claimed-but-failed push: restore the prior status and clear
     ``sent_at`` so the user can retry. No-op if a draft id slipped in
@@ -320,20 +369,23 @@ def abort_push(database_url: str, row_id: int, *, prev_status: str) -> None:
 
 
 def recipient_trust(database_url: str, sender_email: str | None, *, account: str | None = None) -> int:
-    """How many prior replies to this recipient the user *kept* — a coarse
+    """How many prior replies to this recipient were CONFIRMED sent — a coarse
     per-recipient trust signal for gradual auto-send rollout.
 
-    Counts rows whose draft reached a kept state (``amended`` = the user edited
-    it, or actually sent by us) and were NOT dismissed. A brand-new recipient
-    scores 0, so auto-send never fires on a relationship the user hasn't
-    vetted. Conservative by construction (does not count plain auto-pushed
-    drafts the user never engaged with)."""
+    Counts only confirmed-send states: ``send_state='sent'`` (we auto-sent it)
+    or ``status='sent'`` with ``send_state`` NULL (the user marked it sent
+    themselves via mark_sent). It deliberately does NOT count ``amended`` — the
+    /regenerate endpoint also writes ``status='amended'`` for a machine-only
+    re-draft the user never approved, which would inflate trust without human
+    sign-off — nor plain auto-pushed drafts (send_state='draft_created') whose
+    send we can't confirm. A brand-new recipient scores 0, so auto-send never
+    fires on a relationship the user hasn't vetted."""
     if not sender_email:
         return 0
     sql = (
         "SELECT COUNT(*) FROM agent_pending_drafts "
-        "WHERE lower(sender_email) = lower(?) AND status != 'dismissed' "
-        "AND (status = 'amended' OR send_state = 'sent')"
+        "WHERE lower(sender_email) = lower(?) "
+        "AND (send_state = 'sent' OR (status = 'sent' AND send_state IS NULL))"
     )
     params: list[Any] = [sender_email]
     if account:

@@ -485,9 +485,12 @@ def _auto_send_config() -> dict[str, Any]:
     return {
         "enabled": bool(s.get("enabled", False)),
         "mode": mode,
-        "delay_minutes": max(0, _i("delay_minutes", 60)),
+        # Clamp to >=1 so the undo window is ALWAYS non-zero — a 0 would let
+        # auto-send fire on a draft created earlier in the same sweep.
+        "delay_minutes": max(1, _i("delay_minutes", 60)),
         "min_recipient_trust": max(0, _i("min_recipient_trust", 3)),
         "max_per_sweep": max(1, _i("max_per_sweep", 5)),
+        "daily_send_cap": max(0, _i("daily_send_cap", 5)),
     }
 
 
@@ -507,11 +510,23 @@ def _maybe_auto_send(*, database_url: str | None, account: str) -> list[dict[str
         return []
 
     from app.agent import store
-    from app.agent.escalation import decide_action, escalation_config
+    from app.agent.escalation import assess_stakes, decide_action, escalation_config
     from app.agent.send import send_pending_row
+
+    # Reaper: free any rows stranded in 'sending' by a crashed prior run so they
+    # become eligible again (safe — a truly-sent row is 'sent', not 'sending').
+    try:
+        reaped = store.reap_stale_sending(database_url)
+        if reaped:
+            logger.info("auto-send: reaped %d stale 'sending' row(s)", reaped)
+    except Exception as exc:
+        logger.info("auto-send reaper skipped: %s", exc)
 
     esc = escalation_config()
     shadow = cfg["mode"] != "live"
+    # Daily send cap (UTC) — a blast-radius bound mirroring the auto-push cap.
+    remaining = cfg["daily_send_cap"] - store.count_sent_today(database_url, account=account) \
+        if cfg["daily_send_cap"] > 0 else float("inf")
     due = store.due_for_auto_send(
         database_url, account=account,
         delay_minutes=cfg["delay_minutes"], limit=cfg["max_per_sweep"],
@@ -519,9 +534,15 @@ def _maybe_auto_send(*, database_url: str | None, account: str) -> list[dict[str
     results: list[dict[str, Any]] = []
     for row in due:
         row_id = row["id"]
+        if remaining <= 0:
+            results.append({"id": row_id, "action": "held", "reason": "daily send cap reached"})
+            continue
         decision = decide_action(
             quality_score=row.get("quality_score"),
             needs_reply_score=row.get("needs_reply_score") or 0.0,
+            # Prefer the calibrated probability when one was persisted (Phase
+            # A2); decide_action falls back to the raw score when it's None.
+            calibrated_score=row.get("calibrated_score"),
             subject=row.get("subject"),
             body=row.get("body"),
             auto_act_floor=float(esc["auto_act_floor"]),
@@ -530,6 +551,12 @@ def _maybe_auto_send(*, database_url: str | None, account: str) -> list[dict[str
         )
         if decision.action != "auto_act":
             results.append({"id": row_id, "action": "held", "reason": decision.action})
+            continue
+        # Stakes guard on the DRAFT too — escalation scans the inbound, but a
+        # draft can itself state money/legal/commitment the inbound didn't.
+        # Never auto-send a high-stakes draft (e.g. one that invented a price).
+        if esc["high_stakes_blocks"] and assess_stakes(row.get("subject"), row.get("draft")) == "high":
+            results.append({"id": row_id, "action": "held", "reason": "high-stakes draft content"})
             continue
         trust = store.recipient_trust(database_url, row.get("sender_email"), account=account)
         if trust < cfg["min_recipient_trust"]:
@@ -541,6 +568,8 @@ def _maybe_auto_send(*, database_url: str | None, account: str) -> list[dict[str
         outcome = send_pending_row(database_url, row_id, shadow=shadow)
         if outcome.ok:
             action = "shadow" if (shadow or outcome.shadow) else "sent"
+            if action == "sent":
+                remaining -= 1  # only a real send consumes the daily cap
             results.append({"id": row_id, "action": action, "message_id": outcome.sent_message_id})
             logger.info("auto-send (%s) row %s", action, row_id)
         else:
@@ -927,6 +956,7 @@ def _run_sweep(
                 standing_instructions_snapshot=d.standing_instructions_snapshot,
                 thread_summary=d.thread_summary,
                 quality_score=d.quality_score,
+                calibrated_score=getattr(d.verdict, "calibrated_score", None),
             )
             if row_id is not None:
                 persisted += 1
