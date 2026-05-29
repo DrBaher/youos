@@ -319,6 +319,61 @@ def abort_push(database_url: str, row_id: int, *, prev_status: str) -> None:
         conn.commit()
 
 
+def recipient_trust(database_url: str, sender_email: str | None, *, account: str | None = None) -> int:
+    """How many prior replies to this recipient the user *kept* — a coarse
+    per-recipient trust signal for gradual auto-send rollout.
+
+    Counts rows whose draft reached a kept state (``amended`` = the user edited
+    it, or actually sent by us) and were NOT dismissed. A brand-new recipient
+    scores 0, so auto-send never fires on a relationship the user hasn't
+    vetted. Conservative by construction (does not count plain auto-pushed
+    drafts the user never engaged with)."""
+    if not sender_email:
+        return 0
+    sql = (
+        "SELECT COUNT(*) FROM agent_pending_drafts "
+        "WHERE lower(sender_email) = lower(?) AND status != 'dismissed' "
+        "AND (status = 'amended' OR send_state = 'sent')"
+    )
+    params: list[Any] = [sender_email]
+    if account:
+        sql += " AND account = ?"
+        params.append(account)
+    with closing(_connect(database_url)) as conn:
+        row = conn.execute(sql, params).fetchone()
+    return int(row[0]) if row else 0
+
+
+def due_for_auto_send(
+    database_url: str,
+    *,
+    account: str | None = None,
+    delay_minutes: int = 60,
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    """Pushed drafts that have sat past the undo/delay window and are eligible
+    for an autonomous send: a Gmail draft exists (``send_state='draft_created'``),
+    the row wasn't dismissed, and it was pushed at least ``delay_minutes`` ago.
+
+    The delay is the human undo window — auto-send never fires in the same
+    sweep that created the draft, giving you time to catch a bad one."""
+    sql = (
+        "SELECT * FROM agent_pending_drafts "
+        "WHERE send_state = 'draft_created' AND status != 'dismissed' "
+        "AND sent_at IS NOT NULL "
+        "AND datetime(sent_at) <= datetime('now', ?)"
+    )
+    params: list[Any] = [f"-{int(delay_minutes)} minutes"]
+    if account:
+        sql += " AND account = ?"
+        params.append(account)
+    sql += " ORDER BY sent_at ASC LIMIT ?"
+    params.append(int(limit))
+    with closing(_connect(database_url)) as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [_row_to_dict(r) for r in rows]
+
+
 # Recognised dismissal-reason buckets — kept here (not in the DB) so the API
 # can validate and so the tuning code can iterate them without re-querying.
 # 'noise' is the only one that's a direct filter-quality signal; the others
