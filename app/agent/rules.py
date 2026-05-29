@@ -59,6 +59,11 @@ _DRAFT_ACTIONS = ("skip", "decline", "prepend", "hold")
 _MAILBOX_ACTIONS = ("label", "archive", "star")
 _VALID_ACTIONS = _DRAFT_ACTIONS + _MAILBOX_ACTIONS
 
+# Reserved label namespace owned by gmail_label_sync (label→dismissal feedback).
+# A routing rule must never target these or it would fight the sync that
+# removes them (re-added every sweep). Prefix-matched, case-insensitive.
+_RESERVED_LABEL_PREFIX = "youos/"
+
 
 def load_rules() -> list[dict[str, Any]]:
     """Read + normalise ``agent.rules`` from config. Returns [] on any problem
@@ -81,7 +86,16 @@ def load_rules() -> list[dict[str, Any]]:
         action = str(r.get("action", "")).strip().lower()
         if not isinstance(match, dict) or not match or action not in _VALID_ACTIONS:
             continue
-        out.append({"match": match, "action": action, "value": r.get("value")})
+        value = r.get("value")
+        if action == "label":
+            name = str(value or "").strip()
+            # A label name can't contain a comma — gog's --add is comma-delimited,
+            # so "a,b" would become two labels. And it can't live in the reserved
+            # YouOS/ namespace (would fight the dismissal-label sync). Drop such
+            # rules rather than silently corrupt the mailbox.
+            if "," in name or name.lower().startswith(_RESERVED_LABEL_PREFIX):
+                continue
+        out.append({"match": match, "action": action, "value": value})
     return out
 
 

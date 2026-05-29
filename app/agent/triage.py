@@ -721,16 +721,28 @@ def _maybe_apply_mailbox_actions(
     cfg = act._actions_config()
     if not cfg["enabled"]:
         return []
+    # 0 (or less) DISABLES routing — consistent with daily_push_cap /
+    # daily_send_cap (never "unlimited").
+    if cfg["daily_cap"] <= 0:
+        return []
     rules = load_rules()
     if not any(r["action"] in ("label", "archive", "star") for r in rules):
         return []
 
     from app.core.sender import extract_domain
 
-    remaining: int | float = (
-        cfg["daily_cap"] - act.count_actions_today(database_url, account=account)
-        if cfg["daily_cap"] > 0 else float("inf")
-    )
+    remaining: int | float = cfg["daily_cap"] - act.count_actions_today(database_url, account=account)
+    # Per-sweep label cache: fetch existing labels at most ONCE (only when a live
+    # label apply could happen), instead of a `labels list` subprocess per
+    # matched message. None in dry-run (no creates) keeps it cheap.
+    known_labels: set[str] | None = None
+    if not cfg["dry_run"]:
+        try:
+            from app.ingestion import gmail_write
+
+            known_labels = gmail_write.list_labels(account=account)
+        except Exception as exc:
+            logger.info("label cache fetch skipped: %s", exc)
     results: list[dict[str, Any]] = []
     for msg in messages:
         acts = evaluate_mailbox_actions(
@@ -742,7 +754,9 @@ def _maybe_apply_mailbox_actions(
         )
         if not acts:
             continue
-        res = act.apply_mailbox_actions(database_url, account, msg, acts, remaining=remaining)
+        res = act.apply_mailbox_actions(
+            database_url, account, msg, acts, remaining=remaining, known_labels=known_labels,
+        )
         for r in res:
             r["message_id"] = msg.message_id
             if r.get("status") == "applied":
@@ -798,6 +812,16 @@ def _run_sweep(
     mailbox_actions: list[dict[str, Any]] = []
     try:
         mailbox_actions = _maybe_apply_mailbox_actions(database_url, account, messages)
+        # A message routed to ARCHIVE shouldn't also be drafted/persisted — the
+        # user's rule said "get this out of my inbox", so drop it from the draft
+        # pipeline (in dry-run too, so the soak previews the real behaviour).
+        _archived = {
+            a["message_id"] for a in mailbox_actions
+            if a.get("action", {}).get("type") == "archive" and a.get("status") in ("applied", "dry_run")
+        }
+        if _archived:
+            messages = [m for m in messages if m.message_id not in _archived]
+            logger.info("mailbox routing: %d archived message(s) excluded from drafting", len(_archived))
     except Exception as exc:
         logger.warning("mailbox-routing step failed: %s", exc)
 

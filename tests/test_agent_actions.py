@@ -198,6 +198,66 @@ def test_undo_reverses_applied_action(db, monkeypatch):
     assert act.get_action(db, aid)["status"] == "undone"
 
 
+def test_undone_action_is_not_reapplied_next_sweep(db, monkeypatch):
+    """The HIGH bug: after undo, the next sweep must NOT silently re-apply the
+    action the user just undid."""
+    monkeypatch.setattr(act, "_actions_config", lambda: _cfg())
+    monkeypatch.setattr(gmail_write, "ensure_label", lambda **k: None)
+    monkeypatch.setattr(gmail_write, "modify_message_labels",
+                        lambda **k: gmail_write.GmailModifyResult("m1", [], [], {}))
+    a = [{"type": "star", "value": None}]
+    act.apply_mailbox_actions(db, "me@x.com", _msg(), a)        # applied
+    aid = act.list_actions(db)[0]["id"]
+    act.undo_action(db, aid)                                    # undone
+    res = act.apply_mailbox_actions(db, "me@x.com", _msg(), a)  # next sweep, same msg+action
+    assert res[0]["status"] == "skipped_done"                   # NOT re-applied
+
+
+def test_double_undo_is_rejected(db, monkeypatch):
+    monkeypatch.setattr(act, "_actions_config", lambda: _cfg())
+    monkeypatch.setattr(gmail_write, "ensure_label", lambda **k: None)
+    monkeypatch.setattr(gmail_write, "modify_message_labels",
+                        lambda **k: gmail_write.GmailModifyResult("m1", [], [], {}))
+    act.apply_mailbox_actions(db, "me@x.com", _msg(), [{"type": "archive", "value": None}])
+    aid = act.list_actions(db)[0]["id"]
+    assert act.undo_action(db, aid)["ok"]
+    second = act.undo_action(db, aid)
+    assert not second["ok"] and second["http_status"] == 409
+
+
+def test_ensure_label_uses_known_cache(monkeypatch):
+    monkeypatch.setattr(gmail_write, "list_labels",
+                        lambda **k: (_ for _ in ()).throw(AssertionError("must not list when known is provided")))
+
+    class _R:
+        returncode = 0
+        stdout = "{}"
+        stderr = ""
+
+    created = []
+    monkeypatch.setattr("app.ingestion.gmail_write.subprocess.run", lambda cmd, **kw: created.append(cmd) or _R())
+    known = {"INBOX", "Work"}
+    gmail_write.ensure_label(account="me@x.com", name="New", known=known)
+    assert "New" in known and any("create" in c for c in created)  # created + cached
+    created.clear()
+    gmail_write.ensure_label(account="me@x.com", name="New", known=known)
+    assert created == []  # second call sees the cache, no create
+
+
+def test_sweep_cap_zero_disables_routing(db, monkeypatch):
+    from app.agent import triage
+    from app.agent.inbox_fetch import InboxMessage
+
+    monkeypatch.setattr(act, "_actions_config", lambda: {"enabled": True, "dry_run": False, "daily_cap": 0})
+    monkeypatch.setattr("app.agent.rules.load_rules",
+                        lambda: [{"match": {"domain": "@x.com"}, "action": "star", "value": None}])
+    monkeypatch.setattr(gmail_write, "modify_message_labels",
+                        lambda **k: (_ for _ in ()).throw(AssertionError("cap=0 must apply nothing")))
+    msgs = [InboxMessage(message_id="z1", thread_id="t", account="me@x.com",
+                         sender="A <a@x.com>", sender_email="a@x.com", subject="s", body="b", headers={})]
+    assert triage._maybe_apply_mailbox_actions(db, "me@x.com", msgs) == []
+
+
 def test_undo_rejects_non_applied(db, monkeypatch):
     monkeypatch.setattr(act, "_actions_config", lambda: _cfg(dry_run=True))
     act.apply_mailbox_actions(db, "me@x.com", _msg(), [{"type": "star", "value": None}])

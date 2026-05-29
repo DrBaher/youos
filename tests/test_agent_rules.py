@@ -68,6 +68,22 @@ def test_content_predicate_anded_with_sender():
     assert wrong_sender["hold"] is False
 
 
+def test_load_rules_drops_unsafe_label_rules(monkeypatch):
+    """A label name with a comma (gog splits comma-delimited --add) or in the
+    reserved YouOS/ namespace (would fight the dismissal-label sync) is dropped."""
+    from app.agent import rules as rules_mod
+
+    monkeypatch.setattr("app.core.config.load_config", lambda *a, **k: {"agent": {"rules": [
+        {"match": {"domain": "@x.com"}, "action": "label", "value": "a,b"},          # comma → drop
+        {"match": {"domain": "@x.com"}, "action": "label", "value": "YouOS/skip"},   # reserved → drop
+        {"match": {"domain": "@x.com"}, "action": "label", "value": "Recruiting"},   # ok
+        {"match": {"domain": "@x.com"}, "action": "archive", "value": None},          # ok
+    ]}})
+    loaded = rules_mod.load_rules()
+    assert [r["value"] for r in loaded if r["action"] == "label"] == ["Recruiting"]
+    assert any(r["action"] == "archive" for r in loaded)
+
+
 def test_hold_still_drafts_no_skip():
     rules = [{"match": {"body_contains": "legal"}, "action": "hold", "value": None}]
     r = apply_rules(rules, sender_email="a@b.com", domain="b.com", intents=None,
