@@ -114,6 +114,7 @@ def apply_mailbox_actions(
     actions: list[dict[str, Any]],
     *,
     remaining: int | float = float("inf"),
+    known_labels: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Apply the routing ``actions`` to ``message`` (or log them in dry-run).
 
@@ -139,8 +140,11 @@ def apply_mailbox_actions(
                     status="dry_run", detail=f"would add={add} remove={remove}")
             results.append({"action": action, "status": "dry_run"})
             continue
-        # live
-        if _has_status(database_url, message.message_id, action, ("applied",)):
+        # live — also treat a deliberately UNDONE (or in-flight 'undoing') action
+        # as "done" so the next sweep doesn't silently re-apply what the user
+        # just undid. A re-apply after undo must be an explicit action, never
+        # the default sweep behaviour.
+        if _has_status(database_url, message.message_id, action, ("applied", "undone", "undoing")):
             results.append({"action": action, "status": "skipped_done"})
             continue
         if remaining <= 0:
@@ -148,7 +152,7 @@ def apply_mailbox_actions(
             continue
         try:
             if action.get("type") == "label" and action.get("value"):
-                gmail_write.ensure_label(account=account, name=action["value"])
+                gmail_write.ensure_label(account=account, name=action["value"], known=known_labels)
             gmail_write.modify_message_labels(
                 account=account, message_id=message.message_id, add=add, remove=remove,
             )
@@ -206,6 +210,17 @@ def undo_action(database_url: str, action_id: int) -> dict[str, Any]:
     from app.agent.store import _connect
     from app.ingestion import gmail_write
 
+    # Atomically claim the row (applied -> undoing) so a retried/concurrent undo
+    # can't double-run the gog modify. Only the caller that flips it proceeds.
+    with closing(_connect(database_url)) as conn:
+        cur = conn.execute(
+            "UPDATE agent_actions SET status = 'undoing' WHERE id = ? AND status = 'applied'",
+            (action_id,),
+        )
+        conn.commit()
+        if cur.rowcount != 1:
+            return {"ok": False, "http_status": 409, "detail": "undo already in progress or not applicable"}
+
     action = {"type": row["action_type"], "value": row["action_value"]}
     add, remove = _reverse_labels(action)
     try:
@@ -213,6 +228,10 @@ def undo_action(database_url: str, action_id: int) -> dict[str, Any]:
             account=row["account"], message_id=row["message_id"], add=add, remove=remove,
         )
     except Exception as exc:
+        # Roll the claim back so the user can retry the undo.
+        with closing(_connect(database_url)) as conn:
+            conn.execute("UPDATE agent_actions SET status = 'applied' WHERE id = ? AND status = 'undoing'", (action_id,))
+            conn.commit()
         return {"ok": False, "http_status": 502, "detail": f"undo failed: {exc}"}
     with closing(_connect(database_url)) as conn:
         conn.execute(
