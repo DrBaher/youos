@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.117 — 2026-05-29
+
+### Digest schedule: pick the weekday + time
+
+Digest cadence is now finer-grained:
+- **`minute`** (0–59, default 0) on any digest — combined with `hour`, sets the local-tz time-of-day it fires at/after.
+- **`weekday`** for weekly digests — the day it fires, as a name (`monday`…`sunday`/`mon`…`sun`) or `0–6` (Mon=0). Defaults to Monday. So a weekly digest can be "every Friday 9:00" instead of always Monday.
+
+Firing is still once-per-period (daily = local date, weekly = ISO week) — the new fields only choose *when within the period*, so at-most-once is unchanged (a focused review verified this across DST transitions, ISO-week/year boundaries, and weekday off-by-ones). It fires at the first scheduler tick at/after the configured time (so within ~the loop interval of the exact minute), and catches up later in the period if a tick was missed.
+
+The baheros "Newsletters" digest is switched to `category:promotions newer_than:1d` (daily) so each morning's digest is fresh rather than re-covering a rolling week. +6 tests. Still off by default.
+
 ## v0.2.0-beta.116 — 2026-05-29
 
 ### Digest tuning + hardening: choose local or cloud summary, and the fetch-cap fix
