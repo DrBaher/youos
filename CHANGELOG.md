@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.2.0-beta.106 — 2026-05-29
+
+### Beyond drafting: rule-driven mailbox routing (label / archive / star) — the agent-action framework
+
+YouOS can now **act on** inbound mail, not just draft replies. `agent.rules` gains mailbox-routing actions that run on **every fetched message** (routing isn't tied to drafting):
+
+```yaml
+agent:
+  rules:
+    - match: {domain: "@recruiters.com"}
+      action: label
+      value: Recruiting
+    - match: {subject_contains: newsletter}
+      action: archive          # route out of the inbox
+    - match: {body_contains: [urgent, asap]}
+      action: star
+```
+
+- **Same guardrails as the send frontier:** opt-in `agent.actions.enabled` (default **false**), `agent.actions.dry_run` (default **true** — records intent without touching Gmail), and `agent.actions.daily_cap` (50). Account-internal + **reversible**.
+- **Full accountability + undo:** every action is logged to a new `agent_actions` ledger; `GET /api/agent/actions` lists them and `POST /api/agent/actions/{id}/undo` reverses an applied one (re-adds INBOX / removes the label / unstars). Idempotent across sweeps (an applied action is never re-applied; a logged dry-run never blocks a later live apply).
+- **Verified `gog` shapes** (`labels list` / `labels create <name>` / `messages modify <id> --add … --remove …`): label = add the label (created if missing), archive = remove `INBOX`, star = add `STARRED`. New `gmail_write.list_labels` / `ensure_label` / `modify_message_labels`; new `app/agent/actions.py` executor; wired into the sweep as `_maybe_apply_mailbox_actions`.
+- **Deferred (outbound-sensitive):** `forward` — routes mail out of the mailbox, so it belongs with the send frontier's gating, not here.
+
++31 tests (`test_agent_actions.py` + rule/route + API list/undo cases). Never-send boundary unchanged (labeling/archiving is account-internal, not outbound).
+
 ## v0.2.0-beta.105 — 2026-05-29
 
 ### Cap the Stats "pairs reviewed" bar at 100%
