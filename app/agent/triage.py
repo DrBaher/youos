@@ -275,6 +275,41 @@ def _maybe_calibrate(
     return out
 
 
+def _extract_facts_enabled() -> bool:
+    """Whether the sweep harvests facts from drafted inbound mail into memory.
+    Off by default — it's an autonomous write to the user's memory table."""
+    from app.core.config import load_config
+
+    cfg = load_config() or {}
+    a = (cfg.get("agent") or {}) if isinstance(cfg, dict) else {}
+    ef = (a.get("extract_facts") or {}) if isinstance(a, dict) else {}
+    return bool(ef.get("enabled", False)) if isinstance(ef, dict) else False
+
+
+def _maybe_extract_facts(msg: InboxMessage, database_url: str | None) -> None:
+    """Extract concrete facts the sender stated and save them to memory, so
+    replies are grounded rather than invented. No-op unless
+    ``agent.extract_facts.enabled``; rule-based only (high precision, no model);
+    failure-isolated."""
+    if not database_url or not _extract_facts_enabled():
+        return
+    try:
+        from app.core.facts_extractor import extract_and_save
+        from app.db.bootstrap import resolve_sqlite_path
+
+        db_path = resolve_sqlite_path(database_url)
+        saved = extract_and_save(
+            msg.body or "",
+            db_path,
+            sender_email=msg.sender_email,
+            use_llm=False,
+        )
+        if saved:
+            logger.info("extracted %d fact(s) from %s", len(saved), msg.message_id)
+    except Exception as exc:
+        logger.info("fact extraction skipped for %s: %s", msg.message_id, exc)
+
+
 def _calendar_config() -> dict[str, Any]:
     """Read ``agent.calendar.*`` config + the user's timezone. Safe defaults."""
     from app.core.config import load_config
@@ -753,6 +788,11 @@ def _run_sweep(
                 )
             )
             cap_remaining -= 1  # ζ: one less slot for this UTC day
+            # Fact grounding: harvest any concrete facts the sender stated in
+            # this (real, drafted) message into the memory table, so this and
+            # future replies are grounded instead of inventing. Flag-gated
+            # (off by default; it writes to memory), failure-isolated.
+            _maybe_extract_facts(msg, database_url)
         except Exception as exc:
             logger.warning("triage draft generation failed for %s: %s", msg.message_id, exc)
             drafts.append(

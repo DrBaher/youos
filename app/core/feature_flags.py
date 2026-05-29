@@ -309,6 +309,18 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.extract_facts.enabled",
+        "label": "Harvest facts from drafted mail",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "When the agent drafts a reply, extract concrete facts the sender "
+            "stated (addresses, dates, deadlines) into your memory so this and "
+            "future replies are grounded instead of invented. Rule-based, "
+            "on-device. Off by default — it writes to your memory table."
+        ),
+    },
+    {
         "key": "agent.calendar.enabled",
         "label": "Propose meeting times from your calendar",
         "type": "bool",
