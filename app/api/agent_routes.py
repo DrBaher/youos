@@ -374,6 +374,7 @@ class DigestBody(BaseModel):
     weekday: object | None = None
     hour: int = 7
     minute: int = 0
+    account: str = ""
     deliver_to: str = ""
     then_archive: bool = False
     max_messages: int = 50
@@ -457,16 +458,18 @@ def run_digest_now(body: DigestRunBody, request: Request) -> dict:
     from app.agent.digest_tasks import load_digests, run_digest
     from app.core.config import get_user_emails
 
-    account = body.account
+    spec = next((s for s in load_digests() if s.name == body.name), None)
+    if spec is None:
+        raise HTTPException(404, f"no digest named {body.name!r} (configure it under agent.digests.items)")
+
+    # Prefer the caller's account; else the digest's own scoped account; else the
+    # first configured account — so a preview/run targets the right inbox.
+    account = body.account or spec.account
     if not account:
         emails = get_user_emails()
         if not emails:
             raise HTTPException(400, "no account configured (user.emails empty)")
         account = emails[0]
-
-    spec = next((s for s in load_digests() if s.name == body.name), None)
-    if spec is None:
-        raise HTTPException(404, f"no digest named {body.name!r} (configure it under agent.digests.items)")
     return run_digest(_db_url(request), account, spec, dry_run=body.dry_run)
 
 

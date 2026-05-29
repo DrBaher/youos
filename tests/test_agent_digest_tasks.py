@@ -131,25 +131,49 @@ def test_validate_weekday_and_minute():
     assert not dt.validate_digest({"name": "N", "query": "x", "minute": 75})[0]
 
 
-def test_daily_due_respects_hour_and_minute():
+def test_daily_due_is_bounded_catch_up():
     tz = ZoneInfo("UTC")
     spec = _spec(schedule="daily", hour=7, minute=30)
     at = lambda h, m: datetime(2026, 5, 29, h, m, tzinfo=tz)  # noqa: E731
-    assert dt._is_due(spec, at(7, 30)) is True          # exactly the time
-    assert dt._is_due(spec, at(9, 0)) is True            # later
-    assert dt._is_due(spec, at(7, 29)) is False          # one minute early
-    assert dt._is_due(spec, at(6, 59)) is False
+    assert dt._is_due(spec, at(7, 30)) is True           # exactly the time
+    assert dt._is_due(spec, at(9, 0)) is True             # within the 3h catch-up window
+    assert dt._is_due(spec, at(7, 29)) is False           # one minute early
+    # BOUNDED: enabling/ticking long after the time does NOT fire (the b120 fix —
+    # this is what stops an evening enable from blasting a morning digest).
+    assert dt._is_due(spec, at(11, 0)) is False           # 3.5h after → outside catch-up
+    assert dt._is_due(spec, at(22, 0)) is False
 
 
-def test_weekly_due_respects_weekday_and_time():
+def test_weekly_due_is_weekday_exact_and_bounded():
     tz = ZoneInfo("UTC")
     # Friday = weekday 4. 2026-05-29 is a Friday.
-    spec = _spec(schedule="weekly", weekday=4, hour=9, minute=0)
-    assert datetime(2026, 5, 29, 9, 0, tzinfo=tz).weekday() == 4   # sanity: it's Friday
-    assert dt._is_due(spec, datetime(2026, 5, 29, 9, 0, tzinfo=tz)) is True    # Fri 9:00
-    assert dt._is_due(spec, datetime(2026, 5, 29, 8, 59, tzinfo=tz)) is False  # Fri, too early
-    assert dt._is_due(spec, datetime(2026, 5, 27, 23, 0, tzinfo=tz)) is False  # Wed (before Fri)
-    assert dt._is_due(spec, datetime(2026, 5, 30, 1, 0, tzinfo=tz)) is True    # Sat (catch-up, same ISO week)
+    spec = _spec(schedule="weekly", weekday=4, hour=17, minute=0)
+    assert datetime(2026, 5, 29, 17, 0, tzinfo=tz).weekday() == 4   # sanity: Friday
+    assert dt._is_due(spec, datetime(2026, 5, 29, 17, 0, tzinfo=tz)) is True   # Fri 17:00
+    assert dt._is_due(spec, datetime(2026, 5, 29, 16, 59, tzinfo=tz)) is False # too early
+    assert dt._is_due(spec, datetime(2026, 5, 29, 22, 0, tzinfo=tz)) is False  # 5h later → outside catch-up
+    assert dt._is_due(spec, datetime(2026, 5, 27, 17, 0, tzinfo=tz)) is False  # Wed (wrong day)
+    assert dt._is_due(spec, datetime(2026, 5, 30, 1, 0, tzinfo=tz)) is False   # Sat (NOT its weekday)
+
+
+def test_run_due_digests_account_scoping(db, monkeypatch):
+    monkeypatch.setattr(dt, "_digest_config", lambda: _cfg())
+    monkeypatch.setattr(dt, "load_digests", lambda: [_spec(account="only@x.com", hour=7)])
+    _stub_fetch(monkeypatch, _ITEMS)
+    calls = _stub_send(monkeypatch)
+    monkeypatch.setattr(dt, "build_digest_body", lambda items, **k: "B")
+    at8 = datetime(2026, 5, 29, 8, 0, tzinfo=ZoneInfo("UTC"))
+    # scheduler tick for a DIFFERENT account → digest is skipped (not its account)
+    assert dt.run_due_digests(db, "other@y.com", now=at8) == [] and calls == []
+    # tick for the digest's own account → it runs
+    out = dt.run_due_digests(db, "only@x.com", now=at8)
+    assert out and out[0]["status"] == "sent" and len(calls) == 1
+
+
+def test_validate_account():
+    assert dt.validate_digest({"name": "N", "query": "x", "account": "me@x.com"})[0]
+    assert dt.validate_digest({"name": "N", "query": "x", "account": ""})[0]
+    assert not dt.validate_digest({"name": "N", "query": "x", "account": "not-an-email"})[0]
 
 
 # --- body ------------------------------------------------------------------
