@@ -408,3 +408,40 @@ def test_vip_automation_still_hard_skipped():
     )
     assert not v.needs_reply
     assert v.vip is False
+
+
+# --- b84: German/transactional false-positive (found turning the agent on) ----
+
+
+def test_german_order_confirmation_not_drafted():
+    """A German Amazon order confirmation ('Ordered:' subject + German body,
+    even with a stray question) must not be drafted."""
+    v = classify(_msg(
+        sender='"Amazon.de" <bestellbestaetigung@amazon.de>',
+        sender_email="bestellbestaetigung@amazon.de",
+        subject="Ordered: 'Tracks Junior Mirror Goggle'",
+        body="Hallo, vielen Dank für Ihre Bestellung (Bestellbestätigung). Brauchen Sie Hilfe?",
+    ))
+    assert not v.needs_reply, f"score={v.score} reasons={v.reasons}"
+    assert any("transactional" in r for r in v.reasons)
+
+
+def test_transactional_suppresses_false_history_boost():
+    """A transactional template must not get the +0.20 prior-history boost from
+    a corpus-noise reply pair (an ingested confirmation)."""
+    class FakeHistory:
+        def count_for(self, _e):
+            return 5
+
+    v = classify(
+        _msg(subject="Order confirmation", body="Your order has been placed. Anything else?"),
+        history=FakeHistory(),
+    )
+    assert any("transactional" in r for r in v.reasons)
+    assert not any("prior history (5 reply pairs)" in r for r in v.reasons)
+
+
+def test_real_question_to_person_still_drafts():
+    """Guard: the transactional terms don't over-suppress a genuine human ask."""
+    v = classify(_msg(body="Could you confirm the delivery address for the order I placed? Thanks."))
+    assert v.needs_reply

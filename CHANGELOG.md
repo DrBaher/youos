@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.84 — 2026-05-29
+
+### Triage false positive: non-English / order-confirmation mail
+
+Found by turning the agent on against the real baheros inbox (dry-run): a German Amazon order confirmation (`bestellbestaetigung@amazon.de`, subject "Ordered: …") got drafted — the transactional-template detector was English-only, and a corpus-noise reply pair gave it a false +0.20 history boost.
+
+- `TRANSACTIONAL_TEMPLATE_PAT` now covers German order/shipping/payment terms (`bestellbestätigung`, `auftragsbestätigung`, `versandbestätigung`, `zahlungsbestätigung`, `ihre bestellung`, `rechnungsnummer`) plus more English ones (`your order`, `order number/#`, `tracking number`, `out for delivery`, `has shipped`) and the colon-anchored `Ordered:` / `Bestellt:` subject prefix (won't fire on prose like "I ordered the report").
+- A transactional match now also suppresses the prior-history boost, so an ingested confirmation in the corpus can't lift a new confirmation over threshold.
+
++3 tests; a genuine human "could you confirm the delivery address for the order I placed?" still drafts.
+
 ## v0.2.0-beta.83 — 2026-05-29
 
 ### Long-thread catch-up summaries
