@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.agent import digest_tasks as dt
-from app.db.bootstrap import _migrate_agent_digest_runs
+from app.db.bootstrap import _migrate_agent_digest_items, _migrate_agent_digest_runs
 from app.ingestion import gmail_write
 
 
@@ -18,6 +18,7 @@ def db(tmp_path):
     p = tmp_path / "d.db"
     conn = sqlite3.connect(p)
     _migrate_agent_digest_runs(conn)
+    _migrate_agent_digest_items(conn)
     conn.commit()
     conn.close()
     return f"sqlite:///{p}"
@@ -329,6 +330,38 @@ def test_run_due_digests_respects_hour(db, monkeypatch):
     later = dt.run_due_digests(db, "me@x.com", now=datetime(2026, 5, 29, 8, 0, tzinfo=tz))
     assert later and later[0]["status"] == "sent"
     assert len(calls) == 1
+
+
+def test_undigested_filters_already_sent(db):
+    dt._record_digested(db, "Newsletters", "me@x.com", ["m1"], "2026-05-29")
+    out = dt._undigested(db, "Newsletters", "me@x.com", _ITEMS)   # _ITEMS = m1, m2
+    assert [it["id"] for it in out] == ["m2"]                      # m1 filtered, m2 kept
+    # dedup is scoped per digest NAME — a different digest isn't affected
+    assert [it["id"] for it in dt._undigested(db, "Other", "me@x.com", _ITEMS)] == ["m1", "m2"]
+
+
+def test_digest_does_not_repeat_messages_across_runs(db, monkeypatch):
+    monkeypatch.setattr(dt, "_digest_config", lambda: _cfg())
+    monkeypatch.setattr(dt, "build_digest_body", lambda items, **k: "B")
+    calls = _stub_send(monkeypatch)
+    d1 = datetime(2026, 5, 29, 9, 0, tzinfo=ZoneInfo("UTC"))
+    d2 = datetime(2026, 5, 30, 9, 0, tzinfo=ZoneInfo("UTC"))   # next day → new period
+
+    _stub_fetch(monkeypatch, _ITEMS)                            # day 1: m1, m2
+    r1 = dt.run_digest(db, "me@x.com", _spec(), now=d1)
+    assert r1["status"] == "sent" and r1["count"] == 2
+
+    # day 2: m1, m2 still match the query PLUS a new m3 → only m3 is sent
+    _stub_fetch(monkeypatch, _ITEMS + [{"id": "m3", "from": "c@z.com", "subject": "Fresh", "date": "2026-05-30"}])
+    r2 = dt.run_digest(db, "me@x.com", _spec(), now=d2)
+    assert r2["status"] == "sent" and r2["count"] == 1          # only the NEW message
+
+    # day 3: nothing new (only the already-digested m1/m2/m3) → empty, no send
+    d3 = datetime(2026, 5, 31, 9, 0, tzinfo=ZoneInfo("UTC"))
+    _stub_fetch(monkeypatch, _ITEMS + [{"id": "m3", "from": "c@z.com", "subject": "Fresh", "date": "2026-05-30"}])
+    r3 = dt.run_digest(db, "me@x.com", _spec(), now=d3)
+    assert r3["status"] == "empty"
+    assert len(calls) == 2                                      # day1 + day2 only
 
 
 def test_run_due_digests_weekly_respects_weekday(db, monkeypatch):
