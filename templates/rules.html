@@ -116,6 +116,12 @@
       </div>
     </div>
 
+    <div id="fwdNote" class="note" style="display:none; color:var(--error);">
+      ⚠ Forwarding sends mail and is <strong>irreversible</strong>. A forward rule saves fine, but it
+      won&rsquo;t actually send until you enable <em>agent.send.enabled</em> + <em>agent.actions.allow_forward</em>
+      (and routing is live, kill-switch off) in <a href="/settings" style="color:inherit">Settings</a>. Until then it records as <em>blocked</em>.
+    </div>
+
     <div class="preview" id="preview"><span class="miss">Build a rule above&hellip;</span></div>
 
     <div class="actions-bar">
@@ -178,9 +184,16 @@
     ["mark_read", "mark read"],
     ["mark_important", "mark important"],
     ["mark_unimportant", "mark not important"],
+    ["forward", "forward to (outbound — gated)"],
   ];
   const ACTION_LABEL = Object.fromEntries(ACTIONS.map((a) => [a[0], a[1]]));
-  const VALUE_ACTIONS = { label: "Label name (e.g. Receipts)", prepend: "Instruction to add to the draft…" };
+  // Humanizer overrides so the rule reads naturally.
+  const ACTION_PHRASE = { forward: "forward to" };
+  const VALUE_ACTIONS = {
+    label: "Label name (e.g. Receipts)",
+    prepend: "Instruction to add to the draft…",
+    forward: "Destination email address(es), comma-separated",
+  };
 
   // --- elements --------------------------------------------------------------
   const condsEl = document.getElementById("conds");
@@ -198,6 +211,7 @@
   const nlText = document.getElementById("nlText");
   const nlBtn = document.getElementById("nlBtn");
   const nlStatus = document.getElementById("nlStatus");
+  const fwdNote = document.getElementById("fwdNote");
 
   let editIndex = null; // null = adding; integer = editing that rule index
 
@@ -284,11 +298,14 @@
     const a = actionEl.value;
     if (VALUE_ACTIONS[a]) {
       valueWrap.style.display = "";
-      valueLabel.textContent = a === "label" ? "Label name" : "Text";
+      valueLabel.textContent = a === "label" ? "Label name" : (a === "forward" ? "Forward to" : "Text");
       valueEl.placeholder = VALUE_ACTIONS[a];
     } else {
       valueWrap.style.display = "none";
     }
+    // Surface that forwarding is gated + irreversible (it can validate/save, but
+    // won't actually send until the send-frontier flags are turned on).
+    if (fwdNote) fwdNote.style.display = (a === "forward") ? "" : "none";
   }
   actionEl.addEventListener("change", () => { syncValueField(); schedulePreview(); });
   valueEl.addEventListener("input", schedulePreview);
@@ -316,7 +333,7 @@
       return lab + " " + shown;
     });
     const when = conds.length ? conds.join(" AND ") : "(any message)";
-    const act = ACTION_LABEL[rule.action] || rule.action || "(no action)";
+    const act = ACTION_PHRASE[rule.action] || ACTION_LABEL[rule.action] || rule.action || "(no action)";
     const av = rule.value ? " “" + rule.value + "”" : "";
     return { when, then: act + av };
   }

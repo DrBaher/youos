@@ -242,9 +242,11 @@ class RuleBody(BaseModel):
     intent / cold_outreach / subject_contains / body_contains / to_contains /
     cc_contains / subject_regex / body_regex / has_attachment / known_contact /
     older_than_days / newer_than_days; ``action`` is one of skip/decline/prepend/
-    hold (draft-shaping) or label/archive/star/mark_read/mark_important/
-    mark_unimportant (mailbox routing); ``value`` is the label name (for label)
-    or the prepend text. See ``app.agent.rules.MATCH_KEYS``."""
+    hold (draft-shaping), label/archive/star/mark_read/mark_important/
+    mark_unimportant (mailbox routing), or forward (outbound — gated by the send
+    frontier + agent.actions.allow_forward); ``value`` is the label name (label),
+    the prepend text (prepend), or the destination email (forward). See
+    ``app.agent.rules.MATCH_KEYS``."""
 
     match: dict[str, object] = Field(min_length=1)
     action: str

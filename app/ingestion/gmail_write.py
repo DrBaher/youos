@@ -58,6 +58,17 @@ class GmailSendResult:
     raw_response: dict[str, Any]
 
 
+@dataclass
+class GmailForwardResult:
+    """Outcome of a successful FORWARD (an outbound send). ``message_id`` is the
+    Gmail id of the newly-sent forwarded message; ``to`` echoes the recipients;
+    ``raw_response`` is the backend's full payload."""
+
+    message_id: str
+    to: str
+    raw_response: dict[str, Any]
+
+
 def create_draft(
     *,
     account: str,
@@ -168,6 +179,72 @@ def _gog_send_draft(*, account: str, draft_id: str, dry_run: bool) -> GmailSendR
 
     logger.info("sent gmail draft %s for account=%s (dry_run=%s)", draft_id, account, dry_run)
     return GmailSendResult(message_id=message_id, raw_response=payload)
+
+
+def forward_message(
+    *,
+    account: str,
+    message_id: str,
+    to: str,
+    note: str | None = None,
+    backend: str | None = None,
+) -> GmailForwardResult:
+    """Forward an existing inbound message to new recipients — an OUTBOUND send.
+
+    This crosses the never-send boundary, so callers MUST gate it behind the
+    send frontier (``agent.send.enabled`` + the outbound kill-switch) plus the
+    dedicated ``agent.actions.allow_forward`` opt-in — exactly as ``send_draft``
+    is gated. It performs no gating itself. Original attachments are included by
+    default (Gmail forward semantics). Only the ``gog`` backend has a verified
+    forward shape today.
+    """
+    from app.core.config import get_ingestion_google_backend
+
+    name = (backend or get_ingestion_google_backend()).strip().lower()
+    if name == "gog":
+        return _gog_forward(account=account, message_id=message_id, to=to, note=note)
+    raise NotImplementedError(
+        f"forward_message is only implemented for the gog backend (got {name!r})"
+    )
+
+
+def _gog_forward(*, account: str, message_id: str, to: str, note: str | None) -> GmailForwardResult:
+    """Verified ``gog gmail forward --to=<addr> <messageId>`` invocation (gog 0.17.0).
+
+    Shape (confirmed via ``gog gmail forward --help``):
+        gog gmail forward <messageId> --to <addr> --account <email> --json --no-input
+    ``--to`` is required (comma-separated); original attachments are included by
+    default. On success the Google API returns the sent Message resource
+    ``{"id": "...", ...}``.
+    """
+    cmd: list[str] = [
+        "gog", "gmail", "forward", message_id,
+        "--to", to,
+        "--account", account,
+        "--json", "--no-input",
+    ]
+    if note:
+        cmd += ["--note", note]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except FileNotFoundError as exc:
+        raise GmailWriteError("gog CLI not on PATH — install via Homebrew or set up the native backend") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise GmailWriteError("gog gmail forward timed out (30s)") from exc
+
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        raise GmailWriteError(f"gog forward returned exit {result.returncode}: {stderr or 'no stderr'}")
+
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise GmailWriteError(f"gog forward returned non-JSON stdout: {result.stdout[:200]!r}") from exc
+
+    sent_id = str(payload.get("id") or payload.get("messageId") or "")
+    logger.info("forwarded gmail message %s to %s for account=%s", message_id, to, account)
+    return GmailForwardResult(message_id=sent_id, to=to, raw_response=payload)
 
 
 # --- gog backend -----------------------------------------------------------

@@ -37,8 +37,8 @@ Output ONLY a single JSON object, no prose and no code fences, with exactly thre
 - cold_outreach: true or false (an unsolicited stranger)
 - older_than_days / newer_than_days: a number of days
 
-"action" is exactly one of: skip, decline, prepend, hold, label, archive, star, mark_read, mark_important, mark_unimportant.
-"value" is the label name (only for action "label") or the instruction text (only for action "prepend"); otherwise null.
+"action" is exactly one of: skip, decline, prepend, hold, label, archive, star, mark_read, mark_important, mark_unimportant, forward.
+"value" is the label name (for "label"), the instruction text (for "prepend"), or the destination email (for "forward"); otherwise null.
 
 Examples:
 User: archive newsletters older than a week
@@ -52,6 +52,9 @@ JSON: {"match": {"body_contains": ["contract", "lawsuit"]}, "action": "hold", "v
 
 User: star messages with an attachment from strangers I don't know
 JSON: {"match": {"has_attachment": true, "known_contact": false}, "action": "star", "value": null}
+
+User: forward any invoice to my accountant jane@books.com
+JSON: {"match": {"subject_contains": "invoice"}, "action": "forward", "value": "jane@books.com"}
 
 User: {text}
 JSON:"""
