@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.101 — 2026-05-29
+
+### The agent self-heals its own DB before sweeping (silent-failure fix)
+
+Found live on baheros: after the autonomy work shipped (b85+), the **scheduled agent failed every single sweep** — `OperationalError: table agent_pending_drafts has no column named quality_score` — fetching mail then crashing at the persist step with zero drafts, invisibly, for hours. The cause: the new columns only get added by `bootstrap_database`, which needs `docs/schema.sql`; an instance whose server wasn't restarted (or was started with an instance-relative path that can't find the schema file) stays on the old schema while the new code expects the new columns.
+
+- New `ensure_agent_schema(database_url)` runs the agent-table migrations idempotently with **no schema file required** — they all `CREATE TABLE IF NOT EXISTS` then `ALTER TABLE ADD COLUMN`, so they create-or-upgrade on any DB.
+- `run_triage` calls it at the start of every sweep (cheap, idempotent, failure-isolated). A stale instance DB now upgrades itself in place instead of failing every tick.
+
++3 tests reproduce the exact production failure (a pre-b85 DB) and prove the sweep now self-heals and drafts. Never-send boundary unchanged.
+
 ## v0.2.0-beta.100 — 2026-05-29
 
 ### Fix 8 bugs from a second adversarial audit (Phase C+D, b94–b99)
