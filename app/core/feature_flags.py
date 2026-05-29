@@ -423,7 +423,7 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "label": "Mailbox routing daily cap",
         "type": "int",
         "default": 50,
-        "help": "Max real routing actions per UTC day across all sweeps. 0 disables the cap.",
+        "help": "Max real routing actions per UTC day across all sweeps. 0 (or less) DISABLES routing entirely (no 'unlimited' setting, by design).",
     },
     {
         "key": "agent.extract_facts.enabled",
