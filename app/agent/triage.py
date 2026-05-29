@@ -174,6 +174,81 @@ def _auto_push_config() -> dict[str, Any]:
     }
 
 
+def _adjudication_config() -> dict[str, Any]:
+    """Read ``agent.adjudication.*`` config. Off by default; needs the warm
+    model server. ``high`` is the upper edge of the band we adjudicate."""
+    from app.core.config import load_config
+
+    cfg = load_config() or {}
+    a = (cfg.get("agent") or {}) if isinstance(cfg, dict) else {}
+    adj = (a.get("adjudication") or {}) if isinstance(a, dict) else {}
+    if not isinstance(adj, dict):
+        adj = {}
+    try:
+        high = float(adj.get("high", 0.8))
+    except (TypeError, ValueError):
+        high = 0.8
+    return {
+        "enabled": bool(adj.get("enabled", False)),
+        "high": max(0.6, min(1.0, high)),
+    }
+
+
+def _maybe_adjudicate(
+    classified: list[tuple[InboxMessage, NeedsReplyVerdict]],
+    *,
+    threshold: float,
+) -> list[tuple[InboxMessage, NeedsReplyVerdict]]:
+    """LLM veto on borderline would-be drafts. For each message that passed
+    the heuristic with a score just over the threshold (and isn't a VIP), ask
+    the warm model whether it's a broadcast; if so, demote it to
+    surface-for-review. Only ever demotes — never promotes a rejected message.
+
+    No-ops (returns the input unchanged) when the flag is off or the model is
+    unavailable, so the heuristic stands."""
+    cfg = _adjudication_config()
+    if not cfg["enabled"]:
+        return classified
+    from app.core import model_server
+
+    if not model_server.is_enabled():
+        return classified
+    from app.agent.adjudicate import adjudicate
+
+    high = cfg["high"]
+    out: list[tuple[InboxMessage, NeedsReplyVerdict]] = []
+    for msg, verdict in classified:
+        if (
+            verdict.needs_reply
+            and not verdict.vip
+            and threshold <= verdict.score < high
+        ):
+            res = adjudicate(
+                subject=msg.subject,
+                sender=msg.sender or msg.sender_email,
+                body=msg.body,
+            )
+            if res is not None and res.is_broadcast:
+                logger.info(
+                    "adjudication vetoed draft for %s (broadcast, score %.2f)",
+                    msg.message_id, verdict.score,
+                )
+                out.append((
+                    msg,
+                    NeedsReplyVerdict(
+                        needs_reply=False,
+                        score=verdict.score,
+                        reasons=verdict.reasons + ["adjudicated broadcast (LLM veto)"],
+                        cold_outreach=verdict.cold_outreach,
+                        surface_for_review=True,
+                        vip=verdict.vip,
+                    ),
+                ))
+                continue
+        out.append((msg, verdict))
+    return out
+
+
 def _calendar_config() -> dict[str, Any]:
     """Read ``agent.calendar.*`` config + the user's timezone. Safe defaults."""
     from app.core.config import load_config
@@ -496,6 +571,10 @@ def _run_sweep(
         messages, history=history, threshold=threshold,
         skip_senders=skip_senders, vip_senders=vip_senders,
     )
+    # Borderline LLM veto: ask the warm model to demote would-be drafts that
+    # are actually broadcasts (no-op unless agent.adjudication.enabled + model
+    # available). Catches newsletters the regex misses.
+    classified = _maybe_adjudicate(classified, threshold=threshold)
 
     # ζ: daily cap — count already-persisted rows for this account today, then
     # cap how many MORE we'll write this sweep. 0 disables. Hit-cap drafts are
