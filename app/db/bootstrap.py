@@ -47,6 +47,7 @@ def ensure_agent_schema(database_url: str) -> bool:
         _migrate_agent_pending_drafts(conn)
         _migrate_agent_audit(conn)
         _migrate_triage_precision_history(conn)
+        _migrate_agent_actions(conn)
         conn.commit()
         return True
     finally:
@@ -74,6 +75,7 @@ def bootstrap_database() -> Path:
         _migrate_agent_pending_drafts(connection)
         _migrate_agent_audit(connection)
         _migrate_triage_precision_history(connection)
+        _migrate_agent_actions(connection)
         _populate_fts(connection)
         connection.commit()
     finally:
@@ -364,6 +366,38 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
     # can't later be picked up by the auto-send sweep.
     if "hold" not in _cols:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN hold INTEGER NOT NULL DEFAULT 0")
+
+
+def _migrate_agent_actions(connection: sqlite3.Connection) -> None:
+    """Ledger of mailbox-routing actions the agent took (label / archive / star)
+    — the agent-action framework's accountability + undo log. One row per action
+    (or would-be action in dry-run). Every action is reversible, so ``undone_at``
+    + the add/remove symmetry let the user roll one back.
+    """
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS agent_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            thread_id TEXT,
+            sender_email TEXT,
+            subject TEXT,
+            action_type TEXT NOT NULL,          -- 'label' | 'archive' | 'star'
+            action_value TEXT,                  -- label name (NULL for archive/star)
+            status TEXT NOT NULL,               -- 'applied' | 'dry_run' | 'error' | 'undone'
+            detail TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            undone_at TEXT
+        )
+    """)
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_actions_acct ON agent_actions(account, created_at DESC)"
+    )
+    # Idempotency lookup: has this exact action already been applied to this msg?
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_actions_dedup "
+        "ON agent_actions(message_id, action_type, action_value, status)"
+    )
 
 
 def _migrate_triage_precision_history(connection: sqlite3.Connection) -> None:

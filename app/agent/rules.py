@@ -49,7 +49,15 @@ from typing import Any
 # Canned instruction for the common "decline" action.
 DECLINE_INSTRUCTION = "Politely decline this request. Keep it short, courteous, and clear."
 
-_VALID_ACTIONS = ("skip", "decline", "prepend", "hold")
+# Draft-shaping actions (operate on the reply / whether to draft).
+_DRAFT_ACTIONS = ("skip", "decline", "prepend", "hold")
+# Mailbox-routing actions (operate on the inbound message itself — applied by
+# the agent-action framework to EVERY fetched message, not just drafts):
+#   label  — add a Gmail label (value = label name; created if missing)
+#   archive — remove it from the inbox (route out)
+#   star   — flag it
+_MAILBOX_ACTIONS = ("label", "archive", "star")
+_VALID_ACTIONS = _DRAFT_ACTIONS + _MAILBOX_ACTIONS
 
 
 def load_rules() -> list[dict[str, Any]]:
@@ -80,6 +88,42 @@ def load_rules() -> list[dict[str, Any]]:
 def rules_need_intent(rules: list[dict[str, Any]]) -> bool:
     """Whether any rule matches on intent (so the caller knows to classify)."""
     return any("intent" in (r.get("match") or {}) for r in rules)
+
+
+def evaluate_mailbox_actions(
+    rules: list[dict[str, Any]],
+    *,
+    sender_email: str | None,
+    domain: str | None,
+    subject: str | None,
+    body: str | None,
+    intents: list[str] | None = None,
+    cold_outreach: bool = False,
+) -> list[dict[str, Any]]:
+    """Return the mailbox-routing actions (label/archive/star) whose match fires
+    for this message. Runs on EVERY fetched message (routing isn't tied to
+    drafting). Each entry is ``{"type": ..., "value": <label name or None>}``;
+    duplicates (same type+value) are collapsed."""
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for r in rules:
+        action = r["action"]
+        if action not in _MAILBOX_ACTIONS:
+            continue
+        if not _rule_matches(
+            r["match"], sender_email=sender_email, domain=domain,
+            intents=intents, cold_outreach=cold_outreach, subject=subject, body=body,
+        ):
+            continue
+        value = str(r.get("value") or "").strip() or None
+        if action == "label" and not value:
+            continue  # a label rule with no label name is a no-op
+        key = (action, value or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"type": action, "value": value})
+    return out
 
 
 def _any_keyword_in(value: Any, haystack: str) -> bool:

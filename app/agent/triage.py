@@ -135,6 +135,9 @@ class TriageResult:
     # Autonomous auto-send outcomes (opt-in, shadow by default). Each entry:
     # {"id", "action": "sent"|"shadow"|"held"|"error", "reason"?}.
     auto_sent: list[dict[str, Any]] = field(default_factory=list)
+    # Mailbox-routing outcomes (label/archive/star; opt-in, dry-run default).
+    # Each entry: {"message_id", "action": {...}, "status": "applied"|"dry_run"|...}.
+    mailbox_actions: list[dict[str, Any]] = field(default_factory=list)
 
 
 # --- tiered auto-push (opt-in; stays inside the never-send boundary) --------
@@ -700,7 +703,55 @@ def run_triage(
         persisted=accum["persisted"],
         auto_pushed=accum.get("auto_pushed") or [],
         auto_sent=accum.get("auto_sent") or [],
+        mailbox_actions=accum.get("mailbox_actions") or [],
     )
+
+
+def _maybe_apply_mailbox_actions(
+    database_url: str | None, account: str, messages: list[InboxMessage],
+) -> list[dict[str, Any]]:
+    """Apply agent.rules label/archive/star routing to every fetched message.
+    No-op unless ``agent.actions.enabled`` and at least one mailbox-routing rule
+    exists. Enforces the daily cap across the sweep; dry-run records intent."""
+    if not database_url or not messages:
+        return []
+    from app.agent import actions as act
+    from app.agent.rules import evaluate_mailbox_actions, load_rules
+
+    cfg = act._actions_config()
+    if not cfg["enabled"]:
+        return []
+    rules = load_rules()
+    if not any(r["action"] in ("label", "archive", "star") for r in rules):
+        return []
+
+    from app.core.sender import extract_domain
+
+    remaining: int | float = (
+        cfg["daily_cap"] - act.count_actions_today(database_url, account=account)
+        if cfg["daily_cap"] > 0 else float("inf")
+    )
+    results: list[dict[str, Any]] = []
+    for msg in messages:
+        acts = evaluate_mailbox_actions(
+            rules,
+            sender_email=msg.sender_email,
+            domain=extract_domain(msg.sender or msg.sender_email or ""),
+            subject=msg.subject,
+            body=msg.body,
+        )
+        if not acts:
+            continue
+        res = act.apply_mailbox_actions(database_url, account, msg, acts, remaining=remaining)
+        for r in res:
+            r["message_id"] = msg.message_id
+            if r.get("status") == "applied":
+                remaining -= 1
+        results.extend(res)
+    if results:
+        applied = sum(1 for r in results if r.get("status") == "applied")
+        logger.info("mailbox routing: %d action(s) applied, %d total recorded", applied, len(results))
+    return results
 
 
 def _run_sweep(
@@ -739,6 +790,16 @@ def _run_sweep(
 
     # 1) Fetch unread inbox threads.
     messages = fetch_unread(account, window=window, limit=limit, backend=backend)
+
+    # 1b) Mailbox routing (the agent-action framework): apply label/archive/star
+    # rules to EVERY fetched message — routing isn't tied to drafting. Off by
+    # default + dry-run by default; failure-isolated so a routing error can't
+    # break the sweep.
+    mailbox_actions: list[dict[str, Any]] = []
+    try:
+        mailbox_actions = _maybe_apply_mailbox_actions(database_url, account, messages)
+    except Exception as exc:
+        logger.warning("mailbox-routing step failed: %s", exc)
 
     # 2) Score + filter. Sender-history uses the active instance's DB so a
     # repeat-correspondent gets the prior-pairs boost.
@@ -1072,6 +1133,7 @@ def _run_sweep(
         "auto_promoted": auto_promoted,
         "auto_pushed": auto_pushed,
         "auto_sent": auto_sent,
+        "mailbox_actions": mailbox_actions,
     }
 
 
