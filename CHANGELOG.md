@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.2.0-beta.109 — 2026-05-29
+
+### Richer rule filters — match on recipients, attachments, age, contacts, regex (framework, 2/N)
+
+Second step toward user-composable filters + actions. The rule `match` vocabulary grows from 6 keys to 13, so a rule can target far more than sender/subject:
+
+- **`to_contains` / `cc_contains`** — keyword (or list) substring on the `To` / `Cc` headers ("anything sent to my team alias").
+- **`subject_regex` / `body_regex`** — case-insensitive `re.search` for precise patterns (`invoice #\d+`). Invalid patterns are rejected at save time.
+- **`has_attachment`** — true/false; detects a real MIME attachment (a part carrying a filename).
+- **`known_contact`** — true/false; whether you have prior reply pairs with the sender (via `SenderHistory`). Pairs well with `cold_outreach` to single out genuine strangers.
+- **`older_than_days` / `newer_than_days`** — message age in days from its `Date` header. A message with an unparseable/missing date never matches a recency predicate (we don't route what we can't date).
+
+All predicates are still ANDed within a rule and work for both draft-shaping (`skip`/`decline`/`prepend`/`hold`) and mailbox routing (`label`/`archive`/`star`). Runtime matching is exception-safe — a bad regex, an undatable message, or an extreme-year `Date` header degrades to "no match", never a crashed sweep (the draft-loop rule eval is failure-isolated like the calendar/summary steps).
+
+Hardened after an adversarial multi-agent audit of the new matching path: `validate_rule` (and the authoring API) now reject non-finite ages (`NaN`/`Infinity` would silently make a recency clause an always-true no-op), non-boolean flag values (a quoted `"false"` is truthy → inverted predicate), null/empty regex patterns, and the `intent` predicate on routing actions (routing runs before intent classification, so it would never fire). `body_regex` matching is length-capped to bound work on large bodies; rule regexes remain operator-trusted (not ReDoS-analysed). `message_age_days` now also catches `OverflowError`/`OSError`.
+
++13 tests. Never-send/never-act boundary unchanged; routing stays gated + dry-run by default.
+
 ## v0.2.0-beta.108 — 2026-05-29
 
 ### Rules authoring API — manage filters/actions without editing YAML (framework, 1/N)
