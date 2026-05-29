@@ -107,6 +107,10 @@ class TriageDraft:
     model_used: str | None = None
     repairs: list[str] = field(default_factory=list)
     error: str | None = None
+    # The effective standing instructions used for THIS draft (global +
+    # any matched per-sender/intent rules). Persisted so the operator can
+    # see why a draft took a stance.
+    standing_instructions_snapshot: str | None = None
 
 
 @dataclass
@@ -419,6 +423,14 @@ def _run_sweep(
     except Exception:
         skip_senders, vip_senders, daily_cap, strict_local = [], [], 0, False
 
+    # Structured per-sender/intent rules (decline recruiters, CC partner for
+    # client X, propose slots for meetings, skip cold outreach). Loaded once
+    # per sweep. Empty when unconfigured → no behavior change.
+    from app.agent.rules import apply_rules, load_rules, rules_need_intent
+
+    rules = load_rules()
+    _rules_need_intent = rules_need_intent(rules)
+
     classified = classify_many(
         messages, history=history, threshold=threshold,
         skip_senders=skip_senders, vip_senders=vip_senders,
@@ -463,6 +475,41 @@ def _run_sweep(
             )
             skipped.append((msg, verdict_capped))
             continue
+
+        # Per-message standing-instruction rules. Compute the effective
+        # instructions (global + matched rules); a 'skip' rule drops the
+        # message from drafting entirely.
+        effective_instructions = standing_instructions
+        if rules:
+            _intents: list[str] | None = None
+            if _rules_need_intent:
+                try:
+                    from app.core.intent import classify_intents_multi
+
+                    _intents = classify_intents_multi(msg.body)
+                except Exception:
+                    _intents = None
+            from app.core.sender import extract_domain
+
+            _rr = apply_rules(
+                rules,
+                sender_email=msg.sender_email,
+                domain=extract_domain(msg.sender or msg.sender_email or ""),
+                intents=_intents,
+                cold_outreach=verdict.cold_outreach,
+                base_instructions=standing_instructions,
+            )
+            if _rr["skip"]:
+                verdict_ruleskip = NeedsReplyVerdict(
+                    needs_reply=False, score=verdict.score,
+                    reasons=verdict.reasons + ["skipped by agent.rules"],
+                    cold_outreach=verdict.cold_outreach,
+                    surface_for_review=False,
+                )
+                skipped.append((msg, verdict_ruleskip))
+                continue
+            effective_instructions = _rr["instructions"]
+
         try:
             resp = generate_draft(
                 DraftRequest(
@@ -475,7 +522,7 @@ def _run_sweep(
                     # wrong question in a multi-turn thread (populated by
                     # fetch_unread from the real thread).
                     thread_history=msg.thread_history or None,
-                    standing_instructions=standing_instructions,
+                    standing_instructions=effective_instructions,
                     # ζ: refuse cloud fallback during background triage when
                     # strict-local is on. The generation pipeline reads this
                     # via DraftRequest; cold-start before the LoRA is trained
@@ -493,6 +540,7 @@ def _run_sweep(
                     draft=resp.draft,
                     model_used=resp.model_used,
                     repairs=list(getattr(resp, "repairs", []) or []),
+                    standing_instructions_snapshot=effective_instructions,
                 )
             )
             cap_remaining -= 1  # ζ: one less slot for this UTC day
@@ -500,7 +548,8 @@ def _run_sweep(
             logger.warning("triage draft generation failed for %s: %s", msg.message_id, exc)
             drafts.append(
                 TriageDraft(
-                    message=msg, verdict=verdict, error=f"{type(exc).__name__}: {exc}"
+                    message=msg, verdict=verdict, error=f"{type(exc).__name__}: {exc}",
+                    standing_instructions_snapshot=effective_instructions,
                 )
             )
 
@@ -528,7 +577,7 @@ def _run_sweep(
                 draft=d.draft,
                 draft_model=d.model_used,
                 draft_repairs=d.repairs,
-                standing_instructions_snapshot=standing_instructions,
+                standing_instructions_snapshot=d.standing_instructions_snapshot,
             )
             if row_id is not None:
                 persisted += 1
