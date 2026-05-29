@@ -211,3 +211,17 @@ def test_digest_reports_auto_sent_and_shadow_counts(db_url):
     assert "Shadow-sent" in text
     parsed = json.loads(format_digest(d, fmt="json"))
     assert parsed["auto_sent_count"] == 1 and parsed["shadow_sent_count"] == 1
+
+
+def test_pending_preview_includes_draft_body_for_notifications(db_url):
+    """The webhook/JSON digest carries the draft body inline so a notification
+    (OpenClaw) can show 'the email and the reply' without a callback."""
+    _seed(db_url)
+    from app.agent.digest import build_digest, format_digest
+
+    d = build_digest(database_url=db_url, account="you@x.com", days=7)
+    assert d.pending_preview, "expected at least one pending row"
+    assert all("draft" in p for p in d.pending_preview)
+    # The draft text rides along in the JSON payload an orchestrator consumes.
+    parsed = json.loads(format_digest(d, fmt="json"))
+    assert "draft" in parsed["pending_preview"][0]
