@@ -375,6 +375,7 @@ class DigestBody(BaseModel):
     weekday: object | None = None
     hour: int = 7
     minute: int = 0
+    destination: str = "agent"
     account: str = ""
     deliver_to: str = ""
     then_archive: bool = False
@@ -472,6 +473,28 @@ def run_digest_now(body: DigestRunBody, request: Request) -> dict:
             raise HTTPException(400, "no account configured (user.emails empty)")
         account = emails[0]
     return run_digest(_db_url(request), account, spec, dry_run=body.dry_run)
+
+
+@router.get("/api/agent/digests/pending")
+def list_pending_digests_endpoint(request: Request, account: str | None = Query(None)) -> dict:
+    """Computed-but-not-yet-collected 'agent'-destination digests (status
+    'ready'), each with its body — what an orchestrator pulls to deliver. After
+    delivering, call POST /api/agent/digests/{id}/collected."""
+    from app.agent.digest_tasks import list_pending_digests
+
+    return {"pending": list_pending_digests(_db_url(request), account=account)}
+
+
+@router.post("/api/agent/digests/{run_id}/collected")
+def collect_digest_endpoint(run_id: int, request: Request) -> dict:
+    """Mark a 'ready' digest as collected (the orchestrator delivered it). Only a
+    'ready' run can be collected; idempotent across retries via an atomic claim."""
+    from app.agent.digest_tasks import mark_collected
+
+    res = mark_collected(_db_url(request), run_id)
+    if not res.get("ok"):
+        raise HTTPException(res.get("http_status", 500), res.get("detail", "collect failed"))
+    return res
 
 
 class PromoteSkipSendersBody(BaseModel):
