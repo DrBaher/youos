@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.102 — 2026-05-29
+
+### Keep drafting on-device: retry locally before the cloud + cap huge inputs
+
+A live sweep on baheros showed a draft falling back to the cloud after the local model returned empty output. On an empty local draft the old code jumped **straight to Claude** — sending private mail to the cloud for what's usually a transient/cold-start hiccup.
+
+- **Retry locally once before any cloud fallback.** When the local model returns empty/near-empty, `generate_draft` now re-runs the local model one more time; only if *that* is also empty does it fall back. Keeps the reply on-device for the common transient case. (`strict_local` still never touches the cloud — it raises instead.)
+- **Cap the inbound fed to the model** (`generation.max_inbound_chars`, default 4000; 0 = off). A very long email (e.g. an auto-generated meeting-notes dump) can overflow the small local model's context and force a cloud fallback; the tail is trimmed in the prompt only — the retrieval query still uses the full text, so retrieval is unaffected.
+
++5 tests (`test_local_fallback_guard.py`: cap truncates a huge inbound; empty→local-retry recovers on-device; empty-twice→cloud; strict-local never hits cloud). Privacy + never-send boundary unchanged.
+
 ## v0.2.0-beta.101 — 2026-05-29
 
 ### The agent self-heals its own DB before sweeping (silent-failure fix)
