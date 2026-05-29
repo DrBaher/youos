@@ -235,6 +235,78 @@ def skip_sender_candidates(
     }
 
 
+class RuleBody(BaseModel):
+    """One filter→action rule. ``match`` keys are ANDed (sender / domain /
+    intent / cold_outreach / subject_contains / body_contains); ``action`` is
+    one of skip/decline/prepend/hold/label/archive/star; ``value`` is the label
+    name (for label) or the prepend text."""
+
+    match: dict[str, object] = Field(min_length=1)
+    action: str
+    value: object | None = None
+
+
+@router.get("/api/agent/rules")
+def get_rules(request: Request) -> dict:
+    """List the configured filter→action rules (validated), each with its
+    index — the handle for PUT/DELETE."""
+    from app.agent.rules import load_rules
+
+    rules = load_rules()
+    return {"rules": [{"index": i, **r} for i, r in enumerate(rules)]}
+
+
+@router.post("/api/agent/rules/validate")
+def validate_rule_endpoint(body: RuleBody) -> dict:
+    """Dry-validate a rule without saving (for the builder UI / NL preview)."""
+    from app.agent.rules import validate_rule
+
+    ok, err = validate_rule(body.model_dump())
+    return {"ok": ok, "error": err}
+
+
+@router.post("/api/agent/rules")
+def add_rule(body: RuleBody) -> dict:
+    """Append a new rule. Validates, then persists the whole list to config."""
+    from app.agent.rules import load_rules, save_rules, validate_rule
+
+    rule = body.model_dump()
+    ok, err = validate_rule(rule)
+    if not ok:
+        raise HTTPException(400, err)
+    rules = load_rules() + [rule]
+    saved = save_rules(rules)
+    return {"ok": True, "index": len(saved) - 1, "rules": saved}
+
+
+@router.put("/api/agent/rules/{index}")
+def update_rule(index: int, body: RuleBody) -> dict:
+    """Replace the rule at ``index``."""
+    from app.agent.rules import load_rules, save_rules, validate_rule
+
+    rules = load_rules()
+    if index < 0 or index >= len(rules):
+        raise HTTPException(404, f"no rule at index {index} (have {len(rules)})")
+    rule = body.model_dump()
+    ok, err = validate_rule(rule)
+    if not ok:
+        raise HTTPException(400, err)
+    rules[index] = rule
+    return {"ok": True, "rules": save_rules(rules)}
+
+
+@router.delete("/api/agent/rules/{index}")
+def delete_rule(index: int) -> dict:
+    """Delete the rule at ``index``."""
+    from app.agent.rules import load_rules, save_rules
+
+    rules = load_rules()
+    if index < 0 or index >= len(rules):
+        raise HTTPException(404, f"no rule at index {index} (have {len(rules)})")
+    removed = rules.pop(index)
+    return {"ok": True, "removed": removed, "rules": save_rules(rules)}
+
+
 @router.get("/api/agent/actions")
 def list_mailbox_actions(
     request: Request,
