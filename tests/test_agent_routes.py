@@ -383,6 +383,33 @@ def test_rules_page_renders_with_builder_and_ledger(authed_client):
     assert "/api/agent/actions" in html
     # the richer action vocabulary is offered in the builder
     assert "mark_important" in html
+    # the natural-language entry point
+    assert 'id="nlText"' in html
+    assert "/api/agent/rules/parse" in html
+
+
+def test_parse_rule_text_endpoint_model_unavailable(authed_client, monkeypatch):
+    """Endpoint wiring: with the model off it returns ok=False, never 500."""
+    import app.core.model_server as ms
+
+    monkeypatch.setattr(ms, "is_enabled", lambda: False)
+    r = authed_client.post("/api/agent/rules/parse", json={"text": "archive newsletters"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False and body["rule"] is None
+
+
+def test_parse_rule_text_endpoint_happy_path(authed_client, monkeypatch):
+    import app.core.model_server as ms
+
+    monkeypatch.setattr(ms, "is_enabled", lambda: True)
+    monkeypatch.setattr(ms, "complete", lambda *a, **k:
+                        '{"match": {"domain": "@recruiters.com"}, "action": "archive", "value": null}')
+    r = authed_client.post("/api/agent/rules/parse", json={"text": "archive recruiter mail"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["rule"]["action"] == "archive"
 
 
 def test_rules_link_in_nav(authed_client):
