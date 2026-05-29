@@ -457,3 +457,98 @@ def _native_gmail_service(*, account: str) -> Any:
             raise RuntimeError(_NATIVE_REAUTH_HINT)
 
     return build("gmail", "v1", credentials=creds, cache_discovery=False)
+
+
+# --- label / route operations (the agent-action framework) -----------------
+# Account-internal mailbox mutations (apply a label, archive, star). Unlike
+# create_draft/send_draft these never leave the mailbox; they're reversible
+# (every add has a remove), which is what makes the undo ledger possible. gog
+# shapes verified against gog 0.17.0: `labels list`, `labels create <name>`,
+# `messages modify <id> --add "a,b" --remove "c,d"`.
+
+@dataclass
+class GmailModifyResult:
+    message_id: str
+    added: list[str]
+    removed: list[str]
+    raw_response: dict[str, Any]
+
+
+def _gog(args: list[str], *, timeout: int = 20) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    except FileNotFoundError as exc:
+        raise GmailWriteError("gog CLI not on PATH") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise GmailWriteError(f"gog timed out: {' '.join(args[:4])}") from exc
+
+
+def list_labels(*, account: str) -> set[str]:
+    """Return the set of existing label NAMES on the account (gog gmail labels list)."""
+    r = _gog(["gog", "gmail", "labels", "list", "--account", account, "--json", "--no-input"])
+    if r.returncode != 0:
+        raise GmailWriteError(f"gog labels list exit {r.returncode}: {(r.stderr or '').strip()[:160]}")
+    try:
+        payload = json.loads(r.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        raise GmailWriteError(f"gog labels list non-JSON: {r.stdout[:160]!r}") from exc
+    items = payload if isinstance(payload, list) else (payload.get("labels") or payload.get("result") or [])
+    return {str(x.get("name")) for x in items if isinstance(x, dict) and x.get("name")}
+
+
+def ensure_label(*, account: str, name: str) -> None:
+    """Create the label if it doesn't already exist (so a subsequent --add by
+    name resolves). System labels (INBOX/STARRED/…) always exist; user labels
+    may need creating. Idempotent."""
+    if not name or name.upper() in _SYSTEM_LABELS:
+        return
+    if name in list_labels(account=account):
+        return
+    r = _gog(["gog", "gmail", "labels", "create", name, "--account", account, "--json", "--no-input"])
+    if r.returncode != 0:
+        stderr = (r.stderr or "").strip().lower()
+        if "already exists" in stderr or "exists" in stderr:  # race / case difference — fine
+            return
+        raise GmailWriteError(f"gog labels create {name!r} exit {r.returncode}: {(r.stderr or '').strip()[:160]}")
+
+
+# Gmail's reserved system labels (modify accepts these without creating them).
+_SYSTEM_LABELS = {
+    "INBOX", "STARRED", "IMPORTANT", "UNREAD", "SPAM", "TRASH", "SENT", "DRAFT",
+    "CHAT", "CATEGORY_PERSONAL", "CATEGORY_SOCIAL", "CATEGORY_PROMOTIONS",
+    "CATEGORY_UPDATES", "CATEGORY_FORUMS",
+}
+
+
+def modify_message_labels(
+    *,
+    account: str,
+    message_id: str,
+    add: list[str] | None = None,
+    remove: list[str] | None = None,
+    dry_run: bool = False,
+) -> GmailModifyResult:
+    """Add/remove labels on one message (gog gmail messages modify <id>
+    --add "..." --remove "..."). ``dry_run`` passes gog's own --dry-run so the
+    real CLI path runs without changing the mailbox. The caller's higher-level
+    dry-run (agent.actions.dry_run) skips this entirely and only logs intent."""
+    add = [a for a in (add or []) if a]
+    remove = [r for r in (remove or []) if r]
+    if not add and not remove:
+        return GmailModifyResult(message_id, [], [], {})
+    cmd = ["gog", "gmail", "messages", "modify", message_id, "--account", account, "--json", "--no-input"]
+    if add:
+        cmd += ["--add", ",".join(add)]
+    if remove:
+        cmd += ["--remove", ",".join(remove)]
+    if dry_run:
+        cmd.append("--dry-run")
+    r = _gog(cmd)
+    if r.returncode != 0:
+        raise GmailWriteError(f"gog messages modify exit {r.returncode}: {(r.stderr or '').strip()[:160]}")
+    try:
+        payload = json.loads(r.stdout or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    logger.info("modified labels on %s (add=%s remove=%s dry_run=%s)", message_id, add, remove, dry_run)
+    return GmailModifyResult(message_id=message_id, added=add, removed=remove, raw_response=payload)
