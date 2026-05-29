@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.82 — 2026-05-29
+
+### Calendar-aware meeting replies
+
+When the agent drafts a reply to a meeting request, it can now read your calendar free/busy and offer **concrete open slots** ("Tue 2:00–2:30 PM or Wed 10:00–10:30 AM?") instead of "happy to meet, when works for you?".
+
+- New `app/agent/calendar.py`: `fetch_busy` (via the verified `gog calendar freebusy --json` shape), `compute_open_slots` (pure, timezone-aware, deterministic — one slot per business day for spread, within work hours, skipping busy), `format_slots`, `propose_open_slots`.
+- Triage wiring: when `agent.calendar.enabled` and the inbound's intent is `meeting_request`, the agent fetches slots for the account (respecting `user.timezone`) and injects them into that draft's instructions so the model proposes real times. Failure-isolated; **never creates events** — it proposes times you send (stays inside the never-act boundary).
+- Config: `agent.calendar.enabled` (default false; needs the gog calendar scope) + `agent.calendar.{business_days,work_start_hour,work_end_hour,slot_minutes,max_slots}` defaults.
+
+CLI shape verified live before coding (per the "verify the real CLI" lesson). gws/native backends raise NotImplementedError for now. +7 tests (pure slot logic + parser).
+
 ## v0.2.0-beta.81 — 2026-05-29
 
 ### Autoresearch keep/revert bar — tuned from real data

@@ -778,3 +778,47 @@ def test_rules_skip_drops_message_from_drafting(mocked_environment, monkeypatch)
     assert result.persisted == 0 or all(
         "partner.com" not in (r.get("sender_email") or "") for r in drafts
     )
+
+
+def test_calendar_proposes_slots_for_meeting_requests(monkeypatch, tmp_path):
+    """When calendar is enabled and the inbound is a meeting request, the
+    agent injects real open slots into the draft instructions."""
+    import sqlite3
+
+    from app.agent import triage
+    from app.agent.inbox_fetch import InboxMessage
+
+    db = tmp_path / "cal.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE reply_pairs (id INTEGER PRIMARY KEY, inbound_author TEXT)")
+    from app.db.bootstrap import _migrate_agent_audit, _migrate_agent_pending_drafts
+    _migrate_agent_pending_drafts(conn); _migrate_agent_audit(conn); conn.commit(); conn.close()
+
+    msg = InboxMessage(
+        message_id="m1", thread_id="t1", account="you@example.com",
+        sender="Bob <bob@x.com>", sender_email="bob@x.com",
+        subject="Sync", body="Can we schedule a call to sync next week?", headers={},
+    )
+    monkeypatch.setattr("app.agent.triage.fetch_unread", lambda *a, **k: [msg])
+    monkeypatch.setattr("app.agent.triage._calendar_config", lambda: {
+        "enabled": True, "tz": "Europe/Vienna", "business_days": 5,
+        "work_start_hour": 9, "work_end_hour": 17, "slot_minutes": 30, "max_slots": 3,
+    })
+    monkeypatch.setattr("app.agent.rules.load_rules", lambda: [])
+    monkeypatch.setattr("app.agent.calendar.propose_open_slots",
+                        lambda account, **kw: "Tue Jun 2, 2:00 PM–2:30 PM; Wed Jun 3, 10:00 AM–10:30 AM")
+
+    seen = {}
+
+    class _Resp:
+        draft = "ok"; model_used = "m"; repairs: list[str] = []
+
+    def _spy(req, **kw):
+        seen["si"] = req.standing_instructions
+        return _Resp()
+
+    monkeypatch.setattr("app.generation.service.generate_draft", _spy)
+
+    triage.run_triage(account="you@example.com", database_url=f"sqlite:///{db}", configs_dir=tmp_path)
+    assert "You are free at:" in (seen["si"] or "")
+    assert "Tue Jun 2" in (seen["si"] or "")
