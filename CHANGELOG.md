@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.0-beta.115 — 2026-05-29
+
+### Digest preview works before the feature is enabled
+
+Small follow-up to b114: `run_digest`'s `dry_run` preview is read-only (fetch + summarize; no send, no DB write, no period claim), so it now runs **regardless of `agent.digests.enabled`** — you can preview exactly what a digest would contain while the feature (and sending) stays fully gated off. Only *real* runs require the master flag. +1 test.
+
 ## v0.2.0-beta.114 — 2026-05-29
 
 ### Digest tasks — collect → summarize → deliver one email (scheduled)
