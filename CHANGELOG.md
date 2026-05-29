@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.2.0-beta.85 — 2026-05-29
+
+### Per-draft quality gate (autonomy Phase A1)
+
+Auto-push gated on the *needs-reply* score — "this email deserves a reply" — not on whether the **draft itself** is any good. A perfect verdict plus a weak or contentless draft still auto-pushed. This is the foundation for trustworthy autonomy (see `docs/AUTONOMY_ROADMAP.md`): the agent must know when its own output is good enough to act.
+
+- New `draft_quality_score(draft, …)` in `app/generation/service.py` blends **voice fidelity** (averaged `voice_match` vs the user's top retrieved replies — deterministic, ~0 extra cost) with **structural fit** (`_score_candidate`: length + greeting/closing). Collapses to ~0 for unusable drafts; discounts empty-output retries (×0.7) and non-LoRA cloud/base fallbacks (×0.85, less likely to be in-voice). Computed at generation time, failure-isolated (never blocks the draft), and surfaced on `DraftResponse.quality_score`.
+- New `_is_generic_ack`: flags contentless acknowledgements ("thanks for the update", "got it, thanks", "I'll check it out") by **dominance** — once the ack phrase is stripped, almost nothing of substance remains — so a real reply that merely *opens* with "thanks for the update" isn't penalized. Generic acks are driven to ≤0.15, directly killing the live newsletter false positives.
+- Auto-push now gates on the draft's quality too: new `agent.auto_push.quality_floor` flag (float, default 0.5, clamped 0.0–1.0). A draft with no quality score (scoring failed) is treated as below the floor — conservative when the agent can't judge itself. The needs-reply floor still applies; both must pass.
+- Persisted end-to-end: `quality_score` column on `agent_pending_drafts` (migration), threaded through `upsert_pending` and `TriageDraft`.
+- New `docs/AUTONOMY_ROADMAP.md`: the full path from "drafts in your voice" to "processes email autonomously" (Phases A–D), from a 34-agent gap analysis. Thesis: the machinery to *act* is nearly there; the gap is *trust* — make the act-decision trustworthy (quality + calibration + abstain + verify) **before** crossing the send boundary.
+
++11 tests (`test_draft_quality_gate.py` + auto-push quality-gate cases). Never-send boundary unchanged.
+
 ## v0.2.0-beta.84 — 2026-05-29
 
 ### Triage false positive: non-English / order-confirmation mail
