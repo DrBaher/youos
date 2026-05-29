@@ -298,6 +298,15 @@ def test_validate_rule_rejects_intent_for_mailbox_actions():
                           "value": "Propose Tue/Thu."})[0]
 
 
+def test_validate_rule_accepts_richer_actions():
+    from app.agent.rules import validate_rule
+
+    for action in ("mark_read", "mark_important", "mark_unimportant"):
+        assert validate_rule({"match": {"domain": "@x.com"}, "action": action})[0], action
+    # ...but still reject the intent predicate on these routing actions
+    assert not validate_rule({"match": {"intent": "x"}, "action": "mark_read"})[0]
+
+
 def test_regex_search_caps_haystack_length():
     """The regex never scans more than the cap, bounding work on huge bodies."""
     from app.agent.rules import _REGEX_HAYSTACK_CAP, _regex_search

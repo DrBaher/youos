@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.2.0-beta.110 — 2026-05-29
+
+### Richer mailbox actions — mark read / important (framework, 3/N)
+
+Third step toward user-composable filters + actions. The mailbox-routing vocabulary doubles from 3 actions to 6:
+
+- **`mark_read`** — clear the unread flag (remove `UNREAD`).
+- **`mark_important`** — add to the Important tab (add `IMPORTANT`).
+- **`mark_unimportant`** — remove from the Important tab.
+
+Each is a reversible Gmail label mutation, so it slots straight into the existing agent-action framework: gated behind `agent.actions.enabled` (default off), dry-run by default, daily-capped, idempotent across sweeps, ledgered, and undoable (undo is just the inverse label swap). No new write path — `mark_read`/`mark_important` reuse the same `modify_message_labels` route `archive`/`star` already use, and the system labels (`UNREAD`/`IMPORTANT`) bypass label-creation.
+
+A focused review caught a real bug before merge: the routing-enable gate in `_maybe_apply_mailbox_actions` had a hand-copied `("label","archive","star")` whitelist, so a rule set using *only* a new action would have silently no-op'd. The gate now tests the single source of truth (`rules.MAILBOX_ACTIONS`).
+
+Outbound tasks (forward) stay behind the never-send frontier and are intentionally not exposed here; destructive ones (trash) are deliberately omitted pending an explicit opt-in.
+
++4 tests (incl. a regression test for the gate). Never-send/never-act boundary unchanged.
+
 ## v0.2.0-beta.109 — 2026-05-29
 
 ### Richer rule filters — match on recipients, attachments, age, contacts, regex (framework, 2/N)
