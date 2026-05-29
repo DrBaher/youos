@@ -318,6 +318,13 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN sent_message_id TEXT")
     if "actually_sent_at" not in _cols:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN actually_sent_at TEXT")
+    # Phase C (close the loop): marks a terminal row whose outcome has already
+    # been mined into feedback_pairs, so the capture pass is idempotent and the
+    # agent learns from each of its own drafts exactly once.
+    if "feedback_captured" not in _cols:
+        connection.execute(
+            "ALTER TABLE agent_pending_drafts ADD COLUMN feedback_captured INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 def _migrate_triage_precision_history(connection: sqlite3.Connection) -> None:
