@@ -136,6 +136,11 @@ class NeedsReplyVerdict:
     # True when the sender matches ``agent.vip_senders`` — gets a strong score
     # boost and should sort to the top of the queue.
     vip: bool = False
+    # Empirical P(deserved a reply) for this raw score, from the user's own
+    # past verdicts (app/agent/calibration.py). None until a calibrator exists
+    # (a fresh instance has no decided rows). Surfaced for observability and as
+    # the principled gate for an *act* decision; never changes ``needs_reply``.
+    calibrated_score: float | None = None
 
 
 # --- Sender history (count of prior reply pairs to a sender) ---------------

@@ -249,6 +249,32 @@ def _maybe_adjudicate(
     return out
 
 
+def _maybe_calibrate(
+    classified: list[tuple[InboxMessage, NeedsReplyVerdict]],
+) -> list[tuple[InboxMessage, NeedsReplyVerdict]]:
+    """Attach the calibrated probability to each verdict when a calibrator is
+    available. No-op (returns the input unchanged) when none is fitted yet —
+    so a fresh instance with no decided rows just keeps the raw heuristic."""
+    try:
+        from app.agent.calibration import load_calibrator
+
+        cal = load_calibrator()
+    except Exception:
+        cal = None
+    if cal is None:
+        return classified
+    out: list[tuple[InboxMessage, NeedsReplyVerdict]] = []
+    for msg, verdict in classified:
+        try:
+            p = round(cal.probability(verdict.score), 3)
+            verdict.calibrated_score = p
+            verdict.reasons = verdict.reasons + [f"calibrated P={p:.2f}"]
+        except Exception:
+            pass
+        out.append((msg, verdict))
+    return out
+
+
 def _calendar_config() -> dict[str, Any]:
     """Read ``agent.calendar.*`` config + the user's timezone. Safe defaults."""
     from app.core.config import load_config
@@ -575,6 +601,12 @@ def _run_sweep(
     # are actually broadcasts (no-op unless agent.adjudication.enabled + model
     # available). Catches newsletters the regex misses.
     classified = _maybe_adjudicate(classified, threshold=threshold)
+
+    # Attach the calibrated P(deserved a reply) when a calibrator has been
+    # fitted from the user's own past verdicts (no-op on a fresh instance with
+    # no decided rows). Observability + the principled gate for an act
+    # decision; never changes needs_reply.
+    classified = _maybe_calibrate(classified)
 
     # ζ: daily cap — count already-persisted rows for this account today, then
     # cap how many MORE we'll write this sweep. 0 disables. Hit-cap drafts are
