@@ -68,6 +68,56 @@ def test_content_predicate_anded_with_sender():
     assert wrong_sender["hold"] is False
 
 
+def test_validate_rule_accepts_and_rejects():
+    from app.agent.rules import validate_rule
+
+    assert validate_rule({"match": {"domain": "@x.com"}, "action": "label", "value": "Work"})[0]
+    assert validate_rule({"match": {"subject_contains": "hi"}, "action": "archive"})[0]
+    # bad shapes
+    assert not validate_rule({"match": {}, "action": "label", "value": "X"})[0]          # empty match
+    assert not validate_rule({"match": {"frm": "x"}, "action": "star"})[0]               # unknown match key
+    assert not validate_rule({"match": {"domain": "x"}, "action": "frobnicate"})[0]      # unknown action
+    assert not validate_rule({"match": {"domain": "x"}, "action": "label"})[0]           # label w/o value
+    assert not validate_rule({"match": {"domain": "x"}, "action": "label", "value": "a,b"})[0]   # comma
+    assert not validate_rule({"match": {"domain": "x"}, "action": "label", "value": "YouOS/skip"})[0]  # reserved
+
+
+def test_save_rules_round_trips_through_config(tmp_path, monkeypatch):
+    import app.core.config as config_mod
+    from app.agent.rules import load_rules, save_rules
+
+    cfg = tmp_path / "youos_config.yaml"
+    cfg.write_text("user:\n  name: T\n", encoding="utf-8")
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", cfg)
+    config_mod.load_config.cache_clear()
+    try:
+        save_rules([
+            {"match": {"domain": "@recruiters.com"}, "action": "label", "value": "Recruiting"},
+            {"match": {"subject_contains": "invoice"}, "action": "star"},
+        ])
+        loaded = load_rules()
+        assert [r["value"] for r in loaded if r["action"] == "label"] == ["Recruiting"]
+        assert any(r["action"] == "star" for r in loaded)
+    finally:
+        config_mod.load_config.cache_clear()
+
+
+def test_save_rules_rejects_an_invalid_rule(tmp_path, monkeypatch):
+    import app.core.config as config_mod
+    from app.agent.rules import save_rules
+
+    cfg = tmp_path / "youos_config.yaml"
+    cfg.write_text("user: {}\n", encoding="utf-8")
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", cfg)
+    config_mod.load_config.cache_clear()
+    try:
+        import pytest
+        with pytest.raises(ValueError):
+            save_rules([{"match": {"domain": "x"}, "action": "label", "value": "a,b"}])
+    finally:
+        config_mod.load_config.cache_clear()
+
+
 def test_load_rules_drops_unsafe_label_rules(monkeypatch):
     """A label name with a comma (gog splits comma-delimited --add) or in the
     reserved YouOS/ namespace (would fight the dismissal-label sync) is dropped."""

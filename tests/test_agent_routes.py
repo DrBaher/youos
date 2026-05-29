@@ -550,6 +550,62 @@ def test_push_to_gmail_failure_rolls_back_status_so_retry_works(authed_client, m
     assert r2.json()["gmail_draft_id"] == "gd_retry"
 
 
+# --- rules authoring API (CRUD) ---------------------------------------------
+
+
+def test_rules_crud_round_trip(authed_client):
+    # starts empty
+    assert authed_client.get("/api/agent/rules").json()["rules"] == []
+
+    # create
+    r = authed_client.post("/api/agent/rules", json={
+        "match": {"domain": "@recruiters.com"}, "action": "label", "value": "Recruiting"})
+    assert r.status_code == 200, r.text
+    assert r.json()["index"] == 0
+    r2 = authed_client.post("/api/agent/rules", json={
+        "match": {"subject_contains": "invoice"}, "action": "star"})
+    assert r2.status_code == 200
+
+    rules = authed_client.get("/api/agent/rules").json()["rules"]
+    assert len(rules) == 2 and rules[0]["value"] == "Recruiting"
+
+    # update index 0
+    ru = authed_client.put("/api/agent/rules/0", json={
+        "match": {"domain": "@recruiters.com"}, "action": "label", "value": "Jobs"})
+    assert ru.status_code == 200
+    assert authed_client.get("/api/agent/rules").json()["rules"][0]["value"] == "Jobs"
+
+    # delete index 0
+    rd = authed_client.delete("/api/agent/rules/0")
+    assert rd.status_code == 200
+    after = authed_client.get("/api/agent/rules").json()["rules"]
+    assert len(after) == 1 and after[0]["action"] == "star"
+
+
+def test_rules_post_rejects_invalid(authed_client):
+    r = authed_client.post("/api/agent/rules", json={
+        "match": {"domain": "x"}, "action": "label", "value": "a,b"})  # comma label
+    assert r.status_code == 400
+    assert "comma" in r.json()["detail"]
+    r2 = authed_client.post("/api/agent/rules", json={"match": {"nope": "x"}, "action": "star"})
+    assert r2.status_code == 400  # unknown match key
+
+
+def test_rules_validate_endpoint(authed_client):
+    ok = authed_client.post("/api/agent/rules/validate", json={
+        "match": {"domain": "@x.com"}, "action": "archive"}).json()
+    assert ok["ok"] is True
+    bad = authed_client.post("/api/agent/rules/validate", json={
+        "match": {"domain": "@x.com"}, "action": "label"}).json()  # no value
+    assert bad["ok"] is False and "label" in bad["error"]
+
+
+def test_rules_put_delete_404_out_of_range(authed_client):
+    assert authed_client.put("/api/agent/rules/9", json={
+        "match": {"domain": "x"}, "action": "star"}).status_code == 404
+    assert authed_client.delete("/api/agent/rules/9").status_code == 404
+
+
 # --- agent-action framework: list + undo routing actions --------------------
 
 
