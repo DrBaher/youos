@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.83 — 2026-05-29
+
+### Long-thread catch-up summaries
+
+For a reply on a long thread, the agent can now generate a 2–3 line "what changed / what's open" summary so you can catch up without re-reading the whole conversation.
+
+- New `app/agent/thread_summary.py`: `summarize_thread` builds a transcript from the structured `thread_history` (no re-fetch) and summarizes it on the **warm local model** (on-device, no egress). Length-gated (`min_messages`, default 4) so a two-message exchange isn't summarized; failure-isolated — no summary never blocks drafting.
+- `thread_summary` column on `agent_pending_drafts` (idempotent migration); persisted by triage and surfaced on the row + in the digest `pending_preview`.
+- Config: `agent.summarize_threads.enabled` (default false; needs the warm model server) + `min_messages`.
+
+This was the last open item from `docs/AUDIT_2026-05.md` — the autonomy/accuracy/observability audit is now fully worked through. +5 tests.
+
 ## v0.2.0-beta.82 — 2026-05-29
 
 ### Calendar-aware meeting replies
