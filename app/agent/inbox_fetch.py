@@ -30,7 +30,8 @@ class InboxMessage:
     subject: str
     body: str                         # text/plain (falls back to stripped text/html)
     headers: dict[str, str] = field(default_factory=dict)
-    received_at: str | None = None    # ISO timestamp if available
+    received_at: str | None = None    # ISO/RFC822 Date header if available
+    has_attachment: bool = False      # any payload part carries a filename
     # Prior turns in the same thread (oldest→newest, excluding the latest
     # message which is ``body``). Each entry is ``{"sender": ..., "text": ...}``
     # — the shape generation's ``_format_thread_context`` consumes. Lets the
@@ -76,6 +77,39 @@ def _extract_text(payload: dict[str, Any]) -> str:
         return ""
 
     return walk(payload).strip()
+
+
+def _has_attachment(payload: dict[str, Any]) -> bool:
+    """True if any MIME part carries a filename (i.e. a real attachment)."""
+    def walk(p: dict[str, Any]) -> bool:
+        if (p.get("filename") or "").strip():
+            return True
+        return any(walk(part) for part in p.get("parts", []) or [])
+    return walk(payload)
+
+
+def message_age_days(received_at: str | None) -> float | None:
+    """Age of a message in (fractional) days from its RFC822 ``Date`` header,
+    or None if the header is missing/unparseable. Used by the ``older_than_days``
+    / ``newer_than_days`` rule predicates."""
+    if not received_at:
+        return None
+    from datetime import datetime, timezone
+    from email.utils import parsedate_to_datetime
+
+    try:
+        dt = parsedate_to_datetime(received_at)
+    except (TypeError, ValueError, OverflowError, OSError):
+        # OverflowError: an extreme year in the Date header overflows the
+        # datetime constructor (matches the catch-set in gmail_threads /
+        # google_docs). A bad date must yield None, never crash the sweep.
+        return None
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    delta = datetime.now(timezone.utc) - dt
+    return max(0.0, delta.total_seconds() / 86400.0)
 
 
 def fetch_unread(
@@ -140,6 +174,7 @@ def fetch_unread(
                 body=_extract_text(payload),
                 headers=_all_headers(payload),
                 received_at=_header(payload, "Date") or None,
+                has_attachment=_has_attachment(payload),
                 thread_history=thread_history,
             )
         )

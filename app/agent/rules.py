@@ -22,10 +22,18 @@ directly — not a scalar feature flag):
         - match: {cold_outreach: true}
           action: skip
 
-A rule's ``match`` conditions are ANDed. Supported keys: ``sender`` (exact
-email), ``domain`` (``@x.com``), ``intent`` (an intent label), ``cold_outreach``
-(bool), and the content predicates ``subject_contains`` / ``body_contains`` (a
-keyword or list of keywords, case-insensitive substring; matches if ANY hits).
+A rule's ``match`` conditions are ANDed. Supported keys:
+  ``sender`` (exact email), ``domain`` (``@x.com``), ``intent`` (an intent
+  label), ``cold_outreach`` (bool);
+  the keyword predicates ``subject_contains`` / ``body_contains`` /
+  ``to_contains`` / ``cc_contains`` (a keyword or list of keywords,
+  case-insensitive substring; matches if ANY hits);
+  the regex predicates ``subject_regex`` / ``body_regex`` (case-insensitive
+  ``re.search``);
+  ``has_attachment`` (bool — does the message carry a real attachment),
+  ``known_contact`` (bool — do I have prior reply pairs with this sender), and
+  the recency predicates ``older_than_days`` / ``newer_than_days`` (message age
+  in days from its ``Date`` header).
 Actions: ``skip`` (don't draft), ``decline`` (draft a polite decline),
 ``prepend`` (inject ``value`` into that draft's standing instructions), and
 ``hold`` (draft + queue for review, but **never auto-act** — the human decides).
@@ -44,6 +52,8 @@ always finishes-and-sends anything matching a hold rule.
 
 from __future__ import annotations
 
+import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -88,8 +98,18 @@ def load_rules() -> list[dict[str, Any]]:
 
 
 # Recognised match keys (so the authoring API can reject typos with a clear
-# error instead of silently never matching).
-MATCH_KEYS = ("sender", "domain", "intent", "cold_outreach", "subject_contains", "body_contains")
+# error instead of silently never matching). Grouped by the kind of value each
+# expects, so validate_rule can check shape (regex compiles, ages are numbers,
+# flags are booleans) rather than only the key name.
+_BOOL_KEYS = ("cold_outreach", "has_attachment", "known_contact")
+_NUMERIC_KEYS = ("older_than_days", "newer_than_days")
+_REGEX_KEYS = ("subject_regex", "body_regex")
+# keyword (string or list of strings, substring) predicates
+_KEYWORD_KEYS = ("subject_contains", "body_contains", "to_contains", "cc_contains")
+MATCH_KEYS = (
+    "sender", "domain", "intent",
+    *_KEYWORD_KEYS, *_BOOL_KEYS, *_NUMERIC_KEYS, *_REGEX_KEYS,
+)
 
 
 def validate_rule(raw: Any) -> tuple[bool, str]:
@@ -102,9 +122,40 @@ def validate_rule(raw: Any) -> tuple[bool, str]:
     unknown = [k for k in match if k not in MATCH_KEYS]
     if unknown:
         return False, f"unknown match key(s): {unknown}; allowed: {list(MATCH_KEYS)}"
+    for k in _REGEX_KEYS:
+        if k in match:
+            # Reject a non-string / empty pattern up front: str(None) would compile
+            # to the literal pattern 'None' and silently match the word "None".
+            if not isinstance(match[k], str) or not match[k]:
+                return False, f"{k} must be a non-empty regex string"
+            try:
+                re.compile(match[k])
+            except re.error as e:
+                return False, f"{k} is not a valid regular expression: {e}"
+    for k in _NUMERIC_KEYS:
+        if k in match:
+            try:
+                v = float(match[k])
+            except (TypeError, ValueError):
+                return False, f"{k} must be a number of days"
+            # math.isfinite rejects NaN/Infinity: NaN would make every age
+            # comparison False, silently turning the recency clause into a
+            # no-op that widens the match (e.g. archiving fresh mail).
+            if not math.isfinite(v) or v < 0:
+                return False, f"{k} must be a finite, non-negative number of days"
+    for k in _BOOL_KEYS:
+        # A quoted YAML string ("false") is truthy under bool(), inverting the
+        # predicate; require a real boolean so the save-time gate catches it.
+        if k in match and not isinstance(match[k], bool):
+            return False, f"{k} must be true or false"
     action = str(raw.get("action", "")).strip().lower()
     if action not in _VALID_ACTIONS:
         return False, f"unknown action {action!r}; allowed: {list(_VALID_ACTIONS)}"
+    if action in _MAILBOX_ACTIONS and "intent" in match:
+        # Mailbox routing runs before per-message intent classification, so an
+        # 'intent' predicate would never fire there — reject it with a clear
+        # error rather than saving a rule that silently does nothing.
+        return False, "the 'intent' predicate is not supported for label/archive/star rules (routing runs before intent classification)"
     if action == "label":
         name = str(raw.get("value") or "").strip()
         if not name:
@@ -164,6 +215,11 @@ def evaluate_mailbox_actions(
     body: str | None,
     intents: list[str] | None = None,
     cold_outreach: bool = False,
+    to: str | None = None,
+    cc: str | None = None,
+    has_attachment: bool = False,
+    age_days: float | None = None,
+    known_contact: bool = False,
 ) -> list[dict[str, Any]]:
     """Return the mailbox-routing actions (label/archive/star) whose match fires
     for this message. Runs on EVERY fetched message (routing isn't tied to
@@ -178,6 +234,8 @@ def evaluate_mailbox_actions(
         if not _rule_matches(
             r["match"], sender_email=sender_email, domain=domain,
             intents=intents, cold_outreach=cold_outreach, subject=subject, body=body,
+            to=to, cc=cc, has_attachment=has_attachment, age_days=age_days,
+            known_contact=known_contact,
         ):
             continue
         value = str(r.get("value") or "").strip() or None
@@ -199,6 +257,21 @@ def _any_keyword_in(value: Any, haystack: str) -> bool:
     return any(str(n).strip().lower() in h for n in needles if str(n).strip())
 
 
+# Cap regex input length so a non-pathological pattern can't run unbounded over
+# a very large body. Rule regexes are OPERATOR-trusted (only the user authors
+# them) and patterns are NOT ReDoS-analysed — re.compile alone can't detect
+# catastrophic backtracking — so a deliberately nested-quantifier pattern is a
+# self-inflicted foot-gun; this cap just bounds the common large-body case.
+_REGEX_HAYSTACK_CAP = 8000
+
+
+def _regex_search(pattern: Any, haystack: str) -> bool:
+    try:
+        return re.search(str(pattern), (haystack or "")[:_REGEX_HAYSTACK_CAP], re.IGNORECASE) is not None
+    except re.error:
+        return False  # invalid regex (validate_rule rejects these at save time)
+
+
 def _rule_matches(
     match: dict[str, Any],
     *,
@@ -208,6 +281,11 @@ def _rule_matches(
     cold_outreach: bool,
     subject: str | None = None,
     body: str | None = None,
+    to: str | None = None,
+    cc: str | None = None,
+    has_attachment: bool = False,
+    age_days: float | None = None,
+    known_contact: bool = False,
 ) -> bool:
     se = (sender_email or "").lower()
     dom = (domain or "").lower()
@@ -228,6 +306,30 @@ def _rule_matches(
         return False
     if "body_contains" in match and not _any_keyword_in(match["body_contains"], body or ""):
         return False
+    if "to_contains" in match and not _any_keyword_in(match["to_contains"], to or ""):
+        return False
+    if "cc_contains" in match and not _any_keyword_in(match["cc_contains"], cc or ""):
+        return False
+    if "subject_regex" in match and not _regex_search(match["subject_regex"], subject or ""):
+        return False
+    if "body_regex" in match and not _regex_search(match["body_regex"], body or ""):
+        return False
+    if "has_attachment" in match and bool(match["has_attachment"]) != bool(has_attachment):
+        return False
+    if "known_contact" in match and bool(match["known_contact"]) != bool(known_contact):
+        return False
+    if "older_than_days" in match:
+        try:
+            if age_days is None or age_days < float(match["older_than_days"]):
+                return False
+        except (TypeError, ValueError):
+            return False
+    if "newer_than_days" in match:
+        try:
+            if age_days is None or age_days > float(match["newer_than_days"]):
+                return False
+        except (TypeError, ValueError):
+            return False
     return True
 
 
@@ -241,6 +343,11 @@ def apply_rules(
     base_instructions: str | None,
     subject: str | None = None,
     body: str | None = None,
+    to: str | None = None,
+    cc: str | None = None,
+    has_attachment: bool = False,
+    age_days: float | None = None,
+    known_contact: bool = False,
 ) -> dict[str, Any]:
     """Evaluate ``rules`` for one message.
 
@@ -259,6 +366,8 @@ def apply_rules(
             r["match"], sender_email=sender_email, domain=domain,
             intents=intents, cold_outreach=cold_outreach,
             subject=subject, body=body,
+            to=to, cc=cc, has_attachment=has_attachment, age_days=age_days,
+            known_contact=known_contact,
         ):
             continue
         matched.append(r)

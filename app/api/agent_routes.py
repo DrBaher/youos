@@ -236,10 +236,12 @@ def skip_sender_candidates(
 
 
 class RuleBody(BaseModel):
-    """One filter→action rule. ``match`` keys are ANDed (sender / domain /
-    intent / cold_outreach / subject_contains / body_contains); ``action`` is
-    one of skip/decline/prepend/hold/label/archive/star; ``value`` is the label
-    name (for label) or the prepend text."""
+    """One filter→action rule. ``match`` keys are ANDed — sender / domain /
+    intent / cold_outreach / subject_contains / body_contains / to_contains /
+    cc_contains / subject_regex / body_regex / has_attachment / known_contact /
+    older_than_days / newer_than_days; ``action`` is one of
+    skip/decline/prepend/hold/label/archive/star; ``value`` is the label name
+    (for label) or the prepend text. See ``app.agent.rules.MATCH_KEYS``."""
 
     match: dict[str, object] = Field(min_length=1)
     action: str
