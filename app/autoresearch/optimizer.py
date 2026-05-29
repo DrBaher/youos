@@ -35,6 +35,15 @@ class IterationResult:
     candidate_composite: float
     outcome: str  # "improved" | "neutral" | "regressed"
     kept: bool
+    # Per-component baseline→candidate scores, so the run log shows WHICH signal
+    # moved (or didn't) — the difference between "mutation had no effect on the
+    # eval at all" (a config-application bug) and "moved but below threshold".
+    baseline_pass: float = 0.0
+    candidate_pass: float = 0.0
+    baseline_kw: float = 0.0
+    candidate_kw: float = 0.0
+    baseline_conf: float = 0.0
+    candidate_conf: float = 0.0
 
 
 @dataclass
@@ -153,6 +162,12 @@ def run_autoresearch(
             candidate_composite=candidate.composite,
             outcome=outcome,
             kept=kept,
+            baseline_pass=current_baseline.pass_rate,
+            candidate_pass=candidate.pass_rate,
+            baseline_kw=current_baseline.avg_keyword_hit,
+            candidate_kw=candidate.avg_keyword_hit,
+            baseline_conf=current_baseline.avg_confidence,
+            candidate_conf=candidate.avg_confidence,
         )
         report.iterations.append(iteration)
 
@@ -204,6 +219,19 @@ def _write_jsonl_entry(report: AutoresearchReport, configs_dir: Path) -> None:
             "improvements_kept": report.improvements_kept,
             "reverted": report.reverted,
         },
+        # Per-iteration component deltas — so a flat run is diagnosable after the
+        # fact (did pass/kw/conf actually respond to each mutation?).
+        "iteration_components": [
+            {
+                "surface": it.surface_name,
+                "outcome": it.outcome,
+                "composite": [it.baseline_composite, it.candidate_composite],
+                "pass": [it.baseline_pass, it.candidate_pass],
+                "kw": [it.baseline_kw, it.candidate_kw],
+                "conf": [it.baseline_conf, it.candidate_conf],
+            }
+            for it in report.iterations
+        ],
     }
     with open(jsonl_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, default=str) + "\n")
@@ -256,18 +284,29 @@ def format_report(report: AutoresearchReport) -> str:
         lines.append(f"Baseline: {report.baseline.summary()}")
         lines.append("")
 
+    def _components(it: IterationResult) -> str:
+        # Show which signal moved so a flat composite is diagnosable: if these
+        # are all identical, the mutation didn't affect the eval (config not
+        # applied?) rather than just moving below threshold.
+        return (
+            f"    pass {it.baseline_pass:.2f}->{it.candidate_pass:.2f}  "
+            f"kw {it.baseline_kw:.2f}->{it.candidate_kw:.2f}  "
+            f"conf {it.baseline_conf:.2f}->{it.candidate_conf:.2f}"
+        )
+
+    _LABEL = {"improved": ("Improved", "keeping"), "neutral": ("Neutral", "reverting"),
+              "regressed": ("Regressed", "reverting")}
     for it in report.iterations:
         prefix = f"[{it.iteration}/{report.total_eval_runs or len(report.iterations)}]"
         if it.outcome == "dry_run":
             lines.append(f"  {it.mutation_desc}")
-        elif it.outcome == "improved":
-            lines.append(f"{prefix} Mutating {it.mutation_desc}\n  Improved: composite {it.baseline_composite:.2f} -> {it.candidate_composite:.2f} — keeping")
-        elif it.outcome == "neutral":
-            lines.append(f"{prefix} Mutating {it.mutation_desc}\n  Neutral: composite {it.baseline_composite:.2f} -> {it.candidate_composite:.2f} — reverting")
-        else:
-            lines.append(
-                f"{prefix} Mutating {it.mutation_desc}\n  Regressed: composite {it.baseline_composite:.2f} -> {it.candidate_composite:.2f} — reverting"
-            )
+            continue
+        label, verb = _LABEL.get(it.outcome, (it.outcome, "reverting"))
+        delta = f"composite {it.baseline_composite:.3f} -> {it.candidate_composite:.3f}"
+        lines.append(
+            f"{prefix} Mutating {it.mutation_desc}\n"
+            f"  {label}: {delta} — {verb}\n{_components(it)}"
+        )
 
     lines.append("━" * 50)
 

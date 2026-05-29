@@ -149,15 +149,24 @@ def scorecard_from_eval_result(
         ws = [max(0.0, float(case_weights.get(cr.category, 1.0))) for cr in crs]
         wsum = sum(ws) or float(len(crs))
         pass_rate = sum(w * (1.0 if cr.pass_fail == "pass" else 0.0) for w, cr in zip(ws, crs, strict=False)) / wsum
+        warn_for_composite = sum(w * (1.0 if cr.pass_fail == "warn" else 0.0) for w, cr in zip(ws, crs, strict=False)) / wsum
         avg_kw = sum(w * cr.scores.get("keyword_hit_rate", 0.0) for w, cr in zip(ws, crs, strict=False)) / wsum
         avg_conf = sum(w * cr.scores.get("confidence_score", 0.0) for w, cr in zip(ws, crs, strict=False)) / wsum
     else:
         pass_rate = result.passed / total
+        warn_for_composite = result.warned / total
         avg_kw = sum(cr.scores.get("keyword_hit_rate", 0.0) for cr in crs) / total
         avg_conf = sum(cr.scores.get("confidence_score", 0.0) for cr in crs) / total
 
     weights = load_composite_weights(configs_dir)
-    composite = weights["pass_rate"] * pass_rate + weights["avg_keyword_hit"] * avg_kw + weights["avg_confidence"] * avg_conf
+    # Give 'warn' cases HALF credit on the pass term rather than zero. The
+    # objective was dominated by a binary pass/fail with a small benchmark, so a
+    # real improvement that lifted a case fail→warn (without reaching full pass)
+    # registered as no change and got reverted. Partial credit lets the
+    # optimizer see incremental progress; the displayed ``pass_rate`` stays the
+    # strict passed/total (honest), only the composite is graded.
+    graded_pass = pass_rate + 0.5 * warn_for_composite
+    composite = weights["pass_rate"] * graded_pass + weights["avg_keyword_hit"] * avg_kw + weights["avg_confidence"] * avg_conf
 
     return Scorecard(
         config_tag=result.config_tag,
