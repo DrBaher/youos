@@ -12,7 +12,47 @@ from app.autoresearch.scorer import (
     _DEFAULT_WEIGHTS,
     load_composite_weights,
     reset_weight_cache,
+    scorecard_from_eval_result,
 )
+from app.evaluation.service import CaseResult, EvalSuiteResult
+
+
+def _case(pass_fail: str) -> CaseResult:
+    return CaseResult(
+        case_key="k", category="internal", prompt_text="p", draft="d",
+        detected_mode="internal", confidence="medium", precedent_count=1,
+        scores={"keyword_hit_rate": 0.0, "confidence_score": 0.0},
+        pass_fail=pass_fail, notes="",
+    )
+
+
+def _suite(cases):
+    return EvalSuiteResult(
+        config_tag="t", total_cases=len(cases),
+        passed=sum(1 for c in cases if c.pass_fail == "pass"),
+        warned=sum(1 for c in cases if c.pass_fail == "warn"),
+        failed=sum(1 for c in cases if c.pass_fail == "fail"),
+        case_results=cases, run_at="2026-05-29",
+    )
+
+
+def test_warn_cases_get_half_credit_in_composite(tmp_path):
+    """A 'warn' case contributes half the pass-term credit (graded), so the
+    optimizer can see incremental progress instead of a binary cliff."""
+    reset_weight_cache()
+    # Two warns, zero kw/conf. graded_pass = 0 + 0.5*1.0 = 0.5;
+    # composite = pass_weight(0.5) * 0.5 = 0.25 (was 0.0 with binary scoring).
+    sc = scorecard_from_eval_result(_suite([_case("warn"), _case("warn")]), tmp_path)
+    assert sc.pass_rate == 0.0          # display stays strict
+    assert abs(sc.composite - 0.25) < 1e-6
+    reset_weight_cache()
+
+
+def test_fail_cases_get_no_credit(tmp_path):
+    reset_weight_cache()
+    sc = scorecard_from_eval_result(_suite([_case("fail"), _case("fail")]), tmp_path)
+    assert sc.composite == 0.0
+    reset_weight_cache()
 
 
 def test_default_weights():
@@ -76,3 +116,34 @@ def test_get_mutable_surfaces_includes_composite(tmp_path):
         assert s.step_size == 0.05
         assert s.min_val == 0.0
         assert s.max_val == 1.0
+
+
+def _sc(composite: float):
+    from app.autoresearch.scorer import Scorecard
+    return Scorecard(config_tag="t", pass_rate=0.0, warn_rate=0.0, fail_rate=0.0,
+                     avg_keyword_hit=0.0, avg_confidence=0.0, composite=composite)
+
+
+def test_compare_keeps_small_real_improvement():
+    """A +0.01 composite gain (a few keyword points — the magnitude real prompt
+    wins land at) is now 'improved', not discarded by the old +0.02 bar."""
+    from app.autoresearch.scorer import compare_scorecards
+    assert compare_scorecards(_sc(0.453), _sc(0.463)) == "improved"   # +0.010
+    assert compare_scorecards(_sc(0.45), _sc(0.455)) == "neutral"     # +0.005 below bar
+    assert compare_scorecards(_sc(0.45), _sc(0.43)) == "regressed"    # -0.020
+
+
+def test_compare_thresholds_are_configurable():
+    from app.autoresearch.scorer import compare_scorecards
+    # Raise the bar → the same +0.012 is no longer enough.
+    assert compare_scorecards(_sc(0.45), _sc(0.462), improve_threshold=0.03) == "neutral"
+
+
+def test_load_compare_thresholds_from_config(tmp_path):
+    import yaml as _yaml
+
+    from app.autoresearch.scorer import load_compare_thresholds
+    (tmp_path / "autoresearch.yaml").write_text(_yaml.dump({"improve_threshold": 0.04, "regress_threshold": 0.02}))
+    assert load_compare_thresholds(tmp_path) == (0.04, 0.02)
+    # Missing file → defaults.
+    assert load_compare_thresholds(tmp_path / "nope") == (0.01, 0.01)

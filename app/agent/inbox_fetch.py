@@ -31,6 +31,12 @@ class InboxMessage:
     body: str                         # text/plain (falls back to stripped text/html)
     headers: dict[str, str] = field(default_factory=dict)
     received_at: str | None = None    # ISO timestamp if available
+    # Prior turns in the same thread (oldest→newest, excluding the latest
+    # message which is ``body``). Each entry is ``{"sender": ..., "text": ...}``
+    # — the shape generation's ``_format_thread_context`` consumes. Lets the
+    # drafter see the conversation so it doesn't answer the wrong question in a
+    # multi-turn thread. Empty for a brand-new inbound.
+    thread_history: list[dict[str, str]] = field(default_factory=list)
 
 
 def _header(payload: dict[str, Any], name: str) -> str:
@@ -110,6 +116,19 @@ def fetch_unread(
         msg = messages[-1]                                # latest = the unread one
         payload = msg.get("payload", {}) or {}
         sender = _header(payload, "From")
+        # Prior turns (everything before the latest) so generation can draft
+        # with conversation context. Keep the last 4 to bound the prompt;
+        # truncate each body to ~200 chars (matches the regex-thread budget).
+        thread_history: list[dict[str, str]] = []
+        for prev in messages[:-1][-4:]:
+            prev_payload = prev.get("payload", {}) or {}
+            prev_text = _extract_text(prev_payload)
+            if not prev_text:
+                continue
+            thread_history.append({
+                "sender": (_header(prev_payload, "From") or "")[:80],
+                "text": prev_text[:200],
+            })
         results.append(
             InboxMessage(
                 message_id=msg.get("id") or msg.get("messageId") or thread_id,
@@ -121,6 +140,7 @@ def fetch_unread(
                 body=_extract_text(payload),
                 headers=_all_headers(payload),
                 received_at=_header(payload, "Date") or None,
+                thread_history=thread_history,
             )
         )
     return results

@@ -14,7 +14,6 @@ the tone).
 from __future__ import annotations
 
 import re
-import sqlite3
 from dataclasses import dataclass, field
 from typing import Iterable
 
@@ -125,6 +124,9 @@ class NeedsReplyVerdict:
     # confident enough to auto-draft, but the message shouldn't be silently
     # buried either." β surfaces these collapsed under "Review skipped."
     surface_for_review: bool = False
+    # True when the sender matches ``agent.vip_senders`` — gets a strong score
+    # boost and should sort to the top of the queue.
+    vip: bool = False
 
 
 # --- Sender history (count of prior reply pairs to a sender) ---------------
@@ -149,7 +151,9 @@ class SenderHistory:
         if key in self._cache:
             return self._cache[key]
         try:
-            conn = sqlite3.connect(self._db_path)
+            from app.db.bootstrap import connect
+
+            conn = connect(self._db_path)
             try:
                 row = conn.execute(
                     # Match either "Name <email>" or bare "email" forms.
@@ -204,6 +208,7 @@ def classify(
     history: SenderHistory | None = None,
     threshold: float = 0.6,
     skip_senders: list[str] | None = None,
+    vip_senders: list[str] | None = None,
 ) -> NeedsReplyVerdict:
     """Decide whether this inbound deserves a draft.
 
@@ -253,6 +258,21 @@ def classify(
         sender_email=msg.sender_email,
     )
 
+    # Score the NEW content only — strip quoted reply history and the trailing
+    # signature before looking for questions / imperatives / length. On a
+    # threaded reply, msg.body carries the whole quoted prior message, whose
+    # text almost always contains a '?' or "please"; scoring the raw body
+    # inflated trivial acknowledgements ("thanks", "will do") into drafted
+    # replies. Hard-skip header/sender checks above intentionally ran on the
+    # full message; only the soft content signals use the trimmed text.
+    from app.core.text_utils import extract_new_content, strip_signature
+
+    scoring_text = strip_signature(extract_new_content(msg.body))
+    if not scoring_text.strip():
+        # Degenerate (pure quote / signature only) — fall back to the full body
+        # rather than score emptiness.
+        scoring_text = msg.body
+
     # 3) Lightweight needs-reply score.
     score = 0.5  # start at the boundary; signals tip it one way or the other
 
@@ -285,11 +305,11 @@ def classify(
         reasons.append("transactional template (body)")
         transactional = True
 
-    if "?" in msg.body[-200:]:
+    if "?" in scoring_text[-200:]:
         score += 0.20
         reasons.append("ends with a question")
 
-    if ACTION_VERB_PAT.search(msg.body):
+    if ACTION_VERB_PAT.search(scoring_text):
         # Imperative verbs are ubiquitous in transactional templates
         # ("looking forward to see you", "click here to confirm"). When the
         # template detector already fired, suppress the imperative bonus —
@@ -300,8 +320,20 @@ def classify(
             score += 0.10
             reasons.append("imperative verb present")
 
-    word_count = len(msg.body.split())
-    if word_count <= 120:
+    word_count = len(scoring_text.split())
+    # Trivial acknowledgement: very short NEW content with no question and no
+    # request ("thanks", "sounds good", "will do"). Common as the latest message
+    # on a thread the user already handled — penalize rather than give it the
+    # short-body bonus, so it surfaces for review instead of being auto-drafted.
+    is_trivial_ack = (
+        word_count <= 6
+        and "?" not in scoring_text
+        and not ACTION_VERB_PAT.search(scoring_text)
+    )
+    if is_trivial_ack:
+        score -= 0.15
+        reasons.append(f"trivial acknowledgement ({word_count} words, no request)")
+    elif word_count <= 120:
         score += 0.10
         reasons.append(f"short body ({word_count} words)")
     elif word_count > 800:
@@ -334,6 +366,16 @@ def classify(
         score -= 0.15
         reasons.append(f"cold-outreach (heuristic score {cold.score})")
 
+    # VIP boost — a strong, late bump so a VIP's real mail clears the threshold
+    # and sorts to the top, even if it carried a penalty (operational mailbox,
+    # noreply). Hard-skips ran earlier and returned, so a VIP's automation /
+    # newsletters are still filtered; this only lifts mail that survived to
+    # scoring. +0.25 ⇒ base 0.5 alone reaches 0.75 (> default 0.6).
+    is_vip = bool(vip_senders and _matches_skip_list(msg.sender_email, vip_senders))
+    if is_vip:
+        score += 0.25
+        reasons.append("VIP sender (prioritized)")
+
     score = max(0.0, min(1.0, score))
     needs_reply = score >= threshold
     # Surface-for-review tier: didn't pass, but wasn't junk either — score is
@@ -346,6 +388,7 @@ def classify(
         reasons=reasons,
         cold_outreach=cold.is_cold,
         surface_for_review=surface_for_review,
+        vip=is_vip,
     )
 
 
@@ -355,9 +398,16 @@ def classify_many(
     history: SenderHistory | None = None,
     threshold: float = 0.6,
     skip_senders: list[str] | None = None,
+    vip_senders: list[str] | None = None,
 ) -> list[tuple[InboxMessage, NeedsReplyVerdict]]:
     """Vectorised helper. Returns pairs in the input order."""
     return [
-        (m, classify(m, history=history, threshold=threshold, skip_senders=skip_senders))
+        (
+            m,
+            classify(
+                m, history=history, threshold=threshold,
+                skip_senders=skip_senders, vip_senders=vip_senders,
+            ),
+        )
         for m in messages
     ]

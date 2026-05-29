@@ -1,5 +1,227 @@
 # Changelog
 
+## v0.2.0-beta.83 — 2026-05-29
+
+### Long-thread catch-up summaries
+
+For a reply on a long thread, the agent can now generate a 2–3 line "what changed / what's open" summary so you can catch up without re-reading the whole conversation.
+
+- New `app/agent/thread_summary.py`: `summarize_thread` builds a transcript from the structured `thread_history` (no re-fetch) and summarizes it on the **warm local model** (on-device, no egress). Length-gated (`min_messages`, default 4) so a two-message exchange isn't summarized; failure-isolated — no summary never blocks drafting.
+- `thread_summary` column on `agent_pending_drafts` (idempotent migration); persisted by triage and surfaced on the row + in the digest `pending_preview`.
+- Config: `agent.summarize_threads.enabled` (default false; needs the warm model server) + `min_messages`.
+
+This was the last open item from `docs/AUDIT_2026-05.md` — the autonomy/accuracy/observability audit is now fully worked through. +5 tests.
+
+## v0.2.0-beta.82 — 2026-05-29
+
+### Calendar-aware meeting replies
+
+When the agent drafts a reply to a meeting request, it can now read your calendar free/busy and offer **concrete open slots** ("Tue 2:00–2:30 PM or Wed 10:00–10:30 AM?") instead of "happy to meet, when works for you?".
+
+- New `app/agent/calendar.py`: `fetch_busy` (via the verified `gog calendar freebusy --json` shape), `compute_open_slots` (pure, timezone-aware, deterministic — one slot per business day for spread, within work hours, skipping busy), `format_slots`, `propose_open_slots`.
+- Triage wiring: when `agent.calendar.enabled` and the inbound's intent is `meeting_request`, the agent fetches slots for the account (respecting `user.timezone`) and injects them into that draft's instructions so the model proposes real times. Failure-isolated; **never creates events** — it proposes times you send (stays inside the never-act boundary).
+- Config: `agent.calendar.enabled` (default false; needs the gog calendar scope) + `agent.calendar.{business_days,work_start_hour,work_end_hour,slot_minutes,max_slots}` defaults.
+
+CLI shape verified live before coding (per the "verify the real CLI" lesson). gws/native backends raise NotImplementedError for now. +7 tests (pure slot logic + parser).
+
+## v0.2.0-beta.81 — 2026-05-29
+
+### Autoresearch keep/revert bar — tuned from real data
+
+With the prompt surface finally live (b80), a run showed the "answer-first" `system_prompt_suffix` variant genuinely improving the draft: `kw 0.38 → 0.41`, `composite 0.453 → 0.463` (+0.010). But it was reverted, because the hard-coded `improved` bar was **+0.02** — set blind, and now demonstrably discarding real wins.
+
+- `compare_scorecards` thresholds are configurable (`improve_threshold` / `regress_threshold` in `configs/autoresearch.yaml`), default **0.01** (down from the implicit 0.02), so a genuine ~1-composite-point gain is kept. The optimizer loads them once per run. Tune up if your eval's run-to-run noise floor is higher (verify by scoring the same config twice).
+
+This is the last piece: with b76–b80, autoresearch mutations now move the eval; b81 lets it actually *keep* the improvements. +3 tests.
+
+## v0.2.0-beta.80 — 2026-05-29
+
+### The prompt surface was a no-op — now it's real
+
+A live run isolated the last cause of autoresearch's flatness: mutating the prompt variant changed nothing because the key it rewrote — `drafting_prompt` — **is read by nothing**. Generation's `assemble_prompt` uses `system_prompt` (service.py:1106); `drafting_prompt` existed only in the mutator. So autoresearch's prompt surface has been a guaranteed no-op since it was added.
+
+- **`system_prompt_suffix`** (new, optional): generation now appends it to the system prompt. Kept separate from `system_prompt` so tuning drafting *style* can't clobber the instance's persona/brand prompt. Default empty = no change.
+- The autoresearch prompt surface now mutates `system_prompt_suffix` with persona-preserving, additive instruction variants (baseline / "answer-first, skip pleasantries" / "skimmable, bullet-points") — so a variant change actually changes the draft and the eval can respond.
+
+This was the missing piece: with the b77 cache bypass + b79 surface ordering, the prompt surface now genuinely moves the draft, giving autoresearch a lever on the `pass=20%` generation-quality headroom. The legacy `drafting_prompt` key is left as harmless dead config.
+
+## v0.2.0-beta.79 — 2026-05-29
+
+### Autoresearch optimizes the draft-changing surfaces first
+
+`pass=20%` is a generation/prompt problem, but `get_mutable_surfaces` listed the prompt template **last** — after ~20 retrieval surfaces — so a short run (`--max-iter 6`) never reached it, and the nightly spent most of its budget on retrieval knobs that (per b78) rarely change exemplar selection.
+
+Surfaces are now ordered by what actually moves the draft: **prompt template → per-mode reply length → retrieval → composite weights**. Combined with the b77 cache bypass, prompt/length mutations now change the draft and the eval can respond, so autoresearch targets the surface with real headroom. +1 test.
+
+(Decoding params — `generation.decoding.temperature`/`top_p` — live in `youos_config.yaml` behind the `load_config` lru-cache; mutating them needs cache-invalidation plumbing to avoid a silent no-op, so that's a deliberate follow-up rather than a rushed addition.)
+
+## v0.2.0-beta.78 — 2026-05-29
+
+### Score normalization — make boosts + semantic actually reorder (and let autoresearch optimize)
+
+A retrieval-only diagnostic settled it: even a *drastic* config (recency/account → 0.9, semantic_weight → 0.0 vs 0.4) returned the **identical** top-5 reply-pairs — scores shifted but ranking never did. Cause: raw BM25 lexical scores (~5–12, big gaps) dwarf the additive metadata boosts (tenths) and the [0,1] semantic blend, so `recency/account/sender` boosts and `semantic_weight` are **near-inert in production**, and autoresearch's retrieval mutations can't change which exemplars are selected → it could never move the eval.
+
+- **`retrieval.normalize_scores`** (new config, default **false**): min-max normalizes the lexical score to [0,1] across each candidate pool **before truncation**, so the metadata boosts and the semantic blend operate on a comparable scale and can change which results survive. `_normalize_pool` preserves each match's quality/subject multiplier. Applied at all five retrieval truncation points. Off by default → zero production change until opted in per instance (A/B draft quality first).
+- **top_k pinning fixed in the autoresearch eval**: retrieval uses `request.top_k or config.top_k`, and the eval's `DraftRequest` default `top_k=5` was overriding the config — so top_k mutations were silent no-ops. The eval now reads top_k from the (mutated) config.
+
++3 tests. To validate on an instance: set `normalize_scores: true` in its `configs/retrieval/defaults.yaml`, re-run autoresearch, and confirm the per-component deltas now move (and improvements get kept).
+
+## v0.2.0-beta.77 — 2026-05-29
+
+### Root-cause fix: autoresearch was blind to its own mutations
+
+The b76 per-component diagnostics paid off immediately. A live run showed every retrieval-param mutation producing **byte-identical** sub-scores (`pass 0.20→0.20  kw 0.38→0.38  conf 0.85→0.85`) — proof the mutated config had *zero* effect on the eval, not that it moved below threshold.
+
+Cause: the **exemplar cache**. `generate_draft` calls `_apply_cached_order`, which reorders retrieval's output to put previously-cached exemplars first. Populated on the baseline eval, it then pinned the same exemplars into every candidate's prompt — so changing `top_k`, recency/account weights, etc. re-ranked retrieval but the cache forced identical exemplars → identical drafts → identical scores. **This is why autoresearch had kept 0 improvements.**
+
+Fix: `DraftRequest.use_exemplar_cache` (default True = production behavior). The autoresearch eval (`scripts/run_autoresearch.py`) now sets it False, so `generate_draft` skips the cache read/apply/write and each candidate's retrieval config actually drives the exemplars — and the eval. Production drafting is unchanged (cache still on). +1 test.
+
+## v0.2.0-beta.76 — 2026-05-29
+
+### Autoresearch: sensitivity + diagnosability
+
+On the live instance autoresearch kept **0 improvements/night** — every mutation logged `composite 0.42 → 0.42` and reverted. Two changes so the loop can register (and we can diagnose) real progress:
+
+- **Graded composite** (`scorer.py`): a `warn` case now gets **half credit** on the pass term instead of zero, so an improvement that lifts a case fail→warn registers instead of being a binary cliff. The displayed `pass_rate` stays the strict passed/total — only the optimization objective is graded. The acceptance bar is unchanged, so it won't accept noise.
+- **Per-component diagnostics** (`optimizer.py`): each iteration now records and prints the baseline→candidate **pass / keyword / confidence** sub-scores (3-decimal composite), and the JSONL run log carries `iteration_components`. This makes a flat run *diagnosable*: if the sub-scores are identical across a mutation, the eval isn't responding to the mutated config (a wiring bug) — as opposed to moving below threshold.
+
++2 tests. (Whether the loop now keeps improvements is verified by running it on the live corpus — the diagnostics tell us which case it is.)
+
+## v0.2.0-beta.75 — 2026-05-29
+
+### Adapter-promotion gate — no silent regressions
+
+`finetune_lora` wrote the new adapter straight into `models/adapters/latest/` and the warm server reloaded it, so a bad nightly retrain silently degraded every draft with no rollback. Now the nightly gates promotion on the golden-eval composite:
+
+- **Before** fine-tuning: snapshot the current adapter to `models/adapters/previous/` and record the prior run's golden composite as the baseline.
+- **After** the (now-real) golden eval: keep the new adapter only if its composite holds/improves within tolerance (0.02); otherwise **roll back** to the snapshot (restored with a fresh mtime so the warm server reloads the good adapter). The outcome is logged as `adapter_gate` in the run summary.
+
+New `app/evaluation/promotion.py` (`should_promote` / `snapshot_adapter` / `restore_adapter` / `gate_after_eval`) is pure + unit-tested (+5 tests); the nightly wires it around the existing finetune/golden-eval steps. (The end-to-end train→eval→rollback cycle is validated on a live instance.)
+
+## v0.2.0-beta.74 — 2026-05-29
+
+### Proactive push — the agent reaches out
+
+The digest was pull-only and the only push was a macOS notification (useless when you're away from the Mac). Now the background agent can POST a digest summary to a webhook after a sweep, so you — or your Telegram/OpenClaw bot — get nudged without polling.
+
+- New `agent.notify_webhook_url` (+ optional `agent.notify_webhook_secret`, `agent.notify_min_interval_minutes`). Off by default; this is the one place YouOS makes an outbound request.
+- Pushes only when there's something actionable (pending/owed/awaiting > 0), the queue state **changed** since the last push, and the min-interval elapsed — a quiet or unchanged inbox stays quiet.
+- **Metadata only**: summary line, counts, and the pending preview (truncated subjects + senders). Never message bodies or draft text. Secret sent as `X-YouOS-Secret`. Documented in PRIVACY.md.
+
++4 tests.
+
+## v0.2.0-beta.73 — 2026-05-29
+
+### Structured standing-instruction rules
+
+`agent.standing_instructions` was one global string prepended to every draft. New `app/agent/rules.py` adds durable, conditional rules so the agent follows policies, not just a hint — "always decline recruiters", "for client X note I'll CC my partner", "for meeting requests propose Tue/Thu", "skip cold outreach".
+
+Rules live under `agent.rules` in `youos_config.yaml` (a list). Each `match` (ANDed) supports `sender` (exact), `domain` (`@x.com`), `intent` (a label), `cold_outreach` (bool); actions are `skip` (don't draft), `decline` (draft a polite decline), `prepend` (inject `value`). The triage loop evaluates rules per message: a `skip` rule drops the message, otherwise the matched instructions fold into that draft's standing instructions (global + per-rule) and are snapshotted on the row so you can see why a draft took a stance. Intent matching only classifies when a rule needs it. All actions stay draft-only. +8 tests.
+
+## v0.2.0-beta.72 — 2026-05-29
+
+### Voice-match gating in multi-candidate drafting
+
+The metric the whole product rests on — does it sound like *you* — was computed only offline. The live multi-candidate path picked the "best" draft by length-fit + has-a-signoff, which is orthogonal to voice and could discard the most voice-faithful candidate for running a few words long.
+
+Now, when generation has retrieved the user's real replies, `_rank_candidates` scores each candidate's `voice_match` (averaged across the top 3 exemplars, deterministic components → zero extra model cost) and weights it as the primary ranking signal alongside the structural terms. Averaging across several exemplars (not matching one) avoids rewarding verbatim parroting. The chosen candidate's `voice_match` is surfaced on the candidate dict. Backward-compatible: with no exemplars the ranking is unchanged. +1 test.
+
+## v0.2.0-beta.71 — 2026-05-29
+
+### VIP sender routing
+
+Autonomy is prioritization, not just filtering — the one email from your co-founder matters more than ten from strangers. New `agent.vip_senders` flag (comma-separated emails / `@domains`): mail from a VIP gets a strong needs-reply boost (+0.25) so it clears the threshold even if it carried a penalty, and ranks to the top of the score-ordered queue. The verdict carries a `vip` flag and a "VIP sender (prioritized)" reason (visible on the row).
+
+VIPs don't bypass the noise filters: hard-skips (newsletters, automation domains, CI, mailer-daemon) run first and return, so a VIP domain's newsletter is still skipped — only mail that survives to scoring gets the boost. Threaded through `classify` / `classify_many` / `get_agent_config` / the triage sweep. +4 tests.
+
+## v0.2.0-beta.70 — 2026-05-29
+
+### Triage accuracy is now measurable
+
+The audit's sharpest accuracy finding was that triage quality was *unobservable* — the only signal was the post-hoc dismissal rate, and false negatives (real mail the filter buried) left no trace. New harness:
+
+- `app/evaluation/triage_eval.py` — `evaluate_triage` (precision/recall/F1/accuracy + confusion matrix + the list of misclassified cases), `threshold_sweep`, and `best_threshold` (F1-maximizing, ties favor recall).
+- `scripts/eval_triage.py` — CLI over a labelled JSONL corpus; `--sweep` prints the precision/recall trade-off across thresholds so you can pick `agent.threshold` from data instead of guessing. Point `--corpus` at your own mail.
+- `configs/triage_corpus.jsonl` — a starter labelled set (newsletters, mailer-daemon, CI, booking confirmations, trivial acks vs. real questions/requests).
+
++3 tests.
+
+## v0.2.0-beta.69 — 2026-05-29
+
+### Thread context into autonomous drafting
+
+The biggest draft-accuracy fix: the background agent was drafting blind. `fetch_unread` pulled the whole thread but kept only the latest message, then `strip_quoted_text` removed any inline quotes — so on an ongoing thread the model saw a single message with no history and could confidently answer the wrong question or re-ask something already settled.
+
+- `InboxMessage` now carries `thread_history` (the prior turns `fetch_unread` already had in hand — last 4, oldest→newest, sender + truncated text).
+- `DraftRequest.thread_history` threads it to generation; `generate_draft` prefers this structured history over the brittle regex `From:`-block extraction (which `strip_quoted_text` had usually already defeated), feeding it into the existing `[THREAD HISTORY] … [CURRENT MESSAGE]` prompt block.
+- The agent passes `msg.thread_history` through on every triage draft.
+
++3 tests (history captured from a multi-message thread; none for a single-message thread; history reaches `generate_draft`). Still draft-only, still local — no trust-boundary change.
+
+## v0.2.0-beta.68 — 2026-05-29
+
+### Follow-up tracking — the two open loops
+
+A real assistant never lets a thread fall through the cracks. New `app/agent/followups.py` tracks both:
+
+- **Owed inbound** — queued mail you haven't acted on, aging past `agent.followup_owed_days` (default 2). "Bob's email from Tuesday is still unanswered."
+- **Awaiting reply** — replies you pushed/sent with no newer activity on the thread after `agent.followup_wait_days` (default 4). "You emailed Alice 4 days ago, no reply."
+
+Read-only over the existing `agent_pending_drafts` table — no new writes, no Gmail egress. Surfaced via:
+- `GET /api/agent/followups` (per-account; orchestrator's "anything I'm forgetting?" answer)
+- the digest (text, chat, and JSON) — `owed_count` / `awaiting_count` + previews, so the Telegram/OpenClaw bot can nudge you.
+
+Timestamps are parsed in Python (tolerating email-style `...Z` ISO and SQLite's space format). The awaiting-reply check is a DB-only heuristic (infers "they replied" from newer thread activity) — a soft nudge, not a guarantee. +4 tests.
+
+## v0.2.0-beta.67 — 2026-05-29
+
+### Tiered auto-push to Gmail Drafts (opt-in, dry-run first)
+
+The first rung up the autonomy ladder — and it stays fully inside the never-send boundary: after a sweep, YouOS can automatically create a Gmail **Draft** (never sends) for high-confidence replies to known, whitelisted senders, so they're waiting in your Drafts folder when you open Gmail instead of sitting in `/triage`.
+
+Off by default and **dry-run by default** — turn it on and watch the log say what it *would* push for a week before letting it write. New `agent.auto_push.*` flags (all whitelisted, settable via `/settings` or `youos config set`):
+
+- `agent.auto_push.enabled` (bool, default false)
+- `agent.auto_push.dry_run` (bool, default true) — log-only until you turn it off
+- `agent.auto_push.whitelist` (emails / `@domains`) — **required**; empty = nothing is pushed
+- `agent.auto_push.confidence_floor` (default 0.85, clamped 0.6–1.0)
+- `agent.auto_push.known_sender_min_pairs` (default 3) — must have prior history with the sender
+- `agent.auto_push.daily_push_cap` (default 5, per UTC day per account; 0 disables)
+
+A row is auto-pushed only if it cleared all of: enabled, whitelist match, not cold-outreach, score ≥ floor, prior-pairs ≥ min, and under the daily cap. Cold-outreach replies are never auto-pushed. It reuses the idempotent push path (no duplicate drafts), is failure-isolated (a push error never breaks the sweep), and reports outcomes on `TriageResult.auto_pushed`.
+
+## v0.2.0-beta.66 — 2026-05-29
+
+### Autonomy hardening — trust + turn-it-on sprint
+
+Acts on the verified findings in `docs/AUDIT_2026-05.md` (a 55-agent audit of the agent loop, accuracy, and robustness). Closes every Tier-0 correctness/safety bug that blocked trusting the autonomous agent unattended, plus the highest-value bounded accuracy/observability wins. Full suite green; +14 tests.
+
+**Send-safety (the only paths that touch the mailbox):**
+- `push_to_gmail` is now **idempotent**. Each backend call creates a *new* Gmail draft, so a retry, double-click, or two concurrent orchestrators previously left duplicate drafts. New atomic claim (`store.begin_push` / `finalize_push` / `abort_push`) serializes the write; a re-push returns the existing `gmail_draft_id` with `pushed_already: true`, and a backend failure rolls the claim back so retries work. Logic lives in one shared place (`app/agent/push.py`) so the route and future auto-push can't diverge.
+- **gws multi-account fix**: `gmail_write._gws_create_draft` now sets `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` per account (mirroring the read path), preventing a draft for one account landing in another account's Drafts.
+
+**Don't-die-silently:**
+- A sweep that raises (expired gog auth, network down) now **always logs an `agent_audit` row** with the error and re-raises — previously it logged nothing and the observability success-rate stayed green while the agent was dead. The scheduler tracks consecutive failures and notifies once on the first failure transition (and on recovery).
+- **Heartbeat**: `sweep_aggregate` exposes `last_sweep_at` / `last_successful_sweep_at` / `seconds_since_last_sweep`; `/api/agent/observability` adds a staleness hint and surfaces which model is actually drafting.
+- `doctor` now checks gog **auth validity** (bounded `gog auth list` probe), not just that the binary is on PATH — the #1 cause of an unattended agent silently stopping.
+
+**Concurrency / locking:**
+- Agent DB connections use the tuned `bootstrap.connect` (busy_timeout + WAL) instead of a raw `sqlite3.connect`, so a sweep colliding with the nightly or a manual run no longer hits immediate `database is locked`.
+- Per-account sweep lock: a scheduled tick overlapping a manual/API triage is now skipped rather than both running and each consuming the daily-draft-cap budget.
+- Gmail-label sync dismisses **all** pending rows for a labelled thread (not just the newest), so "skip this thread" isn't silently partial.
+
+**Accuracy:**
+- The needs-reply classifier scores the **new content only** — quoted reply history and the trailing signature are stripped before looking for questions/imperatives/length, and trivial acknowledgements ("thanks", "will do") are penalized rather than drafted. Kills the biggest thread-reply false-positive class.
+
+**Learning loop:**
+- The nightly **golden eval now scores real drafts**. It was calling `run_golden_eval()` with no generator, so every case scored against an empty string — the one quality checkpoint after fine-tuning was a no-op. Now instance-aware (resolves DB + configs from settings).
+
+**API / config:**
+- New `GET /api/agent/pending/{id}` (the retry-safety check `AGENT_OPERATIONS.md` mandates was previously impossible to perform).
+- New `POST /api/agent/pending/{id}/regenerate` — re-draft a queued row *in your voice* with a free-form instruction (e.g. "shorter; decline the meeting"), instead of pasting verbatim replacement text.
+- `agent.threshold` is now a whitelisted flag (float, clamped 0.4–0.85) so the documented `/api/config/set` tuning actually works.
+- The auth middleware re-reads config per request, so a PIN / origin allowlist set after startup takes effect without a server restart (closing an exposure window on remote-reachable instances).
+
 ## v0.2.0-beta.65 — 2026-05-28
 
 ### Public docs site — agent discoverability

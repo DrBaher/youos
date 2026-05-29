@@ -154,47 +154,17 @@ _SENDER_TYPE_BOOST_SURFACES: list[dict[str, Any]] = [
 
 # -- Prompt variant definitions ─────────────────────────────────────
 
-_DRAFTING_PROMPT_VARIANTS: list[str] = [
-    # variant_a: current standard
-    """\
-Task: produce a draft in your style grounded in retrieved corpus evidence.
-
-Inputs:
-- user request
-- retrieved chunks
-- relevant reply-pair exemplars
-
-Requirements:
-- preserve intent and tone consistent with your style
-- do not invent personal facts that are not retrieved
-- prefer concise drafts unless the request demands detail
-""",
-    # variant_b: concise format
-    """\
-Task: draft a concise reply in your style using retrieved evidence.
-
-Inputs: user request, retrieved chunks, reply-pair exemplars.
-
-Rules:
-- match your style and intent
-- no invented facts
-- keep it short
-""",
-    # variant_c: direct, skip pleasantries
-    """\
-Task: produce a draft in your style grounded in retrieved corpus evidence.
-
-Inputs:
-- user request
-- retrieved chunks
-- relevant reply-pair exemplars
-
-Requirements:
-- preserve intent and tone consistent with your style
-- do not invent personal facts that are not retrieved
-- prefer concise drafts unless the request demands detail
-- be direct, skip pleasantries
-""",
+# Additive instruction A/B'd onto the system prompt via `system_prompt_suffix`
+# (consumed in app/generation/service.assemble_prompt). These are appended, so
+# they tune drafting STYLE without clobbering the instance's persona system
+# prompt. variant_a is empty = the instance's prompt unchanged (the baseline).
+_SYSTEM_PROMPT_SUFFIX_VARIANTS: list[str] = [
+    # variant_a: no suffix (baseline — system prompt as-is)
+    "",
+    # variant_b: direct, answer-first
+    "Be direct and concise: lead with the answer, skip pleasantries, and don't restate the question.",
+    # variant_c: skimmable structure
+    "Keep replies skimmable: short paragraphs, and bullet points for any multi-item answer. State the key point first.",
 ]
 
 
@@ -312,27 +282,37 @@ def get_mutable_surfaces(configs_dir: Path, *, surface_filter: str | None = None
     if surface_filter is None or surface_filter == "prompt_drafting":
         prompts_path = configs_dir / "prompts.yaml"
         prompts_data = yaml.safe_load(prompts_path.read_text(encoding="utf-8")) or {}
-        current_prompt = prompts_data.get("drafting_prompt", "")
+        # Mutate `system_prompt_suffix` — the key generation actually consumes
+        # (the old `drafting_prompt` key was read by nothing, so this surface
+        # was a guaranteed no-op).
+        current_prompt = prompts_data.get("system_prompt_suffix", "") or ""
 
-        # Determine which variant index matches current
         variant_index = 0
-        for i, variant in enumerate(_DRAFTING_PROMPT_VARIANTS):
+        for i, variant in enumerate(_SYSTEM_PROMPT_SUFFIX_VARIANTS):
             if variant.strip() == current_prompt.strip():
                 variant_index = i
                 break
 
         surfaces.append(
             ConfigSurface(
-                name="drafting_prompt",
+                name="system_prompt_suffix",
                 config_file="prompts.yaml",
-                yaml_key="drafting_prompt",
+                yaml_key="system_prompt_suffix",
                 current_value=current_prompt,
                 mutation_type="template_variant",
-                variants=_DRAFTING_PROMPT_VARIANTS,
+                variants=_SYSTEM_PROMPT_SUFFIX_VARIANTS,
                 variant_index=variant_index,
             )
         )
 
+    # Order so the surfaces that actually CHANGE THE DRAFT lead — the prompt
+    # template and per-mode reply length — followed by retrieval, then the
+    # composite-weight meta-surface. A short run (or the nightly's early
+    # iterations) then exercises the high-headroom generation surfaces first,
+    # rather than spending its whole budget on retrieval knobs that (as the
+    # b78 diagnostic showed) rarely change which exemplars are selected.
+    _priority = {"prompts.yaml": 0, "persona.yaml": 1, "retrieval/defaults.yaml": 2, "autoresearch.yaml": 3}
+    surfaces.sort(key=lambda s: _priority.get(s.config_file, 9))
     return surfaces
 
 

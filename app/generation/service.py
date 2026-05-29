@@ -175,12 +175,25 @@ class DraftRequest:
     # additively with the auto-detected cold-outreach DECLINE_NUDGE so both
     # can apply to the same draft.
     standing_instructions: str | None = None
+    # Prior turns in the same thread (oldest→newest), each
+    # ``{"sender": ..., "text": ...}``. The autonomous agent populates this from
+    # the fetched thread so the drafter sees conversation context instead of
+    # pattern-matching on a single message and answering the wrong question.
+    # Preferred over the brittle regex thread extraction when present.
+    thread_history: list[dict[str, str]] | None = None
     # ζ: refuse cloud fallback for this specific draft. The agent triage
     # path sets this so background sweeps can't silently send inbound text
     # to Claude — if the local model is unavailable, generate_draft returns
     # an error placeholder rather than falling back. Interactive /feedback
     # is unaffected; this is strictly per-request.
     strict_local: bool = False
+    # When False, bypass the exemplar cache so this draft reflects the CURRENT
+    # retrieval config rather than a previously-cached exemplar selection. The
+    # autoresearch eval sets this False — otherwise the cache pins the same
+    # exemplars across every candidate and retrieval-param mutations become
+    # no-ops (the eval scores identically and nothing is ever kept). Production
+    # drafting leaves it True for consistency + speed.
+    use_exemplar_cache: bool = True
     # Pin the generation backend regardless of config/use_local_model. Used by
     # the cross-model comparison (app/evaluation/model_compare.py) to draft the
     # same case under each engine. One of "mlx" | "ollama" | "claude" | "none";
@@ -1094,6 +1107,14 @@ def assemble_prompt(
         "system_prompt",
         "You are YouOS, a local-first email copilot.",
     )
+    # Optional tunable instruction appended to the system prompt. Kept separate
+    # from `system_prompt` so autoresearch can A/B drafting-style instructions
+    # WITHOUT clobbering the instance's persona/brand system prompt. Default
+    # empty = no change. (The old `drafting_prompt` key was mutated by
+    # autoresearch but read by nothing — this is the consumed replacement.)
+    _suffix = prompts.get("system_prompt_suffix", "")
+    if _suffix and _suffix.strip():
+        system = f"{system.rstrip()}\n{_suffix.strip()}"
 
     exemplars_text = _format_exemplars(reply_pairs, score_stats=score_stats)
     n = len(reply_pairs)
@@ -1326,27 +1347,60 @@ def _score_candidate(text: str, *, target_words: int | None, greeting: str, clos
     return score
 
 
+# Voice fidelity is the signal the product is built on, so when exemplars are
+# available it dominates candidate selection — comparable in magnitude to the
+# structural terms (length-fit + greeting/closing ≈ 0–2). Previously the multi-
+# candidate path ranked on length+signoff alone, which is orthogonal to "sounds
+# like me" and could discard the most voice-faithful draft for running long.
+_VOICE_WEIGHT = 2.0
+
+
 def _rank_candidates(
     raw: list[tuple[str, str, float | None]],
     *,
     target_words: int | None,
     greeting: str,
     closing: str,
+    exemplar_replies: list[str] | None = None,
+    embed_fn: Any = None,
 ) -> list[dict[str, Any]]:
     """Score and sort candidates best-first.
 
-    ``raw`` is a list of ``(draft, model_used, temperature)``. Returns dicts
-    with the draft, model_used, temperature and score, sorted descending.
+    ``raw`` is a list of ``(draft, model_used, temperature)``. When
+    ``exemplar_replies`` (the user's real retrieved replies) are given, each
+    candidate also gets a voice-match score averaged across the top few
+    exemplars — measuring how much it sounds like the user, not just whether it
+    fits the persona length. Averaging across several exemplars (rather than
+    matching one) avoids rewarding verbatim parroting; the deterministic
+    components run at zero model cost (pass ``embed_fn`` only to add the
+    semantic term). Returns dicts with draft, model_used, temperature, score,
+    and ``voice_match`` (None when no exemplars), sorted descending.
     """
-    scored = [
-        {
+    refs = [r for r in (exemplar_replies or []) if r and r.strip()][:3]
+    scored: list[dict[str, Any]] = []
+    for draft, model_used, temperature in raw:
+        base = _score_candidate(draft, target_words=target_words, greeting=greeting, closing=closing)
+        voice: float | None = None
+        score = base
+        if base != float("-inf") and refs:
+            from app.evaluation.voice_match import voice_match_score
+
+            vals: list[float] = []
+            for ref in refs:
+                try:
+                    vals.append(float(voice_match_score(draft, ref, embed_fn=embed_fn)["voice_match"]))
+                except Exception:
+                    continue
+            if vals:
+                voice = sum(vals) / len(vals)
+                score = base + _VOICE_WEIGHT * voice
+        scored.append({
             "draft": draft,
             "model_used": model_used,
             "temperature": temperature,
-            "score": _score_candidate(draft, target_words=target_words, greeting=greeting, closing=closing),
-        }
-        for draft, model_used, temperature in raw
-    ]
+            "score": score,
+            "voice_match": round(voice, 3) if voice is not None else None,
+        })
     scored.sort(key=lambda c: c["score"], reverse=True)
     return scored
 
@@ -1631,9 +1685,20 @@ def generate_draft(
 
     detected_lang = detect_language(clean_inbound)
 
-    # Handle thread context for ongoing threads
+    # Handle thread context for ongoing threads. Prefer caller-supplied
+    # structured history (the agent fetches the real thread) — it's far more
+    # reliable than parsing "From:" blocks out of a single quoted body, which
+    # strip_quoted_text has usually already removed. Fall back to the regex
+    # extraction for callers that paste a whole quoted thread into one message.
     inbound_for_prompt = clean_inbound
-    if _has_thread_context(clean_inbound):
+    if request.thread_history:
+        history = [
+            {"sender": h.get("sender", ""), "text": h.get("text", "")}
+            for h in request.thread_history if h.get("text")
+        ]
+        if history:
+            inbound_for_prompt = _format_thread_context(clean_inbound, history)
+    elif _has_thread_context(clean_inbound):
         active_inbound, history = _extract_thread_parts(clean_inbound)
         inbound_for_prompt = _format_thread_context(active_inbound, history)
 
@@ -1728,14 +1793,22 @@ def generate_draft(
         detected_mode = request.mode or retrieval_response.detected_mode
         reply_pairs = retrieval_response.reply_pairs
 
-        cached_ids, exemplar_cache_hit, exemplar_cache_key = _get_cached_exemplar_ids(detected_intent, sender_type_hint, database_url=database_url)
-        reply_pairs = _apply_cached_order(reply_pairs, cached_ids)
+        if request.use_exemplar_cache:
+            cached_ids, exemplar_cache_hit, exemplar_cache_key = _get_cached_exemplar_ids(detected_intent, sender_type_hint, database_url=database_url)
+            reply_pairs = _apply_cached_order(reply_pairs, cached_ids)
 
-        selected_ids = _top_exemplar_source_ids(reply_pairs)
-        # Only persist on a cache miss or when the selection actually changed —
-        # otherwise every hit triggered a redundant DB write of the same row.
-        if not exemplar_cache_hit or selected_ids != cached_ids[: len(selected_ids)]:
-            _update_exemplar_cache(detected_intent, sender_type_hint, selected_ids, database_url=database_url)
+            selected_ids = _top_exemplar_source_ids(reply_pairs)
+            # Only persist on a cache miss or when the selection actually changed —
+            # otherwise every hit triggered a redundant DB write of the same row.
+            if not exemplar_cache_hit or selected_ids != cached_ids[: len(selected_ids)]:
+                _update_exemplar_cache(detected_intent, sender_type_hint, selected_ids, database_url=database_url)
+        else:
+            # Cache bypassed (autoresearch eval): use retrieval's own ordering so
+            # the current config actually determines the exemplars. No read, no
+            # write — the cache stays untouched for production drafting.
+            exemplar_cache_hit = False
+            exemplar_cache_key = None
+            selected_ids = _top_exemplar_source_ids(reply_pairs)
 
         # Build score stats dict from retrieval response
         score_stats = None
@@ -1921,8 +1994,15 @@ def generate_draft(
                         logger.warning("multi-candidate: one candidate failed", exc_info=True)
                 if not raw:
                     raise RuntimeError("all draft candidates failed")
+                # Rank by voice fidelity against the user's retrieved replies,
+                # not just length — the whole point of the local LoRA.
+                exemplar_replies = [
+                    rp.reply_text for rp in reply_pairs[:3]
+                    if getattr(rp, "reply_text", None)
+                ]
                 candidates = _rank_candidates(
                     raw, target_words=avg_reply_words, greeting=repair_greeting, closing=repair_closing,
+                    exemplar_replies=exemplar_replies,
                 )
                 draft = candidates[0]["draft"]
                 model_used = candidates[0]["model_used"]

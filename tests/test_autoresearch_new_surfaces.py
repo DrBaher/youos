@@ -182,3 +182,30 @@ def test_shipped_defaults_yaml_exposes_all_new_surfaces():
     payload = yaml.safe_load(repo_yaml.read_text(encoding="utf-8")) or {}
     for key in EXPECTED_NEW_SURFACES:
         assert key in payload, f"shipped defaults.yaml missing {key} — autoresearch surfaces won't be wired by default"
+
+
+def test_surfaces_prioritize_draft_changing_first(tmp_path):
+    """The prompt template + per-mode length surfaces (which change the draft)
+    must lead, so a short run exercises the high-headroom generation surfaces
+    before retrieval knobs that rarely change exemplar selection."""
+    import yaml as _yaml
+
+    from app.autoresearch.mutator import get_mutable_surfaces
+
+    (tmp_path / "retrieval").mkdir()
+    (tmp_path / "retrieval" / "defaults.yaml").write_text(_yaml.dump({
+        "top_k_reply_pairs": 8, "top_k_chunks": 3, "recency_boost_days": 60,
+        "recency_boost_weight": 0.2, "account_boost_weight": 0.15,
+    }))
+    (tmp_path / "prompts.yaml").write_text(_yaml.dump({"drafting_prompt": "x"}))
+    (tmp_path / "persona.yaml").write_text(_yaml.dump({
+        "modes": {"internal": {"avg_reply_words": 40}}}))
+    (tmp_path / "autoresearch.yaml").write_text(_yaml.dump({
+        "composite_weights": {"pass_rate": 0.5, "avg_keyword_hit": 0.3, "avg_confidence": 0.2}}))
+
+    surfaces = get_mutable_surfaces(tmp_path)
+    files = [s.config_file for s in surfaces]
+    # prompts first, then persona, before retrieval, before autoresearch.
+    assert files[0] == "prompts.yaml"
+    assert files.index("persona.yaml") < files.index("retrieval/defaults.yaml")
+    assert files.index("retrieval/defaults.yaml") < files.index("autoresearch.yaml")
