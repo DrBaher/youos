@@ -987,6 +987,30 @@ def test_rules_skip_drops_message_from_drafting(mocked_environment, monkeypatch)
     )
 
 
+def test_archive_rule_excludes_message_from_drafting(mocked_environment, monkeypatch):
+    """A message routed to archive by a rule must NOT also be drafted/persisted —
+    the user said get it out of the inbox."""
+    from app.agent import actions as act
+    from app.agent import triage
+
+    env = mocked_environment
+    # Route the Alice (@partner.com) message to archive (dry-run is fine: the
+    # rule MATCHED, so it's dropped from drafting either way).
+    monkeypatch.setattr(act, "_actions_config", lambda: {"enabled": True, "dry_run": True, "daily_cap": 50})
+    monkeypatch.setattr("app.agent.rules.load_rules", lambda: [
+        {"match": {"domain": "@partner.com"}, "action": "archive", "value": None},
+    ])
+    monkeypatch.setattr("app.agent.rules.rules_need_intent", lambda rules: False)
+
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    # Alice was archived → not drafted; the newsletter is hard-skipped anyway.
+    assert result.kept == 0
+    assert any(a["action"]["type"] == "archive" for a in result.mailbox_actions)
+
+
 def test_hold_rule_drafts_but_blocks_auto_push(mocked_environment, monkeypatch):
     """A 'hold' rule (content predicate) still drafts the reply, but the row is
     excluded from auto-push — so it can never be auto-sent either."""
