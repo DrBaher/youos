@@ -97,6 +97,8 @@ def send_pending_row(
         return SendOutcome(False, http_status=404, detail="pending row not found")
     if state == "not_pushed":
         return SendOutcome(False, http_status=409, detail="row has no Gmail draft to send")
+    if state == "dismissed":
+        return SendOutcome(False, http_status=409, detail="row was dismissed before the send claimed it")
     if state == "already_sent":
         return SendOutcome(
             True, sent_already=True, row=store.get(database_url, row_id),
