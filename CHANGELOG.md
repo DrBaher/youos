@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.108 — 2026-05-29
+
+### Rules authoring API — manage filters/actions without editing YAML (framework, 1/N)
+
+First step toward user-composable filters + actions/tasks: a REST surface to manage `agent.rules` so an orchestrator (OpenClaw) or a UI can create/edit/delete rules without hand-editing config.
+
+- New `GET /api/agent/rules` (each rule + its index), `POST /api/agent/rules` (append), `PUT /api/agent/rules/{index}`, `DELETE /api/agent/rules/{index}`, and `POST /api/agent/rules/validate` (dry-validate for a builder UI / NL preview).
+- Extracted shared validation in `rules.py`: `validate_rule` (clear errors — unknown match key, unknown action, label without value, comma/reserved label name) + `normalize_rule` (now used by `load_rules` too) + `save_rules` (the single validated write path → config). `MATCH_KEYS` is the recognised filter vocabulary.
+
++12 tests. Pure rule storage (no mailbox mutation); never-send/never-act unaffected.
+
 ## v0.2.0-beta.107 — 2026-05-29
 
 ### Fix 7 bugs from the routing-framework audit (b106)
