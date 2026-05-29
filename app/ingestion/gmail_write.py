@@ -496,20 +496,27 @@ def list_labels(*, account: str) -> set[str]:
     return {str(x.get("name")) for x in items if isinstance(x, dict) and x.get("name")}
 
 
-def ensure_label(*, account: str, name: str) -> None:
+def ensure_label(*, account: str, name: str, known: set[str] | None = None) -> None:
     """Create the label if it doesn't already exist (so a subsequent --add by
     name resolves). System labels (INBOX/STARRED/…) always exist; user labels
-    may need creating. Idempotent."""
+    may need creating. Idempotent.
+
+    ``known`` is an optional caller-supplied set of existing label names (a
+    per-sweep cache) — when given, the existence check uses it instead of a
+    fresh ``labels list`` subprocess per call, and a newly-created name is added
+    to it so later calls in the same sweep see it."""
     if not name or name.upper() in _SYSTEM_LABELS:
         return
-    if name in list_labels(account=account):
+    existing = known if known is not None else list_labels(account=account)
+    if name in existing:
         return
     r = _gog(["gog", "gmail", "labels", "create", name, "--account", account, "--json", "--no-input"])
     if r.returncode != 0:
         stderr = (r.stderr or "").strip().lower()
-        if "already exists" in stderr or "exists" in stderr:  # race / case difference — fine
-            return
-        raise GmailWriteError(f"gog labels create {name!r} exit {r.returncode}: {(r.stderr or '').strip()[:160]}")
+        if not ("already exists" in stderr or "exists" in stderr):  # race/case diff is fine
+            raise GmailWriteError(f"gog labels create {name!r} exit {r.returncode}: {(r.stderr or '').strip()[:160]}")
+    if known is not None:
+        known.add(name)
 
 
 # Gmail's reserved system labels (modify accepts these without creating them).

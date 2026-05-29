@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.2.0-beta.107 — 2026-05-29
+
+### Fix 7 bugs from the routing-framework audit (b106)
+
+An adversarial audit of the b106 mailbox-routing framework confirmed 7 real bugs (2 refuted). All fixed:
+
+- **(HIGH) Undo was silently re-applied on the next sweep.** The live-apply dedup only treated `status='applied'` as "done", but `undo_action` flips the row to `'undone'` — so the next 15-min sweep re-fired the rule and re-applied exactly what the user just undid. Dedup now also blocks on `'undone'`/`'undoing'`, so a deliberate undo stays undone (re-applying is never the default).
+- **(MED) `agent.actions.daily_cap = 0` meant *unlimited*** (it fell into the `float('inf')` branch) — opposite of the auto-push/auto-send caps. Now `≤0` disables routing entirely; help text corrected.
+- **(MED) An archived message was still classified, drafted, and persisted** in the same sweep. A message routed to `archive` is now dropped from the draft pipeline (in dry-run too, so the soak previews real behavior).
+- **(LOW) Atomic undo:** `undo_action` now claims the row (`applied → undoing`) before the gog call, so a retried/concurrent undo can't double-run it (rolls back to `applied` on failure).
+- **(LOW) Label-name safety:** `load_rules` drops `label` rules whose value contains a comma (gog's `--add` is comma-delimited → would create two wrong labels) or lives in the reserved `YouOS/` namespace (would fight the dismissal-label sync).
+- **(LOW) Performance:** the existing-label set is now fetched once per sweep (cached) instead of a `gog labels list` subprocess per matched message.
+
++11 tests. Never-mutate-by-default invariant intact throughout.
+
 ## v0.2.0-beta.106 — 2026-05-29
 
 ### Beyond drafting: rule-driven mailbox routing (label / archive / star) — the agent-action framework
