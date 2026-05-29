@@ -420,6 +420,19 @@ def test_rules_link_in_nav(authed_client):
     assert 'href="/rules"' in authed_client.get("/triage").text
 
 
+def test_digests_list_endpoint(authed_client):
+    r = authed_client.get("/api/agent/digests")
+    assert r.status_code == 200
+    body = r.json()
+    assert "digests" in body and "runs" in body
+
+
+def test_digest_run_unknown_name_404(authed_client):
+    r = authed_client.post("/api/agent/digests/run",
+                           json={"name": "does-not-exist", "account": "me@x.com", "dry_run": True})
+    assert r.status_code == 404
+
+
 def test_triage_page_includes_ux_upgrades(authed_client):
     """Smoke check: the new b41 UX controls are present in the rendered HTML.
 

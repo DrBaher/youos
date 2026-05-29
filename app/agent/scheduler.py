@@ -349,6 +349,22 @@ async def _loop(app) -> None:
                            title=fc.title, message=fc.message)
             setattr(app.state, _FAILURES_ATTR, failures)
 
+            # Scheduled digest tasks (collect → summarize → send one digest).
+            # No-op unless agent.digests.enabled; the per-period claim makes
+            # repeated ticks idempotent, so checking every tick is safe.
+            # Failure-isolated — a digest error never disrupts the sweep loop.
+            try:
+                from app.agent.digest_tasks import run_due_digests
+                from app.core.settings import get_settings
+
+                db_url = get_settings().database_url
+                for account in accounts:
+                    await asyncio.get_event_loop().run_in_executor(
+                        None, partial(run_due_digests, db_url, account)
+                    )
+            except Exception as exc:
+                logger.info("digest tasks step errored: %s", exc)
+
             if total_persisted > 0 and cfg["notify_macos"]:
                 s = "s" if total_persisted != 1 else ""
                 _notify_macos(
