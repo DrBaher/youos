@@ -259,6 +259,18 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "help": "Throttle: at most one webhook push per account per this many minutes, and only when the queue state changed.",
     },
     {
+        "key": "agent.calendar.enabled",
+        "label": "Propose meeting times from your calendar",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "When the agent drafts a reply to a meeting request, read your "
+            "calendar free/busy (via the gog CLI) and offer concrete open slots "
+            "in the draft. Never creates events — proposes times you send. "
+            "Off by default; needs the gog calendar scope authorized."
+        ),
+    },
+    {
         "key": "agent.vip_senders",
         "label": "VIP senders (prioritized)",
         "type": "text",
