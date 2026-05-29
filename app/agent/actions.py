@@ -1,8 +1,9 @@
 """The agent-action framework — rule-driven mailbox routing.
 
 Beyond drafting: when a sweep fetches a message, ``agent.rules`` can ROUTE it —
-apply a Gmail label, archive it (route out of the inbox), or star it. Same
-guardrail shape as the send frontier:
+apply a Gmail label, archive it (route out of the inbox), star it, mark it
+read, or move it in/out of the Important tab. Every action is a reversible
+Gmail label add/remove. Same guardrail shape as the send frontier:
 
 * opt-in: ``agent.actions.enabled`` (default **false**),
 * dry-run by default: ``agent.actions.dry_run`` (records intent, touches nothing),
@@ -25,7 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 def _action_to_labels(action: dict[str, Any]) -> tuple[list[str], list[str]]:
-    """Map a rule action to (labels_to_add, labels_to_remove)."""
+    """Map a rule action to (labels_to_add, labels_to_remove). Every action is a
+    reversible label mutation so undo (``_reverse_labels``) is just the swap."""
     t = action.get("type")
     if t == "label" and action.get("value"):
         return ([action["value"]], [])
@@ -33,6 +35,12 @@ def _action_to_labels(action: dict[str, Any]) -> tuple[list[str], list[str]]:
         return ([], ["INBOX"])
     if t == "star":
         return (["STARRED"], [])
+    if t == "mark_read":
+        return ([], ["UNREAD"])
+    if t == "mark_important":
+        return (["IMPORTANT"], [])
+    if t == "mark_unimportant":
+        return ([], ["IMPORTANT"])
     return ([], [])
 
 
