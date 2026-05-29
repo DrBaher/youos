@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.70 — 2026-05-29
+
+### Triage accuracy is now measurable
+
+The audit's sharpest accuracy finding was that triage quality was *unobservable* — the only signal was the post-hoc dismissal rate, and false negatives (real mail the filter buried) left no trace. New harness:
+
+- `app/evaluation/triage_eval.py` — `evaluate_triage` (precision/recall/F1/accuracy + confusion matrix + the list of misclassified cases), `threshold_sweep`, and `best_threshold` (F1-maximizing, ties favor recall).
+- `scripts/eval_triage.py` — CLI over a labelled JSONL corpus; `--sweep` prints the precision/recall trade-off across thresholds so you can pick `agent.threshold` from data instead of guessing. Point `--corpus` at your own mail.
+- `configs/triage_corpus.jsonl` — a starter labelled set (newsletters, mailer-daemon, CI, booking confirmations, trivial acks vs. real questions/requests).
+
++3 tests.
+
 ## v0.2.0-beta.69 — 2026-05-29
 
 ### Thread context into autonomous drafting
