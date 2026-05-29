@@ -469,6 +469,35 @@ def step_triage_precision(verbose: bool = False) -> str:
     return f"precision={prec_s} recall={rec_s} n={n}"
 
 
+def step_fit_calibrator(verbose: bool = False) -> str:
+    """Refit the needs-reply score calibrator from decided queue rows.
+
+    Maps the raw heuristic score to an empirical P(deserved a reply) learned
+    from the user's own verdicts. Returns ``None`` (and writes nothing) below
+    the minimum sample count — so a young instance keeps the raw heuristic
+    until enough real verdicts exist. Best-effort.
+    """
+    print(f"\n{'=' * 60}")
+    print("STEP: Fit needs-reply calibrator")
+    print(f"{'=' * 60}")
+
+    db_path = resolve_sqlite_path(get_settings().database_url)
+    if not db_path.exists():
+        print("  [SKIP] calibrator — DB not yet created")
+        return "skipped (no DB)"
+
+    from app.agent.calibration import fit_from_database, save_calibrator
+
+    database_url = f"sqlite:///{db_path}"
+    cal = fit_from_database(database_url, days=90)
+    if cal is None:
+        print("  [SKIP] calibrator — not enough decided rows yet (keeping raw heuristic)")
+        return "skipped (insufficient data)"
+    save_calibrator(cal)
+    print(f"  [OK] fitted calibrator from {cal.n_samples} decided rows ({len(cal.centers)} knots)")
+    return f"fitted (n={cal.n_samples})"
+
+
 def step_deduplicate(verbose: bool = False) -> bool:
     """Run corpus deduplication (best-effort)."""
     return _run_step(
@@ -1046,6 +1075,17 @@ def main() -> None:
         results["triage_precision"] = f"error: {exc}"
         steps["triage_precision"] = True  # observability step never fails the run
     _record_duration("triage_precision", _t)
+
+    # 7. Refit the needs-reply score calibrator from the user's own verdicts.
+    # Dormant until there are enough decided rows; best-effort, never fails.
+    _t = time.monotonic()
+    try:
+        results["calibrator"] = step_fit_calibrator(verbose=verbose)
+        steps["calibrator"] = True
+    except Exception as exc:
+        results["calibrator"] = f"error: {exc}"
+        steps["calibrator"] = True
+    _record_duration("calibrator", _t)
 
     # Include recent git log after autoresearch
     try:
