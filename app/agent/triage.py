@@ -729,7 +729,12 @@ def _maybe_apply_mailbox_actions(
     if not any(r["action"] in ("label", "archive", "star") for r in rules):
         return []
 
+    from app.agent.inbox_fetch import message_age_days
     from app.core.sender import extract_domain
+
+    # Sender history → the ``known_contact`` predicate (do I have prior reply
+    # pairs with this sender?). Built once for the sweep; queries are cached.
+    history = SenderHistory.from_database_url(database_url)
 
     remaining: int | float = cfg["daily_cap"] - act.count_actions_today(database_url, account=account)
     # Per-sweep label cache: fetch existing labels at most ONCE (only when a live
@@ -751,6 +756,11 @@ def _maybe_apply_mailbox_actions(
             domain=extract_domain(msg.sender or msg.sender_email or ""),
             subject=msg.subject,
             body=msg.body,
+            to=msg.headers.get("to"),
+            cc=msg.headers.get("cc"),
+            has_attachment=msg.has_attachment,
+            age_days=message_age_days(msg.received_at),
+            known_contact=history.count_for(msg.sender_email) > 0,
         )
         if not acts:
             continue
@@ -936,18 +946,31 @@ def _run_sweep(
 
         _hold = False
         if rules:
+            from app.agent.inbox_fetch import message_age_days
             from app.core.sender import extract_domain
 
-            _rr = apply_rules(
-                rules,
-                sender_email=msg.sender_email,
-                domain=extract_domain(msg.sender or msg.sender_email or ""),
-                intents=_intents,
-                cold_outreach=verdict.cold_outreach,
-                base_instructions=standing_instructions,
-                subject=msg.subject,
-                body=msg.body,
-            )
+            # Failure-isolated like the calendar/summary/draft steps below: a
+            # rule-eval error must never abort the sweep (run_triage re-raises).
+            # On failure, fall back to the global instructions and no hold.
+            try:
+                _rr = apply_rules(
+                    rules,
+                    sender_email=msg.sender_email,
+                    domain=extract_domain(msg.sender or msg.sender_email or ""),
+                    intents=_intents,
+                    cold_outreach=verdict.cold_outreach,
+                    base_instructions=standing_instructions,
+                    subject=msg.subject,
+                    body=msg.body,
+                    to=msg.headers.get("to"),
+                    cc=msg.headers.get("cc"),
+                    has_attachment=msg.has_attachment,
+                    age_days=message_age_days(msg.received_at),
+                    known_contact=history.count_for(msg.sender_email) > 0,
+                )
+            except Exception as exc:
+                logger.warning("agent.rules evaluation failed for %s: %s", msg.message_id, exc)
+                _rr = {"skip": False, "hold": False, "instructions": standing_instructions, "matched": []}
             if _rr["skip"]:
                 verdict_ruleskip = NeedsReplyVerdict(
                     needs_reply=False, score=verdict.score,

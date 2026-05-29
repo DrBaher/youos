@@ -171,3 +171,156 @@ def test_conditions_are_anded():
     only_sender = apply_rules(rules, sender_email="a@b.com", domain="b.com",
                               intents=["question"], cold_outreach=False, base_instructions=None)
     assert only_sender["matched"] == []
+
+
+# --- PR2: richer filters ---------------------------------------------------
+
+
+def test_to_contains_and_cc_contains():
+    rules = [{"match": {"to_contains": "team@co.com"}, "action": "hold", "value": None}]
+    hit = apply_rules(rules, sender_email="a@b.com", domain="b.com", intents=None,
+                      cold_outreach=False, base_instructions=None,
+                      to="Team <team@co.com>, me@me.com")
+    miss = apply_rules(rules, sender_email="a@b.com", domain="b.com", intents=None,
+                       cold_outreach=False, base_instructions=None, to="me@me.com")
+    assert hit["hold"] is True
+    assert miss["hold"] is False
+
+    cc_rules = [{"match": {"cc_contains": ["boss@co.com"]}, "action": "hold", "value": None}]
+    cc_hit = apply_rules(cc_rules, sender_email="a@b.com", domain="b.com", intents=None,
+                         cold_outreach=False, base_instructions=None, cc="boss@co.com")
+    assert cc_hit["hold"] is True
+
+
+def test_subject_regex_and_body_regex():
+    rules = [{"match": {"subject_regex": r"invoice\s*#\d+"}, "action": "hold", "value": None}]
+    hit = apply_rules(rules, sender_email="a@b.com", domain="b.com", intents=None,
+                      cold_outreach=False, base_instructions=None, subject="Invoice #42")
+    miss = apply_rules(rules, sender_email="a@b.com", domain="b.com", intents=None,
+                       cold_outreach=False, base_instructions=None, subject="invoice attached")
+    assert hit["hold"] is True
+    assert miss["hold"] is False
+
+
+def test_has_attachment_predicate():
+    rules = [{"match": {"has_attachment": True}, "action": "label", "value": "Files"}]
+    from app.agent.rules import evaluate_mailbox_actions
+
+    hit = evaluate_mailbox_actions(rules, sender_email="a@b.com", domain="b.com",
+                                   subject="s", body="b", has_attachment=True)
+    miss = evaluate_mailbox_actions(rules, sender_email="a@b.com", domain="b.com",
+                                    subject="s", body="b", has_attachment=False)
+    assert [a["value"] for a in hit] == ["Files"]
+    assert miss == []
+
+
+def test_known_contact_predicate():
+    rules = [{"match": {"known_contact": False, "cold_outreach": True},
+              "action": "hold", "value": None}]
+    cold_stranger = apply_rules(rules, sender_email="x@y.com", domain="y.com", intents=None,
+                                cold_outreach=True, base_instructions=None, known_contact=False)
+    known = apply_rules(rules, sender_email="x@y.com", domain="y.com", intents=None,
+                        cold_outreach=True, base_instructions=None, known_contact=True)
+    assert cold_stranger["hold"] is True
+    assert known["hold"] is False
+
+
+def test_older_and_newer_than_days():
+    older = [{"match": {"older_than_days": 7}, "action": "hold", "value": None}]
+    newer = [{"match": {"newer_than_days": 1}, "action": "hold", "value": None}]
+    assert apply_rules(older, sender_email="a@b.com", domain="b.com", intents=None,
+                       cold_outreach=False, base_instructions=None, age_days=10.0)["hold"] is True
+    assert apply_rules(older, sender_email="a@b.com", domain="b.com", intents=None,
+                       cold_outreach=False, base_instructions=None, age_days=2.0)["hold"] is False
+    # Missing age never matches a recency predicate (rather than crash).
+    assert apply_rules(older, sender_email="a@b.com", domain="b.com", intents=None,
+                       cold_outreach=False, base_instructions=None, age_days=None)["hold"] is False
+    assert apply_rules(newer, sender_email="a@b.com", domain="b.com", intents=None,
+                       cold_outreach=False, base_instructions=None, age_days=0.5)["hold"] is True
+    assert apply_rules(newer, sender_email="a@b.com", domain="b.com", intents=None,
+                       cold_outreach=False, base_instructions=None, age_days=3.0)["hold"] is False
+
+
+def test_validate_rule_richer_filters():
+    from app.agent.rules import validate_rule
+
+    assert validate_rule({"match": {"subject_regex": r"\d+"}, "action": "star"})[0]
+    assert validate_rule({"match": {"older_than_days": 5}, "action": "archive"})[0]
+    assert validate_rule({"match": {"has_attachment": True}, "action": "label", "value": "F"})[0]
+    # bad regex
+    assert not validate_rule({"match": {"body_regex": "("}, "action": "star"})[0]
+    # non-numeric / negative age
+    assert not validate_rule({"match": {"older_than_days": "soon"}, "action": "star"})[0]
+    assert not validate_rule({"match": {"newer_than_days": -3}, "action": "star"})[0]
+
+
+# --- PR2 audit fixes -------------------------------------------------------
+
+
+def test_validate_rule_rejects_nonfinite_age():
+    """NaN/Infinity slip past a bare `< 0` check; NaN would make every age
+    comparison False, silently widening the match (e.g. archiving fresh mail)."""
+    from app.agent.rules import validate_rule
+
+    assert not validate_rule({"match": {"older_than_days": float("nan")}, "action": "archive"})[0]
+    assert not validate_rule({"match": {"newer_than_days": float("inf")}, "action": "archive"})[0]
+
+
+def test_validate_rule_rejects_non_bool_flags():
+    """A quoted YAML string ("false") is truthy and would invert the predicate;
+    require a real boolean so the save-time gate catches it."""
+    from app.agent.rules import validate_rule
+
+    assert not validate_rule({"match": {"has_attachment": "false"}, "action": "skip"})[0]
+    assert not validate_rule({"match": {"known_contact": "no"}, "action": "skip"})[0]
+    assert validate_rule({"match": {"has_attachment": False}, "action": "skip"})[0]
+
+
+def test_validate_rule_rejects_null_or_empty_regex():
+    from app.agent.rules import validate_rule
+
+    assert not validate_rule({"match": {"subject_regex": None}, "action": "star"})[0]
+    assert not validate_rule({"match": {"body_regex": ""}, "action": "star"})[0]
+
+
+def test_validate_rule_rejects_intent_for_mailbox_actions():
+    """Mailbox routing runs before intent classification, so an intent-keyed
+    label/archive/star rule would silently never fire — reject it at save."""
+    from app.agent.rules import validate_rule
+
+    for action in ("label", "archive", "star"):
+        body = {"match": {"intent": "meeting_request"}, "action": action}
+        if action == "label":
+            body["value"] = "Meetings"
+        assert not validate_rule(body)[0], action
+    # intent is still fine for the draft-shaping actions
+    assert validate_rule({"match": {"intent": "meeting_request"}, "action": "prepend",
+                          "value": "Propose Tue/Thu."})[0]
+
+
+def test_regex_search_caps_haystack_length():
+    """The regex never scans more than the cap, bounding work on huge bodies."""
+    from app.agent.rules import _REGEX_HAYSTACK_CAP, _regex_search
+
+    body = ("x" * (_REGEX_HAYSTACK_CAP + 50)) + "needle"
+    # "needle" sits past the cap, so an anchored-near-end search won't see it.
+    assert _regex_search("needle", body) is False
+    assert _regex_search("x", body) is True
+
+
+def test_message_age_days_parses_rfc822():
+    from app.agent.inbox_fetch import message_age_days
+
+    assert message_age_days(None) is None
+    assert message_age_days("not a date") is None
+    # A clearly-old fixed date is many days in the past.
+    age = message_age_days("Mon, 01 Jan 2024 00:00:00 +0000")
+    assert age is not None and age > 300
+
+
+def test_message_age_days_survives_overflow_year():
+    """An extreme year overflows the datetime constructor (OverflowError) — it
+    must yield None, not escape and kill the sweep."""
+    from app.agent.inbox_fetch import message_age_days
+
+    assert message_age_days("Mon, 01 Jan 99999999999999 00:00:00 +0000") is None
