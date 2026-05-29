@@ -71,6 +71,54 @@ def test_duplicate_actions_collapsed():
     assert out == [{"type": "star", "value": None}]
 
 
+def test_richer_actions_evaluate_and_map_to_labels():
+    """mark_read / mark_important / mark_unimportant are valid routing actions
+    and map to the right reversible label add/remove."""
+    rules = [
+        {"match": {"domain": "@x.com"}, "action": "mark_read", "value": None},
+        {"match": {"domain": "@x.com"}, "action": "mark_important", "value": None},
+        {"match": {"domain": "@x.com"}, "action": "mark_unimportant", "value": None},
+    ]
+    out = evaluate_mailbox_actions(rules, sender_email="a@x.com", domain="x.com", subject="s", body="b")
+    assert {a["type"] for a in out} == {"mark_read", "mark_important", "mark_unimportant"}
+
+    assert act._action_to_labels({"type": "mark_read"}) == ([], ["UNREAD"])
+    assert act._action_to_labels({"type": "mark_important"}) == (["IMPORTANT"], [])
+    assert act._action_to_labels({"type": "mark_unimportant"}) == ([], ["IMPORTANT"])
+    # undo is the swap
+    assert act._reverse_labels({"type": "mark_read"}) == (["UNREAD"], [])
+    assert act._reverse_labels({"type": "mark_important"}) == ([], ["IMPORTANT"])
+
+
+def test_routing_gate_not_blocked_by_new_action_only_rules(db, monkeypatch):
+    """Regression: the routing-enable gate must recognise the new actions, so a
+    rule set using ONLY mark_read (no label/archive/star) still routes."""
+    from app.agent import rules as rules_mod
+    from app.agent import triage
+
+    monkeypatch.setattr(act, "_actions_config", lambda: _cfg(dry_run=True))
+    monkeypatch.setattr(rules_mod, "load_rules",
+                        lambda: [{"match": {"domain": "@recruiters.com"}, "action": "mark_read", "value": None}])
+    msg = _msg(headers={}, received_at=None, has_attachment=False)
+    out = triage._maybe_apply_mailbox_actions(db, "me@x.com", [msg])
+    assert out and out[0]["action"]["type"] == "mark_read"
+    assert out[0]["status"] == "dry_run"
+
+
+def test_mark_read_applies_and_undo_re_adds_unread(db, monkeypatch):
+    monkeypatch.setattr(act, "_actions_config", lambda: _cfg())
+    monkeypatch.setattr(gmail_write, "ensure_label", lambda **k: None)
+    seen = []
+    monkeypatch.setattr(gmail_write, "modify_message_labels",
+                        lambda **k: seen.append((k.get("add"), k.get("remove"))) or gmail_write.GmailModifyResult("m1", [], [], {}))
+    act.apply_mailbox_actions(db, "me@x.com", _msg(), [{"type": "mark_read", "value": None}])
+    assert seen[-1] == ([], ["UNREAD"])          # cleared the unread flag
+    aid = act.list_actions(db)[0]["id"]
+    assert act.undo_action(db, aid)["ok"]
+    assert seen[-1] == (["UNREAD"], [])          # undo re-adds UNREAD
+    assert act.get_action(db, aid)["status"] == "undone"
+
+
 # --- gmail_write command shapes --------------------------------------------
 
 
