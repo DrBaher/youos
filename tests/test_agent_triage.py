@@ -725,3 +725,56 @@ def test_thread_history_threaded_into_draft_request(monkeypatch, tmp_path):
         database_url=f"sqlite:///{db}", configs_dir=tmp_path,
     )
     assert seen["thread_history"] == [{"sender": "Alice <alice@x.com>", "text": "Here's the deck."}]
+
+
+def test_rules_prepend_reaches_generate_draft(mocked_environment, monkeypatch):
+    """A prepend rule for the sender injects its instruction into the draft's
+    standing_instructions."""
+    from app.agent import triage
+
+    env = mocked_environment
+    monkeypatch.setattr("app.agent.rules.load_rules", lambda: [
+        {"match": {"domain": "@partner.com"}, "action": "prepend",
+         "value": "Confirm the timeline and CC Jane."},
+    ])
+    monkeypatch.setattr("app.agent.rules.rules_need_intent", lambda rules: False)
+
+    seen = {}
+
+    class _Resp:
+        draft = "ok"
+        model_used = "m"
+        repairs: list[str] = []
+
+    def _spy(req, **kw):
+        seen["si"] = req.standing_instructions
+        return _Resp()
+
+    monkeypatch.setattr("app.generation.service.generate_draft", _spy)
+
+    triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    assert "Confirm the timeline and CC Jane." in (seen["si"] or "")
+
+
+def test_rules_skip_drops_message_from_drafting(mocked_environment, monkeypatch):
+    from app.agent import store, triage
+
+    env = mocked_environment
+    monkeypatch.setattr("app.agent.rules.load_rules", lambda: [
+        {"match": {"domain": "@partner.com"}, "action": "skip", "value": None},
+    ])
+    monkeypatch.setattr("app.agent.rules.rules_need_intent", lambda rules: False)
+
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    # The Alice (@partner.com) message must not be drafted.
+    drafts = store.list_pending(env["database_url"], status="pending", tier="draft")
+    assert all("partner.com" not in (r.get("sender_email") or "") for r in drafts)
+    assert result.persisted == 0 or all(
+        "partner.com" not in (r.get("sender_email") or "") for r in drafts
+    )
