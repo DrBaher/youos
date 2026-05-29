@@ -63,6 +63,7 @@ def get_agent_config() -> dict[str, Any]:
         # time. ``daily_draft_cap`` is per-UTC-day per-account; 0 = unlimited.
         # ``strict_local`` refuses cloud fallback during triage only.
         "skip_senders": _parse_skip_senders(a.get("skip_senders")),
+        "vip_senders": _parse_skip_senders(a.get("vip_senders")),
         "daily_draft_cap": max(0, int(a.get("daily_draft_cap", 50))),
         "strict_local": bool(a.get("strict_local", False)),
     }
