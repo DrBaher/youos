@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.97 — 2026-05-29
+
+### Proactive alerting: a degraded agent reaches you, not just the log (autonomy Phase C)
+
+A background agent that silently stops drafting — expired Google auth, a dead model server serving empty drafts, a sweep crashing every tick — is worse than no agent, because you think it's working. Now those failure modes become actionable alerts on every configured channel (macOS + webhook), not a line in a log.
+
+- New `app/agent/alerts.py`: `classify_sweep_failure()` maps a sweep error to a kind (`auth` / `rate_limit` / `network` / `unknown`) and a remediation ("Re-authenticate: gog auth login"). `sweep_health()` assesses a *completed* sweep's drafts — even a "successful" sweep is unhealthy if most drafts fell back to the cloud (local model down) or came back empty — and flags a spike past a threshold (`min_drafts`-gated so a tiny sweep isn't judged).
+- New scheduler `_alert()` fires on macOS **and** webhook, debounced per (kind, account) so a recurring cause (auth expired every tick) alerts once per window, not every sweep. The failure path now classifies + alerts on every channel; a healthy-but-degraded sweep (cloud-fallback or empty-output spike) raises its own alert.
+- Note: browser-flow Google OAuth can't be auto-refreshed non-interactively, so for an `auth` failure the alert *is* the recovery path (it tells you exactly what to run). A process-not-running watchdog is intentionally external (launchd/cron), since an in-process loop can't alert on its own death.
+
++10 tests (`test_alerts.py`). Never-send boundary unchanged.
+
 ## v0.2.0-beta.96 — 2026-05-29
 
 ### Fix 11 bugs found by an adversarial audit of the autonomy + send frontier (b85–b95)
