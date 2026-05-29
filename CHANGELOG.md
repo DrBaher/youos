@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.2.0-beta.67 — 2026-05-29
+
+### Tiered auto-push to Gmail Drafts (opt-in, dry-run first)
+
+The first rung up the autonomy ladder — and it stays fully inside the never-send boundary: after a sweep, YouOS can automatically create a Gmail **Draft** (never sends) for high-confidence replies to known, whitelisted senders, so they're waiting in your Drafts folder when you open Gmail instead of sitting in `/triage`.
+
+Off by default and **dry-run by default** — turn it on and watch the log say what it *would* push for a week before letting it write. New `agent.auto_push.*` flags (all whitelisted, settable via `/settings` or `youos config set`):
+
+- `agent.auto_push.enabled` (bool, default false)
+- `agent.auto_push.dry_run` (bool, default true) — log-only until you turn it off
+- `agent.auto_push.whitelist` (emails / `@domains`) — **required**; empty = nothing is pushed
+- `agent.auto_push.confidence_floor` (default 0.85, clamped 0.6–1.0)
+- `agent.auto_push.known_sender_min_pairs` (default 3) — must have prior history with the sender
+- `agent.auto_push.daily_push_cap` (default 5, per UTC day per account; 0 disables)
+
+A row is auto-pushed only if it cleared all of: enabled, whitelist match, not cold-outreach, score ≥ floor, prior-pairs ≥ min, and under the daily cap. Cold-outreach replies are never auto-pushed. It reuses the idempotent push path (no duplicate drafts), is failure-isolated (a push error never breaks the sweep), and reports outcomes on `TriageResult.auto_pushed`.
+
 ## v0.2.0-beta.66 — 2026-05-29
 
 ### Autonomy hardening — trust + turn-it-on sprint

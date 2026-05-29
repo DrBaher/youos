@@ -117,6 +117,153 @@ class TriageResult:
     skipped: list[tuple[InboxMessage, NeedsReplyVerdict]]
     surfaced: list[tuple[InboxMessage, NeedsReplyVerdict]] = field(default_factory=list)
     persisted: int = 0      # rows actually inserted (idempotent: 0 on repeat runs)
+    # Tiered auto-push outcomes (opt-in). Each entry:
+    # {"id", "action": "pushed"|"would_push"|"skipped_cap"|"error", "gmail_draft_id"?}.
+    auto_pushed: list[dict[str, Any]] = field(default_factory=list)
+
+
+# --- tiered auto-push (opt-in; stays inside the never-send boundary) --------
+
+
+def _auto_push_config() -> dict[str, Any]:
+    """Read ``agent.auto_push.*`` config with safe, conservative defaults.
+
+    Auto-push creates a Gmail DRAFT (never sends) for high-confidence replies to
+    known, whitelisted senders. Every guardrail defaults to the safe value:
+    disabled, dry-run on, an empty whitelist (which means nothing is pushed),
+    a high confidence floor, and a low daily cap."""
+    from app.core.config import load_config
+
+    cfg = load_config() or {}
+    a = (cfg.get("agent") or {}) if isinstance(cfg, dict) else {}
+    ap = (a.get("auto_push") or {}) if isinstance(a, dict) else {}
+    if not isinstance(ap, dict):
+        ap = {}
+
+    def _f(key, default):
+        try:
+            return float(ap.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    def _i(key, default):
+        try:
+            return int(ap.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "enabled": bool(ap.get("enabled", False)),
+        "dry_run": bool(ap.get("dry_run", True)),
+        "confidence_floor": _f("confidence_floor", 0.85),
+        "min_pairs": _i("known_sender_min_pairs", 3),
+        "daily_push_cap": _i("daily_push_cap", 5),
+        "whitelist": _parse_autopush_whitelist(ap.get("whitelist")),
+    }
+
+
+def _parse_autopush_whitelist(raw: Any) -> list[str]:
+    """Normalise the whitelist (comma/newline string or list) to lowercase entries."""
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        items = [s.strip() for s in raw.replace("\n", ",").split(",")]
+    elif isinstance(raw, (list, tuple)):
+        items = [str(s).strip() for s in raw]
+    else:
+        return []
+    return [s.lower() for s in items if s]
+
+
+def _sender_in_whitelist(sender_email: str | None, whitelist: list[str]) -> bool:
+    """True if the sender matches a whitelist entry (exact email or @domain)."""
+    if not sender_email or not whitelist:
+        return False
+    email = sender_email.lower()
+    for entry in whitelist:
+        if entry.startswith("@"):
+            if email.endswith(entry):
+                return True
+        elif email == entry:
+            return True
+    return False
+
+
+def _maybe_auto_push(
+    *,
+    database_url: str,
+    account: str,
+    history: SenderHistory | None,
+    candidates: list[tuple[int, TriageDraft]],
+) -> list[dict[str, Any]]:
+    """Auto-create Gmail drafts for the qualifying freshly-persisted rows.
+
+    A row qualifies only if ALL hold: auto-push enabled; a non-empty whitelist
+    matches the sender; the draft generated cleanly and isn't cold-outreach;
+    the needs-reply score ≥ confidence_floor; prior reply pairs with the sender
+    ≥ min_pairs; and the per-day cap isn't exhausted. In dry-run (the default)
+    it only logs what it WOULD push. Never sends — only writes Gmail Drafts via
+    the same idempotent path the manual route uses. Failure-isolated.
+    """
+    cfg = _auto_push_config()
+    if not cfg["enabled"] or not candidates:
+        return []
+    whitelist = cfg["whitelist"]
+    if not whitelist:
+        # Enabled but no whitelist → nothing is pushed (safety). Surface once.
+        logger.info("auto-push enabled but agent.auto_push.whitelist is empty — nothing auto-pushed")
+        return []
+
+    floor = cfg["confidence_floor"]
+    min_pairs = cfg["min_pairs"]
+    dry_run = cfg["dry_run"]
+    cap = cfg["daily_push_cap"]
+    if cap <= 0:
+        # cap == 0 disables auto-push entirely.
+        return []
+
+    from app.agent.push import push_pending_row
+    from app.agent.store import count_pushed_today
+
+    remaining: int = max(0, cap - count_pushed_today(database_url, account=account))
+
+    results: list[dict[str, Any]] = []
+    for row_id, d in candidates:
+        if d.draft is None or d.error:
+            continue
+        if d.verdict.cold_outreach:
+            continue
+        if d.verdict.score < floor:
+            continue
+        sender_email = d.message.sender_email
+        if not _sender_in_whitelist(sender_email, whitelist):
+            continue
+        if history is not None and history.count_for(sender_email) < min_pairs:
+            continue
+
+        if dry_run:
+            logger.info(
+                "auto-push (dry-run): WOULD push row %s — score %.2f, sender %s",
+                row_id, d.verdict.score, sender_email,
+            )
+            results.append({"id": row_id, "action": "would_push"})
+            continue
+        if remaining <= 0:
+            results.append({"id": row_id, "action": "skipped_cap"})
+            continue
+        try:
+            outcome = push_pending_row(database_url, row_id)
+        except Exception as exc:  # never let auto-push break the sweep
+            logger.warning("auto-push failed for row %s: %s", row_id, exc)
+            results.append({"id": row_id, "action": "error", "detail": str(exc)})
+            continue
+        if outcome.ok:
+            remaining -= 1
+            results.append({"id": row_id, "action": "pushed", "gmail_draft_id": outcome.gmail_draft_id})
+            logger.info("auto-pushed row %s to Gmail (draft %s)", row_id, outcome.gmail_draft_id)
+        else:
+            results.append({"id": row_id, "action": "error", "detail": outcome.detail})
+    return results
 
 
 def run_triage(
@@ -213,6 +360,7 @@ def run_triage(
         skipped=accum["skipped"],
         surfaced=accum["surfaced"],
         persisted=accum["persisted"],
+        auto_pushed=accum.get("auto_pushed") or [],
     )
 
 
@@ -351,6 +499,7 @@ def _run_sweep(
             )
 
     persisted = 0
+    auto_push_candidates: list[tuple[int, TriageDraft]] = []
     if persist:
         from app.agent.store import upsert_pending
 
@@ -377,6 +526,9 @@ def _run_sweep(
             )
             if row_id is not None:
                 persisted += 1
+                # Only freshly-persisted draft rows are auto-push candidates
+                # (row_id is None on the idempotent repeat — already handled).
+                auto_push_candidates.append((row_id, d))
 
         # Tier 2: borderline cases (no draft generated; the UI shows them
         # collapsed so the user can act manually).
@@ -419,6 +571,17 @@ def _run_sweep(
     except Exception as exc:
         logger.warning("auto-promote skip_senders failed: %s", exc)
 
+    # Tiered auto-push: opt-in, dry-run by default, whitelist-gated. Stays
+    # inside the never-send boundary (writes Gmail Drafts only). Failure-isolated.
+    auto_pushed: list[dict[str, Any]] = []
+    try:
+        auto_pushed = _maybe_auto_push(
+            database_url=database_url, account=account,
+            history=history, candidates=auto_push_candidates,
+        )
+    except Exception as exc:
+        logger.warning("auto-push step failed: %s", exc)
+
     return {
         "messages": messages,
         "drafts": drafts,
@@ -428,6 +591,7 @@ def _run_sweep(
         "kept_count": kept_count,
         "errors_list": errors_list,
         "auto_promoted": auto_promoted,
+        "auto_pushed": auto_pushed,
     }
 
 
