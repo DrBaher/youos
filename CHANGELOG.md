@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.2.0-beta.98 — 2026-05-29
+
+### Richer policy grammar: content rules + a `hold` action (autonomy Phase D)
+
+`agent.rules` could only match on sender / domain / intent / cold-outreach, and could only `skip` / `decline` / `prepend`. It couldn't express "anything mentioning legal or money — let me handle it." Now it can, and that's the human-agent contract made concrete: the agent drafts the reply but a person always finishes-and-sends.
+
+- New **content predicates** `subject_contains` / `body_contains` — a keyword or list of keywords, case-insensitive substring, matches if any hits. ANDed with the other match keys as usual.
+- New **`hold` action** — still drafts the reply (so it's ready) but marks the row so it's **excluded from auto-push and auto-send**. Because auto-send only ever acts on auto-pushed drafts, blocking the push blocks the send too — a hold rule guarantees a human decides.
+
+```yaml
+agent:
+  rules:
+    - match: {body_contains: [legal, contract, lawsuit]}
+      action: hold
+    - match: {subject_contains: invoice}
+      action: hold
+```
+
+Threaded through `apply_rules` → `TriageDraft.hold` → the auto-push gate. +9 tests (`test_agent_rules.py`, `test_agent_triage.py`). Stays inside the never-act boundary.
+
 ## v0.2.0-beta.97 — 2026-05-29
 
 ### Proactive alerting: a degraded agent reaches you, not just the log (autonomy Phase C)

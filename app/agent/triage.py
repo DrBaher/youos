@@ -116,6 +116,9 @@ class TriageDraft:
     thread_summary: str | None = None
     # 0–1 per-draft quality (voice + structure); what auto-push gates on.
     quality_score: float | None = None
+    # A matched ``hold`` rule (agent.rules): draft it, but never auto-act —
+    # excluded from auto-push/auto-send so a human always finishes-and-sends.
+    hold: bool = False
 
 
 @dataclass
@@ -412,6 +415,12 @@ def _maybe_auto_push(
     results: list[dict[str, Any]] = []
     for row_id, d in candidates:
         if d.draft is None or d.error:
+            continue
+        # A 'hold' rule means a human must finish-and-send — never auto-act.
+        # (Blocking auto-push also blocks auto-send: only pushed drafts are
+        # eligible for auto-send.)
+        if getattr(d, "hold", False):
+            logger.info("auto-push: row %s held by an agent.rules hold rule", row_id)
             continue
         if d.verdict.cold_outreach:
             continue
@@ -822,6 +831,7 @@ def _run_sweep(
             except Exception:
                 _intents = None
 
+        _hold = False
         if rules:
             from app.core.sender import extract_domain
 
@@ -832,6 +842,8 @@ def _run_sweep(
                 intents=_intents,
                 cold_outreach=verdict.cold_outreach,
                 base_instructions=standing_instructions,
+                subject=msg.subject,
+                body=msg.body,
             )
             if _rr["skip"]:
                 verdict_ruleskip = NeedsReplyVerdict(
@@ -843,6 +855,9 @@ def _run_sweep(
                 skipped.append((msg, verdict_ruleskip))
                 continue
             effective_instructions = _rr["instructions"]
+            # A 'hold' rule: still draft (the reply is ready) but never auto-act
+            # on it — excluded from auto-push/auto-send so a human decides.
+            _hold = bool(_rr.get("hold"))
 
         # Calendar: a meeting request → propose real open slots so the draft
         # offers concrete times. Failure-isolated; never creates events.
@@ -911,6 +926,7 @@ def _run_sweep(
                     standing_instructions_snapshot=effective_instructions,
                     thread_summary=_summary,
                     quality_score=getattr(resp, "quality_score", None),
+                    hold=_hold,
                 )
             )
             cap_remaining -= 1  # ζ: one less slot for this UTC day
