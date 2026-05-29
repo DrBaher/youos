@@ -469,6 +469,26 @@ def step_triage_precision(verbose: bool = False) -> str:
     return f"precision={prec_s} recall={rec_s} n={n}"
 
 
+def step_capture_queue_feedback(verbose: bool = False) -> str:
+    """Mine the agent's own queue-lifecycle outcomes (edited/kept/dismissed)
+    into feedback_pairs so it learns from its own drafts, not just the old
+    corpus. Idempotent; best-effort."""
+    print(f"\n{'=' * 60}")
+    print("STEP: Capture queue feedback")
+    print(f"{'=' * 60}")
+
+    db_path = resolve_sqlite_path(get_settings().database_url)
+    if not db_path.exists():
+        print("  [SKIP] queue_feedback — DB not yet created")
+        return "skipped (no DB)"
+
+    from app.agent.feedback_capture import capture_queue_feedback
+
+    r = capture_queue_feedback(f"sqlite:///{db_path}")
+    print(f"  [OK] captured {r['captured']} pair(s) from {r['scanned']} terminal rows (skipped {r['skipped']})")
+    return f"captured {r['captured']} (scanned {r['scanned']})"
+
+
 def step_fit_calibrator(verbose: bool = False) -> str:
     """Refit the needs-reply score calibrator from decided queue rows.
 
@@ -870,6 +890,18 @@ def main() -> None:
         steps["benchmark_refresh"] = False
         errors.append(f"Benchmark refresh error: {exc}")
     _record_duration("benchmark_refresh", _t)
+
+    # 1b. Capture the agent's own queue-lifecycle outcomes as feedback (close
+    # the loop). Best-effort; runs before auto-feedback so its pairs flow into
+    # the same fine-tune.
+    _t = time.monotonic()
+    try:
+        results["queue_feedback"] = step_capture_queue_feedback(verbose=verbose)
+        steps["queue_feedback"] = True
+    except Exception as exc:
+        results["queue_feedback"] = f"error: {exc}"
+        steps["queue_feedback"] = True  # never fails the run
+    _record_duration("queue_feedback", _t)
 
     # 2. Auto-feedback extraction
     _t = time.monotonic()

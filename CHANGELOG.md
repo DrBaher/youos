@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.94 — 2026-05-29
+
+### Capture the agent's own draft outcomes as feedback (autonomy Phase C)
+
+The model fine-tunes on the user's historical sent mail; its *own* queued drafts — dismissed, edited, kept-and-sent — were never fed back, so the live false positives and bad drafts never became negative signal. The loop trained on the old corpus, not its own mistakes. This closes that loop.
+
+- New `app/agent/feedback_capture.py`: `capture_queue_feedback()` mines terminal `agent_pending_drafts` rows into `feedback_pairs` — **edited→kept** becomes a correction pair (generated `draft` vs the user's `amended_draft`, rating 4, edit distance via `core.diff`); **sent unchanged** becomes a strong positive (rating 5); **dismissed `wrong_content`** becomes a negative pair (rating 2). `noise` / `wrong_sender` dismissals are *classifier* signals (the precision harness owns them), so they're skipped here.
+- Idempotent via a new `feedback_captured` marker column (migration) — each terminal row is mined exactly once. Captured pairs land with `used_in_finetune=0` so the next nightly fine-tune picks them up.
+- New nightly step `step_capture_queue_feedback`, run just before auto-feedback so its pairs flow into the same fine-tune. Best-effort; never fails the run.
+
++8 tests (`test_feedback_capture.py`). Read-mostly (inserts feedback rows + flips the marker); never-send boundary unchanged.
+
 ## v0.2.0-beta.93 — 2026-05-29
 
 ### Autonomous auto-send — the policy ladder (autonomy Phase B, completes the send frontier)
