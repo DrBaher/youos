@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.74 — 2026-05-29
+
+### Proactive push — the agent reaches out
+
+The digest was pull-only and the only push was a macOS notification (useless when you're away from the Mac). Now the background agent can POST a digest summary to a webhook after a sweep, so you — or your Telegram/OpenClaw bot — get nudged without polling.
+
+- New `agent.notify_webhook_url` (+ optional `agent.notify_webhook_secret`, `agent.notify_min_interval_minutes`). Off by default; this is the one place YouOS makes an outbound request.
+- Pushes only when there's something actionable (pending/owed/awaiting > 0), the queue state **changed** since the last push, and the min-interval elapsed — a quiet or unchanged inbox stays quiet.
+- **Metadata only**: summary line, counts, and the pending preview (truncated subjects + senders). Never message bodies or draft text. Secret sent as `X-YouOS-Secret`. Documented in PRIVACY.md.
+
++4 tests.
+
 ## v0.2.0-beta.73 — 2026-05-29
 
 ### Structured standing-instruction rules
