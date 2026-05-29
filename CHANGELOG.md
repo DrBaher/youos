@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.2.0-beta.93 — 2026-05-29
+
+### Autonomous auto-send — the policy ladder (autonomy Phase B, completes the send frontier)
+
+Wires the send path (b91) and the escalation policy (b92) into the sweep as an opt-in autonomous send — built as a **policy ladder** so trust is earned, not assumed: draft-queue → auto-draft → **shadow-send** (log-only soak) → **live-send to known recipients after a delay**.
+
+- New `_maybe_auto_send` pass in the sweep: for drafts that have sat past the **undo/delay window** (so auto-send never fires in the same sweep that created the draft), it re-applies the escalation decision (`auto_act` only — high-stakes routes to a human) and a **per-recipient trust gate**, then sends via the hard-gated send path. `mode='shadow'` (the default) records a soak-only send without touching Gmail.
+- New store helpers: `recipient_trust` (counts prior *kept* replies to a recipient — new contacts score 0, so auto-send never fires on an un-vetted relationship) and `due_for_auto_send` (the delay-window query).
+- New flags (all conservative): `agent.auto_send.enabled` (default **false**), `agent.auto_send.mode` (default **shadow**), `agent.auto_send.delay_minutes` (60), `agent.auto_send.min_recipient_trust` (3). A live send still also requires `agent.send.enabled` and is blocked instantly by `agent.outbound_kill_switch`.
+- **Caveat documented in the flag help:** if you send a pushed draft manually from Gmail, live mode can't detect that and may resend — only enable live once you let the agent own the thread.
+
+Also fixed a latent test-isolation bug: `test_run_triage_calls_label_sync_at_start` patched `inbox_fetch.fetch_unread` (worked only by import-order luck); now patches the name `triage` actually binds.
+
++9 tests (`test_auto_send.py`). **Default behavior unchanged** — with `agent.auto_send.enabled` off (the default), nothing sends.
+
 ## v0.2.0-beta.92 — 2026-05-29
 
 ### Confidence × stakes escalation (autonomy Phase B)
