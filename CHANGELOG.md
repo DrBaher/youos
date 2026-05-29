@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.103 — 2026-05-29
+
+### One-call confirmed send + draft-in-notification (orchestrator/OpenClaw flow)
+
+Smooths the human-in-the-loop flow "agent drafts → notify me → I review/edit → I confirm → it sends" down to a clean orchestrator surface.
+
+- New `POST /api/agent/pending/{id}/confirm_send` — the single action an orchestrator fires when the user approves: (optional final edit via `amended_draft`) → create the Gmail draft → send it, in one call. The gate is checked **first**, so a disabled send / armed kill-switch returns 403 **before** any Gmail draft is created (no orphan drafts). Still a *human-confirmed* send — gated by `agent.send.enabled` + the kill-switch, distinct from autonomous `auto_send`. An edit sent here is tagged `amended_by='user'`, so it feeds the correction loop. If the draft is created but the send fails, the error names the draft id so the caller can retry `/send`.
+- The digest's `pending_preview` (and thus the post-sweep webhook payload an orchestrator consumes) now carries the **draft body inline** (`draft`, capped at 2000 chars, user's edit preferred) plus `quality_score` — so a notification can show "the email and the reply" without a callback.
+
++5 tests. Never-send default unchanged (`send.enabled` still off by default; `confirm_send` 403s until you opt in).
+
 ## v0.2.0-beta.102 — 2026-05-29
 
 ### Keep drafting on-device: retry locally before the cloud + cap huge inputs
