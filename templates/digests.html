@@ -103,8 +103,12 @@
       <div class="narrow"><label class="fld" for="minute">Minute</label><input type="number" id="minute" min="0" max="59" value="0"></div>
       <div class="narrow"><label class="fld" for="maxmsg">Max msgs</label><input type="number" id="maxmsg" min="1" value="50"></div>
     </div>
-    <div style="margin-top:12px;"><label class="fld" for="deliver">Deliver to (blank = your own inbox)</label>
-      <input type="text" id="deliver" placeholder="your own inbox"></div>
+    <div class="grid" style="margin-top:12px;">
+      <div><label class="fld" for="account">Run for account (blank = all your accounts)</label>
+        <input type="text" id="account" placeholder="all configured accounts"></div>
+      <div><label class="fld" for="deliver">Deliver to (blank = that account's inbox)</label>
+        <input type="text" id="deliver" placeholder="the account's own inbox"></div>
+    </div>
     <div class="actions-bar">
       <label class="chk"><input type="checkbox" id="archive"> archive the messages after sending</label>
       <label class="chk"><input type="checkbox" id="enabled" checked> this digest active</label>
@@ -137,7 +141,7 @@
   const $ = (id) => document.getElementById(id);
   const F = { name: $("name"), query: $("query"), schedule: $("schedule"), weekday: $("weekday"),
               hour: $("hour"), minute: $("minute"), maxmsg: $("maxmsg"), model: $("model"),
-              deliver: $("deliver"), archive: $("archive"), enabled: $("enabled") };
+              account: $("account"), deliver: $("deliver"), archive: $("archive"), enabled: $("enabled") };
   const saveBtn = $("saveBtn"), cancelBtn = $("cancelBtn"), vstatus = $("vstatus");
   const formTitle = $("formTitle"), list = $("list"), ledger = $("ledger"), preview = $("preview"), gate = $("gate");
   const WD = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
@@ -150,7 +154,7 @@
       name: F.name.value.trim(), query: F.query.value.trim(),
       schedule: F.schedule.value, hour: parseInt(F.hour.value, 10) || 0,
       minute: parseInt(F.minute.value, 10) || 0, max_messages: parseInt(F.maxmsg.value, 10) || 50,
-      summary_model: F.model.value, deliver_to: F.deliver.value.trim(),
+      summary_model: F.model.value, account: F.account.value.trim(), deliver_to: F.deliver.value.trim(),
       then_archive: F.archive.checked, enabled: F.enabled.checked,
     };
     if (F.schedule.value === "weekly") b.weekday = F.weekday.value;
@@ -189,7 +193,7 @@
     editIndex = null;
     F.name.value = ""; F.query.value = ""; F.schedule.value = "daily"; F.weekday.value = "monday";
     F.hour.value = "7"; F.minute.value = "0"; F.maxmsg.value = "50"; F.model.value = "local";
-    F.deliver.value = ""; F.archive.checked = false; F.enabled.checked = true;
+    F.account.value = ""; F.deliver.value = ""; F.archive.checked = false; F.enabled.checked = true;
     syncWeekday(); formTitle.textContent = "Add a digest"; cancelBtn.style.display = "none";
     saveBtn.textContent = "Save digest"; saveBtn.disabled = true; vstatus.textContent = "";
   }
@@ -199,7 +203,7 @@
     F.name.value = d.name || ""; F.query.value = d.query || ""; F.schedule.value = d.schedule || "daily";
     F.weekday.value = WD[d.weekday || 0] || "monday"; F.hour.value = d.hour ?? 7; F.minute.value = d.minute ?? 0;
     F.maxmsg.value = d.max_messages ?? 50; F.model.value = d.summary_model || "local";
-    F.deliver.value = d.deliver_to || ""; F.archive.checked = !!d.then_archive; F.enabled.checked = d.enabled !== false;
+    F.account.value = d.account || ""; F.deliver.value = d.deliver_to || ""; F.archive.checked = !!d.then_archive; F.enabled.checked = d.enabled !== false;
     syncWeekday(); formTitle.textContent = "Edit digest #" + d.index; cancelBtn.style.display = "";
     saveBtn.textContent = "Update digest"; runValidate(); window.scrollTo({ top: 0, behavior: "smooth" });
   }
