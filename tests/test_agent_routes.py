@@ -550,6 +550,81 @@ def test_push_to_gmail_failure_rolls_back_status_so_retry_works(authed_client, m
     assert r2.json()["gmail_draft_id"] == "gd_retry"
 
 
+# --- confirm_send: one-call human-confirmed send (OpenClaw approve action) ---
+
+
+def _mock_send_path(monkeypatch, *, enabled=True, kill=False):
+    """Mock the Gmail create_draft + send_draft layer and the send gate."""
+    from app.agent import send as send_mod
+    from app.ingestion import gmail_write
+
+    monkeypatch.setattr(send_mod, "_send_config", lambda: {"enabled": enabled, "kill_switch": kill})
+    monkeypatch.setattr(
+        gmail_write, "create_draft",
+        lambda **kw: gmail_write.GmailDraftResult(draft_id="gd_cs", raw_response={"id": "gd_cs"}),
+    )
+    sent = {}
+    monkeypatch.setattr(
+        gmail_write, "send_draft",
+        lambda **kw: sent.update(kw) or gmail_write.GmailSendResult(message_id="msg_cs", raw_response={"id": "msg_cs"}),
+    )
+    return sent
+
+
+def test_confirm_send_pushes_and_sends_in_one_call(authed_client, monkeypatch):
+    _mock_send_path(monkeypatch)
+    row_id = authed_client.get("/api/agent/pending?tier=draft").json()["rows"][0]["id"]
+
+    r = authed_client.post(f"/api/agent/pending/{row_id}/confirm_send")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["gmail_draft_id"] == "gd_cs"
+    assert body["sent_message_id"] == "msg_cs"
+    assert body["row"]["send_state"] == "sent"
+
+
+def test_confirm_send_applies_final_edit_then_sends(authed_client, monkeypatch):
+    _mock_send_path(monkeypatch)
+    row_id = authed_client.get("/api/agent/pending?tier=draft").json()["rows"][0]["id"]
+
+    r = authed_client.post(
+        f"/api/agent/pending/{row_id}/confirm_send",
+        json={"amended_draft": "My final edited reply — confirmed."},
+    )
+    assert r.status_code == 200, r.text
+    row = r.json()["row"]
+    # The edit was applied (and tagged as a human edit) before sending.
+    assert row["amended_draft"] == "My final edited reply — confirmed."
+    assert row["amended_by"] == "user"
+    assert row["send_state"] == "sent"
+
+
+def test_confirm_send_blocked_when_send_disabled_creates_no_draft(authed_client, monkeypatch):
+    """With send disabled, confirm_send 403s BEFORE creating a Gmail draft (no
+    orphan draft left behind)."""
+    from app.agent import send as send_mod
+    from app.ingestion import gmail_write
+
+    monkeypatch.setattr(send_mod, "_send_config", lambda: {"enabled": False, "kill_switch": False})
+    monkeypatch.setattr(
+        gmail_write, "create_draft",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("must not create a draft when send is disabled")),
+    )
+    row_id = authed_client.get("/api/agent/pending?tier=draft").json()["rows"][0]["id"]
+    r = authed_client.post(f"/api/agent/pending/{row_id}/confirm_send")
+    assert r.status_code == 403
+    assert "disabled" in r.json()["detail"]
+
+
+def test_confirm_send_blocked_by_kill_switch(authed_client, monkeypatch):
+    from app.agent import send as send_mod
+    monkeypatch.setattr(send_mod, "_send_config", lambda: {"enabled": True, "kill_switch": True})
+    row_id = authed_client.get("/api/agent/pending?tier=draft").json()["rows"][0]["id"]
+    r = authed_client.post(f"/api/agent/pending/{row_id}/confirm_send")
+    assert r.status_code == 403
+    assert "kill-switch" in r.json()["detail"]
+
+
 def test_regenerate_redrafts_in_voice_and_persists(authed_client, monkeypatch):
     """The regenerate endpoint re-runs generation with the instruction threaded
     in as standing_instructions, and stores the result as amended_draft."""

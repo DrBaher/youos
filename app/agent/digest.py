@@ -124,6 +124,11 @@ def build_digest(
             "sender_email": r.get("sender_email"),
             "subject": (r.get("subject") or "")[:80],
             "thread_summary": r.get("thread_summary"),
+            # The draft body itself, so a notification (webhook → OpenClaw) can
+            # show "the email and the reply" inline without a callback. The
+            # user's edit wins if present. Capped to keep the payload bounded.
+            "draft": ((r.get("amended_draft") or r.get("draft")) or "")[:2000],
+            "quality_score": r.get("quality_score"),
         }
         for r in pending_rows[:5]
     ]
