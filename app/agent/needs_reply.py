@@ -124,6 +124,9 @@ class NeedsReplyVerdict:
     # confident enough to auto-draft, but the message shouldn't be silently
     # buried either." β surfaces these collapsed under "Review skipped."
     surface_for_review: bool = False
+    # True when the sender matches ``agent.vip_senders`` — gets a strong score
+    # boost and should sort to the top of the queue.
+    vip: bool = False
 
 
 # --- Sender history (count of prior reply pairs to a sender) ---------------
@@ -205,6 +208,7 @@ def classify(
     history: SenderHistory | None = None,
     threshold: float = 0.6,
     skip_senders: list[str] | None = None,
+    vip_senders: list[str] | None = None,
 ) -> NeedsReplyVerdict:
     """Decide whether this inbound deserves a draft.
 
@@ -362,6 +366,16 @@ def classify(
         score -= 0.15
         reasons.append(f"cold-outreach (heuristic score {cold.score})")
 
+    # VIP boost — a strong, late bump so a VIP's real mail clears the threshold
+    # and sorts to the top, even if it carried a penalty (operational mailbox,
+    # noreply). Hard-skips ran earlier and returned, so a VIP's automation /
+    # newsletters are still filtered; this only lifts mail that survived to
+    # scoring. +0.25 ⇒ base 0.5 alone reaches 0.75 (> default 0.6).
+    is_vip = bool(vip_senders and _matches_skip_list(msg.sender_email, vip_senders))
+    if is_vip:
+        score += 0.25
+        reasons.append("VIP sender (prioritized)")
+
     score = max(0.0, min(1.0, score))
     needs_reply = score >= threshold
     # Surface-for-review tier: didn't pass, but wasn't junk either — score is
@@ -374,6 +388,7 @@ def classify(
         reasons=reasons,
         cold_outreach=cold.is_cold,
         surface_for_review=surface_for_review,
+        vip=is_vip,
     )
 
 
@@ -383,9 +398,16 @@ def classify_many(
     history: SenderHistory | None = None,
     threshold: float = 0.6,
     skip_senders: list[str] | None = None,
+    vip_senders: list[str] | None = None,
 ) -> list[tuple[InboxMessage, NeedsReplyVerdict]]:
     """Vectorised helper. Returns pairs in the input order."""
     return [
-        (m, classify(m, history=history, threshold=threshold, skip_senders=skip_senders))
+        (
+            m,
+            classify(
+                m, history=history, threshold=threshold,
+                skip_senders=skip_senders, vip_senders=vip_senders,
+            ),
+        )
         for m in messages
     ]
