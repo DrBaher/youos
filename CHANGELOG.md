@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.0-beta.118 — 2026-05-29
+
+### Digest hardening: per-message dedup
+
+A digest now never includes the same message twice. Every message in a **sent** digest is recorded in a new `agent_digest_items` ledger (UNIQUE on name+account+message_id), and future runs of that digest filter those out — so even if a query window overlaps the cadence (e.g. a 7-day window on a daily schedule), a given email is digested at most once. Dedup is scoped **per digest name**, so the same message can still appear in a different digest. Recording happens only after a successful send (a failed send leaves messages eligible), the preview reflects dedup (shows only what's new) without recording, and it never burns a period when everything's been seen.
+
+A focused review confirmed dedup can't drop new messages and — since it runs before the period claim — can't enable a double-send/double-record (the claim remains the single at-most-once point). +3 tests.
+
 ## v0.2.0-beta.117 — 2026-05-29
 
 ### Digest schedule: pick the weekday + time

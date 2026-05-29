@@ -34,6 +34,12 @@ Config shape (a dict so the master flag and the specs coexist)::
 At-most-once per period: each run claims ``(name, account, period_key)`` via a
 UNIQUE index (the same cross-process claim that fixed the forward double-send),
 so a digest is sent at most once per day/week even with overlapping sweeps.
+
+Per-message dedup: every message included in a SENT digest is recorded in
+``agent_digest_items`` (UNIQUE on name+account+message_id), and future runs of
+that digest filter those out — so a message is never digested twice by the same
+digest even if its query window overlaps the cadence. Dedup is scoped per digest
+NAME, so the same message can still appear in a different digest.
 """
 
 from __future__ import annotations
@@ -319,6 +325,46 @@ def _claim_period(database_url: str, name: str, account: str, period_key: str) -
         return None
 
 
+def _undigested(database_url: str, name: str, account: str,
+                items: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Filter ``items`` down to messages this digest hasn't already sent — the
+    per-message dedup. Scoped to (name, account), so the same message can still
+    appear in a DIFFERENT digest, just never twice in this one."""
+    if not items:
+        return []
+    from app.agent.store import _connect
+
+    ids = [it["id"] for it in items if it.get("id")]
+    if not ids:
+        return []
+    placeholders = ",".join("?" * len(ids))
+    with closing(_connect(database_url)) as conn:
+        rows = conn.execute(
+            f"SELECT message_id FROM agent_digest_items "
+            f"WHERE name = ? AND account = ? AND message_id IN ({placeholders})",
+            (name, account, *ids),
+        ).fetchall()
+    seen = {r[0] for r in rows}
+    return [it for it in items if it.get("id") and it["id"] not in seen]
+
+
+def _record_digested(database_url: str, name: str, account: str,
+                     message_ids: list[str], period_key: str) -> None:
+    """Record message ids included in a SENT digest (INSERT OR IGNORE so the
+    UNIQUE dedup index makes it idempotent / race-safe)."""
+    if not message_ids:
+        return
+    from app.agent.store import _connect
+
+    with closing(_connect(database_url)) as conn:
+        conn.executemany(
+            "INSERT OR IGNORE INTO agent_digest_items (name, account, message_id, period_key) "
+            "VALUES (?, ?, ?, ?)",
+            [(name, account, mid, period_key) for mid in message_ids],
+        )
+        conn.commit()
+
+
 def _period_done(database_url: str, name: str, account: str, period_key: str) -> bool:
     """True if this (digest, account, period) already has a live or sent run, so
     we should not re-run it. A cheap read used to short-circuit before fetching/
@@ -373,30 +419,31 @@ def run_digest(database_url: str, account: str, spec: DigestSpec, *,
     to = spec.deliver_to or account
     subject = f"YouOS digest: {spec.name}"
 
-    # Preview is READ-ONLY (fetch + summarize; no send, no DB write, no claim),
-    # so it works regardless of the master flag — you can preview a digest before
-    # turning the feature on.
-    if dry_run:
-        try:
-            items = _fetch_for_digest(account, spec.query, spec.max_messages)
-        except Exception as exc:
-            return {"status": "error", "name": spec.name, "detail": f"fetch failed: {exc}"}
-        body = build_digest_body(items, model=spec.summary_model) if items else "(no matching messages)"
-        return {"status": "preview", "name": spec.name, "to": to,
-                "count": len(items), "subject": subject, "body": body}
-
-    # A REAL run requires the digest master switch.
-    if not cfg["enabled"]:
-        return {"status": "disabled", "name": spec.name}
-
-    # Self-heal the ledger table so an API-triggered run on a schema-stale
-    # instance can't crash on a missing agent_digest_runs (mirrors run_triage).
+    # Self-heal the ledger/dedup tables (idempotent) so neither the preview's
+    # dedup read nor a real run hits a missing table on a schema-stale instance.
     try:
         from app.db.bootstrap import ensure_agent_schema
 
         ensure_agent_schema(database_url)
     except Exception as exc:
         logger.info("digest schema self-heal skipped: %s", exc)
+
+    # Preview is READ-ONLY (no send, no period claim, no dedup record). It shows
+    # what WOULD be sent — already-digested messages filtered out — and works
+    # regardless of the master flag, so you can preview before turning it on.
+    if dry_run:
+        try:
+            items = _fetch_for_digest(account, spec.query, spec.max_messages)
+        except Exception as exc:
+            return {"status": "error", "name": spec.name, "detail": f"fetch failed: {exc}"}
+        items = _undigested(database_url, spec.name, account, items)
+        body = build_digest_body(items, model=spec.summary_model) if items else "(nothing new to digest)"
+        return {"status": "preview", "name": spec.name, "to": to,
+                "count": len(items), "subject": subject, "body": body}
+
+    # A REAL run requires the digest master switch.
+    if not cfg["enabled"]:
+        return {"status": "disabled", "name": spec.name}
 
     # Real run. Fetch + gates are checked BEFORE claiming the period, so a
     # blocked / empty / transient-fetch-error run does NOT permanently consume
@@ -414,6 +461,8 @@ def run_digest(database_url: str, account: str, spec: DigestSpec, *,
         logger.info("digest %r fetch failed (will retry next tick): %s", spec.name, exc)
         return {"status": "error", "name": spec.name, "period": period, "detail": f"fetch failed: {exc}"}
 
+    # Per-message dedup: only messages this digest hasn't already sent.
+    items = _undigested(database_url, spec.name, account, items)
     if not items:
         return {"status": "empty", "name": spec.name, "period": period}
 
@@ -428,7 +477,7 @@ def run_digest(database_url: str, account: str, spec: DigestSpec, *,
         return {"status": "blocked", "name": spec.name, "period": period,
                 "count": len(items), "detail": reason}
 
-    # Gates open + matching mail present → claim the period, then send.
+    # Gates open + new mail present → claim the period, then send.
     run_id = _claim_period(database_url, spec.name, account, period)
     if run_id is None:
         return {"status": "skipped_done", "name": spec.name, "period": period}
@@ -438,6 +487,10 @@ def run_digest(database_url: str, account: str, spec: DigestSpec, *,
     except Exception as exc:
         _update_run(database_url, run_id, "error", message_count=len(items), detail=f"send failed: {exc}")
         return {"status": "error", "name": spec.name, "period": period, "detail": str(exc)}
+
+    # Record the included messages so a future run of THIS digest won't repeat
+    # them (only after a successful send — a failed send leaves them eligible).
+    _record_digested(database_url, spec.name, account, [it["id"] for it in items], period)
 
     archived = 0
     if spec.then_archive:
