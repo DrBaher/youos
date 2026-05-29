@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.0-beta.72 — 2026-05-29
+
+### Voice-match gating in multi-candidate drafting
+
+The metric the whole product rests on — does it sound like *you* — was computed only offline. The live multi-candidate path picked the "best" draft by length-fit + has-a-signoff, which is orthogonal to voice and could discard the most voice-faithful candidate for running a few words long.
+
+Now, when generation has retrieved the user's real replies, `_rank_candidates` scores each candidate's `voice_match` (averaged across the top 3 exemplars, deterministic components → zero extra model cost) and weights it as the primary ranking signal alongside the structural terms. Averaging across several exemplars (not matching one) avoids rewarding verbatim parroting. The chosen candidate's `voice_match` is surfaced on the candidate dict. Backward-compatible: with no exemplars the ranking is unchanged. +1 test.
+
 ## v0.2.0-beta.71 — 2026-05-29
 
 ### VIP sender routing

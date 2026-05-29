@@ -86,6 +86,26 @@ def test_rank_candidates_orders_best_first():
     assert ranked[0]["temperature"] == 0.7
     assert [c["temperature"] for c in ranked] == [0.7, 0.3, 1.0]
     assert all("score" in c for c in ranked)
+    # No exemplars → voice_match is None (backward compatible).
+    assert all(c["voice_match"] is None for c in ranked)
+
+
+def test_rank_candidates_prefers_voice_match_when_exemplars_given():
+    """With the user's real replies as exemplars, the candidate that sounds
+    more like them wins over an equally-long but stylistically-foreign one —
+    voice, not length, decides."""
+    exemplar = "Hi Alice, confirmed the pricing is unchanged. Let me know if you need anything else. Best, Baher"
+    cand_a = "Hi Alice, confirmed the pricing is unchanged. Reach out if you need more. Best, Baher"
+    n = len(cand_a.split())
+    cand_b = " ".join(["lorem"] * n)  # same length, zero stylistic/lexical overlap
+    # Feed B first so a stable sort can't accidentally favour A by position.
+    raw = [(cand_b, "m", 0.7), (cand_a, "m", 0.3)]
+    ranked = _rank_candidates(
+        raw, target_words=n, greeting="", closing="", exemplar_replies=[exemplar],
+    )
+    assert ranked[0]["draft"] == cand_a
+    assert ranked[0]["voice_match"] is not None
+    assert (ranked[0]["voice_match"] or 0) > (ranked[1]["voice_match"] or 0)
 
 
 # --- end-to-end wiring -----------------------------------------------------

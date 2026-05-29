@@ -1332,27 +1332,60 @@ def _score_candidate(text: str, *, target_words: int | None, greeting: str, clos
     return score
 
 
+# Voice fidelity is the signal the product is built on, so when exemplars are
+# available it dominates candidate selection — comparable in magnitude to the
+# structural terms (length-fit + greeting/closing ≈ 0–2). Previously the multi-
+# candidate path ranked on length+signoff alone, which is orthogonal to "sounds
+# like me" and could discard the most voice-faithful draft for running long.
+_VOICE_WEIGHT = 2.0
+
+
 def _rank_candidates(
     raw: list[tuple[str, str, float | None]],
     *,
     target_words: int | None,
     greeting: str,
     closing: str,
+    exemplar_replies: list[str] | None = None,
+    embed_fn: Any = None,
 ) -> list[dict[str, Any]]:
     """Score and sort candidates best-first.
 
-    ``raw`` is a list of ``(draft, model_used, temperature)``. Returns dicts
-    with the draft, model_used, temperature and score, sorted descending.
+    ``raw`` is a list of ``(draft, model_used, temperature)``. When
+    ``exemplar_replies`` (the user's real retrieved replies) are given, each
+    candidate also gets a voice-match score averaged across the top few
+    exemplars — measuring how much it sounds like the user, not just whether it
+    fits the persona length. Averaging across several exemplars (rather than
+    matching one) avoids rewarding verbatim parroting; the deterministic
+    components run at zero model cost (pass ``embed_fn`` only to add the
+    semantic term). Returns dicts with draft, model_used, temperature, score,
+    and ``voice_match`` (None when no exemplars), sorted descending.
     """
-    scored = [
-        {
+    refs = [r for r in (exemplar_replies or []) if r and r.strip()][:3]
+    scored: list[dict[str, Any]] = []
+    for draft, model_used, temperature in raw:
+        base = _score_candidate(draft, target_words=target_words, greeting=greeting, closing=closing)
+        voice: float | None = None
+        score = base
+        if base != float("-inf") and refs:
+            from app.evaluation.voice_match import voice_match_score
+
+            vals: list[float] = []
+            for ref in refs:
+                try:
+                    vals.append(float(voice_match_score(draft, ref, embed_fn=embed_fn)["voice_match"]))
+                except Exception:
+                    continue
+            if vals:
+                voice = sum(vals) / len(vals)
+                score = base + _VOICE_WEIGHT * voice
+        scored.append({
             "draft": draft,
             "model_used": model_used,
             "temperature": temperature,
-            "score": _score_candidate(draft, target_words=target_words, greeting=greeting, closing=closing),
-        }
-        for draft, model_used, temperature in raw
-    ]
+            "score": score,
+            "voice_match": round(voice, 3) if voice is not None else None,
+        })
     scored.sort(key=lambda c: c["score"], reverse=True)
     return scored
 
@@ -1938,8 +1971,15 @@ def generate_draft(
                         logger.warning("multi-candidate: one candidate failed", exc_info=True)
                 if not raw:
                     raise RuntimeError("all draft candidates failed")
+                # Rank by voice fidelity against the user's retrieved replies,
+                # not just length — the whole point of the local LoRA.
+                exemplar_replies = [
+                    rp.reply_text for rp in reply_pairs[:3]
+                    if getattr(rp, "reply_text", None)
+                ]
                 candidates = _rank_candidates(
                     raw, target_words=avg_reply_words, greeting=repair_greeting, closing=repair_closing,
+                    exemplar_replies=exemplar_replies,
                 )
                 draft = candidates[0]["draft"]
                 model_used = candidates[0]["model_used"]
