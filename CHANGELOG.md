@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.95 — 2026-05-29
+
+### Harden the golden-eval gate against a broken model (autonomy Phase C)
+
+The adapter-promotion gate (b75) only rejects a *relative* composite drop. But if the model is outright broken — every golden case returns an empty draft — the eval scores a low composite that the gate can't distinguish from a real regression, and on a first run (no baseline) it would **promote the broken adapter**. Worse, an empty draft could score `warn` (0 words trivially passes the brevity check). Fixed both:
+
+- `score_case`: an empty/whitespace draft is now a **hard fail** (never `warn`), and carries an `empty` flag. `run_golden_eval` summary gains `empty_count`, `empty_rate`, and a `degenerate` flag (empty_rate > 0.5).
+- `should_promote` / `gate_after_eval`: new `eval_degenerate` parameter is a **hard refuse that overrides everything** — including the "missing values ⇒ promote" first-run default and an apparently-good composite. A degenerate eval forces a rollback; the agent never keeps an adapter "validated" by an untrustworthy eval.
+- Nightly `step_golden_eval` now **fails loud** on a degenerate eval (`[ALERT]`, returns failure) and the pipeline records it as an error; the adapter gate reads `degenerate` from the results file and refuses promotion.
+
++6 tests (`test_golden_eval.py`, `test_adapter_promotion.py`). Never-send boundary unchanged.
+
 ## v0.2.0-beta.94 — 2026-05-29
 
 ### Capture the agent's own draft outcomes as feedback (autonomy Phase C)
