@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.80 — 2026-05-29
+
+### The prompt surface was a no-op — now it's real
+
+A live run isolated the last cause of autoresearch's flatness: mutating the prompt variant changed nothing because the key it rewrote — `drafting_prompt` — **is read by nothing**. Generation's `assemble_prompt` uses `system_prompt` (service.py:1106); `drafting_prompt` existed only in the mutator. So autoresearch's prompt surface has been a guaranteed no-op since it was added.
+
+- **`system_prompt_suffix`** (new, optional): generation now appends it to the system prompt. Kept separate from `system_prompt` so tuning drafting *style* can't clobber the instance's persona/brand prompt. Default empty = no change.
+- The autoresearch prompt surface now mutates `system_prompt_suffix` with persona-preserving, additive instruction variants (baseline / "answer-first, skip pleasantries" / "skimmable, bullet-points") — so a variant change actually changes the draft and the eval can respond.
+
+This was the missing piece: with the b77 cache bypass + b79 surface ordering, the prompt surface now genuinely moves the draft, giving autoresearch a lever on the `pass=20%` generation-quality headroom. The legacy `drafting_prompt` key is left as harmless dead config.
+
 ## v0.2.0-beta.79 — 2026-05-29
 
 ### Autoresearch optimizes the draft-changing surfaces first
