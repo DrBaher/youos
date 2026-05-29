@@ -183,6 +183,22 @@ def _load_last_auto_feedback_at() -> str | None:
         return None
 
 
+def _load_prior_golden_composite() -> float | None:
+    """The previous run's golden composite — the baseline the adapter-promotion
+    gate compares this run's post-finetune composite against."""
+    import json
+
+    log_path = _pipeline_log_path()
+    if not log_path.exists():
+        return None
+    try:
+        data = json.loads(log_path.read_text(encoding="utf-8"))
+        v = data.get("golden_composite")
+        return float(v) if v is not None else None
+    except Exception:
+        return None
+
+
 def _save_last_auto_feedback_at() -> None:
     """Write last_auto_feedback_at to the active instance's pipeline log."""
     import json
@@ -822,6 +838,11 @@ def main() -> None:
     _record_duration("export", _t)
 
     _t = time.monotonic()
+    # Adapter-promotion gate: snapshot the current adapter + remember the prior
+    # golden composite as the baseline BEFORE fine-tuning, so a regressed
+    # retrain can be rolled back after the post-finetune eval.
+    _adapter_snapshotted = False
+    _baseline_golden = _load_prior_golden_composite()
     skip_ft, skip_ft_msg = should_skip_finetune(DEFAULT_DB)
     if skip_ft:
         print(skip_ft_msg)
@@ -829,6 +850,15 @@ def main() -> None:
         steps["finetune"] = True
         skipped_steps.append("finetune")
     elif unused >= 10:
+        try:
+            from app.core.settings import get_adapter_path
+            from app.evaluation.promotion import snapshot_adapter
+
+            _latest_dir = get_adapter_path()
+            _previous_dir = _latest_dir.parent / "previous"
+            _adapter_snapshotted = snapshot_adapter(_latest_dir, _previous_dir)
+        except Exception as exc:
+            print(f"  [WARN] adapter snapshot failed (no rollback this run): {exc}")
         try:
             ok = step_finetune_lora(verbose=verbose)
             results["finetune"] = "OK" if ok else "WARN"
@@ -896,6 +926,33 @@ def main() -> None:
         steps["golden_eval"] = False
         errors.append(f"Golden evaluation error: {exc}")
     _record_duration("golden_eval", _t)
+
+    # 3c. Adapter-promotion gate: if we fine-tuned this run, keep the new
+    # adapter only if the post-finetune golden composite holds/improves vs the
+    # prior run's baseline — otherwise roll back to the pre-finetune snapshot so
+    # a bad retrain can't silently degrade every draft.
+    if _adapter_snapshotted:
+        try:
+            from app.core.settings import get_adapter_path
+            from app.evaluation.promotion import gate_after_eval
+
+            _latest_dir = get_adapter_path()
+            _gate = gate_after_eval(
+                candidate_composite=golden_composite,
+                baseline_composite=_baseline_golden,
+                latest_dir=_latest_dir,
+                previous_dir=_latest_dir.parent / "previous",
+            )
+            results["adapter_gate"] = f"{_gate['action']} — {_gate['reason']}"
+            if _gate["action"] == "rolled_back":
+                print(f"  [GATE] adapter ROLLED BACK — {_gate['reason']}")
+            elif _gate["action"] == "rollback_failed":
+                errors.append(f"adapter rollback failed: {_gate['reason']}")
+            else:
+                print(f"  [GATE] adapter kept — {_gate['reason']}")
+        except Exception as exc:
+            results["adapter_gate"] = f"error: {exc}"
+            print(f"  [WARN] adapter-promotion gate failed: {exc}")
 
     # 4. Embedding indexer (after fine-tuning) — with skip gate
     _t = time.monotonic()

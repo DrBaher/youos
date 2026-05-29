@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.75 — 2026-05-29
+
+### Adapter-promotion gate — no silent regressions
+
+`finetune_lora` wrote the new adapter straight into `models/adapters/latest/` and the warm server reloaded it, so a bad nightly retrain silently degraded every draft with no rollback. Now the nightly gates promotion on the golden-eval composite:
+
+- **Before** fine-tuning: snapshot the current adapter to `models/adapters/previous/` and record the prior run's golden composite as the baseline.
+- **After** the (now-real) golden eval: keep the new adapter only if its composite holds/improves within tolerance (0.02); otherwise **roll back** to the snapshot (restored with a fresh mtime so the warm server reloads the good adapter). The outcome is logged as `adapter_gate` in the run summary.
+
+New `app/evaluation/promotion.py` (`should_promote` / `snapshot_adapter` / `restore_adapter` / `gate_after_eval`) is pure + unit-tested (+5 tests); the nightly wires it around the existing finetune/golden-eval steps. (The end-to-end train→eval→rollback cycle is validated on a live instance.)
+
 ## v0.2.0-beta.74 — 2026-05-29
 
 ### Proactive push — the agent reaches out
