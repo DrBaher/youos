@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.92 — 2026-05-29
+
+### Confidence × stakes escalation (autonomy Phase B)
+
+Whether to *act* on a draft isn't just "is the draft good" — it's the draft's quality crossed with the **stakes** of the message. A flawless draft to a lawyer about a contract should still go to a human; a good draft confirming a coffee time can act on its own.
+
+- New `app/agent/escalation.py`: `assess_stakes(subject, body)` flags money / legal / firm-commitment language (contract, invoice, payment, wire, legal, attorney, deadline, currency amounts, …) with word-boundaried patterns (so "contractor" doesn't trip "contract"). `decide_action(...)` maps (draft quality × confidence × stakes) → one of `auto_act` / `queue` / `ask` / `skip`. **High stakes is a hard veto on `auto_act`** — those always escalate to `ask`. Prefers the calibrated probability (b88) over the raw needs-reply score when available. Pure and deterministic; the autonomous send path (next) consumes the verdict.
+- Wired now as a high-stakes guard on **auto-push**: a whitelisted, high-confidence, high-quality draft is still held for review when the inbound is high-stakes — auto-push only makes itself *more* conservative.
+- New `agent.escalation.*` config (`auto_act_floor` 0.8, `confidence_floor` 0.85, `high_stakes_blocks` true).
+
++12 tests (`test_escalation.py` + the high-stakes auto-push guard). Never-send boundary unchanged.
+
 ## v0.2.0-beta.91 — 2026-05-29
 
 ### The send path + honest state model + kill-switch (autonomy Phase B, hard-gated)
