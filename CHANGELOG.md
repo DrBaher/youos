@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.2.0-beta.100 — 2026-05-29
+
+### Fix 8 bugs from a second adversarial audit (Phase C+D, b94–b99)
+
+A second 14-agent adversarial review (this time over Phase C+D + verifying the b96 fixes) confirmed 8 real bugs (2 refuted). All fixed — two were HIGH and partially undermined guarantees the changelogs had claimed:
+
+- **(HIGH) Draft-stakes veto read the pre-edit draft.** Auto-send's high-stakes guard scanned `draft`, but the body actually sent is `amended_draft or draft` (push.py). An edited/regenerated draft that invents a price/commitment bypassed the veto. Now scans the body that will actually go out.
+- **(HIGH) `hold` was in-memory only.** A `hold` rule blocked auto-push in the same sweep, but the flag wasn't persisted — so a *manually* pushed held row could later be auto-sent. `hold` is now a persisted column and `due_for_auto_send` excludes held rows.
+- **(HIGH) Machine `/regenerate` re-drafts were mined as human corrections.** `_classify_row` treated any `amended_draft` as a rating-4 gold pair, but `/regenerate` writes a machine re-draft the user never approved (the same hazard `recipient_trust` already guards against). Added an `amended_by` provenance column (`user`/`machine`); only human edits become correction pairs.
+- **(MED) `daily_send_cap=0` meant *unlimited*** — the opposite of the auto-push cap it claims to mirror. Now `≤0` disables auto-send entirely; help text corrected.
+- **(MED) `sweep_health` mislabeled broken-model placeholder drafts as cloud fallbacks** (wrong remediation). Sentinel models (`none`/`error`) and `[no model…]` placeholder bodies now count as empty (model-down), not cloud.
+- **(MED) Recovery announcements reached macOS only** — webhook/headless operators never learned the agent healed. Recovery now routes through `_alert` (all channels) **and** clears the per-(kind,account) failure debounce so a later re-failure isn't suppressed.
+- **(MED) `classify_sweep_failure` mis-routed some real Google auth/rate errors to `unknown`** (RefreshError, insufficient scopes, RESOURCE_EXHAUSTED). Patterns extended.
+
++12 tests. Never-send boundary unchanged; every fix is conservative.
+
 ## v0.2.0-beta.99 — 2026-05-29
 
 ### Daily accountability report surfaces what the agent sent (autonomy Phase D)

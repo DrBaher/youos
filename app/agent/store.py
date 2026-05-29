@@ -69,12 +69,14 @@ def upsert_pending(
     thread_summary: str | None = None,
     quality_score: float | None = None,
     calibrated_score: float | None = None,
+    hold: bool = False,
 ) -> int | None:
     """Insert a triage result if the ``message_id`` isn't already stored.
 
     Returns the inserted row id, or ``None`` if a row already existed (the
     idempotency case — same unread thread surfacing across multiple triage
-    runs shouldn't produce duplicates).
+    runs shouldn't produce duplicates). ``hold`` (a matched agent.rules hold
+    rule) is persisted so the row is never auto-sent even if manually pushed.
     """
     with closing(_connect(database_url)) as conn:
         cur = conn.execute(
@@ -84,8 +86,8 @@ def upsert_pending(
                 sender, sender_email, subject, body, received_at,
                 needs_reply_score, reasons_json, cold_outreach, tier,
                 draft, draft_model, draft_repairs_json, standing_instructions_snapshot,
-                thread_summary, quality_score, calibrated_score
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                thread_summary, quality_score, calibrated_score, hold
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 message_id, thread_id, account,
@@ -100,6 +102,7 @@ def upsert_pending(
                 thread_summary,
                 quality_score,
                 calibrated_score,
+                1 if hold else 0,
             ),
         )
         conn.commit()
@@ -141,10 +144,17 @@ def get(database_url: str, row_id: int) -> dict[str, Any] | None:
     return _row_to_dict(row) if row else None
 
 
-def mark_amended(database_url: str, row_id: int, *, amended_draft: str) -> bool:
+def mark_amended(
+    database_url: str, row_id: int, *, amended_draft: str, amended_by: str = "user",
+) -> bool:
+    """Record an amended draft. ``amended_by`` is the provenance: ``'user'`` (a
+    human verbatim edit — a real correction signal) or ``'machine'`` (a
+    /regenerate re-draft the user never approved). Feedback capture only mines
+    ``'user'`` amendments as gold correction pairs."""
     return _update_status(
         database_url, row_id, status="amended",
         amended_draft=amended_draft,
+        amended_by=amended_by,
     )
 
 
@@ -412,6 +422,7 @@ def due_for_auto_send(
     sql = (
         "SELECT * FROM agent_pending_drafts "
         "WHERE send_state = 'draft_created' AND status != 'dismissed' "
+        "AND (hold = 0 OR hold IS NULL) "          # a hold rule never auto-sends
         "AND sent_at IS NOT NULL "
         "AND datetime(sent_at) <= datetime('now', ?)"
     )
@@ -467,6 +478,7 @@ def _update_status(
     *,
     status: Status,
     amended_draft: str | None = None,
+    amended_by: str | None = None,
     sent_at_now: bool = False,
     dismissed_at_now: bool = False,
     gmail_draft_id: str | None = None,
@@ -477,6 +489,9 @@ def _update_status(
     if amended_draft is not None:
         sets.append("amended_draft = ?")
         params.append(amended_draft)
+    if amended_by is not None:
+        sets.append("amended_by = ?")
+        params.append(amended_by)
     if sent_at_now:
         sets.append("sent_at = CURRENT_TIMESTAMP")
     if dismissed_at_now:
