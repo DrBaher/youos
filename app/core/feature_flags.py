@@ -232,6 +232,33 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.notify_webhook_url",
+        "label": "Proactive push webhook URL",
+        "type": "text",
+        "default": "",
+        "help": (
+            "When set, the agent POSTs a digest summary here after a sweep that "
+            "has something actionable (change-detected + throttled) so you/your "
+            "bot are nudged without polling. The ONE place YouOS makes an "
+            "outbound request — metadata only (counts + truncated subjects), "
+            "never message bodies. Empty = no push (default)."
+        ),
+    },
+    {
+        "key": "agent.notify_webhook_secret",
+        "label": "Proactive push webhook secret",
+        "type": "text",
+        "default": "",
+        "help": "Optional shared secret sent as the X-YouOS-Secret header so your receiver can verify the push is from YouOS.",
+    },
+    {
+        "key": "agent.notify_min_interval_minutes",
+        "label": "Min minutes between webhook pushes",
+        "type": "int",
+        "default": 10,
+        "help": "Throttle: at most one webhook push per account per this many minutes, and only when the queue state changed.",
+    },
+    {
         "key": "agent.vip_senders",
         "label": "VIP senders (prioritized)",
         "type": "text",
