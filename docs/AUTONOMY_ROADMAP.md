@@ -54,3 +54,15 @@ Idempotent push + atomic claim, per-account sweep lock, failed-sweep audit + ale
 
 ## The single highest-leverage next step
 **The per-draft quality gate (Phase A #1).** Everything downstream — auto-send, whole-inbox actions, the human contract — depends on the agent *knowing when its own output is good enough to act*. And it's mostly wiring together pieces we already built (`voice_match` + `_score_candidate` + a generic-ack detector), then making auto-push depend on it instead of the needs-reply score.
+
+## Status — Phases A–D shipped (b85–b99, 2026-05-29)
+
+- **Phase A (trust) — done.** b85 per-draft quality gate; b86 borderline LLM adjudication (broadcast veto); b87 real-mail precision harness + nightly snapshot; b88 needs-reply score calibration (isotonic, dormant until data); b89 verify-before-accept (invented email/link/language → collapse quality); b90 fact grounding (`[GROUNDING]` prompt rule + sweep fact harvest).
+- **Phase B (send frontier, hard-gated off) — done.** b91 send path + honest `send_state` + kill-switch; b92 confidence×stakes escalation; b93 autonomous auto-send ladder (delay window + per-recipient trust + shadow-default). Default config still never sends.
+- **Phase C (close the loop) — done.** b94 queue-lifecycle feedback capture; b95 golden-eval degeneracy guard; b97 proactive alerting (failure classification + sweep-health spikes, macOS + webhook).
+- **b96 audit fixes.** A 30-agent adversarial review of A+B confirmed 11 real bugs — all fixed (incl. the feedback manual-send positive, a `begin_send` TOCTOU, a daily-send cap, and a stale-`sending` reaper).
+- **Phase D (whole-inbox + human contract) — partial.** b98 richer policy grammar (`subject_contains`/`body_contains` + a `hold` action that drafts but never auto-acts); b99 daily accountability report surfaces auto-sent/shadow-sent.
+
+**Deliberately deferred (with rationale):**
+- *Generalize auto_push → an agent_actions framework (archive/label/forward).* YAGNI for now — YouOS performs no inbox action besides drafting, so a dispatcher for actions that don't exist would be premature abstraction. The guardrail pattern (dry-run/whitelist/floor/cap/undo) is already proven in auto-push and can be extracted when a second action type lands.
+- *Approval-by-reply (Telegram decision tokens).* Depends on inbound-webhook handling in the orchestrator layer (Hermes/OpenClaw), not in YouOS core; build it where the chat surface lives.
