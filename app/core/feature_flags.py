@@ -378,6 +378,23 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.auto_send.max_per_sweep",
+        "label": "Auto-send max per sweep",
+        "type": "int",
+        "default": 5,
+        "help": "Upper bound on how many drafts a single sweep may auto-send.",
+    },
+    {
+        "key": "agent.auto_send.daily_send_cap",
+        "label": "Auto-send daily cap",
+        "type": "int",
+        "default": 5,
+        "help": (
+            "Max real sends per UTC day across all sweeps — the blast-radius "
+            "bound (mirrors the auto-push daily cap). 0 disables the cap."
+        ),
+    },
+    {
         "key": "agent.extract_facts.enabled",
         "label": "Harvest facts from drafted mail",
         "type": "bool",
