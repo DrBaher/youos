@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>YouOS — Feedback</title>
-<script>(function(){try{var t=localStorage.getItem('youos-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<script>(function(){try{var p=new URLSearchParams(location.search).get('theme');var t=(p==='light'||p==='dark')?p:localStorage.getItem('youos-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <link rel="icon" type="image/svg+xml" href="/static/youos-mark.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
 <style>
@@ -1800,7 +1800,7 @@ function showFactsToast(facts) {
       localStorage.removeItem('youos_tour_done');
       startTour();
     });
-    if (!localStorage.getItem('youos_tour_done')) startTour();
+    if (!localStorage.getItem('youos_tour_done') && !new URLSearchParams(location.search).has('notour')) startTour();
   })();
 
   // ── Progress Nudge ──────────────────────────────────────
