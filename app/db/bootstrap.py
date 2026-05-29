@@ -49,6 +49,7 @@ def ensure_agent_schema(database_url: str) -> bool:
         _migrate_triage_precision_history(conn)
         _migrate_agent_actions(conn)
         _migrate_agent_digest_runs(conn)
+        _migrate_agent_digest_items(conn)
         conn.commit()
         return True
     finally:
@@ -78,6 +79,7 @@ def bootstrap_database() -> Path:
         _migrate_triage_precision_history(connection)
         _migrate_agent_actions(connection)
         _migrate_agent_digest_runs(connection)
+        _migrate_agent_digest_items(connection)
         _populate_fts(connection)
         connection.commit()
     finally:
@@ -439,6 +441,27 @@ def _migrate_agent_digest_runs(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_digest_runs_recent "
         "ON agent_digest_runs(account, created_at DESC)"
+    )
+
+
+def _migrate_agent_digest_items(connection: sqlite3.Connection) -> None:
+    """Per-message dedup ledger: one row per (digest, account, message) that has
+    been INCLUDED IN A SENT digest, so the same message is never digested twice
+    by the same digest (even if a query window overlaps the cadence). The UNIQUE
+    index is the dedup key; recording uses INSERT OR IGNORE."""
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS agent_digest_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            account TEXT NOT NULL,
+            message_id TEXT NOT NULL,
+            period_key TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_digest_items_dedup "
+        "ON agent_digest_items(name, account, message_id)"
     )
 
 
