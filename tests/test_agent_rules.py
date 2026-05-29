@@ -307,6 +307,41 @@ def test_validate_rule_accepts_richer_actions():
     assert not validate_rule({"match": {"intent": "x"}, "action": "mark_read"})[0]
 
 
+def test_forward_validation():
+    from app.agent.rules import validate_rule
+
+    assert validate_rule({"match": {"subject_contains": "invoice"}, "action": "forward",
+                          "value": "jane@books.com"})[0]
+    # multiple comma-separated recipients ok
+    assert validate_rule({"match": {"domain": "@x.com"}, "action": "forward",
+                          "value": "a@x.com, b@y.com"})[0]
+    # missing / invalid destination rejected
+    assert not validate_rule({"match": {"domain": "@x.com"}, "action": "forward"})[0]
+    assert not validate_rule({"match": {"domain": "@x.com"}, "action": "forward", "value": "not-an-email"})[0]
+    assert not validate_rule({"match": {"domain": "@x.com"}, "action": "forward", "value": "a@x.com, junk"})[0]
+    # intent predicate rejected for forward (runs before intent classification)
+    assert not validate_rule({"match": {"intent": "x"}, "action": "forward", "value": "a@x.com"})[0]
+
+
+def test_evaluate_outbound_actions():
+    from app.agent.rules import evaluate_mailbox_actions, evaluate_outbound_actions
+
+    rules = [
+        {"match": {"subject_contains": "invoice"}, "action": "forward", "value": "jane@books.com"},
+        {"match": {"subject_contains": "invoice"}, "action": "label", "value": "Receipts"},
+    ]
+    out = evaluate_outbound_actions(rules, sender_email="a@b.com", domain="b.com",
+                                    subject="Invoice #5", body="x")
+    assert out == [{"type": "forward", "value": "jane@books.com"}]
+    # forward is NOT returned by the mailbox-action evaluator (separate path)
+    mb = evaluate_mailbox_actions(rules, sender_email="a@b.com", domain="b.com",
+                                  subject="Invoice #5", body="x")
+    assert all(a["type"] != "forward" for a in mb)
+    # no match → nothing
+    assert evaluate_outbound_actions(rules, sender_email="a@b.com", domain="b.com",
+                                     subject="Lunch?", body="x") == []
+
+
 def test_regex_search_caps_haystack_length():
     """The regex never scans more than the cap, bounding work on huge bodies."""
     from app.agent.rules import _REGEX_HAYSTACK_CAP, _regex_search
