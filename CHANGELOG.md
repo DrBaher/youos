@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0-beta.121 — 2026-05-29
+
+### Digests: user-defined summary prompt (+ design doc)
+
+A digest now carries its own **`prompt`** — the user's instruction for *what the digest should be* (e.g. "What needs my attention? Flag anything time-sensitive; one line per email"). It's the summary instruction; YouOS appends the fetched items as source material and falls back to a plain itemised list if the model is unavailable. Blank `prompt` ⇒ a sensible default. Authorable via the `/digests` UI + API (capped at 2000 chars).
+
+Also lands `docs/DIGEST_DESIGN.md` — the agreed design for where digests go (your **inbox**, send-gated, or an **agent** that pulls via CLI/MCP/API with no send) and how content is defined (this prompt). The `agent` destination + scheduled-pickup are the next step.
+
++2 tests. Digests still off by default.
+
 ## v0.2.0-beta.120 — 2026-05-29
 
 ### Digest hardening: per-account scoping + bounded catch-up
