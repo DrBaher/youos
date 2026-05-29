@@ -199,7 +199,7 @@
     </div>
     <div class="badge">Local-first · Apple Silicon · Public beta</div>
     <h1>Your email. Your model. <span class="accent">Your style.</span></h1>
-    <p class="tagline">YouOS is an AI email copilot that learns from your sent Gmail history and drafts replies that sound like <em>you</em> — not a generic AI. Everything runs on your Mac, and during setup it becomes <em>your</em> OS.</p>
+    <p class="tagline">YouOS is an AI email copilot that learns from your sent Gmail history and drafts replies that sound like <em>you</em> — not a generic AI. It can run your whole inbox: drafting every reply in your voice and sending only when <em>you</em> confirm. Everything runs on your Mac, and during setup it becomes <em>your</em> OS.</p>
     <div class="cta">
       <a href="#install" class="btn btn-primary">Get started</a>
       <a href="https://github.com/DrBaher/youos" class="btn btn-secondary">View on GitHub</a>
@@ -235,6 +235,32 @@
         <img src="screenshots/02-stats.png" alt="YouOS stats dashboard" loading="lazy">
         <div class="cap">Stats — corpus health, persona drift, feedback streaks.</div>
       </div>
+    </div>
+  </div>
+</section>
+
+<!-- Autonomous loop: drafts for you, sends only on your OK -->
+<section class="block" id="autopilot">
+  <div class="container">
+    <div class="section-head">
+      <h2>It runs your inbox. <span style="color:var(--teal)">You approve the sends.</span></h2>
+      <p>Connect your chat assistant &mdash; Telegram, Slack or WhatsApp via <a href="https://github.com/DrBaher/openclaw">OpenClaw</a> &mdash; or use the built-in review queue. YouOS watches your inbox on a schedule, drafts the replies in your voice, and waits for your word. Nothing goes out without you.</p>
+    </div>
+
+    <div class="flow-loop-row">
+      <div class="flow-box accent">&#9201;&#65039; Every 15 min<small>checks for new mail</small></div>
+      <div class="flow-loop-arrow">&rarr;</div>
+      <div class="flow-box">&#9997;&#65039; Drafts a reply<small>in your voice &mdash; only if it needs one</small></div>
+      <div class="flow-loop-arrow">&rarr;</div>
+      <div class="flow-box">&#128276; Notifies you<small>the email <em>and</em> the draft reply</small></div>
+      <div class="flow-loop-arrow">&rarr;</div>
+      <div class="flow-box">&#128064; You review &amp; edit<small>tweak it, or regenerate</small></div>
+      <div class="flow-loop-arrow">&rarr;</div>
+      <div class="flow-box final">&#9989; You confirm &rarr; Sent<small>one tap, in your voice</small></div>
+    </div>
+
+    <div class="privacy" style="margin-top:38px;">
+      <strong>You are always the last step.</strong> YouOS never sends on its own &mdash; it drafts and waits. Keep it draft-only, require a confirm on every send, add a delay/undo window, or hit the kill-switch to stop all outbound instantly. High-stakes mail &mdash; money, legal, contracts &mdash; always routes to you. And it all runs on your Mac.
     </div>
   </div>
 </section>
