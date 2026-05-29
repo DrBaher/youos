@@ -330,9 +330,12 @@ def test_observability_endpoint_returns_unified_payload(authed_client):
             json={"reason": "noise"},
         )
     body = authed_client.get("/api/agent/observability?days=30").json()
-    # Three aggregates always present, even with zero data.
-    assert set(body.keys()) == {"sweep", "dismissals", "score_histogram", "hints"}
+    # Aggregates always present, even with zero data (drafting may be null).
+    assert set(body.keys()) == {"sweep", "dismissals", "score_histogram", "drafting", "hints"}
     assert "sweeps" in body["sweep"]
+    # Heartbeat fields present on the sweep aggregate.
+    assert "last_sweep_at" in body["sweep"]
+    assert "seconds_since_last_sweep" in body["sweep"]
     assert "by_reason" in body["dismissals"]
     assert "buckets" in body["score_histogram"]
     # Histogram has all five labelled buckets, zero-filled.
@@ -486,3 +489,118 @@ def test_push_to_gmail_propagates_gmail_write_error_as_502(authed_client, monkey
     r = authed_client.post(f"/api/agent/pending/{row_id}/push_to_gmail")
     assert r.status_code == 502
     assert "scope not granted" in r.json()["detail"]
+
+
+def test_push_to_gmail_is_idempotent_no_duplicate_draft(authed_client, monkeypatch):
+    """Re-pushing an already-pushed row returns the SAME draft id and does NOT
+    create a second Gmail draft — the dup-draft guard. create_draft is invoked
+    exactly once across two pushes."""
+    rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
+    row_id = rows[0]["id"]
+
+    from app.ingestion import gmail_write
+    calls = {"n": 0}
+
+    def _create(**kw):
+        calls["n"] += 1
+        return gmail_write.GmailDraftResult(draft_id="gd_once", raw_response={"id": "gd_once"})
+
+    monkeypatch.setattr(gmail_write, "create_draft", _create)
+
+    r1 = authed_client.post(f"/api/agent/pending/{row_id}/push_to_gmail")
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["gmail_draft_id"] == "gd_once"
+    assert r1.json()["pushed_already"] is False
+
+    r2 = authed_client.post(f"/api/agent/pending/{row_id}/push_to_gmail")
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["gmail_draft_id"] == "gd_once"
+    assert r2.json()["pushed_already"] is True
+
+    assert calls["n"] == 1, "create_draft must be called exactly once across two pushes"
+
+
+def test_push_to_gmail_failure_rolls_back_status_so_retry_works(authed_client, monkeypatch):
+    """A backend failure must NOT leave the row stuck in 'sent' with no draft —
+    the claim is rolled back so a retry can succeed."""
+    rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
+    row_id = rows[0]["id"]
+
+    from app.ingestion import gmail_write
+
+    def _fail(**kw):
+        raise gmail_write.GmailWriteError("transient gog error")
+
+    monkeypatch.setattr(gmail_write, "create_draft", _fail)
+    r = authed_client.post(f"/api/agent/pending/{row_id}/push_to_gmail")
+    assert r.status_code == 502
+
+    # Row must be back to a pushable state (not stuck 'sent'), draft id still unset.
+    row = authed_client.get(f"/api/agent/pending/{row_id}").json()
+    assert row["status"] in ("pending", "amended")
+    assert not row.get("gmail_draft_id")
+
+    # A retry with a working backend now succeeds.
+    monkeypatch.setattr(
+        gmail_write, "create_draft",
+        lambda **kw: gmail_write.GmailDraftResult(draft_id="gd_retry", raw_response={"id": "gd_retry"}),
+    )
+    r2 = authed_client.post(f"/api/agent/pending/{row_id}/push_to_gmail")
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["gmail_draft_id"] == "gd_retry"
+
+
+def test_regenerate_redrafts_in_voice_and_persists(authed_client, monkeypatch):
+    """The regenerate endpoint re-runs generation with the instruction threaded
+    in as standing_instructions, and stores the result as amended_draft."""
+    from types import SimpleNamespace
+
+    from app.generation import service as gen
+
+    seen = {}
+
+    def _fake_generate(req, **kw):
+        seen["instruction"] = req.standing_instructions
+        seen["inbound"] = req.inbound_message
+        return SimpleNamespace(draft="Shorter, declined politely.", model_used="qwen-lora")
+
+    monkeypatch.setattr(gen, "generate_draft", _fake_generate)
+
+    rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
+    row_id = rows[0]["id"]
+
+    r = authed_client.post(
+        f"/api/agent/pending/{row_id}/regenerate",
+        json={"instruction": "make it shorter and decline the meeting"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["draft"] == "Shorter, declined politely."
+    assert body["persisted"] is True
+    assert seen["instruction"] == "make it shorter and decline the meeting"
+
+    # Persisted as amended_draft + status amended.
+    row = authed_client.get(f"/api/agent/pending/{row_id}").json()
+    assert row["status"] == "amended"
+    assert row["amended_draft"] == "Shorter, declined politely."
+
+
+def test_regenerate_preview_does_not_persist(authed_client, monkeypatch):
+    from types import SimpleNamespace
+
+    from app.generation import service as gen
+    monkeypatch.setattr(
+        gen, "generate_draft",
+        lambda req, **kw: SimpleNamespace(draft="preview text", model_used="m"),
+    )
+    rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
+    row_id = rows[0]["id"]
+    r = authed_client.post(
+        f"/api/agent/pending/{row_id}/regenerate",
+        json={"instruction": "x", "persist": False},
+    )
+    assert r.status_code == 200
+    assert r.json()["persisted"] is False
+    row = authed_client.get(f"/api/agent/pending/{row_id}").json()
+    assert row["status"] == "pending"  # untouched
+    assert not row.get("amended_draft")

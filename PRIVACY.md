@@ -23,6 +23,7 @@ No data is synced to any cloud service, remote database, or third-party storage.
 - **LLM API calls** (optional): When generating draft replies before the local model is trained, YouOS sends the inbound email text and retrieved context to an LLM API (Claude by default) to produce a draft. This is the only data that leaves your machine.
 - **After local model training**: Once you have enough feedback pairs and the local Qwen model is fine-tuned, all generation happens on-device. No data leaves your machine at all.
 - **You control the fallback**: Set `model.fallback: none` in `youos_config.yaml` to disable all external API calls. YouOS will only use the local model.
+- **Proactive push webhook** (optional, off by default): If you set `agent.notify_webhook_url`, the background agent POSTs a digest *summary* to that URL after a sweep so you (or your own Telegram/OpenClaw bot) get nudged without polling. The payload is **metadata only** — counts plus truncated subjects and senders — and **never includes message bodies or draft text**. The URL is yours to choose (keep it on your own infrastructure to preserve the local-first posture); a `agent.notify_webhook_secret` is sent as the `X-YouOS-Secret` header so your receiver can verify the call. Leave the URL empty (the default) and YouOS makes no such request.
 
 ## What does NOT happen
 

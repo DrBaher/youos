@@ -59,6 +59,21 @@ def list_agent_pending(
     return {"count": len(rows), "rows": rows}
 
 
+@router.get("/api/agent/pending/{row_id}")
+def get_agent_pending(row_id: int, request: Request) -> dict:
+    """Fetch a single pending row by id.
+
+    The retry-safety procedure in AGENT_OPERATIONS.md tells orchestrators to
+    GET this after a timed-out push_to_gmail to check whether ``gmail_draft_id``
+    landed before retrying. It also lets an orchestrator cheaply confirm an
+    action took effect without re-listing the whole queue.
+    """
+    row = store.get(_db_url(request), row_id)
+    if not row:
+        raise HTTPException(404, "pending row not found")
+    return row
+
+
 # --- state transitions -------------------------------------------------------
 
 
@@ -71,6 +86,72 @@ def amend(row_id: int, body: AmendBody, request: Request) -> dict:
     if not store.mark_amended(_db_url(request), row_id, amended_draft=body.amended_draft):
         raise HTTPException(404, "pending row not found")
     return {"ok": True, "row": store.get(_db_url(request), row_id)}
+
+
+class RegenerateBody(BaseModel):
+    """Re-draft a pending row in the user's voice with extra steering.
+
+    Unlike ``amend`` (which takes verbatim replacement text), this re-runs the
+    full generation pipeline — persona, exemplars, LoRA — so an orchestrator
+    can say "make it shorter and decline the meeting" and get a draft that
+    still sounds like the user, instead of having to write the reply itself.
+    """
+
+    instruction: str | None = Field(default=None, description="Free-form steer, e.g. 'shorter; decline the meeting'")
+    tone_hint: str | None = Field(default=None)
+    mode: str | None = Field(default=None, pattern="^(internal|client|personal)$")
+    persist: bool = Field(default=True, description="Store as amended_draft; False = preview only")
+
+
+@router.post("/api/agent/pending/{row_id}/regenerate")
+def regenerate(row_id: int, body: RegenerateBody, request: Request) -> dict:
+    """Re-generate the reply for a pending row, optionally steered by a
+    free-form instruction, and (by default) store it as ``amended_draft``.
+
+    The reply is produced by the same in-voice generation pipeline the rest of
+    YouOS uses — never sends. Pass ``persist: false`` to preview without
+    overwriting the queued draft.
+    """
+    db_url = _db_url(request)
+    row = store.get(db_url, row_id)
+    if not row:
+        raise HTTPException(404, "pending row not found")
+    inbound = row.get("body") or ""
+    if not inbound.strip():
+        raise HTTPException(400, "row has no inbound body to regenerate from")
+
+    from app.generation.service import DraftRequest, generate_draft
+
+    settings = request.app.state.settings
+    try:
+        resp = generate_draft(
+            DraftRequest(
+                inbound_message=inbound,
+                sender=row.get("sender") or row.get("sender_email"),
+                subject=row.get("subject"),
+                account_email=row.get("account"),
+                thread_id=row.get("thread_id"),
+                standing_instructions=(body.instruction or None),
+                tone_hint=body.tone_hint,
+                mode=body.mode,
+            ),
+            database_url=settings.database_url,
+            configs_dir=settings.configs_dir,
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"regeneration failed: {exc}") from exc
+
+    new_draft = resp.draft or ""
+    persisted = bool(body.persist and new_draft.strip())
+    if persisted:
+        store.mark_amended(db_url, row_id, amended_draft=new_draft)
+    return {
+        "ok": True,
+        "draft": new_draft,
+        "model_used": resp.model_used,
+        "persisted": persisted,
+        "row": store.get(db_url, row_id),
+    }
 
 
 class DismissBody(BaseModel):
@@ -298,6 +379,25 @@ def digest(
     return _data_to_dict(data)
 
 
+@router.get("/api/agent/followups")
+def followups(
+    request: Request,
+    account: str | None = Query(None),
+) -> dict:
+    """Open loops the agent is tracking: inbound you owe a reply to (aging
+    pending rows) and replies you're awaiting (sent rows with no newer thread
+    activity). Read-only; drives the digest nudge and an orchestrator's
+    "anything I'm forgetting?" answer.
+    """
+    from app.agent.followups import build_followups
+    from app.core.config import get_user_emails
+
+    if not account:
+        emails = get_user_emails()
+        account = emails[0] if emails else None
+    return build_followups(_db_url(request), account=account)
+
+
 @router.get("/api/agent/observability")
 def observability(
     request: Request,
@@ -321,6 +421,32 @@ def observability(
     histogram = store.score_histogram(db, account=account, days=days)
 
     hints: list[str] = []
+
+    # Heartbeat: an agent that silently stopped sweeping (server died, gog auth
+    # expired and every sweep now fails, agent.enabled flipped off) is the
+    # central trust failure for unattended running. Surface staleness loudly.
+    try:
+        from app.agent.scheduler import get_agent_config
+
+        _agent_cfg = get_agent_config()
+    except Exception:
+        _agent_cfg = {}
+    if _agent_cfg.get("enabled"):
+        interval_min = int(_agent_cfg.get("interval_minutes") or 15)
+        secs_since = sweep.get("seconds_since_last_sweep")
+        if secs_since is None and sweep["sweeps"] == 0:
+            hints.append(
+                "Agent is enabled but no sweeps have been recorded — the "
+                "background loop may not be running (check the server is up)."
+            )
+        elif secs_since is not None and secs_since > max(3 * interval_min * 60, 1800):
+            mins = secs_since // 60
+            hints.append(
+                f"Last sweep was {mins} min ago, but the agent is set to sweep "
+                f"every {interval_min} min — it looks stalled. Check "
+                "/tmp/youos-serve.log and `youos doctor`."
+            )
+
     # Filter is too generous: lots of drafts ending up dismissed as noise.
     noise = dismissals["by_reason"].get("noise", 0)
     total = dismissals["total_persisted"] or 0
@@ -345,10 +471,24 @@ def observability(
             "as feedback pairs to retrain the LoRA on them."
         )
 
+    # Which model is actually drafting. A remote user reading this card (not the
+    # per-row UI badge) otherwise can't tell when drafts silently fell back to
+    # the base/cloud model — they'd keep pushing un-personalized drafts.
+    drafting: dict | None = None
+    try:
+        from app.core.stats import get_drafting_model_status
+
+        drafting = get_drafting_model_status(db)
+        if not drafting.get("healthy", True):
+            hints.append(f"Drafting: {drafting.get('label')} — {drafting.get('detail')}")
+    except Exception:
+        drafting = None
+
     return {
         "sweep": sweep,
         "dismissals": dismissals,
         "score_histogram": histogram,
+        "drafting": drafting,
         "hints": hints,
     }
 
@@ -431,54 +571,29 @@ def save_as_feedback_pair(row_id: int, body: SaveAsTrainingPairBody, request: Re
 def push_to_gmail(row_id: int, request: Request) -> dict:
     """Phase 2: create a real Gmail Drafts entry for this pending row.
 
-    Uses the configured ``ingestion.google_backend``; ``gog`` is supported,
-    ``gws`` and ``native`` will raise NotImplementedError until Phase 2.2.
-    On success, marks the row as ``sent`` (the user finishes-and-sends
-    from Gmail) and stores the Gmail draft id for traceability.
+    Uses the configured ``ingestion.google_backend`` (gog/gws/native). On
+    success, marks the row as ``sent`` (the user finishes-and-sends from Gmail)
+    and stores the Gmail draft id for traceability.
+
+    **Idempotent.** Each backend call creates a *new* Gmail draft, so a retry
+    after a timeout or two concurrent callers would otherwise leave duplicate
+    drafts. The shared helper claims the row atomically (``store.begin_push``);
+    a re-push of an already-pushed row returns the existing draft id with
+    ``pushed_already=true`` rather than creating a second one.
 
     The draft text used is ``amended_draft`` if the user edited it, else the
-    original ``draft`` field. Threading uses the inbound's ``thread_id`` so
-    Gmail shows it as a draft reply on the original conversation.
+    original ``draft`` field.
     """
-    db_url = _db_url(request)
-    row = store.get(db_url, row_id)
-    if not row:
-        raise HTTPException(404, "pending row not found")
-    if row.get("tier") != "draft" or not (row.get("amended_draft") or row.get("draft")):
-        raise HTTPException(400, "row has no draft to push (tier=surface, or draft is empty)")
-    if not row.get("sender_email"):
-        raise HTTPException(400, "row has no sender_email; cannot route the reply")
+    from app.agent.push import push_pending_row
 
-    body = row.get("amended_draft") or row.get("draft") or ""
-    raw_subject = row.get("subject") or ""
-    # Gmail handles threading from the thread_id, but we still prepend "Re: "
-    # if missing so the user sees the conventional subject in their Drafts.
-    subject = raw_subject if raw_subject.lower().startswith("re:") else f"Re: {raw_subject}"
-
-    from app.ingestion.gmail_write import GmailWriteError, create_draft
-
-    try:
-        result = create_draft(
-            account=row["account"],
-            # gog threads via the inbound message id; gws/native via thread id.
-            # We pass both so each backend uses its preferred id.
-            reply_to_message_id=row.get("message_id"),
-            thread_id=row.get("thread_id"),
-            to_email=row["sender_email"],
-            subject=subject,
-            body=body,
-        )
-    except NotImplementedError as exc:
-        raise HTTPException(501, str(exc)) from exc
-    except GmailWriteError as exc:
-        raise HTTPException(502, f"Gmail write failed: {exc}") from exc
-
-    # Persist the draft id alongside the sent timestamp.
-    store.mark_sent(db_url, row_id, gmail_draft_id=result.draft_id)
+    outcome = push_pending_row(_db_url(request), row_id)
+    if not outcome.ok:
+        raise HTTPException(outcome.http_status or 500, outcome.detail or "push failed")
     return {
         "ok": True,
-        "gmail_draft_id": result.draft_id,
-        "row": store.get(db_url, row_id),
+        "gmail_draft_id": outcome.gmail_draft_id,
+        "pushed_already": outcome.pushed_already,
+        "row": outcome.row,
     }
 
 

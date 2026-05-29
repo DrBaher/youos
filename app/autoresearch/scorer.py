@@ -149,15 +149,24 @@ def scorecard_from_eval_result(
         ws = [max(0.0, float(case_weights.get(cr.category, 1.0))) for cr in crs]
         wsum = sum(ws) or float(len(crs))
         pass_rate = sum(w * (1.0 if cr.pass_fail == "pass" else 0.0) for w, cr in zip(ws, crs, strict=False)) / wsum
+        warn_for_composite = sum(w * (1.0 if cr.pass_fail == "warn" else 0.0) for w, cr in zip(ws, crs, strict=False)) / wsum
         avg_kw = sum(w * cr.scores.get("keyword_hit_rate", 0.0) for w, cr in zip(ws, crs, strict=False)) / wsum
         avg_conf = sum(w * cr.scores.get("confidence_score", 0.0) for w, cr in zip(ws, crs, strict=False)) / wsum
     else:
         pass_rate = result.passed / total
+        warn_for_composite = result.warned / total
         avg_kw = sum(cr.scores.get("keyword_hit_rate", 0.0) for cr in crs) / total
         avg_conf = sum(cr.scores.get("confidence_score", 0.0) for cr in crs) / total
 
     weights = load_composite_weights(configs_dir)
-    composite = weights["pass_rate"] * pass_rate + weights["avg_keyword_hit"] * avg_kw + weights["avg_confidence"] * avg_conf
+    # Give 'warn' cases HALF credit on the pass term rather than zero. The
+    # objective was dominated by a binary pass/fail with a small benchmark, so a
+    # real improvement that lifted a case fail→warn (without reaching full pass)
+    # registered as no change and got reverted. Partial credit lets the
+    # optimizer see incremental progress; the displayed ``pass_rate`` stays the
+    # strict passed/total (honest), only the composite is graded.
+    graded_pass = pass_rate + 0.5 * warn_for_composite
+    composite = weights["pass_rate"] * graded_pass + weights["avg_keyword_hit"] * avg_kw + weights["avg_confidence"] * avg_conf
 
     return Scorecard(
         config_tag=result.config_tag,
@@ -170,17 +179,48 @@ def scorecard_from_eval_result(
     )
 
 
-def compare_scorecards(baseline: Scorecard, candidate: Scorecard) -> str:
+DEFAULT_IMPROVE_THRESHOLD = 0.01
+DEFAULT_REGRESS_THRESHOLD = 0.01
+
+
+def load_compare_thresholds(configs_dir: Path | None = None) -> tuple[float, float]:
+    """Read ``improve_threshold`` / ``regress_threshold`` from
+    configs/autoresearch.yaml. Defaults (0.01 / 0.01) chosen from data: real
+    prompt/retrieval wins on the golden benchmark land around +0.01 composite
+    (a few keyword points), and the old +0.02 bar silently discarded them.
+    Tune up if the eval's run-to-run noise floor is higher (verify by scoring
+    the same config twice)."""
+    improve, regress = DEFAULT_IMPROVE_THRESHOLD, DEFAULT_REGRESS_THRESHOLD
+    if configs_dir is None:
+        return improve, regress
+    config_path = configs_dir / "autoresearch.yaml"
+    if config_path.exists():
+        import yaml
+
+        try:
+            data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            improve = float(data.get("improve_threshold", improve))
+            regress = float(data.get("regress_threshold", regress))
+        except Exception:
+            pass
+    return improve, regress
+
+
+def compare_scorecards(
+    baseline: Scorecard,
+    candidate: Scorecard,
+    *,
+    improve_threshold: float = DEFAULT_IMPROVE_THRESHOLD,
+    regress_threshold: float = DEFAULT_REGRESS_THRESHOLD,
+) -> str:
     """Compare two scorecards.
 
-    Returns:
-        "improved"  — composite >= baseline + 0.02
-        "regressed" — composite < baseline - 0.01
-        "neutral"   — otherwise
-    """
+    Returns ``"improved"`` when composite rises by ≥ ``improve_threshold``,
+    ``"regressed"`` when it falls by more than ``regress_threshold``, else
+    ``"neutral"``. Thresholds default to 0.01 (see ``load_compare_thresholds``)."""
     diff = candidate.composite - baseline.composite
-    if diff >= 0.02:
+    if diff >= improve_threshold:
         return "improved"
-    if diff < -0.01:
+    if diff < -regress_threshold:
         return "regressed"
     return "neutral"

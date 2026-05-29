@@ -105,6 +105,35 @@ def test_labelled_thread_with_pending_row_gets_dismissed_and_label_removed(db_ur
     assert row["dismissal_reason"] == "noise"
 
 
+def test_labelled_thread_dismisses_all_pending_rows_not_just_newest(db_url, monkeypatch):
+    """A thread can produce multiple pending rows across sweeps (message_id
+    changes). A 'skip this thread' gesture must dismiss ALL of them — the old
+    behavior dismissed only the highest-id row, leaving the others to be
+    re-surfaced."""
+    from app.agent import store
+
+    common = {
+        "thread_id": "t-multi", "account": "you@x.com",
+        "sender": "S", "sender_email": "s@x.com", "subject": "x", "body": "y",
+        "received_at": None, "needs_reply_score": 0.7, "reasons": [],
+        "cold_outreach": False, "tier": "draft", "draft": "hi",
+        "draft_model": "m", "draft_repairs": [], "standing_instructions_snapshot": None,
+    }
+    rid1 = store.upsert_pending(db_url, message_id="m-a", **common)
+    rid2 = store.upsert_pending(db_url, message_id="m-b", **common)
+
+    _install_gog_mocks(monkeypatch, search_payload={
+        "threads": [{"id": "m-b", "threadId": "t-multi"}],
+    })
+
+    from app.agent.gmail_label_sync import sync_gmail_label_dismissals
+    r = sync_gmail_label_dismissals(account="you@x.com", database_url=db_url, label="YouOS/skip")
+
+    assert set(r.dismissed) == {rid1, rid2}
+    assert store.get(db_url, rid1)["status"] == "dismissed"
+    assert store.get(db_url, rid2)["status"] == "dismissed"
+
+
 def test_labelled_thread_with_no_pending_row_is_skipped_not_errored(db_url, monkeypatch):
     """If the user labels a thread that's not in the queue (e.g. it never
     triggered the agent in the first place), don't error — just record."""

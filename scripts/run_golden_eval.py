@@ -172,7 +172,8 @@ def main() -> None:
     from app.generation.service import DraftRequest, generate_draft
 
     database_url = f"sqlite:///{args.db_path}"
-    configs_dir = ROOT_DIR / "configs"
+    # Instance-aware: use the active instance's configs, not the repo's.
+    configs_dir = get_settings().configs_dir
 
     def _generate(prompt_text, *, database_url, configs_dir):
         response = generate_draft(

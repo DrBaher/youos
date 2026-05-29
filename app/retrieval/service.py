@@ -185,6 +185,33 @@ class RetrievalConfig:
     # loop A/B how much extra credit a literal title/subject term-match should
     # earn over a pure BM25 ranking.
     field_match_bonus_per_token: float = 0.25
+    # When True, min-max normalize the lexical (BM25) score to [0,1] across each
+    # candidate pool BEFORE truncation, so the metadata boosts (recency/account/
+    # sender) and the semantic blend — which live on a [0,1] scale — can actually
+    # reorder results. Off by default: raw BM25 (0–12+) otherwise dominates so
+    # the boosts/semantic_weight are near-inert (which also made autoresearch
+    # unable to move the eval). Opt-in per instance; tune + A/B before defaulting.
+    normalize_scores: bool = False
+
+
+def _normalize_pool(matches: list[RetrievalMatch]) -> None:
+    """Re-score a candidate pool with the lexical component min-max normalized to
+    [0,1], so the additive metadata boosts (and the downstream semantic blend)
+    operate on a comparable scale and can change which results survive
+    truncation. Preserves each match's quality/subject multiplier (recovered as
+    ``score / (lexical + metadata)``). In place. No-op for <2 matches. Skips
+    ``None`` placeholders (the pool can carry them before ``_top_matches``)."""
+    real = [m for m in matches if m is not None]
+    if len(real) < 2:
+        return
+    lex = [m.lexical_score for m in real]
+    lo, hi = min(lex), max(lex)
+    span = (hi - lo) or 1.0
+    for m in real:
+        lex_norm = (m.lexical_score - lo) / span
+        raw_combined = m.lexical_score + m.metadata_score
+        mult = (m.score / raw_combined) if raw_combined else 1.0
+        m.score = round((lex_norm + m.metadata_score) * mult, 4)
 
 
 def _has_fts5_table(connection: sqlite3.Connection, table_name: str) -> bool:
@@ -496,6 +523,8 @@ class RetrievalService:
             match = self._score_chunk_row_fts(row, query=query, tokens=tokens, request=request)
             if match is not None:
                 matches.append(match)
+        if self.config.normalize_scores:
+            _normalize_pool(matches)
         return _top_matches(matches, request.top_k_chunks or self.config.top_k_chunks)
 
     def _retrieve_reply_pairs_fts(
@@ -555,6 +584,8 @@ class RetrievalService:
             match = self._score_reply_pair_row_fts(row, query=query, tokens=tokens, request=request)
             if match is not None:
                 matches.append(match)
+        if self.config.normalize_scores:
+            _normalize_pool(matches)
         return _top_matches(matches, request.top_k_reply_pairs or self.config.top_k_reply_pairs)
 
     def _score_chunk_row_fts(
@@ -710,6 +741,8 @@ class RetrievalService:
                 account_emails=request.account_emails,
             )
         ]
+        if self.config.normalize_scores:
+            _normalize_pool(matches)
         return _top_matches(matches, request.top_k_documents or self.config.top_k_documents)
 
     def _retrieve_chunks_legacy(
@@ -754,6 +787,8 @@ class RetrievalService:
                 account_emails=request.account_emails,
             )
         ]
+        if self.config.normalize_scores:
+            _normalize_pool(matches)
         return _top_matches(matches, request.top_k_chunks or self.config.top_k_chunks)
 
     def _retrieve_reply_pairs_legacy(
@@ -801,6 +836,8 @@ class RetrievalService:
                 account_emails=request.account_emails,
             )
         ]
+        if self.config.normalize_scores:
+            _normalize_pool(matches)
         return _top_matches(matches, request.top_k_reply_pairs or self.config.top_k_reply_pairs)
 
     # -- Legacy scoring ──────────────────────────────────────────────────
@@ -1116,6 +1153,7 @@ def _load_retrieval_config(configs_dir: Path) -> RetrievalConfig:
             lexical_scale=float(payload.get("lexical_scale", 2.0)),
             lexical_cap=float(payload.get("lexical_cap", 10.0)),
             field_match_bonus_per_token=float(payload.get("field_match_bonus_per_token", 0.25)),
+            normalize_scores=bool(payload.get("normalize_scores", False)),
         )
 
     # Legacy path
