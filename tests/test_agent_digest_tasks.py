@@ -25,8 +25,10 @@ def db(tmp_path):
 
 
 def _spec(**over):
+    # Default to the 'inbox' (send) destination so the send/gate/dedup tests
+    # exercise the email path; agent-path tests pass destination="agent".
     base = dict(name="Newsletters", query="label:Newsletters newer_than:7d",
-                schedule="daily", hour=7, deliver_to="", then_archive=False,
+                schedule="daily", hour=7, destination="inbox", deliver_to="", then_archive=False,
                 max_messages=50, enabled=True)
     base.update(over)
     return dt.DigestSpec(**base)
@@ -438,6 +440,65 @@ def test_digest_does_not_repeat_messages_across_runs(db, monkeypatch):
     r3 = dt.run_digest(db, "me@x.com", _spec(), now=d3)
     assert r3["status"] == "empty"
     assert len(calls) == 2                                      # day1 + day2 only
+
+
+def test_validate_destination():
+    assert dt.validate_digest({"name": "N", "query": "x", "destination": "agent"})[0]
+    assert dt.validate_digest({"name": "N", "query": "x", "destination": "inbox"})[0]
+    assert not dt.validate_digest({"name": "N", "query": "x", "destination": "telegram"})[0]
+    assert dt._normalize_digest({"name": "N", "query": "x"}).destination == "agent"   # safe default
+
+
+def test_agent_destination_stores_ready_without_sending(db, monkeypatch):
+    """The key safety property: an 'agent' digest computes + stores a 'ready'
+    body and sends NOTHING — so it works even with the send frontier fully shut."""
+    # send gates ALL closed — would block an inbox digest, must NOT block agent
+    monkeypatch.setattr(dt, "_digest_config", lambda: _cfg(send_enabled=False, kill_switch=True))
+    _stub_fetch(monkeypatch, _ITEMS)
+    calls = _stub_send(monkeypatch)
+    monkeypatch.setattr(dt, "build_digest_body", lambda items, **k: "AGENT BODY")
+    res = dt.run_digest(db, "me@x.com", _spec(destination="agent"),
+                        now=datetime(2026, 5, 29, 9, 0, tzinfo=ZoneInfo("UTC")))
+    assert res["status"] == "ready" and res["count"] == 2 and res["body"] == "AGENT BODY"
+    assert calls == []                                   # nothing sent
+    # stored as pending for pickup, with the body
+    pending = dt.list_pending_digests(db)
+    assert len(pending) == 1 and pending[0]["body"] == "AGENT BODY" and pending[0]["name"] == "Newsletters"
+
+
+def test_inbox_destination_still_gated(db, monkeypatch):
+    monkeypatch.setattr(dt, "_digest_config", lambda: _cfg(send_enabled=False))
+    _stub_fetch(monkeypatch, _ITEMS)
+    calls = _stub_send(monkeypatch)
+    monkeypatch.setattr(dt, "build_digest_body", lambda items, **k: "B")
+    res = dt.run_digest(db, "me@x.com", _spec(destination="inbox"),
+                        now=datetime(2026, 5, 29, 9, 0, tzinfo=ZoneInfo("UTC")))
+    assert res["status"] == "blocked" and calls == []    # inbox still needs the send frontier
+
+
+def test_collect_pending_digest(db, monkeypatch):
+    monkeypatch.setattr(dt, "_digest_config", lambda: _cfg())
+    _stub_fetch(monkeypatch, _ITEMS)
+    monkeypatch.setattr(dt, "build_digest_body", lambda items, **k: "B")
+    dt.run_digest(db, "me@x.com", _spec(destination="agent"),
+                  now=datetime(2026, 5, 29, 9, 0, tzinfo=ZoneInfo("UTC")))
+    rid = dt.list_pending_digests(db)[0]["id"]
+    assert dt.mark_collected(db, rid)["ok"] is True
+    assert dt.list_pending_digests(db) == []             # no longer pending
+    second = dt.mark_collected(db, rid)                  # already collected
+    assert not second["ok"] and second["http_status"] == 409
+
+
+def test_agent_digest_at_most_once_per_period(db, monkeypatch):
+    monkeypatch.setattr(dt, "_digest_config", lambda: _cfg())
+    _stub_fetch(monkeypatch, _ITEMS)
+    monkeypatch.setattr(dt, "build_digest_body", lambda items, **k: "B")
+    now = datetime(2026, 5, 29, 9, 0, tzinfo=ZoneInfo("UTC"))
+    first = dt.run_digest(db, "me@x.com", _spec(destination="agent"), now=now)
+    second = dt.run_digest(db, "me@x.com", _spec(destination="agent"), now=now)  # same period
+    assert first["status"] == "ready"
+    assert second["status"] == "skipped_done"            # period already produced
+    assert len(dt.list_pending_digests(db)) == 1
 
 
 def test_run_due_digests_weekly_respects_weekday(db, monkeypatch):

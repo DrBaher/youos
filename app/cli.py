@@ -756,6 +756,80 @@ def digest_cmd(
     typer.echo(out)
 
 
+# --- email digest TASKS (agent.digests) — distinct from the activity digest -----
+digests_app = typer.Typer(
+    name="digests", no_args_is_help=True,
+    help="Email digest tasks (agent.digests): run/collect a configured digest for an orchestrator.",
+)
+app.add_typer(digests_app, name="digests")
+
+
+def _digest_account(account: str | None, spec) -> str:
+    from app.core.config import get_user_emails
+
+    acct = account or getattr(spec, "account", "")
+    if not acct:
+        emails = get_user_emails()
+        if not emails:
+            typer.echo("No account configured. Pass --account or set user.emails.", err=True)
+            raise typer.Exit(2)
+        acct = emails[0]
+    return acct
+
+
+@digests_app.command("run")
+def digests_run(
+    name: str = typer.Argument(..., help="Configured digest name (agent.digests.items)"),
+    account: str = typer.Option(None, "--account", help="Account to run for (default: digest's own, else first)"),
+    preview: bool = typer.Option(False, "--preview", help="Don't claim/send/store — just print what it would be"),
+):
+    """Run a configured digest and print its body. A real run (default) records
+    the period + dedup; for an 'agent' digest it stores the body as 'ready' (no
+    send), for 'inbox' it emails (gated). ``--preview`` only computes + prints."""
+    from app.agent.digest_tasks import load_digests, run_digest
+
+    spec = next((s for s in load_digests() if s.name == name), None)
+    if spec is None:
+        typer.echo(f"No digest named {name!r} (configure it under agent.digests.items).", err=True)
+        raise typer.Exit(2)
+    acct = _digest_account(account, spec)
+    res = run_digest(get_settings().database_url, acct, spec, dry_run=preview)
+    typer.echo(f"[{res.get('status')}] {name} → {acct}  ({res.get('count', 0)} msg)")
+    if res.get("body"):
+        typer.echo("")
+        typer.echo(res["body"])
+
+
+@digests_app.command("pending")
+def digests_pending(
+    account: str = typer.Option(None, "--account", help="Filter to one account"),
+):
+    """List 'agent'-destination digests computed but not yet collected (with body
+    + id). An orchestrator delivers each, then `youos digests collect <id>`."""
+    from app.agent.digest_tasks import list_pending_digests
+
+    rows = list_pending_digests(get_settings().database_url, account=account)
+    if not rows:
+        typer.echo("(no pending digests)")
+        return
+    for r in rows:
+        typer.echo(f"=== id={r['id']}  {r['name']} → {r['account']}  ({r['message_count']} msg, {r['period_key']}) ===")
+        typer.echo(r.get("body") or "")
+        typer.echo("")
+
+
+@digests_app.command("collect")
+def digests_collect(run_id: int = typer.Argument(..., help="Pending digest id (from `youos digests pending`)")):
+    """Mark a pending digest delivered (status ready → collected)."""
+    from app.agent.digest_tasks import mark_collected
+
+    res = mark_collected(get_settings().database_url, run_id)
+    if not res.get("ok"):
+        typer.echo(f"✕ {res.get('detail')}", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"collected id={run_id}")
+
+
 @app.command()
 def serve():
     """Start the YouOS web server."""
