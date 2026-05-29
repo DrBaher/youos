@@ -1598,6 +1598,20 @@ def _persona_routing_enabled() -> bool:
         return False
 
 
+def _max_inbound_chars() -> int:
+    """Max characters of inbound text to feed the model (``generation.
+    max_inbound_chars``, default 4000; 0 disables). Bounds prompt size so a
+    huge email can't overflow the local model into a cloud fallback."""
+    try:
+        from app.core.config import load_config
+
+        cfg = load_config() or {}
+        gen = cfg.get("generation", {}) if isinstance(cfg, dict) else {}
+        return max(0, int(gen.get("max_inbound_chars", 4000)))
+    except (TypeError, ValueError, AttributeError):
+        return 4000
+
+
 def _compute_max_tokens(avg_reply_words: int | None, *, persona: dict[str, Any] | None = None, intent: str | None = None) -> int:
     """Compute max_tokens as a rough upper bound from avg_reply_words.
 
@@ -1831,6 +1845,15 @@ def generate_draft(
     elif _has_thread_context(clean_inbound):
         active_inbound, history = _extract_thread_parts(clean_inbound)
         inbound_for_prompt = _format_thread_context(active_inbound, history)
+
+    # Bound the inbound fed to the model. A very long email (e.g. an
+    # auto-generated meeting-notes dump) can overflow the local model's context
+    # and force an empty-output fallback to the cloud; truncating the tail keeps
+    # generation on-device. Generous default (only trims genuinely huge inputs);
+    # the retrieval query above used the full text, so retrieval is unaffected.
+    _cap = _max_inbound_chars()
+    if _cap and len(inbound_for_prompt) > _cap:
+        inbound_for_prompt = inbound_for_prompt[:_cap].rstrip() + "\n[… message truncated for length …]"
 
     # Open one shared DB connection for all metadata lookups (P1)
     db_path = resolve_sqlite_path(database_url)
@@ -2168,20 +2191,41 @@ def generate_draft(
 
     # Retry on empty or signature-only local model output
     empty_output_retried = False
-    _draft_stripped = strip_signature(draft).strip()
-    non_ws = len(draft.replace(" ", "").replace("\n", "").replace("\t", ""))
-    _looks_like_only_signature = len(_draft_stripped) < 15 and non_ws > 0
-    if (non_ws < 10 or _looks_like_only_signature) and model_used not in ("error", "claude"):
-        logger.warning("Local model returned empty output, falling back to Claude")
-        if fallback_model != "none":
+
+    def _is_empty_draft(d: str) -> bool:
+        stripped = strip_signature(d).strip()
+        nws = len(d.replace(" ", "").replace("\n", "").replace("\t", ""))
+        return nws < 10 or (len(stripped) < 15 and nws > 0)
+
+    if _is_empty_draft(draft) and model_used not in ("error", "claude"):
+        # First retry the LOCAL model once. Empty local output is most often a
+        # cold-start / transient hiccup, and a retry keeps the reply ON-DEVICE
+        # instead of bouncing private mail to the cloud. Only after a second
+        # local empty do we fall back (and strict_local already forced
+        # fallback_model='none' above, so it won't reach the cloud there).
+        if any(tag in model_used for tag in ("qwen", "lora", "base")):
             try:
-                draft = _call_claude_cli(prompt, max_tokens=max_tokens)
-                model_used = "claude"
-                empty_output_retried = True
-            except Exception as fallback_exc:
-                raise ValueError("Draft generation returned empty output") from fallback_exc
-        else:
-            raise ValueError("Draft generation returned empty output")
+                _rd, _rm = _local_draft_once(
+                    prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p,
+                    request=request, sender_type_hint=sender_type_hint,
+                )
+                if not _is_empty_draft(_rd):
+                    draft, model_used = _rd, _rm
+                    logger.info("local model recovered on retry — stayed on-device")
+            except Exception as exc:
+                logger.info("local retry after empty output failed: %s", exc)
+
+        if _is_empty_draft(draft):
+            logger.warning("Local model returned empty output, falling back to Claude")
+            if fallback_model != "none":
+                try:
+                    draft = _call_claude_cli(prompt, max_tokens=max_tokens)
+                    model_used = "claude"
+                    empty_output_retried = True
+                except Exception as fallback_exc:
+                    raise ValueError("Draft generation returned empty output") from fallback_exc
+            else:
+                raise ValueError("Draft generation returned empty output")
 
         # Increment counter in pipeline log
         try:
