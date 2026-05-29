@@ -621,6 +621,19 @@ def run_triage(
         database_url = database_url or settings.database_url
         configs_dir = configs_dir or settings.configs_dir
 
+    # Self-heal the agent tables before sweeping. A sweep against a stale
+    # instance DB (server not restarted after a schema change, or started with
+    # an instance-relative path so bootstrap couldn't find schema.sql) would
+    # otherwise fail at the persist step EVERY tick with zero drafts — invisibly.
+    # This is idempotent + cheap; failure-isolated so a migration hiccup can't
+    # itself kill the sweep (the sweep would then surface the real DB error).
+    try:
+        from app.db.bootstrap import ensure_agent_schema
+
+        ensure_agent_schema(database_url)
+    except Exception as exc:
+        logger.warning("ensure_agent_schema failed (continuing): %s", exc)
+
     # ε: bracket the whole sweep so we can log a single agent_audit row at
     # the end — start time, duration, counts, any per-message errors.
     import time as _time
