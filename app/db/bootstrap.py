@@ -48,6 +48,7 @@ def ensure_agent_schema(database_url: str) -> bool:
         _migrate_agent_audit(conn)
         _migrate_triage_precision_history(conn)
         _migrate_agent_actions(conn)
+        _migrate_agent_digest_runs(conn)
         conn.commit()
         return True
     finally:
@@ -76,6 +77,7 @@ def bootstrap_database() -> Path:
         _migrate_agent_audit(connection)
         _migrate_triage_precision_history(connection)
         _migrate_agent_actions(connection)
+        _migrate_agent_digest_runs(connection)
         _populate_fts(connection)
         connection.commit()
     finally:
@@ -408,6 +410,35 @@ def _migrate_agent_actions(connection: sqlite3.Connection) -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_actions_forward_claim "
         "ON agent_actions(message_id, action_value) "
         "WHERE action_type = 'forward' AND status IN ('forwarding', 'applied', 'error')"
+    )
+
+
+def _migrate_agent_digest_runs(connection: sqlite3.Connection) -> None:
+    """Ledger of scheduled digest-task runs (collect → summarize → send one
+    digest email). One row per (digest, account, period) so a digest sends
+    AT MOST ONCE per period — the UNIQUE index is the cross-process claim, the
+    same pattern that fixed the forward double-send race."""
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS agent_digest_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            account TEXT NOT NULL,
+            period_key TEXT NOT NULL,           -- 'YYYY-MM-DD' (daily) | 'YYYY-Www' (weekly)
+            status TEXT NOT NULL,               -- 'sending'|'sent'|'dry_run'|'empty'|'blocked'|'error'
+            message_count INTEGER DEFAULT 0,
+            sent_message_id TEXT,
+            detail TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    # At-most-once per period: only one writer can claim (name, account, period).
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_digest_runs_period "
+        "ON agent_digest_runs(name, account, period_key)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_digest_runs_recent "
+        "ON agent_digest_runs(account, created_at DESC)"
     )
 
 
