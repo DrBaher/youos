@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.89 — 2026-05-29
+
+### Verify-before-accept — catch hallucinated specifics before acting (autonomy Phase A3)
+
+A draft that *reads* well can still be unsafe to act on: written in the wrong language, or stating a concrete email / link / number the model invented (it appears nowhere in the inbound or thread). For an autonomous agent those are the dangerous failures — a fluent reply that quotes a made-up address.
+
+- New `app/generation/verify.py`: `verify_draft()` runs cheap deterministic checks and splits findings into **blocking** (language mismatch, invented email address, invented link — almost never legitimate in a reply) and **warnings** (an amount or a time/date not found in the inbound — often legitimate, e.g. proposing a meeting slot or restating a known price, so surfaced but not blocking). Grounding corpus = inbound + thread history; the account and sender addresses count as allowed participants.
+- Wired into generation: every `generate_draft` now computes verify (failure-isolated — never blocks *drafting*). A **blocking** issue collapses the draft's `quality_score` (→ ≤0.1), so the existing auto-push quality floor (b85) holds the draft for human review — verify reuses the act-gate rather than adding a new one. Findings are surfaced on `DraftResponse.verify_issues`.
+
++11 tests (`test_verify_draft.py`). Verify only ever *holds* a draft for review — never sends, never loosens. Never-send boundary unchanged.
+
 ## v0.2.0-beta.88 — 2026-05-29
 
 ### Calibrate the needs-reply score to a real probability (autonomy Phase A2)
