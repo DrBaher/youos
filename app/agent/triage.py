@@ -469,6 +469,10 @@ def _run_sweep(
                     subject=msg.subject,
                     account_email=account,
                     thread_id=msg.thread_id,
+                    # Conversation history so the drafter doesn't answer the
+                    # wrong question in a multi-turn thread (populated by
+                    # fetch_unread from the real thread).
+                    thread_history=msg.thread_history or None,
                     standing_instructions=standing_instructions,
                     # ζ: refuse cloud fallback during background triage when
                     # strict-local is on. The generation pipeline reads this

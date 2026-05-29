@@ -175,6 +175,12 @@ class DraftRequest:
     # additively with the auto-detected cold-outreach DECLINE_NUDGE so both
     # can apply to the same draft.
     standing_instructions: str | None = None
+    # Prior turns in the same thread (oldest→newest), each
+    # ``{"sender": ..., "text": ...}``. The autonomous agent populates this from
+    # the fetched thread so the drafter sees conversation context instead of
+    # pattern-matching on a single message and answering the wrong question.
+    # Preferred over the brittle regex thread extraction when present.
+    thread_history: list[dict[str, str]] | None = None
     # ζ: refuse cloud fallback for this specific draft. The agent triage
     # path sets this so background sweeps can't silently send inbound text
     # to Claude — if the local model is unavailable, generate_draft returns
@@ -1631,9 +1637,20 @@ def generate_draft(
 
     detected_lang = detect_language(clean_inbound)
 
-    # Handle thread context for ongoing threads
+    # Handle thread context for ongoing threads. Prefer caller-supplied
+    # structured history (the agent fetches the real thread) — it's far more
+    # reliable than parsing "From:" blocks out of a single quoted body, which
+    # strip_quoted_text has usually already removed. Fall back to the regex
+    # extraction for callers that paste a whole quoted thread into one message.
     inbound_for_prompt = clean_inbound
-    if _has_thread_context(clean_inbound):
+    if request.thread_history:
+        history = [
+            {"sender": h.get("sender", ""), "text": h.get("text", "")}
+            for h in request.thread_history if h.get("text")
+        ]
+        if history:
+            inbound_for_prompt = _format_thread_context(clean_inbound, history)
+    elif _has_thread_context(clean_inbound):
         active_inbound, history = _extract_thread_parts(clean_inbound)
         inbound_for_prompt = _format_thread_context(active_inbound, history)
 
