@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YouOS — Digests</title>
+<script>(function(){try{var p=new URLSearchParams(location.search).get('theme');var t=(p==='light'||p==='dark')?p:localStorage.getItem('youos-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="icon" type="image/svg+xml" href="/static/youos-mark.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+  .container { max-width: 860px; margin: 0 auto; padding: 0 24px 48px; }
+  .oc-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 0.5rem; }
+  .oc-logo { display: flex; align-items: center; gap: 0.5rem; }
+  .oc-wordmark { color: var(--teal); font-weight: 700; font-size: 1.1rem; }
+  .oc-nav { display: flex; gap: 1.5rem; flex-wrap: wrap; }
+  .oc-nav-link { color: var(--muted-2); text-decoration: none; font-size: 0.85rem; font-weight: 500; transition: color 0.2s; }
+  .oc-nav-link:hover, .oc-nav-link.active { color: var(--teal); }
+  h1 { font-size: 1.6rem; margin: 28px 0 4px; color: var(--teal); }
+  h2 { font-size: 1.05rem; margin: 28px 0 10px; color: var(--text); }
+  .sub { color: var(--muted-2); font-size: 0.9rem; margin-bottom: 20px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+  label.fld { display: block; font-size: 0.78rem; color: var(--muted-2); font-weight: 600; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.03em; }
+  select, input[type=text], input[type=number] { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; font-size: 0.88rem; font-family: inherit; width: 100%; }
+  .grid { display: flex; gap: 14px; flex-wrap: wrap; }
+  .grid > div { flex: 1 1 200px; }
+  .grid .narrow { flex: 0 0 120px; }
+  .chk { display: flex; align-items: center; gap: 8px; font-size: 0.88rem; color: var(--text); }
+  .chk input { width: auto; }
+  .btn { background: var(--teal); color: #04201c; border: none; border-radius: 7px; padding: 9px 16px; font-size: 0.88rem; font-weight: 600; cursor: pointer; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-ghost { background: none; border: 1px solid var(--border); color: var(--muted-2); }
+  .btn-ghost:hover { color: var(--teal); border-color: var(--teal); }
+  .actions-bar { display: flex; gap: 10px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+  .vstatus { font-size: 0.82rem; }
+  .vstatus.ok { color: var(--success); }
+  .vstatus.err { color: var(--error); }
+  .dg-item { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--surface); }
+  .dg-item:last-child { border-bottom: none; }
+  .dg-text { font-size: 0.9rem; }
+  .dg-name { font-weight: 600; color: var(--teal); }
+  .dg-meta { color: var(--muted-2); font-size: 0.82rem; margin-top: 2px; }
+  .dg-off { color: var(--faint); font-size: 0.74rem; border: 1px solid var(--border); border-radius: 10px; padding: 1px 6px; margin-left: 6px; }
+  .dg-btns { display: flex; gap: 6px; white-space: nowrap; }
+  .lnk { background: none; border: none; color: var(--muted-2); cursor: pointer; font-size: 0.82rem; padding: 4px 6px; }
+  .lnk:hover { color: var(--teal); }
+  .lnk.del:hover { color: var(--error); }
+  pre.preview { white-space: pre-wrap; word-break: break-word; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 0.82rem; max-height: 360px; overflow: auto; margin-top: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .badge { font-size: 0.72rem; padding: 2px 7px; border-radius: 10px; font-weight: 600; }
+  .badge.sent { background: rgba(0,196,167,0.18); color: var(--teal); }
+  .badge.dry_run, .badge.empty, .badge.skipped_done { background: var(--surface-2); color: var(--muted-2); }
+  .badge.blocked, .badge.error { background: rgba(220,80,80,0.16); color: var(--error); }
+  .led-item { display: flex; gap: 9px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--surface); font-size: 0.83rem; }
+  .led-item:last-child { border-bottom: none; }
+  .note { color: var(--faint); font-size: 0.8rem; margin-top: 16px; }
+  .note code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+  .gate { font-size: 0.84rem; border-radius: 8px; padding: 10px 12px; margin-bottom: 18px; }
+  .gate.off { background: var(--surface-2); color: var(--muted-2); border: 1px solid var(--border); }
+  .gate.on { background: rgba(0,196,167,0.12); color: var(--teal); border: 1px solid rgba(0,196,167,0.3); }
+  .oc-footer { border-top: 1px solid var(--border); margin-top: 32px; padding: 20px 0; display: flex; gap: 0.6rem; justify-content: center; color: var(--faint); font-size: 0.82rem; }
+  .oc-footer a { color: var(--faint); }
+</style>
+<link rel="stylesheet" href="/static/youos.css">
+<script src="/static/youos.js" defer></script>
+</head>
+<body>
+<div class="container">
+  <header class="oc-header">
+    <div class="oc-logo"><span>&#x2709;&#xFE0F;</span><span class="oc-wordmark" id="appName">YouOS</span></div>
+    <nav class="oc-nav">
+      <a href="/feedback" class="oc-nav-link">Draft Email</a>
+      <a href="/triage" class="oc-nav-link">Triage</a>
+      <a href="/rules" class="oc-nav-link">Rules</a>
+      <a href="/digests" class="oc-nav-link active">Digests</a>
+      <a href="/stats" class="oc-nav-link">Stats</a>
+      <a href="/settings" class="oc-nav-link">Settings</a>
+      <a href="/about" class="oc-nav-link">About</a>
+    </nav>
+  </header>
+
+  <h1>Digests</h1>
+  <p class="sub">A digest runs a Gmail query, summarizes the matches into one email, and sends it on a schedule.
+  Each message is digested at most once. Preview anytime; nothing sends until the gates below are on.</p>
+
+  <div class="gate off" id="gate">Checking digest status…</div>
+
+  <h2 id="formTitle">Add a digest</h2>
+  <div class="card">
+    <div class="grid">
+      <div><label class="fld" for="name">Name</label><input type="text" id="name" placeholder="Newsletters"></div>
+      <div><label class="fld" for="model">Summary model</label>
+        <select id="model"><option value="local">local (on-device, private)</option><option value="cloud">cloud (Claude, sharper)</option></select></div>
+    </div>
+    <div style="margin-top:12px;"><label class="fld" for="query">Gmail query</label>
+      <input type="text" id="query" placeholder="category:promotions newer_than:1d"></div>
+    <div class="grid" style="margin-top:12px;">
+      <div class="narrow"><label class="fld" for="schedule">Schedule</label>
+        <select id="schedule"><option value="daily">daily</option><option value="weekly">weekly</option></select></div>
+      <div class="narrow" id="weekdayWrap" style="display:none;"><label class="fld" for="weekday">Weekday</label>
+        <select id="weekday"><option value="monday">Mon</option><option value="tuesday">Tue</option><option value="wednesday">Wed</option><option value="thursday">Thu</option><option value="friday">Fri</option><option value="saturday">Sat</option><option value="sunday">Sun</option></select></div>
+      <div class="narrow"><label class="fld" for="hour">Hour (0–23)</label><input type="number" id="hour" min="0" max="23" value="7"></div>
+      <div class="narrow"><label class="fld" for="minute">Minute</label><input type="number" id="minute" min="0" max="59" value="0"></div>
+      <div class="narrow"><label class="fld" for="maxmsg">Max msgs</label><input type="number" id="maxmsg" min="1" value="50"></div>
+    </div>
+    <div style="margin-top:12px;"><label class="fld" for="deliver">Deliver to (blank = your own inbox)</label>
+      <input type="text" id="deliver" placeholder="your own inbox"></div>
+    <div class="actions-bar">
+      <label class="chk"><input type="checkbox" id="archive"> archive the messages after sending</label>
+      <label class="chk"><input type="checkbox" id="enabled" checked> this digest active</label>
+    </div>
+    <div class="actions-bar">
+      <button class="btn" id="saveBtn" type="button" disabled>Save digest</button>
+      <button class="btn btn-ghost" id="cancelBtn" type="button" style="display:none;">Cancel edit</button>
+      <span class="vstatus" id="vstatus"></span>
+    </div>
+  </div>
+
+  <h2>Your digests</h2>
+  <div class="card" id="list"><p class="sub" style="padding:8px 0;">Loading…</p></div>
+  <pre class="preview" id="preview" style="display:none;"></pre>
+
+  <h2>Recent runs</h2>
+  <div class="card" id="ledger"><p class="sub" style="padding:8px 0;">Loading…</p></div>
+
+  <p class="note">Same digests are available over the REST API
+  (<code>GET/POST/PUT/DELETE /api/agent/digests</code>, <code>/validate</code>, <code>/run</code>).</p>
+
+  <footer class="oc-footer">
+    <span>YouOS <span id="appVersion"></span></span><span>&middot;</span>
+    <a href="https://github.com/DrBaher/youos" target="_blank">GitHub</a><span>&middot;</span><span>Your data stays local</span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const F = { name: $("name"), query: $("query"), schedule: $("schedule"), weekday: $("weekday"),
+              hour: $("hour"), minute: $("minute"), maxmsg: $("maxmsg"), model: $("model"),
+              deliver: $("deliver"), archive: $("archive"), enabled: $("enabled") };
+  const saveBtn = $("saveBtn"), cancelBtn = $("cancelBtn"), vstatus = $("vstatus");
+  const formTitle = $("formTitle"), list = $("list"), ledger = $("ledger"), preview = $("preview"), gate = $("gate");
+  const WD = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
+  let editIndex = null;
+
+  function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c])); }
+
+  function readForm() {
+    const b = {
+      name: F.name.value.trim(), query: F.query.value.trim(),
+      schedule: F.schedule.value, hour: parseInt(F.hour.value, 10) || 0,
+      minute: parseInt(F.minute.value, 10) || 0, max_messages: parseInt(F.maxmsg.value, 10) || 50,
+      summary_model: F.model.value, deliver_to: F.deliver.value.trim(),
+      then_archive: F.archive.checked, enabled: F.enabled.checked,
+    };
+    if (F.schedule.value === "weekly") b.weekday = F.weekday.value;
+    return b;
+  }
+
+  function syncWeekday() { $("weekdayWrap").style.display = (F.schedule.value === "weekly") ? "" : "none"; }
+  F.schedule.addEventListener("change", () => { syncWeekday(); scheduleValidate(); });
+  Object.values(F).forEach((el) => { el.addEventListener("input", scheduleValidate); el.addEventListener("change", scheduleValidate); });
+
+  let t = null;
+  function scheduleValidate() { clearTimeout(t); t = setTimeout(runValidate, 180); }
+  function runValidate() {
+    const b = readForm();
+    if (!b.name || !b.query) { saveBtn.disabled = true; vstatus.className = "vstatus"; vstatus.textContent = ""; return; }
+    fetch("/api/agent/digests/validate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) })
+      .then((r) => r.json()).then((d) => {
+        saveBtn.disabled = !d.ok;
+        vstatus.className = d.ok ? "vstatus ok" : "vstatus err";
+        vstatus.textContent = d.ok ? "valid ✓" : "✕ " + d.error;
+      }).catch(() => { saveBtn.disabled = true; vstatus.className = "vstatus err"; vstatus.textContent = "could not validate"; });
+  }
+
+  saveBtn.addEventListener("click", () => {
+    const editing = editIndex !== null;
+    const url = editing ? "/api/agent/digests/" + editIndex : "/api/agent/digests";
+    saveBtn.disabled = true; vstatus.className = "vstatus"; vstatus.textContent = "saving…";
+    fetch(url, { method: editing ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(readForm()) })
+      .then((r) => (r.ok ? r.json() : r.json().then((e) => Promise.reject(e.detail || "error"))))
+      .then(() => { resetForm(); loadAll(); })
+      .catch((err) => { vstatus.className = "vstatus err"; vstatus.textContent = "✕ " + err; saveBtn.disabled = false; });
+  });
+  cancelBtn.addEventListener("click", resetForm);
+
+  function resetForm() {
+    editIndex = null;
+    F.name.value = ""; F.query.value = ""; F.schedule.value = "daily"; F.weekday.value = "monday";
+    F.hour.value = "7"; F.minute.value = "0"; F.maxmsg.value = "50"; F.model.value = "local";
+    F.deliver.value = ""; F.archive.checked = false; F.enabled.checked = true;
+    syncWeekday(); formTitle.textContent = "Add a digest"; cancelBtn.style.display = "none";
+    saveBtn.textContent = "Save digest"; saveBtn.disabled = true; vstatus.textContent = "";
+  }
+
+  function editDigest(d) {
+    editIndex = d.index;
+    F.name.value = d.name || ""; F.query.value = d.query || ""; F.schedule.value = d.schedule || "daily";
+    F.weekday.value = WD[d.weekday || 0] || "monday"; F.hour.value = d.hour ?? 7; F.minute.value = d.minute ?? 0;
+    F.maxmsg.value = d.max_messages ?? 50; F.model.value = d.summary_model || "local";
+    F.deliver.value = d.deliver_to || ""; F.archive.checked = !!d.then_archive; F.enabled.checked = d.enabled !== false;
+    syncWeekday(); formTitle.textContent = "Edit digest #" + d.index; cancelBtn.style.display = "";
+    saveBtn.textContent = "Update digest"; runValidate(); window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function describe(d) {
+    const when = d.schedule === "weekly"
+      ? "weekly · " + (WD[d.weekday || 0] || "monday") + " " + String(d.hour).padStart(2, "0") + ":" + String(d.minute || 0).padStart(2, "0")
+      : "daily · " + String(d.hour).padStart(2, "0") + ":" + String(d.minute || 0).padStart(2, "0");
+    return when + " · " + (d.summary_model || "local") + " · → " + (d.deliver_to || "your inbox");
+  }
+
+  function doPreview(name) {
+    preview.style.display = ""; preview.textContent = "Building preview…";
+    fetch("/api/agent/digests/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name, dry_run: true }) })
+      .then((r) => r.json()).then((d) => {
+        preview.textContent = (d.status === "preview")
+          ? ("PREVIEW — " + (d.count || 0) + " message(s) → " + d.to + "\n\n" + (d.body || ""))
+          : ("status: " + d.status + (d.detail ? " — " + d.detail : ""));
+      }).catch(() => { preview.textContent = "preview failed"; });
+  }
+
+  function loadAll() {
+    fetch("/api/config/flags").then((r) => r.json()).then((d) => {
+      const on = (d.flags || []).find((f) => f.key === "agent.digests.enabled");
+      const send = (d.flags || []).find((f) => f.key === "agent.send.enabled");
+      const enabled = on && on.value, sending = send && send.value;
+      if (enabled && sending) { gate.className = "gate on"; gate.textContent = "✓ Digests are ON and sending is enabled — active digests will send on schedule."; }
+      else { gate.className = "gate off"; gate.innerHTML = "Digests are <strong>off</strong> (previewable only). To send: turn on <code>agent.digests.enabled</code>" + (sending ? "" : " + <code>agent.send.enabled</code>") + " in Settings."; }
+    }).catch(() => {});
+
+    fetch("/api/agent/digests").then((r) => r.json()).then((d) => {
+      const digests = d.digests || [];
+      list.innerHTML = "";
+      if (!digests.length) list.innerHTML = '<p class="sub" style="padding:8px 0;">No digests yet. Add one above.</p>';
+      digests.forEach((dg) => {
+        const item = document.createElement("div"); item.className = "dg-item";
+        const txt = document.createElement("div"); txt.className = "dg-text";
+        txt.innerHTML = '<span class="dg-name">' + esc(dg.name) + "</span>" + (dg.enabled === false ? '<span class="dg-off">inactive</span>' : "") +
+          '<div class="dg-meta">' + esc(dg.query) + "</div>" + '<div class="dg-meta">' + esc(describe(dg)) + "</div>";
+        const btns = document.createElement("div"); btns.className = "dg-btns";
+        const pv = document.createElement("button"); pv.className = "lnk"; pv.textContent = "Preview"; pv.onclick = () => doPreview(dg.name);
+        const ed = document.createElement("button"); ed.className = "lnk"; ed.textContent = "Edit"; ed.onclick = () => editDigest(dg);
+        const rm = document.createElement("button"); rm.className = "lnk del"; rm.textContent = "Delete";
+        rm.onclick = () => { if (confirm("Delete digest " + dg.name + "?")) fetch("/api/agent/digests/" + dg.index, { method: "DELETE" }).then((r) => r.ok ? loadAll() : alert("delete failed")); };
+        btns.append(pv, ed, rm); item.append(txt, btns); list.appendChild(item);
+      });
+      const runs = d.runs || [];
+      ledger.innerHTML = "";
+      if (!runs.length) ledger.innerHTML = '<p class="sub" style="padding:8px 0;">No runs yet.</p>';
+      runs.forEach((r) => {
+        const it = document.createElement("div"); it.className = "led-item";
+        it.innerHTML = '<span class="badge ' + esc(r.status) + '">' + esc(r.status) + '</span><span>' + esc(r.name) +
+          " · " + esc(r.period_key || "") + " · " + (r.message_count || 0) + " msg</span>";
+        ledger.appendChild(it);
+      });
+    }).catch(() => { list.textContent = "Could not load digests."; });
+  }
+
+  resetForm(); loadAll();
+})();
+</script>
+</body>
+</html>

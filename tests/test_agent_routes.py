@@ -433,6 +433,30 @@ def test_digest_run_unknown_name_404(authed_client):
     assert r.status_code == 404
 
 
+def test_digests_page_renders_with_builder(authed_client):
+    r = authed_client.get("/digests")
+    assert r.status_code == 200
+    html = r.text
+    assert "/static/youos.css" in html
+    assert 'id="query"' in html and 'id="schedule"' in html and 'id="weekday"' in html
+    assert "/api/agent/digests/validate" in html
+    assert 'href="/digests"' in authed_client.get("/triage").text   # in shared nav
+
+
+def test_digest_validate_endpoint(authed_client):
+    ok = authed_client.post("/api/agent/digests/validate",
+                            json={"name": "N", "query": "label:X", "schedule": "weekly", "weekday": "friday"})
+    assert ok.status_code == 200 and ok.json()["ok"] is True
+    bad = authed_client.post("/api/agent/digests/validate", json={"name": "", "query": "x"})
+    assert bad.status_code == 200 and bad.json()["ok"] is False
+
+
+def test_digest_update_delete_out_of_range_404(authed_client):
+    # index checks happen before any config write, so these 404 without mutating
+    assert authed_client.put("/api/agent/digests/999", json={"name": "N", "query": "x"}).status_code == 404
+    assert authed_client.delete("/api/agent/digests/999").status_code == 404
+
+
 def test_triage_page_includes_ux_upgrades(authed_client):
     """Smoke check: the new b41 UX controls are present in the rendered HTML.
 

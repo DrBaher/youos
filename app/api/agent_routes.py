@@ -22,6 +22,7 @@ router = APIRouter(tags=["agent"])
 _TEMPLATE_DIR = Path(__file__).resolve().parents[1].parent / "templates"
 _TEMPLATE = _TEMPLATE_DIR / "triage.html"
 _RULES_TEMPLATE = _TEMPLATE_DIR / "rules.html"
+_DIGESTS_TEMPLATE = _TEMPLATE_DIR / "digests.html"
 
 
 def _db_url(request: Request) -> str:
@@ -363,15 +364,89 @@ class DigestRunBody(BaseModel):
     dry_run: bool = True   # default to a safe preview (build body, don't send)
 
 
+class DigestBody(BaseModel):
+    """One digest spec for the authoring API. ``weekday`` accepts a day name or
+    0-6 (Mon=0); see ``app.agent.digest_tasks.validate_digest``."""
+
+    name: str
+    query: str
+    schedule: str = "daily"
+    weekday: object | None = None
+    hour: int = 7
+    minute: int = 0
+    deliver_to: str = ""
+    then_archive: bool = False
+    max_messages: int = 50
+    summary_model: str = "local"
+    enabled: bool = True
+
+    def to_spec_dict(self) -> dict:
+        d = self.model_dump()
+        if d.get("weekday") is None:
+            d.pop("weekday", None)   # let the validator/default handle absence
+        return d
+
+
 @router.get("/api/agent/digests")
 def list_digests(request: Request, account: str | None = Query(None)) -> dict:
-    """The configured digest tasks + recent run history (for the UI / an
-    orchestrator). Read-only; never sends."""
+    """The configured digest tasks (each with its index — the handle for
+    PUT/DELETE) + recent run history. Read-only; never sends."""
     from app.agent.digest_tasks import list_digest_runs, load_digests
 
-    specs = [vars(s) for s in load_digests()]
+    specs = [{"index": i, **vars(s)} for i, s in enumerate(load_digests())]
     runs = list_digest_runs(_db_url(request), account=account, limit=50)
     return {"digests": specs, "runs": runs}
+
+
+@router.post("/api/agent/digests/validate")
+def validate_digest_endpoint(body: DigestBody) -> dict:
+    """Dry-validate a digest spec without saving (for the builder UI)."""
+    from app.agent.digest_tasks import validate_digest
+
+    ok, err = validate_digest(body.to_spec_dict())
+    return {"ok": ok, "error": err}
+
+
+@router.post("/api/agent/digests")
+def add_digest(body: DigestBody) -> dict:
+    """Append a new digest. Validates, then persists the whole list to config."""
+    from app.agent.digest_tasks import load_digests, save_digests, validate_digest
+
+    spec = body.to_spec_dict()
+    ok, err = validate_digest(spec)
+    if not ok:
+        raise HTTPException(400, err)
+    existing = [vars(s) for s in load_digests()]
+    saved = save_digests(existing + [spec])
+    return {"ok": True, "index": len(saved) - 1, "digests": saved}
+
+
+@router.put("/api/agent/digests/{index}")
+def update_digest(index: int, body: DigestBody) -> dict:
+    """Replace the digest at ``index``."""
+    from app.agent.digest_tasks import load_digests, save_digests, validate_digest
+
+    existing = [vars(s) for s in load_digests()]
+    if index < 0 or index >= len(existing):
+        raise HTTPException(404, f"no digest at index {index} (have {len(existing)})")
+    spec = body.to_spec_dict()
+    ok, err = validate_digest(spec)
+    if not ok:
+        raise HTTPException(400, err)
+    existing[index] = spec
+    return {"ok": True, "digests": save_digests(existing)}
+
+
+@router.delete("/api/agent/digests/{index}")
+def delete_digest(index: int) -> dict:
+    """Delete the digest at ``index``."""
+    from app.agent.digest_tasks import load_digests, save_digests
+
+    existing = [vars(s) for s in load_digests()]
+    if index < 0 or index >= len(existing):
+        raise HTTPException(404, f"no digest at index {index} (have {len(existing)})")
+    removed = existing.pop(index)
+    return {"ok": True, "removed": removed, "digests": save_digests(existing)}
 
 
 @router.post("/api/agent/digests/run")
@@ -957,3 +1032,12 @@ def rules_page() -> HTMLResponse:
     if not _RULES_TEMPLATE.exists():
         raise HTTPException(500, "rules template missing")
     return HTMLResponse(_RULES_TEMPLATE.read_text(encoding="utf-8"))
+
+
+@router.get("/digests", response_class=HTMLResponse)
+def digests_page() -> HTMLResponse:
+    """Render the digest-task builder (CRUD over /api/agent/digests) with preview
+    + run history. Served per-request like the other pages."""
+    if not _DIGESTS_TEMPLATE.exists():
+        raise HTTPException(500, "digests template missing")
+    return HTMLResponse(_DIGESTS_TEMPLATE.read_text(encoding="utf-8"))

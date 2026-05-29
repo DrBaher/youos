@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.119 — 2026-05-29
+
+### Digest authoring UI — build/edit/preview digests in the browser
+
+A `/digests` page (plain HTML/vanilla-JS on the shared design system, like `/rules`) to manage digest tasks without editing config:
+- **Builder** for every field — name, Gmail query, schedule (daily/weekly), weekday (for weekly), hour + minute, summary model (local/cloud), deliver-to, max messages, archive-after, active — with live validation.
+- **Preview** any saved digest (dry-run: shows the summarized body + recipient + count, sends nothing).
+- **Your digests** list (edit/delete in place) + a **recent-runs** ledger with status badges.
+- A status banner showing whether digests are armed (`agent.digests.enabled`) and sending (`agent.send.enabled`), so it's clear when something will actually go out.
+
+Backed by a new digest CRUD API — `POST/PUT/DELETE /api/agent/digests` + `POST /api/agent/digests/validate` + `save_digests` (the single validated write path, preserving the `agent.digests.enabled` master flag). "Digests" is now in the shared nav. +7 tests; never-send/never-act boundary unchanged.
+
 ## v0.2.0-beta.118 — 2026-05-29
 
 ### Digest hardening: per-message dedup
