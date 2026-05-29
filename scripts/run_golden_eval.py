@@ -35,6 +35,10 @@ def score_case(
     draft_lower = draft.lower()
     words = draft.split()
     word_count = len(words)
+    # An empty / whitespace draft is a hard fail — never let it slip to "warn"
+    # via the brevity check (0 words trivially passes max_words). An all-empty
+    # eval means the model is broken, not that the adapter is fine.
+    is_empty = not (draft or "").strip()
 
     # Keyword hit rate
     expected_keywords = case.get("expected_keywords", [])
@@ -59,7 +63,9 @@ def score_case(
         language_match = detected_language == expected_language
 
     # Overall pass/warn/fail — max_words violation is now a fail condition
-    if not brevity_pass:
+    if is_empty:
+        status = "fail"
+    elif not brevity_pass:
         status = "fail"
     elif keyword_hit_rate >= 0.5 and mode_match and language_match:
         status = "pass"
@@ -78,6 +84,7 @@ def score_case(
         "word_count": word_count,
         "max_words": max_words,
         "brevity_pass": brevity_pass,
+        "empty": is_empty,
         "status": status,
     }
     if expected_language:
@@ -123,12 +130,22 @@ def run_golden_eval(
     passed = sum(1 for r in results if r["status"] == "pass")
     warned = sum(1 for r in results if r["status"] == "warn")
     failed = sum(1 for r in results if r["status"] == "fail")
+    empty_count = sum(1 for r in results if r.get("empty"))
+    empty_rate = round(empty_count / total, 4) if total else 0.0
+    # Degenerate = the eval can't be trusted to validate anything because the
+    # model returned (mostly) nothing. An all-empty eval scores a low composite
+    # that looks like a "real" score to the promotion gate; this flag lets the
+    # gate refuse to act on it instead of silently promoting a broken adapter.
+    degenerate = total > 0 and empty_rate > 0.5
 
     summary = {
         "total": total,
         "passed": passed,
         "warned": warned,
         "failed": failed,
+        "empty_count": empty_count,
+        "empty_rate": empty_rate,
+        "degenerate": degenerate,
         "results": results,
     }
 
