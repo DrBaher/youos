@@ -54,6 +54,10 @@ logger = logging.getLogger(__name__)
 
 _MAX_MESSAGES = 50
 _VALID_SCHEDULES = ("daily", "weekly")
+# Where a computed digest goes. 'agent' (default) = YouOS stores the body and an
+# orchestrator collects it via CLI/MCP/API — NOTHING is sent, so it never crosses
+# the send frontier. 'inbox' = YouOS emails it (gated by the send frontier).
+_VALID_DESTINATIONS = ("agent", "inbox")
 # Bounded catch-up: a digest fires only within this many hours AFTER its target
 # time (covers a missed tick / brief restart), NOT "any time later that day".
 # This is why enabling a digest long after its time doesn't blast immediately —
@@ -106,6 +110,7 @@ class DigestSpec:
     hour: int = 7
     minute: int = 0            # time-of-day minute (with hour), local tz
     weekday: int = 0           # weekly only: which day fires (Mon=0 … Sun=6)
+    destination: str = "agent"  # 'agent' (compute+store for pickup, no send) | 'inbox' (email, gated)
     account: str = ""         # empty → run for every configured account; set → only that one
     deliver_to: str = ""      # empty → deliver to the account's own inbox
     then_archive: bool = False
@@ -157,6 +162,9 @@ def validate_digest(raw: Any) -> tuple[bool, str]:
     sm = str(raw.get("summary_model") or "local").strip().lower()
     if sm not in _VALID_SUMMARY_MODELS:
         return False, f"summary_model must be one of {list(_VALID_SUMMARY_MODELS)}"
+    destn = str(raw.get("destination") or "agent").strip().lower()
+    if destn not in _VALID_DESTINATIONS:
+        return False, f"destination must be one of {list(_VALID_DESTINATIONS)}"
     return True, ""
 
 
@@ -172,6 +180,7 @@ def _normalize_digest(raw: Any) -> DigestSpec | None:
         hour=int(raw.get("hour", 7)),
         minute=int(raw.get("minute", 0)),
         weekday=(_parse_weekday(raw.get("weekday")) or 0),
+        destination=str(raw.get("destination") or "agent").strip().lower(),
         account=str(raw.get("account") or "").strip(),
         deliver_to=str(raw.get("deliver_to") or "").strip(),
         then_archive=bool(raw.get("then_archive", False)),
@@ -432,7 +441,7 @@ def _period_done(database_url: str, name: str, account: str, period_key: str) ->
     with closing(_connect(database_url)) as conn:
         row = conn.execute(
             "SELECT 1 FROM agent_digest_runs WHERE name = ? AND account = ? AND period_key = ? "
-            "AND status IN ('sending', 'sent') LIMIT 1",
+            "AND status IN ('sending', 'sent', 'ready', 'collected') LIMIT 1",
             (name, account, period_key),
         ).fetchone()
     return row is not None
@@ -440,7 +449,7 @@ def _period_done(database_url: str, name: str, account: str, period_key: str) ->
 
 def _update_run(database_url: str, run_id: int | None, status: str, *,
                 message_count: int | None = None, sent_message_id: str | None = None,
-                detail: str | None = None) -> None:
+                body: str | None = None, detail: str | None = None) -> None:
     if run_id is None:
         return
     from app.agent.store import _connect
@@ -453,6 +462,9 @@ def _update_run(database_url: str, run_id: int | None, status: str, *,
     if sent_message_id is not None:
         sets.append("sent_message_id = ?")
         params.append(sent_message_id)
+    if body is not None:
+        sets.append("body = ?")
+        params.append(body)
     if detail is not None:
         sets.append("detail = ?")
         params.append(detail[:500])
@@ -522,22 +534,36 @@ def run_digest(database_url: str, account: str, spec: DigestSpec, *,
     if not items:
         return {"status": "empty", "name": spec.name, "period": period}
 
-    # Gate the send (digest master is already on; check the send frontier).
-    if cfg["kill_switch"]:
-        reason = "outbound kill-switch is on"
-    elif not cfg["send_enabled"]:
-        reason = "agent.send.enabled is false"
-    else:
-        reason = None
-    if reason is not None:
-        return {"status": "blocked", "name": spec.name, "period": period,
-                "count": len(items), "detail": reason}
+    # The send frontier gates ONLY the 'inbox' destination (it emails). The
+    # 'agent' destination sends nothing — it stores the body for pickup — so it
+    # never touches the send frontier.
+    if spec.destination == "inbox":
+        if cfg["kill_switch"]:
+            reason = "outbound kill-switch is on"
+        elif not cfg["send_enabled"]:
+            reason = "agent.send.enabled is false"
+        else:
+            reason = None
+        if reason is not None:
+            return {"status": "blocked", "name": spec.name, "period": period,
+                    "count": len(items), "detail": reason}
 
-    # Gates open + new mail present → claim the period, then send.
+    # Gates open (or N/A for agent) + new mail present → claim the period.
     run_id = _claim_period(database_url, spec.name, account, period)
     if run_id is None:
         return {"status": "skipped_done", "name": spec.name, "period": period}
     body = build_digest_body(items, model=spec.summary_model, prompt=spec.prompt)
+
+    if spec.destination == "agent":
+        # Store the computed digest for an orchestrator to collect (CLI/MCP/API);
+        # send NOTHING. Recording dedup here means the next period is fresh.
+        _record_digested(database_url, spec.name, account, [it["id"] for it in items], period)
+        _update_run(database_url, run_id, "ready", message_count=len(items), body=body,
+                    detail=f"ready for pickup ({len(items)} msg)")
+        return {"status": "ready", "name": spec.name, "period": period, "run_id": run_id,
+                "count": len(items), "body": body}
+
+    # destination == "inbox": send the email.
     try:
         res = gmail_write.send_email(account=account, to=to, subject=subject, body=body)
     except Exception as exc:
@@ -557,7 +583,7 @@ def run_digest(database_url: str, account: str, spec: DigestSpec, *,
             except Exception as exc:
                 logger.info("digest archive of %s failed: %s", it["id"], exc)
 
-    _update_run(database_url, run_id, "sent", message_count=len(items),
+    _update_run(database_url, run_id, "sent", message_count=len(items), body=body,
                 sent_message_id=res.message_id, detail=f"sent to {to}; archived {archived}")
     return {"status": "sent", "name": spec.name, "period": period, "to": to,
             "count": len(items), "sent_message_id": res.message_id, "archived": archived}
@@ -589,10 +615,46 @@ def run_due_digests(database_url: str, account: str, *, now: datetime | None = N
         except Exception as exc:  # never let one digest break the loop
             logger.warning("digest %r failed: %s", spec.name, exc)
             out.append({"status": "error", "name": spec.name, "detail": str(exc)})
-    sent = sum(1 for r in out if r.get("status") == "sent")
+    done = sum(1 for r in out if r.get("status") in ("sent", "ready"))
     if out:
-        logger.info("digests: %d run, %d sent", len(out), sent)
+        logger.info("digests: %d run, %d produced", len(out), done)
     return out
+
+
+def list_pending_digests(database_url: str, *, account: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    """Computed-but-not-yet-collected 'agent'-destination digests (status
+    'ready'), including the body — what an orchestrator pulls to deliver."""
+    from app.agent.store import _connect
+
+    where = "WHERE status = 'ready'"
+    params: list[Any] = []
+    if account:
+        where += " AND account = ?"
+        params.append(account)
+    params.append(int(limit))
+    with closing(_connect(database_url)) as conn:
+        rows = conn.execute(
+            f"SELECT id, name, account, period_key, message_count, body, created_at "
+            f"FROM agent_digest_runs {where} ORDER BY id DESC LIMIT ?",
+            params,
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_collected(database_url: str, run_id: int) -> dict[str, Any]:
+    """Mark a 'ready' digest as 'collected' (the orchestrator delivered it).
+    Atomic claim so two pollers can't both think they own it."""
+    from app.agent.store import _connect
+
+    with closing(_connect(database_url)) as conn:
+        cur = conn.execute(
+            "UPDATE agent_digest_runs SET status = 'collected' WHERE id = ? AND status = 'ready'",
+            (run_id,),
+        )
+        conn.commit()
+    if cur.rowcount != 1:
+        return {"ok": False, "http_status": 409, "detail": "digest not found or not in 'ready' state"}
+    return {"ok": True, "id": run_id}
 
 
 def list_digest_runs(database_url: str, *, account: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
