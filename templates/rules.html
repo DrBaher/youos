@@ -93,6 +93,14 @@
 
   <h2 id="formTitle">Add a rule</h2>
   <div class="card">
+    <label class="fld" for="nlText">Describe it in plain English (optional)</label>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <input type="text" id="nlText" placeholder="e.g. archive newsletters older than a week" style="flex:1 1 auto;">
+      <button class="btn btn-ghost" id="nlBtn" type="button">Parse</button>
+    </div>
+    <div class="vstatus" id="nlStatus" style="margin:5px 0 0; min-height:1em;"></div>
+    <div style="border-top:1px solid var(--surface); margin:16px 0;"></div>
+
     <label class="fld">When&hellip; (all conditions must match)</label>
     <div id="conds"></div>
     <button class="btn btn-ghost" id="addCond" type="button">+ condition</button>
@@ -187,6 +195,9 @@
   const formTitle = document.getElementById("formTitle");
   const rulesList = document.getElementById("rulesList");
   const ledger = document.getElementById("ledger");
+  const nlText = document.getElementById("nlText");
+  const nlBtn = document.getElementById("nlBtn");
+  const nlStatus = document.getElementById("nlStatus");
 
   let editIndex = null; // null = adding; integer = editing that rule index
 
@@ -362,14 +373,18 @@
     actionEl.value = "";
     valueEl.value = "";
     syncValueField();
+    if (nlText) nlText.value = "";
+    if (nlStatus) { nlStatus.className = "vstatus"; nlStatus.textContent = ""; }
     formTitle.textContent = "Add a rule";
     cancelBtn.style.display = "none";
     saveBtn.textContent = "Save rule";
     runValidate();
   }
 
-  function loadEditor(rule, index) {
-    editIndex = index;
+  // Fill the builder from a rule object. index === null → add mode (e.g. from
+  // an NL parse: the user reviews and saves a NEW rule); a number → edit mode.
+  function populate(rule, index) {
+    editIndex = (index == null ? null : index);
     condsEl.innerHTML = "";
     const entries = Object.entries(rule.match || {});
     if (!entries.length) makeCondRow("subject_contains", null);
@@ -377,12 +392,41 @@
     actionEl.value = rule.action || "";
     syncValueField();
     valueEl.value = rule.value || "";
-    formTitle.textContent = "Edit rule #" + index;
     cancelBtn.style.display = "";
-    saveBtn.textContent = "Update rule";
+    if (editIndex == null) {
+      formTitle.textContent = "Add a rule — review & save";
+      saveBtn.textContent = "Save rule";
+    } else {
+      formTitle.textContent = "Edit rule #" + index;
+      saveBtn.textContent = "Update rule";
+    }
     runValidate();
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
+  function loadEditor(rule, index) { populate(rule, index); }
+
+  nlBtn.addEventListener("click", () => {
+    const text = nlText.value.trim();
+    if (!text) return;
+    nlStatus.className = "vstatus"; nlStatus.textContent = "parsing…"; nlBtn.disabled = true;
+    fetch("/api/agent/rules/parse", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: text }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        nlBtn.disabled = false;
+        if (d.rule) {
+          populate(d.rule, null);
+          nlStatus.className = d.ok ? "vstatus ok" : "vstatus err";
+          nlStatus.textContent = d.ok ? "parsed — review below and save" : "parsed with issues: " + (d.error || "");
+        } else {
+          nlStatus.className = "vstatus err";
+          nlStatus.textContent = "✕ " + (d.error || "could not parse");
+        }
+      })
+      .catch(() => { nlBtn.disabled = false; nlStatus.className = "vstatus err"; nlStatus.textContent = "could not reach the parser"; });
+  });
+  nlText.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); nlBtn.click(); } });
 
   // --- rules list ------------------------------------------------------------
   function loadRules() {
