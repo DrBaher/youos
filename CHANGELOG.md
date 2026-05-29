@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.2.0-beta.112 — 2026-05-29
+
+### Natural-language rule authoring — describe a rule, the local model drafts it (framework, 5/N)
+
+Final step of the user-composable filters/actions series: describe a rule in plain English and the warm local model turns it into a structured `{match, action, value}` rule for you to review and save.
+
+- **`POST /api/agent/rules/parse`** `{text}` → `{ok, rule, error}`. Sends the description to the warm local model (no egress) with a few-shot prompt covering the full 13-key match vocabulary + 10 actions, extracts the JSON, coerces stringified bools/numbers, and validates with the same `validate_rule` gate.
+- **Confirm before save** — the parse **never** persists. On the `/rules` page a "Describe it in plain English" box pre-fills the builder with the parsed rule; the user reviews/edits and clicks Save (which goes through the normal CRUD). Even an invalid parse pre-fills best-effort so it can be fixed by hand.
+- **Failure-isolated** — model off / unreachable / unparseable answer returns `ok=False` with a friendly message and falls back to manual building; it never raises into the page. JSON extraction is string-aware so a regex value with braces (`\d{2,3}`) doesn't break parsing.
+
+Verified end-to-end against the real warm model: *"archive newsletters older than a week"* → `{subject_contains: "newsletter", older_than_days: 7} → archive`.
+
++11 tests. Local-only (uses the warm model server, the same one drafting uses); never-send/never-act boundary unchanged.
+
 ## v0.2.0-beta.111 — 2026-05-29
 
 ### Rule builder UI — author filters/actions without editing YAML (framework, 4/N)

@@ -270,6 +270,22 @@ def validate_rule_endpoint(body: RuleBody) -> dict:
     return {"ok": ok, "error": err}
 
 
+class RuleTextBody(BaseModel):
+    """A plain-English rule description to parse into structured form."""
+
+    text: str
+
+
+@router.post("/api/agent/rules/parse")
+def parse_rule_text_endpoint(body: RuleTextBody) -> dict:
+    """Turn a natural-language description into a structured rule via the warm
+    local model. NEVER saves — returns ``{ok, rule, error}`` for the builder to
+    pre-fill so the user confirms (and can edit) before hitting Save."""
+    from app.agent.nl_rule import parse_rule_text
+
+    return parse_rule_text(body.text)
+
+
 @router.post("/api/agent/rules")
 def add_rule(body: RuleBody) -> dict:
     """Append a new rule. Validates, then persists the whole list to config."""
