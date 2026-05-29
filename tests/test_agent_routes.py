@@ -386,6 +386,9 @@ def test_rules_page_renders_with_builder_and_ledger(authed_client):
     # the natural-language entry point
     assert 'id="nlText"' in html
     assert "/api/agent/rules/parse" in html
+    # the outbound forward action + its gating warning
+    assert '"forward"' in html and "forward to (outbound" in html
+    assert 'id="fwdNote"' in html
 
 
 def test_parse_rule_text_endpoint_model_unavailable(authed_client, monkeypatch):
