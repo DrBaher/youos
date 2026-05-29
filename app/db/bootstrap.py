@@ -28,6 +28,31 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
     return conn
 
 
+def ensure_agent_schema(database_url: str) -> bool:
+    """Idempotently bring the agent tables on ``database_url`` up to date.
+
+    This is the self-heal for the silent-failure class where new code expects a
+    column an existing instance DB doesn't have yet (e.g. a server that wasn't
+    restarted, or was started with an instance-relative path so
+    ``bootstrap_database`` couldn't find ``docs/schema.sql``). Unlike
+    ``bootstrap_database`` it needs NO schema file — the agent migrations all
+    ``CREATE TABLE IF NOT EXISTS`` then ``ALTER TABLE ADD COLUMN`` as needed, so
+    they create-or-upgrade on any DB. Cheap + idempotent; safe to call before
+    every sweep. Returns True on success.
+    """
+    db_path = resolve_sqlite_path(database_url)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db_path)
+    try:
+        _migrate_agent_pending_drafts(conn)
+        _migrate_agent_audit(conn)
+        _migrate_triage_precision_history(conn)
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
 def bootstrap_database() -> Path:
     settings = get_settings()
     db_path = resolve_sqlite_path(settings.database_url)
