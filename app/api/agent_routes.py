@@ -144,7 +144,9 @@ def regenerate(row_id: int, body: RegenerateBody, request: Request) -> dict:
     new_draft = resp.draft or ""
     persisted = bool(body.persist and new_draft.strip())
     if persisted:
-        store.mark_amended(db_url, row_id, amended_draft=new_draft)
+        # Machine re-draft (not a human edit) — tagged so feedback capture
+        # doesn't mine it as a gold correction pair.
+        store.mark_amended(db_url, row_id, amended_draft=new_draft, amended_by="machine")
     return {
         "ok": True,
         "draft": new_draft,

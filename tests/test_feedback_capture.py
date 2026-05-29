@@ -82,6 +82,25 @@ def test_classify_sent_unchanged_is_positive():
     assert pair["edited"] == pair["generated"]
 
 
+def test_classify_machine_regenerate_amend_is_not_a_correction():
+    """A /regenerate re-draft (amended_by='machine') must NOT be mined as a gold
+    human correction — that would train the model on its own output."""
+    assert _classify_row({
+        "draft": "Yes, sounds good.", "body": "Can you confirm?",
+        "amended_draft": "Yes — confirmed, see you at 3pm.", "amended_by": "machine",
+        "status": "amended", "send_state": None, "dismissal_reason": None,
+    }) is None
+
+
+def test_classify_user_amend_still_a_correction():
+    pair = _classify_row({
+        "draft": "Yes, sounds good.", "body": "Can you confirm?",
+        "amended_draft": "Yes — confirmed, see you at 3pm.", "amended_by": "user",
+        "status": "amended", "send_state": None, "dismissal_reason": None,
+    })
+    assert pair is not None and pair["rating"] == 4
+
+
 def test_classify_dismissed_wrong_content_is_negative():
     pair = _classify_row({
         "draft": "Yes, sounds good.", "body": "Can you confirm?",
