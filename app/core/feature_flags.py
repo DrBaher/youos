@@ -426,6 +426,18 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "help": "Max real routing actions per UTC day across all sweeps. 0 (or less) DISABLES routing entirely (no 'unlimited' setting, by design).",
     },
     {
+        "key": "agent.actions.allow_forward",
+        "label": "Mailbox routing: allow forwarding (outbound)",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "Lets a 'forward' rule actually send mail to another address. "
+            "OFF by default and IRREVERSIBLE (a sent forward can't be undone). "
+            "A real forward also requires agent.send.enabled on + the outbound "
+            "kill-switch off + routing not in dry-run — every gate must be open."
+        ),
+    },
+    {
         "key": "agent.extract_facts.enabled",
         "label": "Harvest facts from drafted mail",
         "type": "bool",

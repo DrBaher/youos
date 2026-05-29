@@ -781,6 +781,60 @@ def _maybe_apply_mailbox_actions(
     return results
 
 
+def _maybe_forward(
+    database_url: str | None, account: str, messages: list[InboxMessage],
+) -> list[dict[str, Any]]:
+    """Apply agent.rules 'forward' actions to fetched messages — the OUTBOUND
+    path, kept separate from label routing because it SENDS mail. No-op unless
+    ``agent.actions.enabled`` and a forward rule exists. The actual send is gated
+    inside ``apply_outbound_actions`` (send frontier + allow_forward + not
+    dry-run); dry-run records intent only. Shares the daily cap with routing via
+    the ledger count."""
+    if not database_url or not messages:
+        return []
+    from app.agent import actions as act
+    from app.agent.inbox_fetch import message_age_days
+    from app.agent.rules import OUTBOUND_ACTIONS, evaluate_outbound_actions, load_rules
+    from app.core.sender import extract_domain
+
+    cfg = act._actions_config()
+    if not cfg["enabled"] or cfg["daily_cap"] <= 0:
+        return []
+    rules = load_rules()
+    if not any(r["action"] in OUTBOUND_ACTIONS for r in rules):
+        return []
+
+    history = SenderHistory.from_database_url(database_url)
+    remaining: int | float = cfg["daily_cap"] - act.count_actions_today(database_url, account=account)
+    results: list[dict[str, Any]] = []
+    for msg in messages:
+        acts = evaluate_outbound_actions(
+            rules,
+            sender_email=msg.sender_email,
+            domain=extract_domain(msg.sender or msg.sender_email or ""),
+            subject=msg.subject,
+            body=msg.body,
+            to=msg.headers.get("to"),
+            cc=msg.headers.get("cc"),
+            has_attachment=msg.has_attachment,
+            age_days=message_age_days(msg.received_at),
+            known_contact=history.count_for(msg.sender_email) > 0,
+        )
+        if not acts:
+            continue
+        res = act.apply_outbound_actions(database_url, account, msg, acts, remaining=remaining)
+        for r in res:
+            r["message_id"] = msg.message_id
+            if r.get("status") == "applied":
+                remaining -= 1
+        results.extend(res)
+    if results:
+        fwd = sum(1 for r in results if r.get("status") == "applied")
+        blocked = sum(1 for r in results if r.get("status") == "blocked")
+        logger.info("forward routing: %d forwarded, %d blocked, %d total recorded", fwd, blocked, len(results))
+    return results
+
+
 def _run_sweep(
     *,
     account: str,
@@ -837,6 +891,16 @@ def _run_sweep(
             logger.info("mailbox routing: %d archived message(s) excluded from drafting", len(_archived))
     except Exception as exc:
         logger.warning("mailbox-routing step failed: %s", exc)
+
+    # 1c) Outbound forward routing — SEPARATE from label routing because it sends
+    # mail. Gated inside apply_outbound_actions (send frontier + allow_forward);
+    # off unless a forward rule exists. Failure-isolated. Results join the same
+    # ledger/accumulator (forward never archives, so drafting is unaffected).
+    try:
+        forward_actions = _maybe_forward(database_url, account, messages)
+        mailbox_actions.extend(forward_actions)
+    except Exception as exc:
+        logger.warning("forward-routing step failed: %s", exc)
 
     # 2) Score + filter. Sender-history uses the active instance's DB so a
     # repeat-correspondent gets the prior-pairs boost.

@@ -40,7 +40,11 @@ and ``hold`` (draft + queue for review, but **never auto-act** — the human
 decides). Mailbox-routing actions (applied by the agent-action framework to
 every fetched message): ``label`` / ``archive`` / ``star`` / ``mark_read`` /
 ``mark_important`` / ``mark_unimportant`` — each a reversible Gmail label
-mutation, gated + dry-run by default + undoable.
+mutation, gated + dry-run by default + undoable. Outbound action: ``forward``
+(``value`` = destination email) — SENDS the message on; crosses the never-send
+frontier, so it is gated behind the send frontier (``agent.send.enabled`` +
+outbound kill-switch) PLUS a dedicated ``agent.actions.allow_forward`` opt-in,
+is irreversible (no undo), and at-most-once.
 
     agent:
       rules:
@@ -81,7 +85,15 @@ _MAILBOX_ACTIONS = ("label", "archive", "star", "mark_read", "mark_important", "
 # Public alias so callers (e.g. triage's routing-enable gate) test membership
 # against the single source of truth instead of a hand-copied tuple that drifts.
 MAILBOX_ACTIONS = _MAILBOX_ACTIONS
-_VALID_ACTIONS = _DRAFT_ACTIONS + _MAILBOX_ACTIONS
+# Outbound actions — these SEND mail (cross the never-send frontier), so they
+# are evaluated/executed on a SEPARATE path from the reversible label ops and
+# gated behind the send frontier (agent.send.enabled + outbound kill-switch)
+# PLUS a dedicated opt-in (agent.actions.allow_forward). They are irreversible
+# (no undo) and at-most-once.
+#   forward — forward the message to another address (value = destination email)
+_OUTBOUND_ACTIONS = ("forward",)
+OUTBOUND_ACTIONS = _OUTBOUND_ACTIONS
+_VALID_ACTIONS = _DRAFT_ACTIONS + _MAILBOX_ACTIONS + _OUTBOUND_ACTIONS
 
 # Reserved label namespace owned by gmail_label_sync (label→dismissal feedback).
 # A routing rule must never target these or it would fight the sync that
@@ -164,11 +176,11 @@ def validate_rule(raw: Any) -> tuple[bool, str]:
     action = str(raw.get("action", "")).strip().lower()
     if action not in _VALID_ACTIONS:
         return False, f"unknown action {action!r}; allowed: {list(_VALID_ACTIONS)}"
-    if action in _MAILBOX_ACTIONS and "intent" in match:
-        # Mailbox routing runs before per-message intent classification, so an
-        # 'intent' predicate would never fire there — reject it with a clear
-        # error rather than saving a rule that silently does nothing.
-        return False, "the 'intent' predicate is not supported for label/archive/star rules (routing runs before intent classification)"
+    if action in (_MAILBOX_ACTIONS + _OUTBOUND_ACTIONS) and "intent" in match:
+        # Routing (label/archive/star/...) and outbound (forward) run before
+        # per-message intent classification, so an 'intent' predicate would
+        # never fire there — reject it rather than save a rule that does nothing.
+        return False, "the 'intent' predicate is not supported for routing/forward rules (they run before intent classification)"
     if action == "label":
         name = str(raw.get("value") or "").strip()
         if not name:
@@ -177,7 +189,23 @@ def validate_rule(raw: Any) -> tuple[bool, str]:
             return False, "a label name cannot contain a comma"
         if name.lower().startswith(_RESERVED_LABEL_PREFIX):
             return False, f"label names starting with {_RESERVED_LABEL_PREFIX!r} are reserved"
+    if action == "forward":
+        dest = str(raw.get("value") or "").strip()
+        if not dest:
+            return False, "a 'forward' rule needs a non-empty 'value' (the destination email address)"
+        recipients = [p.strip() for p in dest.split(",") if p.strip()]
+        if not recipients or not all(_looks_like_email(p) for p in recipients):
+            return False, "a 'forward' rule's 'value' must be one or more valid email addresses (comma-separated)"
     return True, ""
+
+
+# A deliberately simple address check (not full RFC 5322): local@domain.tld with
+# no spaces/commas in either side. Enough to reject typos before a real send.
+_EMAIL_RE = re.compile(r"^[^@\s,]+@[^@\s,]+\.[^@\s,]+$")
+
+
+def _looks_like_email(s: str) -> bool:
+    return bool(_EMAIL_RE.match(s.strip()))
 
 
 def normalize_rule(raw: Any) -> dict[str, Any] | None:
@@ -255,6 +283,50 @@ def evaluate_mailbox_actions(
         if action == "label" and not value:
             continue  # a label rule with no label name is a no-op
         key = (action, value or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"type": action, "value": value})
+    return out
+
+
+def evaluate_outbound_actions(
+    rules: list[dict[str, Any]],
+    *,
+    sender_email: str | None,
+    domain: str | None,
+    subject: str | None,
+    body: str | None,
+    intents: list[str] | None = None,
+    cold_outreach: bool = False,
+    to: str | None = None,
+    cc: str | None = None,
+    has_attachment: bool = False,
+    age_days: float | None = None,
+    known_contact: bool = False,
+) -> list[dict[str, Any]]:
+    """Return the OUTBOUND actions (forward) whose match fires for this message.
+    Kept on a separate path from ``evaluate_mailbox_actions`` because forwarding
+    SENDS mail — its executor is gated behind the send frontier + a dedicated
+    opt-in and is irreversible. Each entry is ``{"type": "forward", "value":
+    <destination>}``; a forward with no destination is dropped; dupes collapse."""
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for r in rules:
+        action = r["action"]
+        if action not in _OUTBOUND_ACTIONS:
+            continue
+        if not _rule_matches(
+            r["match"], sender_email=sender_email, domain=domain,
+            intents=intents, cold_outreach=cold_outreach, subject=subject, body=body,
+            to=to, cc=cc, has_attachment=has_attachment, age_days=age_days,
+            known_contact=known_contact,
+        ):
+            continue
+        value = str(r.get("value") or "").strip() or None
+        if not value:
+            continue  # a forward with no destination is a no-op (and unsafe)
+        key = (action, value)
         if key in seen:
             continue
         seen.add(key)

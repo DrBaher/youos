@@ -382,9 +382,9 @@ def _migrate_agent_actions(connection: sqlite3.Connection) -> None:
             thread_id TEXT,
             sender_email TEXT,
             subject TEXT,
-            action_type TEXT NOT NULL,          -- 'label' | 'archive' | 'star'
-            action_value TEXT,                  -- label name (NULL for archive/star)
-            status TEXT NOT NULL,               -- 'applied' | 'dry_run' | 'error' | 'undone'
+            action_type TEXT NOT NULL,          -- 'label' | 'archive' | 'star' | 'mark_*' | 'forward'
+            action_value TEXT,                  -- label name / forward destination (NULL for archive/star/mark_*)
+            status TEXT NOT NULL,               -- 'applied' | 'dry_run' | 'error' | 'undone' | 'forwarding' | 'blocked'
             detail TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             undone_at TEXT
@@ -397,6 +397,17 @@ def _migrate_agent_actions(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE INDEX IF NOT EXISTS idx_agent_actions_dedup "
         "ON agent_actions(message_id, action_type, action_value, status)"
+    )
+    # At-most-once for the OUTBOUND forward action (it sends mail and can't be
+    # undone). A partial UNIQUE index makes the 'forwarding' claim atomic and
+    # cross-process: only one writer can hold a live forward (forwarding/applied/
+    # error) for a given (message, destination), so two concurrent sweeps in
+    # SEPARATE processes can't both pass a check-then-insert and double-send.
+    # Scoped to forward rows so it never constrains the retryable label actions.
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_actions_forward_claim "
+        "ON agent_actions(message_id, action_value) "
+        "WHERE action_type = 'forward' AND status IN ('forwarding', 'applied', 'error')"
     )
 
 

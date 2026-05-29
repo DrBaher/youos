@@ -354,3 +354,134 @@ def test_sweep_routes_every_fetched_message(db, monkeypatch):
     assert ("n1", [], ["INBOX"]) in applied        # newsletter → archived
     assert "p1" not in by_msg                       # no rule matched
     assert sum(1 for r in out if r["status"] == "applied") == 2
+
+
+# --- outbound forward action (b113) ----------------------------------------
+
+
+def _fwd_cfg(enabled=True, dry_run=False, cap=50, allow_forward=True,
+             send_enabled=True, kill_switch=False):
+    return {"enabled": enabled, "dry_run": dry_run, "daily_cap": cap,
+            "allow_forward": allow_forward, "send_enabled": send_enabled,
+            "kill_switch": kill_switch}
+
+
+def _stub_forward(monkeypatch):
+    """Record forward_message calls; return a successful result."""
+    calls = []
+
+    def _fwd(*, account, message_id, to, note=None, backend=None):
+        calls.append({"account": account, "message_id": message_id, "to": to})
+        return gmail_write.GmailForwardResult(message_id="sent1", to=to, raw_response={"id": "sent1"})
+
+    monkeypatch.setattr(gmail_write, "forward_message", _fwd)
+    return calls
+
+
+def test_forward_dry_run_records_without_sending(db, monkeypatch):
+    monkeypatch.setattr(act, "_forward_config", lambda: _fwd_cfg(dry_run=True))
+    calls = _stub_forward(monkeypatch)
+    res = act.apply_outbound_actions(db, "me@x.com", _msg(), [{"type": "forward", "value": "j@b.com"}])
+    assert res[0]["status"] == "dry_run"
+    assert calls == []                       # nothing was sent
+    assert act.list_actions(db)[0]["status"] == "dry_run"
+
+
+def test_forward_blocked_when_gates_closed(db, monkeypatch):
+    calls = _stub_forward(monkeypatch)
+    # allow_forward off
+    monkeypatch.setattr(act, "_forward_config", lambda: _fwd_cfg(allow_forward=False))
+    r1 = act.apply_outbound_actions(db, "me@x.com", _msg(message_id="a"), [{"type": "forward", "value": "j@b.com"}])
+    # send.enabled off
+    monkeypatch.setattr(act, "_forward_config", lambda: _fwd_cfg(send_enabled=False))
+    r2 = act.apply_outbound_actions(db, "me@x.com", _msg(message_id="b"), [{"type": "forward", "value": "j@b.com"}])
+    # kill switch on
+    monkeypatch.setattr(act, "_forward_config", lambda: _fwd_cfg(kill_switch=True))
+    r3 = act.apply_outbound_actions(db, "me@x.com", _msg(message_id="c"), [{"type": "forward", "value": "j@b.com"}])
+    assert r1[0]["status"] == "blocked" and r2[0]["status"] == "blocked" and r3[0]["status"] == "blocked"
+    assert calls == []                       # never sent under any closed gate
+
+
+def test_forward_live_sends_and_is_at_most_once(db, monkeypatch):
+    monkeypatch.setattr(act, "_forward_config", lambda: _fwd_cfg())  # all gates open, live
+    calls = _stub_forward(monkeypatch)
+    a = [{"type": "forward", "value": "j@b.com"}]
+    first = act.apply_outbound_actions(db, "me@x.com", _msg(), a)
+    second = act.apply_outbound_actions(db, "me@x.com", _msg(), a)   # next sweep, same msg+dest
+    assert first[0]["status"] == "applied"
+    assert second[0]["status"] == "skipped_done"
+    assert len(calls) == 1 and calls[0]["to"] == "j@b.com"           # sent EXACTLY once
+
+
+def test_forward_error_is_not_retried(db, monkeypatch):
+    monkeypatch.setattr(act, "_forward_config", lambda: _fwd_cfg())
+    n = {"i": 0}
+
+    def _boom(*, account, message_id, to, note=None, backend=None):
+        n["i"] += 1
+        raise gmail_write.GmailWriteError("smtp boom")
+
+    monkeypatch.setattr(gmail_write, "forward_message", _boom)
+    a = [{"type": "forward", "value": "j@b.com"}]
+    first = act.apply_outbound_actions(db, "me@x.com", _msg(), a)
+    second = act.apply_outbound_actions(db, "me@x.com", _msg(), a)
+    assert first[0]["status"] == "error"
+    assert second[0]["status"] == "skipped_done"   # at-most-once: errored forward NOT retried
+    assert n["i"] == 1
+
+
+def test_forward_distinct_destinations_each_send_once(db, monkeypatch):
+    monkeypatch.setattr(act, "_forward_config", lambda: _fwd_cfg())
+    calls = _stub_forward(monkeypatch)
+    act.apply_outbound_actions(db, "me@x.com", _msg(), [{"type": "forward", "value": "a@x.com"}])
+    act.apply_outbound_actions(db, "me@x.com", _msg(), [{"type": "forward", "value": "b@x.com"}])
+    assert sorted(c["to"] for c in calls) == ["a@x.com", "b@x.com"]
+
+
+def test_forward_cannot_be_undone(db, monkeypatch):
+    monkeypatch.setattr(act, "_forward_config", lambda: _fwd_cfg())
+    _stub_forward(monkeypatch)
+    act.apply_outbound_actions(db, "me@x.com", _msg(), [{"type": "forward", "value": "j@b.com"}])
+    aid = act.list_actions(db)[0]["id"]
+    assert act.get_action(db, aid)["status"] == "applied"
+    out = act.undo_action(db, aid)
+    assert not out["ok"] and out["http_status"] == 409   # irreversible
+
+
+def test_forward_disabled_actions_is_noop(db, monkeypatch):
+    monkeypatch.setattr(act, "_forward_config", lambda: _fwd_cfg(enabled=False))
+    calls = _stub_forward(monkeypatch)
+    assert act.apply_outbound_actions(db, "me@x.com", _msg(), [{"type": "forward", "value": "j@b.com"}]) == []
+    assert calls == []
+
+
+def test_gog_forward_builds_verified_command(monkeypatch):
+    seen = {}
+
+    class _R:
+        returncode = 0
+        stdout = '{"id":"sent9"}'
+        stderr = ""
+
+    monkeypatch.setattr("app.ingestion.gmail_write.subprocess.run",
+                        lambda cmd, **kw: seen.update(cmd=cmd) or _R())
+    res = gmail_write.forward_message(account="me@x.com", message_id="m1", to="j@b.com", backend="gog")
+    cmd = seen["cmd"]
+    assert cmd[:4] == ["gog", "gmail", "forward", "m1"]
+    assert "--to" in cmd and "j@b.com" in cmd
+    assert "--account" in cmd and "--json" in cmd and "--no-input" in cmd
+    assert res.message_id == "sent9" and res.to == "j@b.com"
+
+
+def test_forward_claim_is_atomic_cross_process(db):
+    """The audit's TOCTOU fix: the 'forwarding' claim is DB-enforced (partial
+    UNIQUE index), so a second concurrent claim for the same (message, dest)
+    loses and returns None — it must not go on to send."""
+    action = {"type": "forward", "value": "j@b.com"}
+    first = act._claim_forward(db, account="me@x.com", message=_msg(), action=action)
+    second = act._claim_forward(db, account="me@x.com", message=_msg(), action=action)
+    assert first is not None
+    assert second is None                       # lost the race → caller won't send
+    # a DIFFERENT destination is independent (own claim)
+    other = act._claim_forward(db, account="me@x.com", message=_msg(), action={"type": "forward", "value": "k@b.com"})
+    assert other is not None
