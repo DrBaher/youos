@@ -658,6 +658,49 @@ def test_adjudication_noop_when_disabled(mocked_environment, monkeypatch):
     assert result.kept == 1
 
 
+# --- Fact grounding in the sweep (Phase A3) --------------------------------
+
+
+def test_fact_extraction_runs_for_drafted_mail_when_enabled(mocked_environment, monkeypatch):
+    from app.agent import triage
+    from app.core import facts_extractor
+
+    env = mocked_environment
+    monkeypatch.setattr(triage, "_extract_facts_enabled", lambda: True)
+    calls = []
+    monkeypatch.setattr(
+        facts_extractor, "extract_and_save",
+        lambda note, db_path, **kw: calls.append((note, kw.get("sender_email"))) or [],
+    )
+
+    triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    # Exactly the drafted (Alice) message had its body harvested.
+    assert len(calls) == 1
+    assert "Q3 pricing" in calls[0][0]
+    assert calls[0][1] == "alice@partner.com"
+
+
+def test_fact_extraction_skipped_when_disabled(mocked_environment, monkeypatch):
+    from app.agent import triage
+    from app.core import facts_extractor
+
+    env = mocked_environment
+    monkeypatch.setattr(triage, "_extract_facts_enabled", lambda: False)
+    monkeypatch.setattr(
+        facts_extractor, "extract_and_save",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not extract when disabled")),
+    )
+
+    result = triage.run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+    )
+    assert result.kept == 1
+
+
 # --- Tiered auto-push (audit Tier 2) ---------------------------------------
 
 
