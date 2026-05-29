@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<script>(function(){try{var t=localStorage.getItem('youos-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<script>(function(){try{var p=new URLSearchParams(location.search).get('theme');var t=(p==='light'||p==='dark')?p:localStorage.getItem('youos-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <title>YouOS — Your email. Your model. Your style.</title>
 <meta name="description" content="YouOS is a local-first AI email copilot that learns from your sent Gmail history and drafts replies that sound like you. Runs on your Mac. No cloud, no subscriptions, no tracking.">
 <link rel="canonical" href="https://youos.you.com/">
@@ -98,6 +98,14 @@
   .shot img { display: block; width: 100%; height: auto; }
   .shot .cap { padding: 12px 16px; color: var(--muted); font-size: 0.9rem; }
   .shot.wide { grid-column: 1 / -1; }
+  /* theme-aware screenshots: dark by default; light when the site renders light
+     (OS preference OR the manual toggle, which sets :root[data-theme]). */
+  img.shot-light { display: none; }
+  @media (prefers-color-scheme: light) { img.shot-dark { display: none; } img.shot-light { display: block; } }
+  :root[data-theme="dark"] img.shot-dark { display: block; }
+  :root[data-theme="dark"] img.shot-light { display: none; }
+  :root[data-theme="light"] img.shot-dark { display: none; }
+  :root[data-theme="light"] img.shot-light { display: block; }
 
   /* Backends / no lock-in */
   .backends { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
@@ -236,11 +244,13 @@
         <div class="cap">Paste a thread → YouOS drafts a reply grounded in your real past replies.</div>
       </div>
       <div class="shot">
-        <img src="screenshots/01-draft-reply.png" alt="YouOS draft reply screen" loading="lazy">
+        <img class="shot-dark" src="screenshots/01-draft-reply.png" alt="YouOS draft reply screen" loading="lazy">
+        <img class="shot-light" src="screenshots/01-draft-reply-light.png" alt="YouOS draft reply screen" loading="lazy">
         <div class="cap">Draft reply — confidence-annotated, with “How was this generated?”</div>
       </div>
       <div class="shot">
-        <img src="screenshots/02-stats.png" alt="YouOS stats dashboard" loading="lazy">
+        <img class="shot-dark" src="screenshots/02-stats.png" alt="YouOS stats dashboard" loading="lazy">
+        <img class="shot-light" src="screenshots/02-stats-light.png" alt="YouOS stats dashboard" loading="lazy">
         <div class="cap">Stats — corpus health, persona drift, feedback streaks.</div>
       </div>
     </div>
