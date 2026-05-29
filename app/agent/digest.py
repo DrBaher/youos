@@ -61,6 +61,10 @@ class DigestData:
     awaiting_count: int = 0
     owed_preview: list[dict[str, Any]] = field(default_factory=list)
     awaiting_preview: list[dict[str, Any]] = field(default_factory=list)
+    # Send-frontier accountability ("what I actually sent"). Both 0 unless
+    # auto-send is enabled; shadow = soak-mode (logged, never sent).
+    auto_sent_count: int = 0
+    shadow_sent_count: int = 0
 
 
 def build_digest(
@@ -105,6 +109,9 @@ def build_digest(
     pending_rows = list_pending(database_url, account=account, status="pending", limit=500)
     sent_rows = list_pending(database_url, account=account, status="sent", limit=500)
     pushed_count = sum(1 for r in sent_rows if r.get("gmail_draft_id"))
+    # Send-frontier outcomes (status='sent' carries the honest send_state).
+    auto_sent_count = sum(1 for r in sent_rows if r.get("send_state") == "sent")
+    shadow_sent_count = sum(1 for r in sent_rows if r.get("send_state") == "shadow")
     # b59: top-5 pending rows captured here so the chat formatter doesn't
     # need to re-query (which would also fight test isolation — the
     # formatter ran against get_settings().database_url not the caller's).
@@ -167,6 +174,8 @@ def build_digest(
         awaiting_count=len(awaiting),
         owed_preview=owed[:5],
         awaiting_preview=awaiting[:5],
+        auto_sent_count=auto_sent_count,
+        shadow_sent_count=shadow_sent_count,
     )
 
 
@@ -214,6 +223,10 @@ def _format_text(d: DigestData) -> str:
     lines.append("")
     lines.append(f"Pending review: {d.pending_count}")
     lines.append(f"Pushed to Gmail Drafts: {d.pushed_count}")
+    if d.auto_sent_count:
+        lines.append(f"Auto-sent: {d.auto_sent_count}")
+    if d.shadow_sent_count:
+        lines.append(f"Shadow-sent (soak, not actually sent): {d.shadow_sent_count}")
     lines.append(f"Dismissed: {d.dismissed_count} ({d.dismissal_rate:.0%} of persisted)")
     if d.dismissal_by_reason:
         lines.append("  by reason:")
@@ -379,6 +392,8 @@ def _data_to_dict(d: DigestData) -> dict[str, Any]:
         "awaiting_count": d.awaiting_count,
         "owed_preview": d.owed_preview,
         "awaiting_preview": d.awaiting_preview,
+        "auto_sent_count": d.auto_sent_count,
+        "shadow_sent_count": d.shadow_sent_count,
     }
 
 
