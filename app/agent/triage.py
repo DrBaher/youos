@@ -113,6 +113,8 @@ class TriageDraft:
     standing_instructions_snapshot: str | None = None
     # Optional "what changed" catch-up summary for long threads.
     thread_summary: str | None = None
+    # 0–1 per-draft quality (voice + structure); what auto-push gates on.
+    quality_score: float | None = None
 
 
 @dataclass
@@ -162,6 +164,10 @@ def _auto_push_config() -> dict[str, Any]:
         "enabled": bool(ap.get("enabled", False)),
         "dry_run": bool(ap.get("dry_run", True)),
         "confidence_floor": _f("confidence_floor", 0.85),
+        # Per-draft quality floor — auto-push requires the DRAFT to be good,
+        # not just the email to deserve a reply. Drafts with no quality score
+        # (scoring failed) are treated as below the floor (safe default).
+        "quality_floor": _f("quality_floor", 0.5),
         "min_pairs": _i("known_sender_min_pairs", 3),
         "daily_push_cap": _i("daily_push_cap", 5),
         "whitelist": _parse_autopush_whitelist(ap.get("whitelist")),
@@ -250,6 +256,7 @@ def _maybe_auto_push(
         return []
 
     floor = cfg["confidence_floor"]
+    quality_floor = cfg["quality_floor"]
     min_pairs = cfg["min_pairs"]
     dry_run = cfg["dry_run"]
     cap = cfg["daily_push_cap"]
@@ -269,6 +276,14 @@ def _maybe_auto_push(
         if d.verdict.cold_outreach:
             continue
         if d.verdict.score < floor:
+            continue
+        # The draft itself must be good enough — not just the email worth a
+        # reply. No quality score (scoring failed) → treat as below floor.
+        if d.quality_score is None or d.quality_score < quality_floor:
+            logger.info(
+                "auto-push: row %s held — draft quality %s < floor %.2f",
+                row_id, d.quality_score, quality_floor,
+            )
             continue
         sender_email = d.message.sender_email
         if not _sender_in_whitelist(sender_email, whitelist):
@@ -623,6 +638,7 @@ def _run_sweep(
                     repairs=list(getattr(resp, "repairs", []) or []),
                     standing_instructions_snapshot=effective_instructions,
                     thread_summary=_summary,
+                    quality_score=getattr(resp, "quality_score", None),
                 )
             )
             cap_remaining -= 1  # ζ: one less slot for this UTC day
@@ -662,6 +678,7 @@ def _run_sweep(
                 draft_repairs=d.repairs,
                 standing_instructions_snapshot=d.standing_instructions_snapshot,
                 thread_summary=d.thread_summary,
+                quality_score=d.quality_score,
             )
             if row_id is not None:
                 persisted += 1
