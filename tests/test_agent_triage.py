@@ -680,3 +680,48 @@ def test_auto_push_below_floor_is_not_pushed(mocked_environment, monkeypatch):
         database_url=env["database_url"], configs_dir=env["configs_dir"],
     )
     assert result.auto_pushed == []
+
+
+def test_thread_history_threaded_into_draft_request(monkeypatch, tmp_path):
+    """The agent passes the inbound's thread_history to generate_draft so the
+    drafter has conversation context."""
+    import sqlite3
+
+    from app.agent.inbox_fetch import InboxMessage
+
+    db = tmp_path / "th.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE reply_pairs (id INTEGER PRIMARY KEY, inbound_author TEXT)")
+    from app.db.bootstrap import _migrate_agent_audit, _migrate_agent_pending_drafts
+    _migrate_agent_pending_drafts(conn)
+    _migrate_agent_audit(conn)
+    conn.commit()
+    conn.close()
+
+    msg = InboxMessage(
+        message_id="m1", thread_id="t1", account="you@example.com",
+        sender="Alice <alice@x.com>", sender_email="alice@x.com",
+        subject="Re: Q3", body="Any update on pricing?", headers={},
+        thread_history=[{"sender": "Alice <alice@x.com>", "text": "Here's the deck."}],
+    )
+    monkeypatch.setattr("app.agent.triage.fetch_unread", lambda *a, **k: [msg])
+
+    seen = {}
+
+    class _Resp:
+        draft = "Hi Alice, pricing is unchanged."
+        model_used = "m"
+        repairs: list[str] = []
+
+    def _spy(req, **kw):
+        seen["thread_history"] = req.thread_history
+        return _Resp()
+
+    monkeypatch.setattr("app.generation.service.generate_draft", _spy)
+
+    from app.agent.triage import run_triage
+    run_triage(
+        account="you@example.com",
+        database_url=f"sqlite:///{db}", configs_dir=tmp_path,
+    )
+    assert seen["thread_history"] == [{"sender": "Alice <alice@x.com>", "text": "Here's the deck."}]
