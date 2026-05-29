@@ -365,6 +365,23 @@ def dismissal_stats(
     }
 
 
+def count_pushed_today(database_url: str, *, account: str) -> int:
+    """Count rows for ``account`` pushed to Gmail today (UTC) — any row with a
+    ``gmail_draft_id`` and a ``sent_at`` dated today. Used to enforce the
+    auto-push daily cap. Conservatively counts manual pushes too, so the cap is
+    an upper bound on total Gmail-draft writes per day."""
+    with closing(_connect(database_url)) as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) FROM agent_pending_drafts
+            WHERE account = ? AND gmail_draft_id IS NOT NULL
+              AND date(sent_at) = date('now')
+            """,
+            (account,),
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
 def count_persisted_today(database_url: str, *, account: str) -> int:
     """Count rows persisted for ``account`` since UTC midnight. Used by ζ to
     enforce ``agent.daily_draft_cap`` — defends against a runaway loop on a
