@@ -111,6 +111,8 @@ class TriageDraft:
     # any matched per-sender/intent rules). Persisted so the operator can
     # see why a draft took a stance.
     standing_instructions_snapshot: str | None = None
+    # Optional "what changed" catch-up summary for long threads.
+    thread_summary: str | None = None
 
 
 @dataclass
@@ -465,6 +467,16 @@ def _run_sweep(
     cal_cfg = _calendar_config()
     _need_intent = _rules_need_intent or cal_cfg["enabled"]
 
+    # Long-thread "what changed" summaries (opt-in). Read once per sweep.
+    try:
+        from app.core.config import load_config as _lc
+
+        _st = (((_lc() or {}).get("agent") or {}).get("summarize_threads") or {})
+        _summarize_enabled = bool(_st.get("enabled", False)) if isinstance(_st, dict) else False
+        _summary_min = int(_st.get("min_messages", 4) or 4) if isinstance(_st, dict) else 4
+    except Exception:
+        _summarize_enabled, _summary_min = False, 4
+
     classified = classify_many(
         messages, history=history, threshold=threshold,
         skip_senders=skip_senders, vip_senders=vip_senders,
@@ -566,6 +578,19 @@ def _run_sweep(
             except Exception as exc:
                 logger.warning("calendar slot proposal failed: %s", exc)
 
+        # Long-thread catch-up summary (depends only on the thread, not the
+        # draft). Failure-isolated.
+        _summary: str | None = None
+        if _summarize_enabled and msg.thread_history and len(msg.thread_history) >= _summary_min:
+            try:
+                from app.agent.thread_summary import summarize_thread
+
+                _summary = summarize_thread(
+                    msg.thread_history, subject=msg.subject, min_messages=_summary_min,
+                )
+            except Exception as exc:
+                logger.warning("thread summary failed: %s", exc)
+
         try:
             resp = generate_draft(
                 DraftRequest(
@@ -597,6 +622,7 @@ def _run_sweep(
                     model_used=resp.model_used,
                     repairs=list(getattr(resp, "repairs", []) or []),
                     standing_instructions_snapshot=effective_instructions,
+                    thread_summary=_summary,
                 )
             )
             cap_remaining -= 1  # ζ: one less slot for this UTC day
@@ -606,6 +632,7 @@ def _run_sweep(
                 TriageDraft(
                     message=msg, verdict=verdict, error=f"{type(exc).__name__}: {exc}",
                     standing_instructions_snapshot=effective_instructions,
+                    thread_summary=_summary,
                 )
             )
 
@@ -634,6 +661,7 @@ def _run_sweep(
                 draft_model=d.model_used,
                 draft_repairs=d.repairs,
                 standing_instructions_snapshot=d.standing_instructions_snapshot,
+                thread_summary=d.thread_summary,
             )
             if row_id is not None:
                 persisted += 1
