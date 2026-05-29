@@ -116,3 +116,34 @@ def test_get_mutable_surfaces_includes_composite(tmp_path):
         assert s.step_size == 0.05
         assert s.min_val == 0.0
         assert s.max_val == 1.0
+
+
+def _sc(composite: float):
+    from app.autoresearch.scorer import Scorecard
+    return Scorecard(config_tag="t", pass_rate=0.0, warn_rate=0.0, fail_rate=0.0,
+                     avg_keyword_hit=0.0, avg_confidence=0.0, composite=composite)
+
+
+def test_compare_keeps_small_real_improvement():
+    """A +0.01 composite gain (a few keyword points — the magnitude real prompt
+    wins land at) is now 'improved', not discarded by the old +0.02 bar."""
+    from app.autoresearch.scorer import compare_scorecards
+    assert compare_scorecards(_sc(0.453), _sc(0.463)) == "improved"   # +0.010
+    assert compare_scorecards(_sc(0.45), _sc(0.455)) == "neutral"     # +0.005 below bar
+    assert compare_scorecards(_sc(0.45), _sc(0.43)) == "regressed"    # -0.020
+
+
+def test_compare_thresholds_are_configurable():
+    from app.autoresearch.scorer import compare_scorecards
+    # Raise the bar → the same +0.012 is no longer enough.
+    assert compare_scorecards(_sc(0.45), _sc(0.462), improve_threshold=0.03) == "neutral"
+
+
+def test_load_compare_thresholds_from_config(tmp_path):
+    import yaml as _yaml
+
+    from app.autoresearch.scorer import load_compare_thresholds
+    (tmp_path / "autoresearch.yaml").write_text(_yaml.dump({"improve_threshold": 0.04, "regress_threshold": 0.02}))
+    assert load_compare_thresholds(tmp_path) == (0.04, 0.02)
+    # Missing file → defaults.
+    assert load_compare_thresholds(tmp_path / "nope") == (0.01, 0.01)

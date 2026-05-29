@@ -21,6 +21,7 @@ from app.autoresearch.scorer import (
     compare_scorecards,
     draft_quality_case_weights,
     draft_quality_weighting_enabled,
+    load_compare_thresholds,
     scorecard_from_eval_result,
 )
 from app.evaluation.service import EvalRequest, run_eval_suite
@@ -90,6 +91,10 @@ def run_autoresearch(
     # Ensure logging table exists
     ensure_table(database_url)
 
+    # Keep/revert thresholds (configurable; defaults 0.01). Loaded once so every
+    # iteration this run is judged on the same bar.
+    improve_threshold, regress_threshold = load_compare_thresholds(configs_dir)
+
     # Draft-quality case weights (default off): computed ONCE from the current
     # draft_events log and applied to every scorecard this run, so baseline and
     # candidates stay comparable. Pushes the objective toward the cohorts where
@@ -148,7 +153,10 @@ def run_autoresearch(
         )
         eval_count += 1
         candidate = scorecard_from_eval_result(candidate_result, configs_dir, case_weights=case_weights)
-        outcome = compare_scorecards(current_baseline, candidate)
+        outcome = compare_scorecards(
+            current_baseline, candidate,
+            improve_threshold=improve_threshold, regress_threshold=regress_threshold,
+        )
 
         kept = outcome == "improved"
         if not kept:
