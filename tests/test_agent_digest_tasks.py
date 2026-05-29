@@ -84,6 +84,41 @@ def test_period_key():
     assert dt._period_key("weekly", d).startswith("2026-W")
 
 
+def test_parse_weekday():
+    assert dt._parse_weekday("monday") == 0 and dt._parse_weekday("Fri") == 4
+    assert dt._parse_weekday(6) == 6 and dt._parse_weekday("3") == 3
+    assert dt._parse_weekday("noneday") is None and dt._parse_weekday(9) is None
+    assert dt._parse_weekday(True) is None  # bool is not a weekday
+
+
+def test_validate_weekday_and_minute():
+    assert dt.validate_digest({"name": "N", "query": "x", "schedule": "weekly",
+                               "weekday": "friday", "hour": 8, "minute": 30})[0]
+    assert not dt.validate_digest({"name": "N", "query": "x", "weekday": "funday"})[0]
+    assert not dt.validate_digest({"name": "N", "query": "x", "minute": 75})[0]
+
+
+def test_daily_due_respects_hour_and_minute():
+    tz = ZoneInfo("UTC")
+    spec = _spec(schedule="daily", hour=7, minute=30)
+    at = lambda h, m: datetime(2026, 5, 29, h, m, tzinfo=tz)  # noqa: E731
+    assert dt._is_due(spec, at(7, 30)) is True          # exactly the time
+    assert dt._is_due(spec, at(9, 0)) is True            # later
+    assert dt._is_due(spec, at(7, 29)) is False          # one minute early
+    assert dt._is_due(spec, at(6, 59)) is False
+
+
+def test_weekly_due_respects_weekday_and_time():
+    tz = ZoneInfo("UTC")
+    # Friday = weekday 4. 2026-05-29 is a Friday.
+    spec = _spec(schedule="weekly", weekday=4, hour=9, minute=0)
+    assert datetime(2026, 5, 29, 9, 0, tzinfo=tz).weekday() == 4   # sanity: it's Friday
+    assert dt._is_due(spec, datetime(2026, 5, 29, 9, 0, tzinfo=tz)) is True    # Fri 9:00
+    assert dt._is_due(spec, datetime(2026, 5, 29, 8, 59, tzinfo=tz)) is False  # Fri, too early
+    assert dt._is_due(spec, datetime(2026, 5, 27, 23, 0, tzinfo=tz)) is False  # Wed (before Fri)
+    assert dt._is_due(spec, datetime(2026, 5, 30, 1, 0, tzinfo=tz)) is True    # Sat (catch-up, same ISO week)
+
+
 # --- body ------------------------------------------------------------------
 
 
@@ -294,3 +329,17 @@ def test_run_due_digests_respects_hour(db, monkeypatch):
     later = dt.run_due_digests(db, "me@x.com", now=datetime(2026, 5, 29, 8, 0, tzinfo=tz))
     assert later and later[0]["status"] == "sent"
     assert len(calls) == 1
+
+
+def test_run_due_digests_weekly_respects_weekday(db, monkeypatch):
+    monkeypatch.setattr(dt, "_digest_config", lambda: _cfg())
+    monkeypatch.setattr(dt, "load_digests",
+                        lambda: [_spec(schedule="weekly", weekday=4, hour=9, minute=0)])  # Friday 9am
+    _stub_fetch(monkeypatch, _ITEMS)
+    calls = _stub_send(monkeypatch)
+    monkeypatch.setattr(dt, "build_digest_body", lambda items, **k: "B")
+    tz = ZoneInfo("UTC")
+    wed = dt.run_due_digests(db, "me@x.com", now=datetime(2026, 5, 27, 12, 0, tzinfo=tz))  # Wednesday
+    assert wed == [] and calls == []                      # not its day yet
+    fri = dt.run_due_digests(db, "me@x.com", now=datetime(2026, 5, 29, 9, 0, tzinfo=tz))   # Friday 9am
+    assert fri and fri[0]["status"] == "sent" and len(calls) == 1
