@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.69 — 2026-05-29
+
+### Thread context into autonomous drafting
+
+The biggest draft-accuracy fix: the background agent was drafting blind. `fetch_unread` pulled the whole thread but kept only the latest message, then `strip_quoted_text` removed any inline quotes — so on an ongoing thread the model saw a single message with no history and could confidently answer the wrong question or re-ask something already settled.
+
+- `InboxMessage` now carries `thread_history` (the prior turns `fetch_unread` already had in hand — last 4, oldest→newest, sender + truncated text).
+- `DraftRequest.thread_history` threads it to generation; `generate_draft` prefers this structured history over the brittle regex `From:`-block extraction (which `strip_quoted_text` had usually already defeated), feeding it into the existing `[THREAD HISTORY] … [CURRENT MESSAGE]` prompt block.
+- The agent passes `msg.thread_history` through on every triage draft.
+
++3 tests (history captured from a multi-message thread; none for a single-message thread; history reaches `generate_draft`). Still draft-only, still local — no trust-boundary change.
+
 ## v0.2.0-beta.68 — 2026-05-29
 
 ### Follow-up tracking — the two open loops
