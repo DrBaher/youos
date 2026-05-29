@@ -19,7 +19,9 @@ from pydantic import BaseModel, Field
 from app.agent import store
 
 router = APIRouter(tags=["agent"])
-_TEMPLATE = Path(__file__).resolve().parents[1].parent / "templates" / "triage.html"
+_TEMPLATE_DIR = Path(__file__).resolve().parents[1].parent / "templates"
+_TEMPLATE = _TEMPLATE_DIR / "triage.html"
+_RULES_TEMPLATE = _TEMPLATE_DIR / "rules.html"
 
 
 def _db_url(request: Request) -> str:
@@ -888,3 +890,12 @@ def triage_page() -> HTMLResponse:
     if not _TEMPLATE.exists():
         raise HTTPException(500, "triage template missing")
     return HTMLResponse(_TEMPLATE.read_text(encoding="utf-8"))
+
+
+@router.get("/rules", response_class=HTMLResponse)
+def rules_page() -> HTMLResponse:
+    """Render the filter→action rule builder (CRUD over /api/agent/rules) plus
+    the recent-routing-actions ledger. Served per-request like the other pages."""
+    if not _RULES_TEMPLATE.exists():
+        raise HTTPException(500, "rules template missing")
+    return HTMLResponse(_RULES_TEMPLATE.read_text(encoding="utf-8"))
