@@ -623,8 +623,20 @@ def step_golden_eval(verbose: bool = False) -> bool:
 
         total = summary.get("total", 0)
         passed = summary.get("passed", 0)
+        empty_rate = summary.get("empty_rate", 0.0)
         composite = passed / total if total > 0 else 0.0
-        print(f"  Golden eval: {passed}/{total} passed (composite: {composite:.2f})")
+        print(f"  Golden eval: {passed}/{total} passed (composite: {composite:.2f}, empty {empty_rate:.0%})")
+        # Fail LOUD on a degenerate eval — the model returned mostly nothing, so
+        # the composite is meaningless. This is a broken-pipeline alarm, not a
+        # quality signal; the adapter gate reads `degenerate` and refuses to
+        # promote on it.
+        if summary.get("degenerate"):
+            print(
+                f"  [ALERT] golden eval DEGENERATE — {empty_rate:.0%} of cases returned an empty "
+                f"draft. The model/adapter is likely broken (server down, bad adapter). "
+                f"Refusing to trust this eval."
+            )
+            return False
         print("  [OK] Golden evaluation completed")
         return composite >= 0.5
     except Exception as exc:
@@ -1007,6 +1019,7 @@ def main() -> None:
     # 3b. Golden evaluation (after fine-tuning, before autoresearch)
     _t = time.monotonic()
     golden_composite = None
+    golden_degenerate = False
     try:
         ok = step_golden_eval(verbose=verbose)
         results["golden_eval"] = "OK" if ok else "WARN"
@@ -1020,6 +1033,9 @@ def main() -> None:
             total_g = golden_data.get("total", 0)
             passed_g = golden_data.get("passed", 0)
             golden_composite = round(passed_g / total_g, 4) if total_g > 0 else 0.0
+            golden_degenerate = bool(golden_data.get("degenerate", False))
+        if golden_degenerate:
+            errors.append("golden eval degenerate (mostly empty drafts) — pipeline/model likely broken")
     except Exception as exc:
         results["golden_eval"] = f"error: {exc}"
         steps["golden_eval"] = False
@@ -1041,6 +1057,7 @@ def main() -> None:
                 baseline_composite=_baseline_golden,
                 latest_dir=_latest_dir,
                 previous_dir=_latest_dir.parent / "previous",
+                eval_degenerate=golden_degenerate,
             )
             results["adapter_gate"] = f"{_gate['action']} — {_gate['reason']}"
             if _gate["action"] == "rolled_back":
