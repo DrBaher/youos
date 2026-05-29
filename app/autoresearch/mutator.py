@@ -333,6 +333,14 @@ def get_mutable_surfaces(configs_dir: Path, *, surface_filter: str | None = None
             )
         )
 
+    # Order so the surfaces that actually CHANGE THE DRAFT lead — the prompt
+    # template and per-mode reply length — followed by retrieval, then the
+    # composite-weight meta-surface. A short run (or the nightly's early
+    # iterations) then exercises the high-headroom generation surfaces first,
+    # rather than spending its whole budget on retrieval knobs that (as the
+    # b78 diagnostic showed) rarely change which exemplars are selected.
+    _priority = {"prompts.yaml": 0, "persona.yaml": 1, "retrieval/defaults.yaml": 2, "autoresearch.yaml": 3}
+    surfaces.sort(key=lambda s: _priority.get(s.config_file, 9))
     return surfaces
 
 
