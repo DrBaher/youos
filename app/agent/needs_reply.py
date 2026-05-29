@@ -14,7 +14,6 @@ the tone).
 from __future__ import annotations
 
 import re
-import sqlite3
 from dataclasses import dataclass, field
 from typing import Iterable
 
@@ -149,7 +148,9 @@ class SenderHistory:
         if key in self._cache:
             return self._cache[key]
         try:
-            conn = sqlite3.connect(self._db_path)
+            from app.db.bootstrap import connect
+
+            conn = connect(self._db_path)
             try:
                 row = conn.execute(
                     # Match either "Name <email>" or bare "email" forms.
@@ -253,6 +254,21 @@ def classify(
         sender_email=msg.sender_email,
     )
 
+    # Score the NEW content only — strip quoted reply history and the trailing
+    # signature before looking for questions / imperatives / length. On a
+    # threaded reply, msg.body carries the whole quoted prior message, whose
+    # text almost always contains a '?' or "please"; scoring the raw body
+    # inflated trivial acknowledgements ("thanks", "will do") into drafted
+    # replies. Hard-skip header/sender checks above intentionally ran on the
+    # full message; only the soft content signals use the trimmed text.
+    from app.core.text_utils import extract_new_content, strip_signature
+
+    scoring_text = strip_signature(extract_new_content(msg.body))
+    if not scoring_text.strip():
+        # Degenerate (pure quote / signature only) — fall back to the full body
+        # rather than score emptiness.
+        scoring_text = msg.body
+
     # 3) Lightweight needs-reply score.
     score = 0.5  # start at the boundary; signals tip it one way or the other
 
@@ -285,11 +301,11 @@ def classify(
         reasons.append("transactional template (body)")
         transactional = True
 
-    if "?" in msg.body[-200:]:
+    if "?" in scoring_text[-200:]:
         score += 0.20
         reasons.append("ends with a question")
 
-    if ACTION_VERB_PAT.search(msg.body):
+    if ACTION_VERB_PAT.search(scoring_text):
         # Imperative verbs are ubiquitous in transactional templates
         # ("looking forward to see you", "click here to confirm"). When the
         # template detector already fired, suppress the imperative bonus —
@@ -300,8 +316,20 @@ def classify(
             score += 0.10
             reasons.append("imperative verb present")
 
-    word_count = len(msg.body.split())
-    if word_count <= 120:
+    word_count = len(scoring_text.split())
+    # Trivial acknowledgement: very short NEW content with no question and no
+    # request ("thanks", "sounds good", "will do"). Common as the latest message
+    # on a thread the user already handled — penalize rather than give it the
+    # short-body bonus, so it surfaces for review instead of being auto-drafted.
+    is_trivial_ack = (
+        word_count <= 6
+        and "?" not in scoring_text
+        and not ACTION_VERB_PAT.search(scoring_text)
+    )
+    if is_trivial_ack:
+        score -= 0.15
+        reasons.append(f"trivial acknowledgement ({word_count} words, no request)")
+    elif word_count <= 120:
         score += 0.10
         reasons.append(f"short body ({word_count} words)")
     elif word_count > 800:

@@ -9,6 +9,7 @@ ships from this module.
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -16,6 +17,86 @@ from app.agent.inbox_fetch import InboxMessage, fetch_unread
 from app.agent.needs_reply import NeedsReplyVerdict, SenderHistory, classify_many
 
 logger = logging.getLogger(__name__)
+
+# Per-account sweep serialization. A scheduled tick and a manual / API triage
+# can fire for the same account at once (e.g. the user clicks "Run triage" just
+# as the notification lands). Without serialization both fetch the same unread
+# set and each consume the daily_draft_cap budget independently, so the cap —
+# the runaway-loop guardrail — can be exceeded ~2x; the message_id UNIQUE
+# constraint stops duplicate ROWS but not duplicate model spend. A non-blocking
+# per-account lock makes the second caller a no-op: the in-flight sweep already
+# covers the inbox, and skipping is cheaper than blocking an HTTP request for a
+# full sweep. These locks live for the process; the dict only ever grows by the
+# number of distinct accounts.
+_sweep_locks: dict[str, threading.Lock] = {}
+_sweep_locks_guard = threading.Lock()
+
+
+def _account_lock(account: str) -> threading.Lock:
+    with _sweep_locks_guard:
+        lk = _sweep_locks.get(account)
+        if lk is None:
+            lk = threading.Lock()
+            _sweep_locks[account] = lk
+        return lk
+
+
+def _empty_sweep_accum() -> dict[str, Any]:
+    """Default accumulators so a sweep that fails before producing anything
+    still has well-formed values for the audit row + result."""
+    return {
+        "messages": [], "drafts": [], "skipped": [], "surfaced": [],
+        "persisted": 0, "kept_count": 0, "errors_list": [], "auto_promoted": [],
+    }
+
+
+def _log_sweep_safe(
+    database_url: str,
+    *,
+    account: str,
+    trigger: str,
+    window: str,
+    threshold: float,
+    accum: dict[str, Any],
+    fatal_error: str | None,
+    standing_instructions: str | None,
+    started_at: str,
+    t0: float,
+) -> None:
+    """Append exactly one ``agent_audit`` row for the sweep — on success,
+    partial success, or fatal error. This is what makes a totally-failed sweep
+    (expired gog auth, network down) VISIBLE: previously a sweep that raised
+    before the end never logged, so the observability success-rate stayed green
+    while the agent was dead. Never raises (audit fidelity < agent uptime)."""
+    import time as _time
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
+
+    try:
+        from app.agent.store import log_sweep
+
+        errors = list(accum.get("errors_list") or [])
+        if fatal_error:
+            errors.append(fatal_error)
+        log_sweep(
+            database_url,
+            account=account,
+            trigger=trigger,
+            window=window,
+            threshold=threshold,
+            fetched=len(accum.get("messages") or []),
+            kept=int(accum.get("kept_count") or 0),
+            surfaced=len(accum.get("surfaced") or []),
+            persisted=int(accum.get("persisted") or 0),
+            errors=errors,
+            standing_instructions_snapshot=standing_instructions,
+            started_at=started_at,
+            finished_at=_dt.now(_tz.utc).isoformat(),
+            duration_ms=int((_time.monotonic() - t0) * 1000),
+            auto_promoted_senders=accum.get("auto_promoted") or [],
+        )
+    except Exception as exc:
+        logger.warning("triage audit log failed: %s", exc)
 
 
 @dataclass
@@ -89,6 +170,68 @@ def run_triage(
         except Exception:
             standing_instructions = None
 
+    # #6: serialize sweeps per account. If a sweep for this account is already
+    # running (a scheduled tick overlapping a manual/API run), skip — the
+    # in-flight sweep already covers the inbox, and running a second pass would
+    # only burn model time and risk exceeding the daily cap.
+    lock = _account_lock(account)
+    if not lock.acquire(blocking=False):
+        logger.info(
+            "triage: a sweep for %s is already in progress — skipping this %s run",
+            account, trigger,
+        )
+        return TriageResult(fetched=0, kept=0, drafts=[], skipped=[], surfaced=[], persisted=0)
+
+    accum = _empty_sweep_accum()
+    fatal_error: str | None = None
+    try:
+        accum = _run_sweep(
+            account=account, window=window, limit=limit, threshold=threshold,
+            database_url=database_url, configs_dir=configs_dir, backend=backend,
+            persist=persist, standing_instructions=standing_instructions,
+        )
+    except Exception as exc:
+        # #4: a sweep that raises (auth expiry, network blip, DB locked) must
+        # not vanish — record it so the finally-block audit row captures it,
+        # then re-raise so the scheduler counts the failure and can alert.
+        fatal_error = f"{type(exc).__name__}: {exc}"
+        logger.warning("triage sweep failed for %s (%s): %s", account, trigger, exc)
+        raise
+    finally:
+        lock.release()
+        _log_sweep_safe(
+            database_url, account=account, trigger=trigger, window=window,
+            threshold=threshold, accum=accum, fatal_error=fatal_error,
+            standing_instructions=standing_instructions,
+            started_at=_started_at_iso, t0=_t0,
+        )
+
+    return TriageResult(
+        fetched=len(accum["messages"]),
+        kept=accum["kept_count"],
+        drafts=accum["drafts"],
+        skipped=accum["skipped"],
+        surfaced=accum["surfaced"],
+        persisted=accum["persisted"],
+    )
+
+
+def _run_sweep(
+    *,
+    account: str,
+    window: str,
+    limit: int,
+    threshold: float,
+    database_url: str,
+    configs_dir: Any,
+    backend: str | None,
+    persist: bool,
+    standing_instructions: str | None,
+) -> dict[str, Any]:
+    """The sweep body: label-sync → fetch → classify → cap → draft → persist →
+    auto-promote. Returns the accumulators ``run_triage`` needs for its audit
+    row and result. A raise here propagates to ``run_triage``, whose finally
+    block logs the failure."""
     # b57: Sync Gmail-label dismissals BEFORE fetching unread, so any rows
     # the user labelled YouOS/skip from their phone get dismissed in this
     # sweep (and so the next-step skip_senders / counters reflect them).
@@ -276,47 +419,16 @@ def run_triage(
     except Exception as exc:
         logger.warning("auto-promote skip_senders failed: %s", exc)
 
-    # ε: append one row per sweep — always written, regardless of persist=.
-    # The audit log records *attempts*, not outcomes; --dry-run still leaves
-    # a trace of what was swept (with persisted=0).
-    try:
-        from datetime import datetime as _dt
-        from datetime import timezone as _tz2
-
-        _finished_at_iso = _dt.now(_tz2.utc).isoformat()
-        _duration_ms = int((_time.monotonic() - _t0) * 1000)
-        from app.agent.store import log_sweep
-
-        log_sweep(
-            database_url,
-            account=account,
-            trigger=trigger,
-            window=window,
-            threshold=threshold,
-            fetched=len(messages),
-            kept=kept_count,
-            surfaced=len(surfaced),
-            persisted=persisted,
-            errors=errors_list,
-            standing_instructions_snapshot=standing_instructions,
-            started_at=_started_at_iso,
-            finished_at=_finished_at_iso,
-            duration_ms=_duration_ms,
-            auto_promoted_senders=auto_promoted,
-        )
-    except Exception as exc:
-        # Audit-log failure must not propagate — the agent loop has higher
-        # priorities than its own observability.
-        logger.warning("triage audit log failed: %s", exc)
-
-    return TriageResult(
-        fetched=len(messages),
-        kept=kept_count,
-        drafts=drafts,
-        skipped=skipped,
-        surfaced=surfaced,
-        persisted=persisted,
-    )
+    return {
+        "messages": messages,
+        "drafts": drafts,
+        "skipped": skipped,
+        "surfaced": surfaced,
+        "persisted": persisted,
+        "kept_count": kept_count,
+        "errors_list": errors_list,
+        "auto_promoted": auto_promoted,
+    }
 
 
 # Threshold for auto-promotion. Higher than the UI's min_count=2 because

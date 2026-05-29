@@ -486,9 +486,36 @@ def step_golden_eval(verbose: bool = False) -> bool:
     print(f"{'=' * 60}")
 
     try:
+        from app.core.settings import get_settings
+        from app.generation.service import DraftRequest, generate_draft
         from scripts.run_golden_eval import run_golden_eval, save_results
 
-        summary = run_golden_eval()
+        # Build a REAL generator. The bug: run_golden_eval() was called with no
+        # generate_fn, so every case scored against an EMPTY draft — the one
+        # quality checkpoint after fine-tuning was a no-op (composite ~0 every
+        # night regardless of the new adapter). Resolve db + configs from
+        # settings so it stays instance-aware.
+        settings = get_settings()
+        database_url = settings.database_url
+        configs_dir = settings.configs_dir
+
+        def _generate(prompt_text, *, database_url, configs_dir):
+            response = generate_draft(
+                DraftRequest(inbound_message=prompt_text),
+                database_url=database_url,
+                configs_dir=configs_dir,
+            )
+            return {
+                "draft": response.draft,
+                "detected_mode": response.detected_mode,
+                "detected_language": getattr(response, "detected_language", None),
+            }
+
+        summary = run_golden_eval(
+            generate_fn=_generate,
+            database_url=database_url,
+            configs_dir=configs_dir,
+        )
         save_results(summary)
 
         total = summary.get("total", 0)

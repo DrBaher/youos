@@ -57,39 +57,59 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
 
     SKIP_PREFIXES = ("/login", "/static")
 
-    def __init__(self, app, config: dict):
+    def __init__(self, app, config: dict | None = None, *, config_provider=None):
         super().__init__(app)
-        self.config = config
+        # Resolve config live on every request so a PIN / origin allowlist set
+        # after startup takes effect without a restart. Production passes
+        # ``config_provider=load_config``; a static ``config`` dict (tests, or
+        # an explicit snapshot) is wrapped as a frozen provider.
+        if config_provider is not None:
+            self._config_provider = config_provider
+        elif config is not None:
+            self._config_provider = lambda: config
+        else:
+            self._config_provider = load_config
+        initial = self._config_provider()
+        self.config = initial
         # Load persisted sessions (already pruned of expired tokens on load).
         # Keep the creation timestamps in memory so expiry can be enforced
         # server-side — storing only the keys let captured tokens replay
         # indefinitely until process restart, ignoring SESSION_MAX_AGE.
         self.sessions: dict[str, float] = dict(load_sessions())
         self.limiter = LoginRateLimiter()
-        self.allowed_origins: set[str] = compute_allowed_origins(config)
-        # `None` means "not configured" — token requests aren't origin-
-        # checked. A configured (non-empty) set narrows token auth to those
-        # origins. Computed once at construction; restart to change.
-        self.token_allowed_origins: set[str] | None = compute_token_allowed_origins(config)
+        # Defaults for any external reader; dispatch recomputes per request
+        # from the live config so a post-start change is honored.
+        self.allowed_origins: set[str] = compute_allowed_origins(initial)
+        self.token_allowed_origins: set[str] | None = compute_token_allowed_origins(initial)
 
-    def _origin_check_passes(self, request: Request) -> bool:
+    def _origin_check_passes(self, request: Request, allowed_origins: set[str]) -> bool:
         return request_origin_allowed(
             method=request.method,
             origin=request.headers.get("origin"),
             referer=request.headers.get("referer"),
-            allowed_origins=self.allowed_origins,
+            allowed_origins=allowed_origins,
         )
 
-    def _token_origin_check_passes(self, request: Request) -> bool:
+    def _token_origin_check_passes(self, request: Request, token_allowed_origins: set[str] | None) -> bool:
         return token_request_origin_allowed(
             method=request.method,
             origin=request.headers.get("origin"),
-            allowed_origins=self.token_allowed_origins,
+            allowed_origins=token_allowed_origins,
         )
 
     async def dispatch(self, request: Request, call_next):
-        if not is_auth_enabled(self.config):
+        # Re-read config (lru-cached, cleared on every save_config) per request
+        # rather than the snapshot captured at construction. Otherwise a user
+        # who sets a PIN / origin allowlist on a network-reachable instance
+        # stays UNAUTHENTICATED until the server restarts — a real exposure
+        # window on the privacy-first product. The scheduler already re-reads
+        # config each tick for the same reason.
+        config = self._config_provider()
+        if not is_auth_enabled(config):
             return await call_next(request)
+
+        allowed_origins = compute_allowed_origins(config)
+        token_allowed_origins = compute_token_allowed_origins(config)
 
         path = request.url.path
         if any(path.startswith(p) for p in self.SKIP_PREFIXES):
@@ -100,7 +120,7 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
             created_at = self.sessions.get(token)
             if created_at is not None:
                 if time.time() - created_at < SESSION_MAX_AGE:
-                    if not self._origin_check_passes(request):
+                    if not self._origin_check_passes(request, allowed_origins):
                         return JSONResponse(
                             {"detail": "origin not allowed"},
                             status_code=403,
@@ -123,7 +143,7 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
             if auth_header[:7].lower() == "bearer ":
                 api_token = auth_header[7:].strip()
         if api_token and verify_api_token(api_token):
-            if not self._token_origin_check_passes(request):
+            if not self._token_origin_check_passes(request, token_allowed_origins):
                 return JSONResponse(
                     {"detail": "origin not allowed for token auth"},
                     status_code=403,
@@ -226,21 +246,24 @@ def create_app() -> FastAPI:
     app.state.settings = settings
     app.state.config = config
 
-    auth_middleware = PinAuthMiddleware(app, config)
+    auth_middleware = PinAuthMiddleware(app, config_provider=load_config)
     app.add_middleware(BaseHTTPMiddleware, dispatch=auth_middleware.dispatch)
     app.state.auth = auth_middleware
 
     # ── Login routes ──
     @app.get("/login", response_class=HTMLResponse)
     async def login_page(request: Request):
-        if not is_auth_enabled(config):
+        # Re-read config so a PIN set after startup makes /login functional
+        # (matches the middleware's per-request read).
+        if not is_auth_enabled(load_config()):
             return RedirectResponse(url="/feedback", status_code=303)
         template = (TEMPLATES_DIR / "login.html").read_text(encoding="utf-8")
         return HTMLResponse(template.replace("{{ error }}", ""))
 
     @app.post("/login")
     async def login_submit(request: Request):
-        if not is_auth_enabled(config):
+        current_config = load_config()
+        if not is_auth_enabled(current_config):
             return RedirectResponse(url="/feedback", status_code=303)
 
         client_ip = request.client.host if request.client else "unknown"
@@ -253,7 +276,7 @@ def create_app() -> FastAPI:
 
         form = await request.form()
         pin = form.get("pin", "")
-        stored_hash = config.get("server", {}).get("pin", "")
+        stored_hash = current_config.get("server", {}).get("pin", "")
 
         if verify_pin(str(pin), stored_hash):
             auth_middleware.limiter.reset(client_ip)

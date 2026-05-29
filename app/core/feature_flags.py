@@ -96,6 +96,20 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "help": "How often the background loop sweeps unread mail. Minimum 1; the loop enforces a 60-second floor for safety.",
     },
     {
+        "key": "agent.threshold",
+        "label": "Needs-reply threshold",
+        "type": "float",
+        "default": 0.6,
+        "min": 0.4,
+        "max": 0.85,
+        "help": (
+            "Score cutoff for drafting a reply. Higher = stricter (fewer "
+            "false positives, but more real mail missed); lower = looser. "
+            "Clamped to 0.4–0.85. Prefer feedback-driven tuning over manual "
+            "tweaks. Read by the background scheduler and /api/agent/triage."
+        ),
+    },
+    {
         "key": "agent.notify_macos",
         "label": "macOS notification on new drafts",
         "type": "bool",
@@ -219,6 +233,17 @@ def coerce_value(flag: dict, raw: Any) -> Any:
         if s not in flag["choices"]:
             raise ValueError(f"expected one of {flag['choices']}, got {raw!r}")
         return s
+    if flag["type"] == "float":
+        try:
+            v = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"expected a number, got {raw!r}") from exc
+        lo, hi = flag.get("min"), flag.get("max")
+        if lo is not None:
+            v = max(float(lo), v)
+        if hi is not None:
+            v = min(float(hi), v)
+        return v
     return raw
 
 

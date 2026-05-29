@@ -51,6 +51,61 @@ def strip_quoted_text(text: str) -> str:
     return text
 
 
+# Conservative sign-off / signature start markers. A line that *is* one of
+# these (optionally with a trailing name on the same/next lines) marks the end
+# of the message's substantive content.
+_SIGNATURE_START = re.compile(
+    r"^\s*(?:--\s*$|"
+    r"(?:best|best regards|regards|kind regards|warm regards|cheers|thanks|"
+    r"thank you|sincerely|yours|talk soon|sent from my )\b.{0,40}$)",
+    re.IGNORECASE,
+)
+
+
+def extract_new_content(text: str) -> str:
+    """Return only the new (non-quoted) content of an email body.
+
+    Like :func:`strip_quoted_text` but WITHOUT the 50-char fallback: a trivial
+    reply on a long thread ("thanks", "will do") returns just that short new
+    content, not the whole quoted history. This matters for needs-reply
+    scoring, where the quoted block almost always contains a stray '?' or
+    imperative that would otherwise inflate a no-op acknowledgement to a
+    drafted reply. Falls back to the full text only when no quote boundary is
+    found at all.
+    """
+    if not text:
+        return text
+    earliest_pos = len(text)
+    for pattern in _QUOTE_BOUNDARY_PATTERNS:
+        match = pattern.search(text)
+        if match and match.start() < earliest_pos:
+            earliest_pos = match.start()
+    if earliest_pos < len(text):
+        return text[:earliest_pos].rstrip()
+    return text
+
+
+def strip_signature(text: str) -> str:
+    """Best-effort removal of a trailing signature/sign-off block.
+
+    Scans the last few lines for a sign-off marker (``--``, ``Best,``,
+    ``Regards``, ``Sent from my …``) and cuts from there. Conservative: only
+    fires in the tail of the message and keeps the original if cutting would
+    leave nothing, so it can't eat the substance of a short reply.
+    """
+    if not text:
+        return text
+    lines = text.splitlines()
+    # Only look in the last 8 lines so a "Best regards," that opens a sentence
+    # mid-body isn't mistaken for the sign-off.
+    start = max(0, len(lines) - 8)
+    for i in range(start, len(lines)):
+        if _SIGNATURE_START.match(lines[i]):
+            head = "\n".join(lines[:i]).rstrip()
+            return head if head else text
+    return text
+
+
 def detect_language(text: str) -> str:
     """Detect language of text. Returns ISO 639-1 code (e.g. 'en', 'de', 'ar').
 
