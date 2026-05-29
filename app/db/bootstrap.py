@@ -329,6 +329,16 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
         connection.execute(
             "ALTER TABLE agent_pending_drafts ADD COLUMN feedback_captured INTEGER NOT NULL DEFAULT 0"
         )
+    # Provenance of an amendment: 'user' (a human verbatim edit, a real
+    # correction signal) vs 'machine' (a /regenerate re-draft the user never
+    # approved). Feedback capture must only treat 'user' edits as gold pairs.
+    if "amended_by" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN amended_by TEXT")
+    # Phase D: a matched ``hold`` rule excludes this row from auto-push AND
+    # auto-send. Persisted (not just in-memory) so a manually-pushed hold row
+    # can't later be picked up by the auto-send sweep.
+    if "hold" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN hold INTEGER NOT NULL DEFAULT 0")
 
 
 def _migrate_triage_precision_history(connection: sqlite3.Connection) -> None:

@@ -25,6 +25,14 @@ def test_classify_network():
     assert classify_sweep_failure("getaddrinfo failed").kind == "network"
 
 
+def test_classify_more_auth_and_rate_variants():
+    # Google client-library shapes that previously fell through to 'unknown'.
+    assert classify_sweep_failure("google.auth.exceptions.RefreshError").kind == "auth"
+    assert classify_sweep_failure("Request had insufficient authentication scopes").kind == "auth"
+    assert classify_sweep_failure("403 access denied").kind == "auth"
+    assert classify_sweep_failure("RESOURCE_EXHAUSTED: quota").kind == "rate_limit"
+
+
 def test_classify_unknown():
     fc = classify_sweep_failure("KeyError: 'foo'")
     assert fc.kind == "unknown"
@@ -83,3 +91,20 @@ def test_empty_takes_precedence_over_fallback_classification():
     h = sweep_health(drafts)
     assert h["empties"] == 3
     assert h["cloud_fallbacks"] == 0
+
+
+def test_sentinel_model_and_placeholder_body_count_as_empty_not_cloud():
+    """A 'no model available' placeholder (model_used='none' or a '[no model...'
+    body) is a broken model, not a cloud fallback — so it raises the empty
+    alarm (right remediation), not the fallback one."""
+    drafts = [
+        _Draft(model_used="none", draft="[no model available — install one]"),
+        _Draft(model_used="error", draft="[draft generation failed]"),
+        _Draft(model_used="claude-cloud", draft="[no model available]"),  # placeholder body
+        _Draft(),  # one healthy
+    ]
+    h = sweep_health(drafts)
+    assert h["empties"] == 3
+    assert h["cloud_fallbacks"] == 0
+    assert h["spike"]["empty"] is True
+    assert h["spike"]["fallback"] is False

@@ -310,9 +310,14 @@ async def _loop(app) -> None:
                         None, partial(_run_one_sweep, account, cfg)
                     )
                     total_persisted += int(n)
-                    # Recovery: announce once if it had been failing.
-                    if failures.get(account, 0) > 0 and cfg["notify_macos"]:
-                        _notify_macos(
+                    # Recovery: announce once on every channel (not just macOS)
+                    # if it had been failing, and clear the failure debounce so a
+                    # later re-failure isn't wrongly suppressed.
+                    if failures.get(account, 0) > 0:
+                        for k in [k for k in _LAST_ALERT_TS if k.endswith(f":{account}") and k.startswith("sweep_fail:")]:
+                            _LAST_ALERT_TS.pop(k, None)
+                        _alert(
+                            cfg, kind="recovered", account=account,
                             title="YouOS",
                             message=f"Agent recovered — sweeps for {account} are working again.",
                         )

@@ -391,7 +391,8 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "default": 5,
         "help": (
             "Max real sends per UTC day across all sweeps — the blast-radius "
-            "bound (mirrors the auto-push daily cap). 0 disables the cap."
+            "bound (mirrors the auto-push daily cap). 0 (or less) DISABLES "
+            "auto-send entirely; there is no 'unlimited' setting by design."
         ),
     },
     {
