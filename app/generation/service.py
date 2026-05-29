@@ -230,6 +230,10 @@ class DraftResponse:
     # strength). This is what an autonomous action should gate on — "is the draft
     # itself good enough to act on", not just "does this email deserve a reply".
     quality_score: float | None = None
+    # Verify-before-accept findings (app/generation/verify.py). A blocking issue
+    # (language mismatch, invented email/link) collapses quality_score so the
+    # auto-push quality floor holds the draft for review. Empty when clean.
+    verify_issues: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -2203,6 +2207,26 @@ def generate_draft(
     except Exception:
         _quality = None
 
+    # Verify-before-accept: deterministic safety checks (language match, no
+    # invented email/link/amount). A blocking issue collapses quality_score so
+    # the auto-push quality floor holds the draft for review. Failure-isolated.
+    _verify_issues: list[str] = []
+    try:
+        from app.generation.verify import verify_draft
+
+        _vr = verify_draft(
+            draft,
+            inbound=request.inbound_message,
+            thread_history=request.thread_history,
+            account_email=request.account_email,
+            sender=request.sender,
+        )
+        _verify_issues = _vr.issues
+        if _vr.blocking and _quality is not None:
+            _quality = min(_quality, 0.1)
+    except Exception:
+        pass
+
     return DraftResponse(
         draft=draft,
         detected_mode=detected_mode,
@@ -2221,4 +2245,5 @@ def generate_draft(
         repairs=repairs,
         candidates=candidates,
         quality_score=_quality,
+        verify_issues=_verify_issues,
     )
