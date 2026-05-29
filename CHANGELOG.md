@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.88 — 2026-05-29
+
+### Calibrate the needs-reply score to a real probability (autonomy Phase A2)
+
+The classifier's score is an additive heuristic — 0.85 does **not** mean "85% likely to deserve a reply." Calibration fixes that: it learns, from the user's own past verdicts, what fraction of messages at each score level actually deserved a reply, and maps a raw score to that empirical probability. A calibrated probability is what an *act* decision should eventually gate on, because it can be tied to a real precision target instead of a meaningless cutoff.
+
+- New `app/agent/calibration.py`: bins labeled `(score, outcome)` pairs (outcome from the same truth-mapping the precision harness uses), Laplace-smooths each bin's positive rate, then enforces monotonicity with pool-adjacent-violators (isotonic regression). Deterministic, dependency-free. `Calibrator.probability(score)` interpolates between knots; JSON-serializable; persisted to `var/triage_calibrator.json`.
+- **Dormant until there's data**: `fit()` returns `None` below `min_samples` (50). A fresh instance (baheros today has 0 decided rows) keeps the raw heuristic; the calibrator self-activates as real verdicts accumulate.
+- Wired into the sweep (`_maybe_calibrate`): when a calibrator exists, each verdict gets a `calibrated_score` and a `calibrated P=…` reason (persisted in `reasons_json`); never changes the `needs_reply` decision. New nightly step `step_fit_calibrator` (after the precision snapshot) refits from the last 90 days of verdicts.
+
++10 tests (`test_calibration.py`: PAV monotonicity/weighting, min-sample dormancy, interpolation/clamping, serialize roundtrip, fit-from-database). Never-send boundary unchanged.
+
 ## v0.2.0-beta.87 — 2026-05-29
 
 ### Real-mail triage precision, tracked over time (autonomy Phase A2)
