@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.87 — 2026-05-29
+
+### Real-mail triage precision, tracked over time (autonomy Phase A2)
+
+The fixture harness scores the classifier against hand-labeled cases; it had never measured the agent on the *actual* inbox. Now we score the draft decision against the user's own verdicts on the queue — the only ground truth that reflects live behavior — and record it nightly so the false-positive rate is visible to the operator *and* to autoresearch.
+
+- New `app/evaluation/real_mail_eval.py`: `evaluate_real_mail()` mines decided `agent_pending_drafts` rows into a confusion matrix. What the agent *predicted* is its tier (`draft` = positive, `surface` = abstain/negative); what was *true* is the verdict — `sent`/`amended` (and `dismissed:wrong_content`) = the message deserved a reply; `dismissed:noise`/`wrong_sender` = it didn't; `already_handled`/`other`/no-reason/`pending` = excluded (can't label the needs-reply decision). Reports precision/recall/F1 + the false positives broken down by reason and by sender.
+- New `triage_precision_history` table (migration) + `record_snapshot` / `precision_history` / `run_and_record`. A new nightly step (`step_triage_precision` in `nightly_pipeline.py`, after autoresearch) snapshots it each run; read-only, best-effort, never fails the pipeline.
+- New read endpoint `GET /api/agent/precision` returns the live metric (recomputed now) plus the recorded history for the /triage observability surface.
+
++14 tests (`test_real_mail_eval.py`). Read-only over the queue; never-send boundary unchanged.
+
 ## v0.2.0-beta.86 — 2026-05-29
 
 ### Borderline LLM adjudication — a broadcast veto (autonomy Phase A2)

@@ -48,6 +48,7 @@ def bootstrap_database() -> Path:
         _migrate_draft_events(connection)
         _migrate_agent_pending_drafts(connection)
         _migrate_agent_audit(connection)
+        _migrate_triage_precision_history(connection)
         _populate_fts(connection)
         connection.commit()
     finally:
@@ -297,6 +298,39 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
     # Per-draft quality score (0–1) — what auto-push/auto-send gate on.
     if "quality_score" not in _cols:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN quality_score REAL")
+
+
+def _migrate_triage_precision_history(connection: sqlite3.Connection) -> None:
+    """Time series of the draft-decision's precision/recall measured on REAL
+    mail (autonomy Phase A2).
+
+    One row per snapshot (run nightly). Ground truth comes from the user's own
+    verdicts on queued rows — sent/amended = the message deserved a reply;
+    dismissed-as-noise/wrong-sender = it didn't — so the live false-positive
+    rate is visible over time to the operator *and* to autoresearch. Read-only
+    aggregate; never rewritten.
+    """
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS triage_precision_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account TEXT,
+            computed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            window_days INTEGER NOT NULL,
+            precision REAL,
+            recall REAL,
+            f1 REAL,
+            tp INTEGER NOT NULL DEFAULT 0,
+            fp INTEGER NOT NULL DEFAULT 0,
+            fn INTEGER NOT NULL DEFAULT 0,
+            tn INTEGER NOT NULL DEFAULT 0,
+            sample_size INTEGER NOT NULL DEFAULT 0,
+            excluded INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_triage_precision_computed "
+        "ON triage_precision_history(computed_at DESC)"
+    )
 
 
 def _migrate_agent_audit(connection: sqlite3.Connection) -> None:

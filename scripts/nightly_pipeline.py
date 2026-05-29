@@ -431,6 +431,44 @@ def step_snapshot_daily(verbose: bool = False) -> dict:
         return {"ok": False, "skipped": False, "error": str(exc)}
 
 
+def step_triage_precision(verbose: bool = False) -> str:
+    """Snapshot the draft decision's precision/recall on real mail.
+
+    Ground truth is the user's own verdicts on queued rows (sent/amended =
+    deserved a reply; dismissed-as-noise/wrong-sender = didn't). Records one
+    row in ``triage_precision_history`` so the false-positive rate is trackable
+    over time and by autoresearch. Read-only over the queue; a fresh instance
+    with nothing decided yet just records an empty snapshot.
+    """
+    print(f"\n{'=' * 60}")
+    print("STEP: Triage precision (real mail)")
+    print(f"{'=' * 60}")
+
+    db_path = resolve_sqlite_path(get_settings().database_url)
+    if not db_path.exists():
+        print("  [SKIP] triage_precision — DB not yet created")
+        return "skipped (no DB)"
+
+    from app.evaluation.real_mail_eval import run_and_record
+
+    database_url = f"sqlite:///{db_path}"
+    result = run_and_record(database_url, days=30)
+    conf = result["confusion"]
+    prec = result["precision"]
+    rec = result["recall"]
+    n = result["sample_size"]
+    prec_s = f"{prec:.2f}" if prec is not None else "n/a"
+    rec_s = f"{rec:.2f}" if rec is not None else "n/a"
+    print(
+        f"  [OK] precision={prec_s} recall={rec_s} "
+        f"(tp={conf['tp']} fp={conf['fp']} fn={conf['fn']} tn={conf['tn']}, "
+        f"n={n}, excluded={result['excluded']})"
+    )
+    if result["fp_by_reason"]:
+        print(f"  false positives by reason: {result['fp_by_reason']}")
+    return f"precision={prec_s} recall={rec_s} n={n}"
+
+
 def step_deduplicate(verbose: bool = False) -> bool:
     """Run corpus deduplication (best-effort)."""
     return _run_step(
@@ -996,6 +1034,18 @@ def main() -> None:
             steps["autoresearch"] = False
             errors.append(f"Autoresearch error: {exc}")
     _record_duration("autoresearch", _t)
+
+    # 6. Real-mail triage precision snapshot — track the draft decision's
+    # precision/recall against the user's own verdicts so the false-positive
+    # rate is visible over time. Read-only, best-effort, never fails the run.
+    _t = time.monotonic()
+    try:
+        results["triage_precision"] = step_triage_precision(verbose=verbose)
+        steps["triage_precision"] = True
+    except Exception as exc:
+        results["triage_precision"] = f"error: {exc}"
+        steps["triage_precision"] = True  # observability step never fails the run
+    _record_duration("triage_precision", _t)
 
     # Include recent git log after autoresearch
     try:
