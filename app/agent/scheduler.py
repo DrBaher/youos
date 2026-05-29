@@ -171,7 +171,11 @@ def _maybe_push_webhook(app, account: str, cfg: dict[str, Any]) -> None:
     now = _time.monotonic()
     min_interval = cfg.get("notify_min_interval_minutes", 10) * 60
 
-    if (now - prev.get("ts", 0.0)) < min_interval:
+    last_ts = prev.get("ts")
+    # Throttle only relative to a PRIOR push. ``monotonic()`` is seconds since an
+    # arbitrary point (often small on a freshly-booted host), so comparing
+    # against a 0.0 default would wrongly throttle the very first push.
+    if last_ts is not None and (now - last_ts) < min_interval:
         return  # throttle — don't flap
     if prev.get("sig") == sig:
         return  # nothing changed since the last push
