@@ -207,6 +207,19 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "help": "Only auto-push drafts whose needs-reply score is at least this. Clamped 0.6–1.0.",
     },
     {
+        "key": "agent.auto_push.quality_floor",
+        "label": "Auto-push draft-quality floor",
+        "type": "float",
+        "default": 0.5,
+        "min": 0.0,
+        "max": 1.0,
+        "help": (
+            "Only auto-push when the DRAFT's quality score (voice fidelity + "
+            "structure, generic acks ~0) is at least this — so a high "
+            "needs-reply score plus a weak draft is held for review, not pushed."
+        ),
+    },
+    {
         "key": "agent.auto_push.known_sender_min_pairs",
         "label": "Auto-push: min prior reply pairs with the sender",
         "type": "int",

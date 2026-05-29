@@ -294,6 +294,9 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
     # reviewer can catch up on a long thread without reading it.
     if "thread_summary" not in _cols:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN thread_summary TEXT")
+    # Per-draft quality score (0–1) — what auto-push/auto-send gate on.
+    if "quality_score" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN quality_score REAL")
 
 
 def _migrate_agent_audit(connection: sqlite3.Connection) -> None:
