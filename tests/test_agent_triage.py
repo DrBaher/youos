@@ -792,7 +792,10 @@ def test_calendar_proposes_slots_for_meeting_requests(monkeypatch, tmp_path):
     conn = sqlite3.connect(db)
     conn.execute("CREATE TABLE reply_pairs (id INTEGER PRIMARY KEY, inbound_author TEXT)")
     from app.db.bootstrap import _migrate_agent_audit, _migrate_agent_pending_drafts
-    _migrate_agent_pending_drafts(conn); _migrate_agent_audit(conn); conn.commit(); conn.close()
+    _migrate_agent_pending_drafts(conn)
+    _migrate_agent_audit(conn)
+    conn.commit()
+    conn.close()
 
     msg = InboxMessage(
         message_id="m1", thread_id="t1", account="you@example.com",
@@ -811,7 +814,9 @@ def test_calendar_proposes_slots_for_meeting_requests(monkeypatch, tmp_path):
     seen = {}
 
     class _Resp:
-        draft = "ok"; model_used = "m"; repairs: list[str] = []
+        draft = "ok"
+        model_used = "m"
+        repairs: list[str] = []
 
     def _spy(req, **kw):
         seen["si"] = req.standing_instructions
@@ -836,7 +841,10 @@ def test_thread_summary_persisted_for_long_threads(monkeypatch, tmp_path):
     conn = sqlite3.connect(db)
     conn.execute("CREATE TABLE reply_pairs (id INTEGER PRIMARY KEY, inbound_author TEXT)")
     from app.db.bootstrap import _migrate_agent_audit, _migrate_agent_pending_drafts
-    _migrate_agent_pending_drafts(conn); _migrate_agent_audit(conn); conn.commit(); conn.close()
+    _migrate_agent_pending_drafts(conn)
+    _migrate_agent_audit(conn)
+    conn.commit()
+    conn.close()
 
     msg = InboxMessage(
         message_id="m1", thread_id="t1", account="you@example.com",
@@ -851,7 +859,9 @@ def test_thread_summary_persisted_for_long_threads(monkeypatch, tmp_path):
                         lambda hist, **kw: "Pricing agreed; start date open.")
 
     class _Resp:
-        draft = "ok"; model_used = "m"; repairs: list[str] = []
+        draft = "ok"
+        model_used = "m"
+        repairs: list[str] = []
     monkeypatch.setattr("app.generation.service.generate_draft", lambda req, **kw: _Resp())
 
     triage.run_triage(account="you@example.com", database_url=f"sqlite:///{db}", configs_dir=tmp_path)
