@@ -457,6 +457,22 @@ def test_digest_update_delete_out_of_range_404(authed_client):
     assert authed_client.delete("/api/agent/digests/999").status_code == 404
 
 
+def test_digest_pending_and_collect_endpoints(authed_client):
+    r = authed_client.get("/api/agent/digests/pending")
+    assert r.status_code == 200 and "pending" in r.json()
+    # collecting a non-existent/not-ready run is a 409 (atomic claim found nothing)
+    assert authed_client.post("/api/agent/digests/99999/collected").status_code == 409
+
+
+def test_digest_validate_accepts_destination_and_prompt(authed_client):
+    ok = authed_client.post("/api/agent/digests/validate", json={
+        "name": "N", "query": "label:X", "destination": "agent", "prompt": "what needs me"})
+    assert ok.status_code == 200 and ok.json()["ok"] is True
+    bad = authed_client.post("/api/agent/digests/validate", json={
+        "name": "N", "query": "x", "destination": "telegram"})
+    assert bad.status_code == 200 and bad.json()["ok"] is False
+
+
 def test_triage_page_includes_ux_upgrades(authed_client):
     """Smoke check: the new b41 UX controls are present in the rendered HTML.
 

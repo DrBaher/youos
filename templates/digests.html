@@ -48,7 +48,8 @@
   .lnk.del:hover { color: var(--error); }
   pre.preview { white-space: pre-wrap; word-break: break-word; background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 0.82rem; max-height: 360px; overflow: auto; margin-top: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .badge { font-size: 0.72rem; padding: 2px 7px; border-radius: 10px; font-weight: 600; }
-  .badge.sent { background: rgba(0,196,167,0.18); color: var(--teal); }
+  .badge.sent, .badge.collected { background: rgba(0,196,167,0.18); color: var(--teal); }
+  .badge.ready { background: rgba(0,196,167,0.10); color: var(--teal); }
   .badge.dry_run, .badge.empty, .badge.skipped_done { background: var(--surface-2); color: var(--muted-2); }
   .badge.blocked, .badge.error { background: rgba(220,80,80,0.16); color: var(--error); }
   .led-item { display: flex; gap: 9px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--surface); font-size: 0.83rem; }
@@ -91,6 +92,8 @@
       <div><label class="fld" for="name">Name</label><input type="text" id="name" placeholder="Newsletters"></div>
       <div><label class="fld" for="model">Summary model</label>
         <select id="model"><option value="local">local (on-device, private)</option><option value="cloud">cloud (Claude, sharper)</option></select></div>
+      <div><label class="fld" for="destination">Destination</label>
+        <select id="destination"><option value="agent">agent (pull via CLI/MCP/API — no send)</option><option value="inbox">inbox (email — send-gated)</option></select></div>
     </div>
     <div style="margin-top:12px;"><label class="fld" for="query">Gmail query (which emails)</label>
       <input type="text" id="query" placeholder="category:promotions newer_than:1d"></div>
@@ -143,7 +146,7 @@
   const $ = (id) => document.getElementById(id);
   const F = { name: $("name"), query: $("query"), prompt: $("prompt"), schedule: $("schedule"), weekday: $("weekday"),
               hour: $("hour"), minute: $("minute"), maxmsg: $("maxmsg"), model: $("model"),
-              account: $("account"), deliver: $("deliver"), archive: $("archive"), enabled: $("enabled") };
+              destination: $("destination"), account: $("account"), deliver: $("deliver"), archive: $("archive"), enabled: $("enabled") };
   const saveBtn = $("saveBtn"), cancelBtn = $("cancelBtn"), vstatus = $("vstatus");
   const formTitle = $("formTitle"), list = $("list"), ledger = $("ledger"), preview = $("preview"), gate = $("gate");
   const WD = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
@@ -156,7 +159,7 @@
       name: F.name.value.trim(), query: F.query.value.trim(), prompt: F.prompt.value.trim(),
       schedule: F.schedule.value, hour: parseInt(F.hour.value, 10) || 0,
       minute: parseInt(F.minute.value, 10) || 0, max_messages: parseInt(F.maxmsg.value, 10) || 50,
-      summary_model: F.model.value, account: F.account.value.trim(), deliver_to: F.deliver.value.trim(),
+      summary_model: F.model.value, destination: F.destination.value, account: F.account.value.trim(), deliver_to: F.deliver.value.trim(),
       then_archive: F.archive.checked, enabled: F.enabled.checked,
     };
     if (F.schedule.value === "weekly") b.weekday = F.weekday.value;
@@ -195,7 +198,7 @@
     editIndex = null;
     F.name.value = ""; F.query.value = ""; F.prompt.value = ""; F.schedule.value = "daily"; F.weekday.value = "monday";
     F.hour.value = "7"; F.minute.value = "0"; F.maxmsg.value = "50"; F.model.value = "local";
-    F.account.value = ""; F.deliver.value = ""; F.archive.checked = false; F.enabled.checked = true;
+    F.destination.value = "agent"; F.account.value = ""; F.deliver.value = ""; F.archive.checked = false; F.enabled.checked = true;
     syncWeekday(); formTitle.textContent = "Add a digest"; cancelBtn.style.display = "none";
     saveBtn.textContent = "Save digest"; saveBtn.disabled = true; vstatus.textContent = "";
   }
@@ -205,7 +208,7 @@
     F.name.value = d.name || ""; F.query.value = d.query || ""; F.prompt.value = d.prompt || ""; F.schedule.value = d.schedule || "daily";
     F.weekday.value = WD[d.weekday || 0] || "monday"; F.hour.value = d.hour ?? 7; F.minute.value = d.minute ?? 0;
     F.maxmsg.value = d.max_messages ?? 50; F.model.value = d.summary_model || "local";
-    F.account.value = d.account || ""; F.deliver.value = d.deliver_to || ""; F.archive.checked = !!d.then_archive; F.enabled.checked = d.enabled !== false;
+    F.destination.value = d.destination || "agent"; F.account.value = d.account || ""; F.deliver.value = d.deliver_to || ""; F.archive.checked = !!d.then_archive; F.enabled.checked = d.enabled !== false;
     syncWeekday(); formTitle.textContent = "Edit digest #" + d.index; cancelBtn.style.display = "";
     saveBtn.textContent = "Update digest"; runValidate(); window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -214,7 +217,8 @@
     const when = d.schedule === "weekly"
       ? "weekly · " + (WD[d.weekday || 0] || "monday") + " " + String(d.hour).padStart(2, "0") + ":" + String(d.minute || 0).padStart(2, "0")
       : "daily · " + String(d.hour).padStart(2, "0") + ":" + String(d.minute || 0).padStart(2, "0");
-    return when + " · " + (d.summary_model || "local") + " · → " + (d.deliver_to || "your inbox");
+    const dest = (d.destination === "inbox") ? ("→ " + (d.deliver_to || "your inbox")) : "→ agent (pull)";
+    return when + " · " + (d.summary_model || "local") + " · " + dest;
   }
 
   function doPreview(name) {
