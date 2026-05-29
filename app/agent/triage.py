@@ -129,6 +129,9 @@ class TriageResult:
     # Tiered auto-push outcomes (opt-in). Each entry:
     # {"id", "action": "pushed"|"would_push"|"skipped_cap"|"error", "gmail_draft_id"?}.
     auto_pushed: list[dict[str, Any]] = field(default_factory=list)
+    # Autonomous auto-send outcomes (opt-in, shadow by default). Each entry:
+    # {"id", "action": "sent"|"shadow"|"held"|"error", "reason"?}.
+    auto_sent: list[dict[str, Any]] = field(default_factory=list)
 
 
 # --- tiered auto-push (opt-in; stays inside the never-send boundary) --------
@@ -459,6 +462,92 @@ def _maybe_auto_push(
     return results
 
 
+def _auto_send_config() -> dict[str, Any]:
+    """Read ``agent.auto_send.*``. Off by default; SHADOW mode by default even
+    when enabled, so turning it on soaks (log-only) until you opt into 'live'."""
+    from app.core.config import load_config
+
+    cfg = load_config() or {}
+    a = (cfg.get("agent") or {}) if isinstance(cfg, dict) else {}
+    s = (a.get("auto_send") or {}) if isinstance(a, dict) else {}
+    if not isinstance(s, dict):
+        s = {}
+
+    def _i(key, default):
+        try:
+            return int(s.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    mode = str(s.get("mode", "shadow")).strip().lower()
+    if mode not in ("shadow", "live"):
+        mode = "shadow"
+    return {
+        "enabled": bool(s.get("enabled", False)),
+        "mode": mode,
+        "delay_minutes": max(0, _i("delay_minutes", 60)),
+        "min_recipient_trust": max(0, _i("min_recipient_trust", 3)),
+        "max_per_sweep": max(1, _i("max_per_sweep", 5)),
+    }
+
+
+def _maybe_auto_send(*, database_url: str | None, account: str) -> list[dict[str, Any]]:
+    """Autonomous auto-send pass — the top rung of the policy ladder.
+
+    For drafts that have sat past the undo/delay window, re-applies the
+    escalation decision (``auto_act`` only) and a per-recipient trust gate,
+    then sends via the hard-gated send path. ``mode='shadow'`` (the default)
+    records a soak-only send without touching Gmail. No-op unless
+    ``agent.auto_send.enabled``. Never sends a draft created in this same sweep
+    (the delay window guarantees that)."""
+    if not database_url:
+        return []
+    cfg = _auto_send_config()
+    if not cfg["enabled"]:
+        return []
+
+    from app.agent import store
+    from app.agent.escalation import decide_action, escalation_config
+    from app.agent.send import send_pending_row
+
+    esc = escalation_config()
+    shadow = cfg["mode"] != "live"
+    due = store.due_for_auto_send(
+        database_url, account=account,
+        delay_minutes=cfg["delay_minutes"], limit=cfg["max_per_sweep"],
+    )
+    results: list[dict[str, Any]] = []
+    for row in due:
+        row_id = row["id"]
+        decision = decide_action(
+            quality_score=row.get("quality_score"),
+            needs_reply_score=row.get("needs_reply_score") or 0.0,
+            subject=row.get("subject"),
+            body=row.get("body"),
+            auto_act_floor=float(esc["auto_act_floor"]),
+            confidence_floor=float(esc["confidence_floor"]),
+            high_stakes_blocks=bool(esc["high_stakes_blocks"]),
+        )
+        if decision.action != "auto_act":
+            results.append({"id": row_id, "action": "held", "reason": decision.action})
+            continue
+        trust = store.recipient_trust(database_url, row.get("sender_email"), account=account)
+        if trust < cfg["min_recipient_trust"]:
+            results.append({
+                "id": row_id, "action": "held",
+                "reason": f"recipient trust {trust} < {cfg['min_recipient_trust']}",
+            })
+            continue
+        outcome = send_pending_row(database_url, row_id, shadow=shadow)
+        if outcome.ok:
+            action = "shadow" if (shadow or outcome.shadow) else "sent"
+            results.append({"id": row_id, "action": action, "message_id": outcome.sent_message_id})
+            logger.info("auto-send (%s) row %s", action, row_id)
+        else:
+            results.append({"id": row_id, "action": "error", "detail": outcome.detail})
+    return results
+
+
 def run_triage(
     *,
     account: str,
@@ -554,6 +643,7 @@ def run_triage(
         surfaced=accum["surfaced"],
         persisted=accum["persisted"],
         auto_pushed=accum.get("auto_pushed") or [],
+        auto_sent=accum.get("auto_sent") or [],
     )
 
 
@@ -896,6 +986,16 @@ def _run_sweep(
     except Exception as exc:
         logger.warning("auto-push step failed: %s", exc)
 
+    # Autonomous auto-send: the send frontier. Acts on drafts that have sat
+    # past the undo window, passed escalation, and reached enough recipient
+    # trust. Off by default, SHADOW by default; gated by send.enabled +
+    # kill-switch downstream. Never sends drafts created this same sweep.
+    auto_sent: list[dict[str, Any]] = []
+    try:
+        auto_sent = _maybe_auto_send(database_url=database_url, account=account)
+    except Exception as exc:
+        logger.warning("auto-send step failed: %s", exc)
+
     return {
         "messages": messages,
         "drafts": drafts,
@@ -906,6 +1006,7 @@ def _run_sweep(
         "errors_list": errors_list,
         "auto_promoted": auto_promoted,
         "auto_pushed": auto_pushed,
+        "auto_sent": auto_sent,
     }
 
 
