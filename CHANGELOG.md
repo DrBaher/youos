@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.2.0-beta.122 — 2026-05-29
+
+### Digest destination: `agent` (pull, no send) or `inbox` (email)
+
+Implements the agreed design. A digest now has a **`destination`**:
+
+- **`agent`** (default) — YouOS computes the digest and **stores it for pickup**; it **sends nothing**, so it never crosses the never-send frontier (no `send.enabled`/kill-switch needed). An orchestrator collects it via CLI/MCP/API and delivers it wherever it likes. Both pull modes work: **on-demand** (`POST /api/agent/digests/run` / `youos digests run <name>` returns the body) and **scheduled + stored** (the scheduler computes due `agent` digests, stores the body as `ready`; the orchestrator polls `GET /api/agent/digests/pending`, delivers, then `POST /api/agent/digests/{id}/collected` / `youos digests collect <id>` — an atomic `ready → collected` ack).
+- **`inbox`** — YouOS emails the digest, still fully gated by the send frontier.
+
+So the **safe default** (`agent`) produces digests with zero send risk; `inbox` is the deliberate, gated opt-in. New `body` column on `agent_digest_runs` (stores the computed digest for pickup); `_period_done` counts `ready`/`collected` so an already-produced period isn't re-produced; per-message dedup records on production. New `youos digests run|pending|collect` CLI group (distinct from the activity-`digest` command).
+
+A focused review confirmed: an `agent` digest has **no path** to `send_email` (reaches `ready` even with the frontier fully shut), `inbox` stays gated, the pickup ack is atomic, and pre-existing digests default to `agent` (the safe direction — never an accidental send). +11 tests. Digests still off by default.
+
 ## v0.2.0-beta.121 — 2026-05-29
 
 ### Digests: user-defined summary prompt (+ design doc)
