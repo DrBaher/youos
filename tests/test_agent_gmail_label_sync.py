@@ -293,7 +293,10 @@ def test_run_triage_calls_label_sync_at_start(monkeypatch, tmp_path):
     conn.close()
     db_url = f"sqlite:///{db}"
 
-    monkeypatch.setattr("app.agent.inbox_fetch.fetch_unread", lambda *a, **kw: [])
+    # Patch the name triage actually calls (it does `from inbox_fetch import
+    # fetch_unread`, so the binding lives on the triage module). Patching the
+    # inbox_fetch path only worked by import-order luck.
+    monkeypatch.setattr("app.agent.triage.fetch_unread", lambda *a, **kw: [])
 
     called = {"yes": False}
     def _spy(*, account, database_url, label="YouOS/skip"):

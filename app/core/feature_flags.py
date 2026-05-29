@@ -331,6 +331,53 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.auto_send.enabled",
+        "label": "Autonomous auto-send (opt-in)",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "Let the agent SEND drafts that sat past the delay window, passed "
+            "escalation (auto-act, low-stakes), and reached enough recipient "
+            "trust. Also needs agent.send.enabled. Default OFF, and SHADOW "
+            "(log-only) until you set agent.auto_send.mode=live. Caveat: if you "
+            "send a pushed draft manually from Gmail, live mode can't tell and "
+            "may resend — only enable live once you let the agent own the thread."
+        ),
+    },
+    {
+        "key": "agent.auto_send.mode",
+        "label": "Auto-send mode",
+        "type": "text",
+        "default": "shadow",
+        "help": (
+            "'shadow' (default) records what auto-send WOULD do without touching "
+            "Gmail — a safe soak. 'live' actually sends. Switch to live only "
+            "after watching shadow runs."
+        ),
+    },
+    {
+        "key": "agent.auto_send.delay_minutes",
+        "label": "Auto-send delay / undo window (minutes)",
+        "type": "int",
+        "default": 60,
+        "help": (
+            "How long a pushed draft must sit before auto-send considers it — "
+            "your window to catch a bad one. Auto-send never fires in the same "
+            "sweep that created the draft."
+        ),
+    },
+    {
+        "key": "agent.auto_send.min_recipient_trust",
+        "label": "Auto-send min recipient trust",
+        "type": "int",
+        "default": 3,
+        "help": (
+            "How many prior replies to a recipient you must have kept before "
+            "auto-send will send to them — a gradual, per-recipient rollout. "
+            "New recipients never auto-send until trust accrues."
+        ),
+    },
+    {
         "key": "agent.extract_facts.enabled",
         "label": "Harvest facts from drafted mail",
         "type": "bool",
