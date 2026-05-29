@@ -97,6 +97,40 @@ def test_build_digest_body_uses_model_then_falls_back():
     assert "Weekly digest" in fb and "News" in fb
 
 
+def test_summary_model_validation_and_selection(monkeypatch):
+    assert dt.validate_digest({"name": "N", "query": "x", "summary_model": "local"})[0]
+    assert dt.validate_digest({"name": "N", "query": "x", "summary_model": "cloud"})[0]
+    assert not dt.validate_digest({"name": "N", "query": "x", "summary_model": "gpt5"})[0]
+    # 'cloud' routes to the Claude CLI helper
+    import app.generation.service as gen
+    monkeypatch.setattr(gen, "_call_claude_cli", lambda p, **k: "CLOUD SUMMARY")
+    body = dt.build_digest_body(_ITEMS, model="cloud")
+    assert "CLOUD SUMMARY" in body
+    # 'local' routes to the warm model server
+    import app.core.model_server as ms
+    monkeypatch.setattr(ms, "is_enabled", lambda: True)
+    monkeypatch.setattr(ms, "complete", lambda p, **k: "LOCAL SUMMARY")
+    assert "LOCAL SUMMARY" in dt.build_digest_body(_ITEMS, model="local")
+    # default spec uses local
+    assert dt._normalize_digest({"name": "N", "query": "x"}).summary_model == "local"
+
+
+def test_fetch_passes_max_so_the_cap_applies(monkeypatch):
+    """Regression: gog search defaults to --max=10, so the configured cap must be
+    passed explicitly or a 50-message digest silently only ever sees 10."""
+    seen = {}
+
+    class _R:
+        returncode = 0
+        stdout = "[]"
+        stderr = ""
+
+    monkeypatch.setattr("subprocess.run", lambda cmd, **kw: seen.update(cmd=cmd) or _R())
+    dt._fetch_for_digest("me@x.com", "label:X", 50)
+    cmd = seen["cmd"]
+    assert "--max" in cmd and cmd[cmd.index("--max") + 1] == "50"
+
+
 # --- claim atomicity -------------------------------------------------------
 
 

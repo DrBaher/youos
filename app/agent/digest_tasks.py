@@ -27,6 +27,7 @@ Config shape (a dict so the master flag and the specs coexist)::
             deliver_to: ""         # empty = your own inbox
             then_archive: false
             max_messages: 50
+            summary_model: local   # local (warm model, no egress) | cloud (Claude)
 
 At-most-once per period: each run claims ``(name, account, period_key)`` via a
 UNIQUE index (the same cross-process claim that fixed the forward double-send),
@@ -47,6 +48,9 @@ _MAX_MESSAGES = 50
 _VALID_SCHEDULES = ("daily", "weekly")
 
 
+_VALID_SUMMARY_MODELS = ("local", "cloud")
+
+
 @dataclass
 class DigestSpec:
     name: str
@@ -56,6 +60,7 @@ class DigestSpec:
     deliver_to: str = ""      # empty → deliver to the account's own inbox
     then_archive: bool = False
     max_messages: int = _MAX_MESSAGES
+    summary_model: str = "local"   # 'local' (warm model, no egress) | 'cloud' (Claude)
     enabled: bool = True
 
 
@@ -86,6 +91,9 @@ def validate_digest(raw: Any) -> tuple[bool, str]:
             return False, "max_messages must be a positive integer"
     except (TypeError, ValueError):
         return False, "max_messages must be a positive integer"
+    sm = str(raw.get("summary_model") or "local").strip().lower()
+    if sm not in _VALID_SUMMARY_MODELS:
+        return False, f"summary_model must be one of {list(_VALID_SUMMARY_MODELS)}"
     return True, ""
 
 
@@ -101,6 +109,7 @@ def _normalize_digest(raw: Any) -> DigestSpec | None:
         deliver_to=str(raw.get("deliver_to") or "").strip(),
         then_archive=bool(raw.get("then_archive", False)),
         max_messages=int(raw.get("max_messages", _MAX_MESSAGES)),
+        summary_model=str(raw.get("summary_model") or "local").strip().lower(),
         enabled=bool(raw.get("enabled", True)),
     )
 
@@ -170,9 +179,13 @@ def _fetch_for_digest(account: str, query: str, limit: int) -> list[dict[str, st
     import json
     import subprocess
 
+    # ``gog gmail messages search`` defaults to --max=10, so WITHOUT this a
+    # max_messages=50 digest would silently only ever see 10. Pass --max so the
+    # configured cap actually applies.
     cmd = [
         "gog", "gmail", "messages", "search", query,
-        "--account", account, "--json", "--results-only", "--no-input",
+        "--account", account, "--max", str(max(1, int(limit))),
+        "--json", "--results-only", "--no-input",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
@@ -193,33 +206,49 @@ def _fetch_for_digest(account: str, query: str, limit: int) -> list[dict[str, st
     return items
 
 
-def build_digest_body(items: list[dict[str, str]], *, complete_fn=None) -> str:
-    """Summarize the collected messages into a digest body. Uses the warm local
-    model when available; always falls back to a plain itemised list so a digest
-    is never empty."""
+def _summary_fn(model: str):
+    """Pick a completion function for the summary, or None if unavailable.
+    'local' → warm model server (no egress); 'cloud' → Claude CLI."""
+    if model == "cloud":
+        try:
+            from app.generation.service import _call_claude_cli
+        except Exception:
+            return None
+        return lambda p: _call_claude_cli(p)
+    from app.core import model_server
+
+    if model_server.is_enabled():
+        return lambda p: model_server.complete(p, max_tokens=400, temperature=0.2)
+    return None
+
+
+def build_digest_body(items: list[dict[str, str]], *, model: str = "local", complete_fn=None) -> str:
+    """Summarize the collected messages into a digest body. ``model`` selects
+    the summarizer ('local' warm model, no egress — the default; or 'cloud' =
+    Claude, which sends the senders/subjects/dates). Always falls back to a plain
+    itemised list so a digest is never empty (model off / errors / disabled)."""
     listing = "\n".join(f"- From {it['from']} | {it['subject']} | {it['date']}" for it in items)
     header = f"YouOS digest — {len(items)} message(s)\n\n"
 
-    if complete_fn is None:
-        from app.core import model_server
-
-        if model_server.is_enabled():
-            def complete_fn(p: str) -> str:
-                return model_server.complete(p, max_tokens=500, temperature=0.2)
-
-    if complete_fn is not None:
+    fn = complete_fn if complete_fn is not None else _summary_fn(model)
+    if fn is not None:
+        # Tight prompt: one line per email, no repetition, bounded — the small
+        # local model otherwise rambles and repeats. The itemised list is
+        # appended separately, so the model only needs to add the gist.
         prompt = (
-            "Summarize the following emails into a brief, skimmable digest. Group "
-            "similar items, call out anything that looks important or time-sensitive, "
-            "and keep it concise. Do not invent details not present below.\n\n"
+            "Write a concise email digest. ONE short bullet per email: the sender's "
+            "name and the gist in at most 12 words. Then a final line "
+            "'Worth attention:' naming ONLY the genuinely time-sensitive or important "
+            "ones (or 'nothing urgent'). Do NOT repeat yourself, do NOT add a preamble, "
+            "do NOT invent anything. Keep the whole digest under 150 words.\n\n"
             f"{listing}\n\nDigest:"
         )
         try:
-            out = (complete_fn(prompt) or "").strip()
+            out = (fn(prompt) or "").strip()
             if out:
                 return f"{header}{out}\n\n— items —\n{listing}"
         except Exception as exc:
-            logger.info("digest summarization failed, using plain list: %s", exc)
+            logger.info("digest summarization (%s) failed, using plain list: %s", model, exc)
     return header + listing
 
 
@@ -305,7 +334,7 @@ def run_digest(database_url: str, account: str, spec: DigestSpec, *,
             items = _fetch_for_digest(account, spec.query, spec.max_messages)
         except Exception as exc:
             return {"status": "error", "name": spec.name, "detail": f"fetch failed: {exc}"}
-        body = build_digest_body(items) if items else "(no matching messages)"
+        body = build_digest_body(items, model=spec.summary_model) if items else "(no matching messages)"
         return {"status": "preview", "name": spec.name, "to": to,
                 "count": len(items), "subject": subject, "body": body}
 
@@ -356,7 +385,7 @@ def run_digest(database_url: str, account: str, spec: DigestSpec, *,
     run_id = _claim_period(database_url, spec.name, account, period)
     if run_id is None:
         return {"status": "skipped_done", "name": spec.name, "period": period}
-    body = build_digest_body(items)
+    body = build_digest_body(items, model=spec.summary_model)
     try:
         res = gmail_write.send_email(account=account, to=to, subject=subject, body=body)
     except Exception as exc:
