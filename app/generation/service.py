@@ -1107,6 +1107,14 @@ def assemble_prompt(
         "system_prompt",
         "You are YouOS, a local-first email copilot.",
     )
+    # Optional tunable instruction appended to the system prompt. Kept separate
+    # from `system_prompt` so autoresearch can A/B drafting-style instructions
+    # WITHOUT clobbering the instance's persona/brand system prompt. Default
+    # empty = no change. (The old `drafting_prompt` key was mutated by
+    # autoresearch but read by nothing — this is the consumed replacement.)
+    _suffix = prompts.get("system_prompt_suffix", "")
+    if _suffix and _suffix.strip():
+        system = f"{system.rstrip()}\n{_suffix.strip()}"
 
     exemplars_text = _format_exemplars(reply_pairs, score_stats=score_stats)
     n = len(reply_pairs)
