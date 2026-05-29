@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script>(function(){try{var t=localStorage.getItem('youos-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<title>YouOS — chat with your inbox agent</title>
+<meta name="description" content="A simulated chat: your YouOS agent drafts an email reply in your voice and sends it only when you confirm.">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --teal: #00c4a7; --teal-dim: #0a8f7c;
+    --bg: #0d1117; --surface: #161b22; --surface-2: #1c2330;
+    --border: #30363d; --text: #e6edf3; --muted: #8b949e; --bad: #f85149;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --teal:#0a8f7c; --teal-dim:#0a8f7c; --bg:#ffffff; --surface:#f5f7fa; --surface-2:#eceff3;
+      --border:#d8dee6; --text:#1a2230; --muted:#5b6675; --bad:#d1242f; }
+  }
+  :root[data-theme="light"] { --teal:#0a8f7c; --teal-dim:#0a8f7c; --bg:#ffffff; --surface:#f5f7fa; --surface-2:#eceff3;
+    --border:#d8dee6; --text:#1a2230; --muted:#5b6675; --bad:#d1242f; }
+  :root[data-theme="dark"] { --teal:#00c4a7; --teal-dim:#0a8f7c; --bg:#0d1117; --surface:#161b22; --surface-2:#1c2330;
+    --border:#30363d; --text:#e6edf3; --muted:#8b949e; --bad:#f85149; }
+
+  body { font-family:'Inter',system-ui,sans-serif; background:var(--bg); color:var(--text);
+    line-height:1.5; -webkit-font-smoothing:antialiased; display:grid; place-items:center; min-height:100vh; padding:24px; }
+
+  /* Phone-ish chat frame */
+  .phone { width:380px; max-width:100%; background:var(--bg); border:1px solid var(--border);
+    border-radius:22px; overflow:hidden; box-shadow:0 24px 70px rgba(0,0,0,0.35); display:flex; flex-direction:column; height:660px; }
+  .chat-head { display:flex; align-items:center; gap:11px; padding:14px 16px; background:var(--surface);
+    border-bottom:1px solid var(--border); flex:none; }
+  .avatar { width:38px; height:38px; border-radius:50%; background:linear-gradient(135deg,var(--teal),var(--teal-dim));
+    display:grid; place-items:center; color:#03110e; font-weight:800; font-size:0.95rem; flex:none; }
+  .chat-head .who { font-weight:700; font-size:0.95rem; }
+  .chat-head .status { font-size:0.74rem; color:var(--teal); display:flex; align-items:center; gap:5px; }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--teal); display:inline-block; }
+
+  .thread { flex:1; overflow:hidden; padding:16px 14px; display:flex; flex-direction:column; gap:10px;
+    background:var(--bg); }
+
+  .row { display:flex; }
+  .row.you { justify-content:flex-end; }
+  .bubble { max-width:84%; padding:9px 13px; border-radius:15px; font-size:0.9rem; line-height:1.45;
+    border:1px solid var(--border); background:var(--surface); }
+  .row.agent .bubble { border-bottom-left-radius:5px; }
+  .row.you .bubble { background:var(--teal); color:#03110e; border-color:transparent; border-bottom-right-radius:5px; font-weight:500; }
+
+  /* enter animation */
+  .row { opacity:0; transform:translateY(8px); animation:pop .32s ease forwards; }
+  @keyframes pop { to { opacity:1; transform:none; } }
+
+  /* email + draft cards */
+  .card { max-width:90%; border:1px solid var(--border); border-radius:14px; background:var(--surface); overflow:hidden; }
+  .card .ch { font-size:0.72rem; font-weight:700; letter-spacing:0.03em; text-transform:uppercase;
+    padding:8px 13px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:7px; }
+  .card.email .ch { color:var(--muted); }
+  .card.draft { border-color:var(--teal-dim); }
+  .card.draft .ch { color:var(--teal); background:rgba(0,196,167,0.06); }
+  .card .meta { font-size:0.75rem; color:var(--muted); padding:8px 13px 0; }
+  .card .body { padding:9px 13px 12px; font-size:0.88rem; color:var(--text); white-space:pre-wrap; }
+  .chips { display:flex; gap:7px; padding:0 13px 12px; flex-wrap:wrap; }
+  .chip { font-size:0.76rem; padding:4px 11px; border-radius:999px; border:1px solid var(--border); color:var(--muted); }
+  .chip.go { border-color:var(--teal); color:var(--teal); font-weight:600; }
+
+  /* sent pill */
+  .row.sent { justify-content:center; }
+  .sent-pill { font-size:0.8rem; color:var(--teal); border:1px solid var(--teal-dim);
+    background:rgba(0,196,167,0.06); border-radius:999px; padding:5px 14px; font-weight:600; }
+
+  /* typing indicator */
+  .typing { display:inline-flex; gap:4px; padding:11px 14px; }
+  .typing i { width:7px; height:7px; border-radius:50%; background:var(--muted); display:inline-block; animation:blink 1.1s infinite; }
+  .typing i:nth-child(2){ animation-delay:.18s; } .typing i:nth-child(3){ animation-delay:.36s; }
+  @keyframes blink { 0%,60%,100%{ opacity:.25; transform:translateY(0); } 30%{ opacity:1; transform:translateY(-3px); } }
+
+  .foot { flex:none; padding:9px 14px; border-top:1px solid var(--border); background:var(--surface);
+    color:var(--muted); font-size:0.78rem; display:flex; align-items:center; gap:8px; }
+  .foot .lock { color:var(--teal); }
+  .caption { margin-top:16px; text-align:center; color:var(--muted); font-size:0.85rem; max-width:380px; }
+  .caption b { color:var(--text); }
+  /* embed mode (?embed): tight framing for an <iframe> on the landing page */
+  body.embed { min-height:auto; padding:14px; background:transparent; }
+  body.embed .caption { display:none; }
+  @media (prefers-reduced-motion: reduce) { .row { animation-duration:.001s; } }
+</style>
+</head>
+<body>
+<div class="phone" role="img" aria-label="A simulated chat with the YouOS inbox agent: it shows a new email and a drafted reply, the user edits and confirms, and it sends.">
+  <div class="chat-head">
+    <div class="avatar">Y</div>
+    <div>
+      <div class="who">YouOS · your inbox agent</div>
+      <div class="status"><span class="dot"></span> watching your inbox · on your Mac</div>
+    </div>
+  </div>
+  <div class="thread" id="thread"></div>
+  <div class="foot"><span class="lock">&#128274;</span> Drafts in your voice · sends only when you confirm</div>
+</div>
+<p class="caption"><b>You stay in the loop.</b> YouOS drafts; you approve. Nothing is sent without your OK.</p>
+
+<script>
+// Replaced with the judged storyboard. Each turn: {from:'agent'|'you', kind:'text'|'email'|'draft'|'sent', text, label?, chips?}
+const TURNS = [
+  {from:'agent', kind:'text', text:"Heads up — Dana wants to move tomorrow's 2pm. I drafted a reply with times you're actually free."},
+  {from:'agent', kind:'email', label:"From: Dana Reyes · Subject: Re: Onboarding sync", text:"Hey — something came up and I can't do tomorrow at 2. Any chance we could push it? Happy to work around your schedule. Thanks!"},
+  {from:'agent', kind:'draft', label:"to Dana Reyes", text:"No problem at all, Dana! Looking at my week, I'm open Thu 11am, Thu 3:30pm, or Fri 10am. Any of those work? Happy to grab whichever's easiest.", chips:["Edit","Regenerate","Send ✓"]},
+  {from:'you', kind:'text', text:"nice. drop Friday tho, keep that clear"},
+  {from:'agent', kind:'draft', label:"updated · to Dana Reyes", text:"No problem at all, Dana! I'm open Thu 11am or Thu 3:30pm — either work? Happy to grab whichever's easiest for you.", chips:["Edit","Regenerate","Send ✓"]},
+  {from:'agent', kind:'text', text:"Pulled Friday. Send it?"},
+  {from:'you', kind:'text', text:"yep send it"},
+  {from:'agent', kind:'sent', text:"Sent to Dana ✓ — in your voice"},
+  {from:'agent', kind:'text', text:"I'll flag her reply when it comes in."},
+];
+
+const thread = document.getElementById('thread');
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const wait = ms => new Promise(r => setTimeout(r, ms));
+function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+function render(t){
+  const row = document.createElement('div');
+  row.className = 'row ' + (t.from === 'you' ? 'you' : (t.kind === 'sent' ? 'sent' : 'agent'));
+  if (t.kind === 'text') {
+    row.innerHTML = '<div class="bubble">' + esc(t.text) + '</div>';
+  } else if (t.kind === 'sent') {
+    row.innerHTML = '<div class="sent-pill">' + esc(t.text) + '</div>';
+  } else { // email or draft card
+    const head = t.kind === 'draft' ? '✍️ Draft reply · in your voice' : '📩 New email';
+    let html = '<div class="card ' + t.kind + '"><div class="ch">' + head + '</div>';
+    if (t.label) html += '<div class="meta">' + esc(t.label) + '</div>';
+    html += '<div class="body">' + esc(t.text) + '</div>';
+    if (t.chips) html += '<div class="chips">' + t.chips.map((c,i) =>
+      '<span class="chip' + (i === t.chips.length-1 ? ' go' : '') + '">' + esc(c) + '</span>').join('') + '</div>';
+    html += '</div>';
+    row.innerHTML = html;
+  }
+  thread.appendChild(row);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+async function typing(){
+  const row = document.createElement('div');
+  row.className = 'row agent'; row.dataset.typing = '1';
+  row.innerHTML = '<div class="bubble typing"><i></i><i></i><i></i></div>';
+  thread.appendChild(row); thread.scrollTop = thread.scrollHeight;
+  await wait(850); row.remove();
+}
+
+async function play(){
+  thread.innerHTML = '';
+  if (reduce) { TURNS.forEach(render); return; }
+  for (const t of TURNS) {
+    if (t.from === 'agent') await typing();
+    else await wait(620);
+    render(t);
+    await wait(t.kind === 'email' || t.kind === 'draft' ? 1700 : 1050);
+  }
+  await wait(3600);
+  play();
+}
+
+// Frame mode (?step=N): render turns[0..N] statically for screenshot capture
+// (used to build the GIF). Optional &theme=dark|light pins the theme for a
+// brand-consistent capture. Default = the looping live animation.
+const _params = new URLSearchParams(location.search);
+const _theme = _params.get('theme');
+if (_theme === 'dark' || _theme === 'light') document.documentElement.setAttribute('data-theme', _theme);
+if (_params.has('embed')) document.body.classList.add('embed');
+const _step = _params.get('step');
+if (_step !== null) {
+  thread.innerHTML = '';
+  TURNS.slice(0, parseInt(_step, 10) + 1).forEach(render);
+  thread.scrollTop = thread.scrollHeight;
+} else {
+  play();
+}
+</script>
+</body>
+</html>
