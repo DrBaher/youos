@@ -662,6 +662,73 @@ def send_pending(row_id: int, request: Request, body: SendBody | None = None) ->
     }
 
 
+class ConfirmSendBody(BaseModel):
+    """Human-confirmed send in one call (the OpenClaw 'I approve this' action).
+
+    Optionally carries the user's final edited text (``amended_draft``) so a
+    review-edit-confirm round-trip is a single request: amend → push → send.
+    """
+
+    amended_draft: str | None = Field(
+        default=None, description="Final edited reply text; omit to send the existing draft as-is."
+    )
+    backend: str | None = Field(default=None)
+
+
+@router.post("/api/agent/pending/{row_id}/confirm_send")
+def confirm_send(row_id: int, request: Request, body: ConfirmSendBody | None = None) -> dict:
+    """One-call human-confirmed send: (optional edit) → create the Gmail draft →
+    send it. The single action an orchestrator (OpenClaw) fires when the user
+    approves a reply, so review→edit→confirm is one request, not three.
+
+    Send is still hard-gated by ``agent.send.enabled`` + the kill-switch (this
+    is a *human-confirmed* send, distinct from autonomous ``auto_send``). If the
+    draft is created but the send fails, the Gmail draft remains and the error
+    is returned so the caller can retry ``/send`` (idempotent).
+    """
+    from app.agent.push import push_pending_row
+    from app.agent.send import _send_config, send_pending_row
+
+    db = _db_url(request)
+    b = body or ConfirmSendBody()
+
+    # 0) Gate FIRST, before creating any Gmail draft — so a disabled send (or an
+    #    armed kill-switch) doesn't leave an orphan draft behind.
+    gate = _send_config()
+    if gate["kill_switch"]:
+        raise HTTPException(403, "outbound kill-switch is on; all sending is blocked")
+    if not gate["enabled"]:
+        raise HTTPException(403, "sending is disabled (set agent.send.enabled to allow confirmed sends)")
+
+    # 1) Apply the user's final edit, if any (tagged 'user' so it counts as a
+    #    real correction for the feedback loop).
+    if b.amended_draft is not None and b.amended_draft.strip():
+        if not store.mark_amended(db, row_id, amended_draft=b.amended_draft, amended_by="user"):
+            raise HTTPException(404, "pending row not found")
+
+    # 2) Materialize the Gmail draft (idempotent; uses amended_draft or draft).
+    push = push_pending_row(db, row_id, backend=b.backend)
+    if not push.ok:
+        raise HTTPException(push.http_status or 500, push.detail or "could not create the Gmail draft to send")
+
+    # 3) Send it (gated by agent.send.enabled + kill-switch).
+    outcome = send_pending_row(db, row_id, backend=b.backend)
+    if not outcome.ok:
+        # The draft exists in Gmail; surface the send error so the caller can
+        # retry /send without re-pushing.
+        raise HTTPException(
+            outcome.http_status or 500,
+            f"{outcome.detail or 'send failed'} (a Gmail draft {push.gmail_draft_id} exists; retry /send)",
+        )
+    return {
+        "ok": True,
+        "gmail_draft_id": push.gmail_draft_id,
+        "sent_message_id": outcome.sent_message_id,
+        "sent_already": outcome.sent_already,
+        "row": outcome.row,
+    }
+
+
 # --- triage trigger ----------------------------------------------------------
 
 
