@@ -413,3 +413,15 @@ def test_evaluate_outbound_collapses_duplicate_forwards():
     out = evaluate_outbound_actions(rules, sender_email="a@b.com", domain="b.com",
                                     subject="x", body="")
     assert out == [{"type": "forward", "value": "j@b.com"}]
+
+
+def test_validate_rule_rejects_dash_leading_label():
+    """b151: a '-'-leading label name is parsed by the gog CLI as a flag (option
+    injection), so the authoring API must reject it before it persists."""
+    from app.agent.rules import validate_rule
+
+    base = {"match": {"sender": "x@y.com"}}
+    assert validate_rule({**base, "action": "label", "value": "-evil"}) == (
+        False, "a label name cannot begin with '-'",
+    )
+    assert validate_rule({**base, "action": "label", "value": "Work"})[0] is True
