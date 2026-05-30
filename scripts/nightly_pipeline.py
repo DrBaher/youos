@@ -372,6 +372,18 @@ def step_finetune_personas(verbose: bool = False) -> dict:
         if not export_ok:
             failed.append(persona)
             continue
+        # Snapshot this persona's current adapter before retraining so a bad
+        # retrain has a recovery point (the global path snapshots; personas had
+        # none). There's no per-persona golden eval yet, so this is a rollback
+        # POINT, not an automatic gate — recovery is manual for now.
+        try:
+            from app.core.settings import get_adapter_path
+            from app.evaluation.promotion import snapshot_adapter
+
+            _persona_adapter = get_adapter_path().parent / "personas" / persona
+            snapshot_adapter(_persona_adapter, _persona_adapter.parent / f"{persona}.previous")
+        except Exception as _snap_exc:
+            print(f"  [WARN] persona '{persona}' snapshot failed (no recovery point): {_snap_exc}")
         finetune_ok = _run_step(
             f"Finetune (persona={persona})",
             [
@@ -953,6 +965,7 @@ def main() -> None:
     # golden composite as the baseline BEFORE fine-tuning, so a regressed
     # retrain can be rolled back after the post-finetune eval.
     _adapter_snapshotted = False
+    _finetuned = False
     _baseline_golden = _load_prior_golden_composite()
     skip_ft, skip_ft_msg = should_skip_finetune(DEFAULT_DB)
     if skip_ft:
@@ -972,6 +985,7 @@ def main() -> None:
             print(f"  [WARN] adapter snapshot failed (no rollback this run): {exc}")
         try:
             ok = step_finetune_lora(verbose=verbose)
+            _finetuned = ok
             results["finetune"] = "OK" if ok else "WARN"
             steps["finetune"] = ok
             if not ok:
@@ -1049,7 +1063,7 @@ def main() -> None:
     if _adapter_snapshotted:
         try:
             from app.core.settings import get_adapter_path
-            from app.evaluation.promotion import gate_after_eval
+            from app.evaluation.promotion import composite_to_persist, gate_after_eval
 
             _latest_dir = get_adapter_path()
             _gate = gate_after_eval(
@@ -1066,9 +1080,29 @@ def main() -> None:
                 errors.append(f"adapter rollback failed: {_gate['reason']}")
             else:
                 print(f"  [GATE] adapter kept — {_gate['reason']}")
+            # Persist the LIVE adapter's score as next run's baseline. After a
+            # rollback the live adapter is the previous snapshot (baseline) — not
+            # the rejected candidate — so persisting the candidate would lower the
+            # bar and let the next regressed retrain slip past the gate.
+            golden_composite = composite_to_persist(_gate["action"], golden_composite, _baseline_golden)
         except Exception as exc:
             results["adapter_gate"] = f"error: {exc}"
             print(f"  [WARN] adapter-promotion gate failed: {exc}")
+    elif _finetuned and golden_degenerate:
+        # First-ever finetune (nothing to snapshot) whose eval is degenerate:
+        # there's no prior adapter to roll back to, so discard the untrustworthy
+        # one and fall back to the base model rather than serve it.
+        try:
+            from app.core.settings import get_adapter_path
+            from app.evaluation.promotion import discard_adapter
+
+            if discard_adapter(get_adapter_path()):
+                results["adapter_gate"] = "discarded — first finetune degenerate, no snapshot"
+                print("  [GATE] adapter DISCARDED — first finetune degenerate (no rollback target)")
+                errors.append("first finetune produced a degenerate eval; adapter discarded")
+        except Exception as exc:
+            results["adapter_gate"] = f"error: {exc}"
+            print(f"  [WARN] degenerate first-finetune discard failed: {exc}")
 
     # 4. Embedding indexer (after fine-tuning) — with skip gate
     _t = time.monotonic()
