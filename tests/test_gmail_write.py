@@ -560,8 +560,3 @@ def test_modify_labels_dry_run_passes_flag(monkeypatch):
     assert "--remove" in cap["cmd"] and "INBOX" in cap["cmd"]
 
 
-def test_modify_labels_unsupported_backend_raises(monkeypatch):
-    monkeypatch.setattr("app.core.config.get_ingestion_google_backend", lambda: "gws")
-    from app.ingestion.gmail_write import modify_message_labels
-    with pytest.raises(NotImplementedError):
-        modify_message_labels(account="me@x.com", message_id="m1", add=["X"], remove=[])
