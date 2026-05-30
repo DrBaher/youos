@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.146 — 2026-05-30
+
+### Hardening: a dismissed reply can't be resurrected, and agent-route fields are bounded
+
+Second of the 4th hardening pass — two MEDIUM findings.
+
+- **A dismissed row could be resurrected and sent.** `mark_amended` flipped a row to `amended` via a bare `WHERE id = ?`, so calling `/amend`, `/regenerate`, or `/confirm_send` on a **dismissed** row changed its status *before* the `begin_send` / `due_for_auto_send` dismissed-guards run — re-arming a reply the user deliberately killed for send / autonomous auto-send. `_update_status` now takes a `require_status` precondition and `mark_amended` passes `('pending','amended')`, so an amend on a dismissed (or sent) row is an atomic no-op (`rowcount=0` → False → 404) and the row stays dismissed.
+- **Unbounded string fields on the agent routes.** `amended_draft` (amend + confirm_send), `instruction`/`tone_hint` (regenerate), and the NL `text` (rules-parse, digests-parse-query) had `min_length` or nothing — b132 capped the 7 inbound fields but missed this surface, so a multi-MB POST was a cheap memory/prompt DoS (and on `digests/parse-query` with `model:cloud`, an unbounded egress). Added `max_length` (50 000 on drafts, 4 000 on instruction / NL text, 200 on tone_hint).
+
++2 regression tests (amend refuses a dismissed row + stays dismissed; all five route fields reject oversize input). Full suite: 1720 passed.
+
 ## v0.2.0-beta.145 — 2026-05-30
 
 ### Hardening: confirm_send can't drop an approved edit, and the review-queue can't be DoSed
