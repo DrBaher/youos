@@ -13,7 +13,7 @@ from pathlib import Path
 
 from app.core.sender import _PERSONAL_DOMAINS, classify_sender, extract_domain
 from app.core.settings import get_settings
-from app.db.bootstrap import resolve_sqlite_path
+from app.db.bootstrap import connect, resolve_sqlite_path
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
 _STOPWORDS = frozenset(
@@ -194,7 +194,7 @@ def build_profiles(
     sender_email: str | None = None,
 ) -> tuple[int, int]:
     """Build sender profiles from reply_pairs. Returns (new_count, updated_count)."""
-    conn = sqlite3.connect(db_path)
+    conn = connect(db_path)  # tuned: 30s busy_timeout + WAL (vs the 5s sqlite3 default)
     conn.row_factory = sqlite3.Row
     try:
         # Get unique inbound authors
@@ -314,7 +314,7 @@ def annotate_intents(db_path: Path) -> int:
     """
     from app.core.intent import classify_intent
 
-    conn = sqlite3.connect(db_path)
+    conn = connect(db_path)  # tuned: 30s busy_timeout + WAL (vs the 5s sqlite3 default)
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute("SELECT id, inbound_text, metadata_json FROM reply_pairs WHERE inbound_text IS NOT NULL").fetchall()

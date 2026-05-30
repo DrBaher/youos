@@ -123,3 +123,26 @@ def test_dpo_length_matching(tmp_path):
     assert not output.exists()
 
     db_path.unlink()
+
+
+def test_dpo_export_output_is_owner_only(tmp_path):
+    """b151: exported JSONL holds raw email bodies/drafts — not world-readable."""
+    import os
+    import stat
+
+    db_path = _make_db([
+        ("Can we meet to discuss the timeline?", "Sure, sending times now.", 5),
+        ("Can you review my proposal for the new feature set?", "meh whatever no opinion", 1),
+    ])
+    args = argparse.Namespace(db=str(db_path), dpo=True)
+    import scripts.export_feedback_jsonl as mod
+
+    orig_root = mod.ROOT_DIR
+    mod.ROOT_DIR = tmp_path
+    try:
+        export_dpo(args)
+    finally:
+        mod.ROOT_DIR = orig_root
+    out = tmp_path / "data" / "dpo_train.jsonl"
+    assert oct(stat.S_IMODE(os.stat(out).st_mode)) == "0o600"
+    db_path.unlink()
