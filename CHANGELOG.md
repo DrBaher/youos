@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.136 — 2026-05-30
+
+### Hardening: error-text leakage, webhook SSRF, and forged prompt markers
+
+Sixth of the post-b130 hardening series — three low-severity defense-in-depth fixes.
+
+- **Raw exception text echoed to API clients.** Five generation-failure paths (`/draft/compare` ×2, the review-queue compare ×2, the draft stream, and the service fallback) returned `f"[generation failed: {exc}]"` verbatim, leaking filesystem paths / config keys / backend CLI stderr to the caller. Each now logs the detail server-side and returns a static `"[generation failed — see server logs]"` (mirroring the existing `feedback_routes` pattern).
+- **Webhook SSRF.** The user-settable `agent.notify_webhook_url` was POSTed with no validation, so an authenticated config-write could point YouOS's one outbound request at `http://169.254.169.254/…` or an internal service. `_post_webhook` now gates on `_webhook_url_allowed`: http(s) scheme only, and the host must not resolve to a loopback / private / link-local / reserved / multicast address. Fails closed.
+- **Forged prompt section markers.** An inbound email could start a line with `[TASK]` / `[SYSTEM]` / `[GROUNDING]` etc. and inject a competing instruction block into the draft prompt. `neutralize_prompt_markers` now defangs forged markers in the untrusted inbound + subject before they're embedded (inserts a space after the bracket — readable, but no longer a structural marker). Bounded anyway by the never-send invariant, but it removes a decision-flip / draft-poison lever.
+
++3 regression tests (marker defang + normal-text no-op; SSRF block list; compare endpoint returns a static message, not raw exception text). Full suite: 1697 passed.
+
 ## v0.2.0-beta.135 — 2026-05-30
 
 ### Hardening: per-account sweep lock now serializes across processes

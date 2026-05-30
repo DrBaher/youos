@@ -64,3 +64,18 @@ def test_no_push_when_url_unset(monkeypatch):
     app = SimpleNamespace(state=SimpleNamespace())
     scheduler._maybe_push_webhook(app, "you@x.com", _cfg(notify_webhook_url=""))
     assert posted == []
+
+
+def test_webhook_url_allowed_blocks_ssrf():
+    """b136: the user-set webhook URL can't be pointed at internal/metadata
+    hosts (SSRF). IP literals keep this deterministic (no DNS)."""
+    from app.agent.scheduler import _webhook_url_allowed
+
+    for bad in (
+        "http://127.0.0.1/x",                       # loopback
+        "http://169.254.169.254/latest/meta-data/",  # cloud metadata
+        "http://10.1.2.3/", "https://192.168.1.1/",  # RFC1918
+        "file:///etc/passwd", "ftp://8.8.8.8/",      # non-http(s) scheme
+    ):
+        assert _webhook_url_allowed(bad) is False, bad
+    assert _webhook_url_allowed("https://8.8.8.8/hook") is True  # public IP ok

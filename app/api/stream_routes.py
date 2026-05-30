@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import signal
@@ -35,6 +36,7 @@ from app.generation.service import (
 from app.retrieval.service import RetrievalRequest, retrieve_context
 
 router = APIRouter(prefix="/draft", tags=["draft-stream"])
+logger = logging.getLogger(__name__)
 
 
 class StreamBody(BaseModel):
@@ -272,8 +274,9 @@ def _stream_generate(body: StreamBody, settings):
             repairs = response.repairs
             candidates = response.candidates
             model_used = response.model_used
-        except Exception as exc:
-            yield f"data: {json.dumps({'token': f'[generation failed: {exc}]'})}\n\n"
+        except Exception:
+            logger.exception("draft stream: generation failed")
+            yield f"data: {json.dumps({'token': '[generation failed — see server logs]'})}\n\n"
     finally:
         # Don't leave a hung claude (or its child processes) running if we
         # errored out or the client disconnected mid-stream.
