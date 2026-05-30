@@ -25,7 +25,7 @@ from app.core.config import (
 )
 from app.core.sender import classify_sender, extract_domain, first_name_from_display_name
 from app.core.settings import get_adapter_path
-from app.core.text_utils import strip_quoted_text
+from app.core.text_utils import neutralize_prompt_markers, strip_quoted_text
 from app.db.bootstrap import connect as _connect
 from app.db.bootstrap import resolve_sqlite_path
 from app.retrieval.service import (
@@ -1271,9 +1271,11 @@ def assemble_prompt(
     if greeting and closing:
         result += f"\nBegin your reply with: {greeting}\nEnd your reply with: {closing}\n"
 
-    inbound_section = inbound_message
+    # Defang attacker-forged section markers in the untrusted inbound + subject
+    # so they can't inject a competing [TASK]/[SYSTEM] instruction block.
+    inbound_section = neutralize_prompt_markers(inbound_message)
     if subject:
-        inbound_section = f"Subject: {subject}\n\n{inbound_message}"
+        inbound_section = f"Subject: {neutralize_prompt_markers(subject)}\n\n{inbound_section}"
     result += f"\n[INBOUND MESSAGE]\n{inbound_section}"
     return result
 
@@ -2185,8 +2187,11 @@ def generate_draft(
         else:
             draft = _call_claude_cli(prompt, max_tokens=max_tokens)
             model_used = fallback_model
-    except Exception as exc:
-        draft = f"[draft generation failed: {exc}]"
+    except Exception:
+        # Log the detail server-side; the draft field is user-visible, so don't
+        # leak raw exception text (paths, config keys, backend CLI stderr).
+        logger.exception("draft generation failed")
+        draft = "[draft generation failed — see server logs]"
         model_used = "error"
 
     # Retry on empty or signature-only local model output
