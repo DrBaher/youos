@@ -386,6 +386,10 @@ def _maybe_extract_facts(msg: InboxMessage, database_url: str | None) -> None:
             db_path,
             sender_email=msg.sender_email,
             use_llm=False,
+            # Inbound is attacker-controlled: extract contact facts (sender-keyed)
+            # but never a user_pref, which would become a global standing
+            # instruction injected into every draft.
+            allow_user_pref=False,
         )
         if saved:
             logger.info("extracted %d fact(s) from %s", len(saved), msg.message_id)
