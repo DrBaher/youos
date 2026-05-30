@@ -30,6 +30,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from app.core.secure_io import write_secret
+
 logger = logging.getLogger(__name__)
 
 
@@ -588,7 +590,8 @@ def _native_gmail_service(*, account: str) -> Any:
     if not creds.valid:
         if creds.expired and creds.refresh_token:
             creds.refresh(GoogleAuthRequest())
-            token_path.write_text(creds.to_json(), encoding="utf-8")
+            # 0o600: this file holds the OAuth refresh_token + client_secret.
+            write_secret(token_path, creds.to_json())
         else:
             raise RuntimeError(_NATIVE_REAUTH_HINT)
 

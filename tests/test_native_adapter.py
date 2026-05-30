@@ -219,3 +219,48 @@ def test_drive_get_requests_metadata_fields(monkeypatch):
     assert out["name"] == "Doc"
     assert log[0][1]["fileId"] == "d1"
     assert "webViewLink" in log[0][1]["fields"]
+
+
+def test_native_oauth_token_file_written_owner_only(tmp_path, monkeypatch):
+    """b142: the refreshed OAuth token (refresh_token + client_secret) must be
+    written 0o600, not world-readable (the b134 secret-perms sibling that was
+    missed). Injects a minimal fake google namespace so the lazy imports in
+    _load_credentials resolve without the real library."""
+    import os
+    import stat
+    import sys
+    import types
+
+    class _Creds:
+        valid = False
+        expired = True
+        refresh_token = "rt"
+
+        def refresh(self, _req):
+            pass
+
+        def to_json(self):
+            return '{"refresh_token": "rt", "client_secret": "cs"}'
+
+    cred_mod = types.ModuleType("google.oauth2.credentials")
+    cred_mod.Credentials = type(
+        "Credentials", (), {"from_authorized_user_file": staticmethod(lambda path, scopes: _Creds())}
+    )
+    req_mod = types.ModuleType("google.auth.transport.requests")
+    req_mod.Request = lambda: None
+    for name, mod in [
+        ("google", types.ModuleType("google")),
+        ("google.oauth2", types.ModuleType("google.oauth2")),
+        ("google.oauth2.credentials", cred_mod),
+        ("google.auth", types.ModuleType("google.auth")),
+        ("google.auth.transport", types.ModuleType("google.auth.transport")),
+        ("google.auth.transport.requests", req_mod),
+    ]:
+        monkeypatch.setitem(sys.modules, name, mod)
+
+    src = NativeSource(token_dir=str(tmp_path))
+    tok = tmp_path / "me@x.com.json"
+    tok.write_text("{}")
+    os.chmod(tok, 0o644)  # start world-readable
+    src._load_credentials("me@x.com")
+    assert oct(stat.S_IMODE(os.stat(tok).st_mode)) == "0o600"

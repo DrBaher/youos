@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from app.core.config import get_ingestion_google_backend
+from app.core.secure_io import write_secret
 
 logger = logging.getLogger(__name__)
 
@@ -489,7 +490,8 @@ class NativeSource:
         if not creds.valid:
             if creds.expired and creds.refresh_token:
                 creds.refresh(Request())
-                token_path.write_text(creds.to_json(), encoding="utf-8")
+                # 0o600: this file holds the OAuth refresh_token + client_secret.
+                write_secret(token_path, creds.to_json())
             else:
                 raise RuntimeError(f"Stored Google credentials for {account!r} are invalid; re-authorize.")
         return creds
@@ -522,7 +524,8 @@ class NativeSource:
         creds = flow.run_local_server(port=0)
         token_path = self._token_path(account)
         token_path.parent.mkdir(parents=True, exist_ok=True)
-        token_path.write_text(creds.to_json(), encoding="utf-8")
+        # 0o600: this file holds the OAuth refresh_token + client_secret.
+        write_secret(token_path, creds.to_json())
         return token_path
 
     # --- Gmail -------------------------------------------------------------
