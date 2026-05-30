@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.129 — 2026-05-30
+
+### Hardening: malformed inbound email can no longer abort the triage sweep
+
+An adversarial robustness audit (4 lenses → per-finding verification) of the ingestion/sweep surface found one real **high-severity** bug, fixed here. `fetch_unread` parsed attacker-influenced MIME — headers, body base64, and the `parts` tree — *outside* the per-thread `try/except` (which only wrapped the network `get_thread`), and `_run_sweep`/`run_triage` re-raises on failure. So a single crafted unread email could abort the **entire** triage run for that account (every other unread message goes undrafted). Three independent triggers were confirmed: non-dict `headers`/`parts` entries (`AttributeError`), non-string / wrong-length / non-ASCII body base64 (`ValueError`/`binascii.Error`), and a deeply-nested or self-referential `parts` tree (`RecursionError`).
+
+Fixed with defense in depth:
+- The MIME parse helpers (`_header`, `_all_headers`, `_extract_text`, `_has_attachment`) now tolerate malformed input — `isinstance` guards on payload/headers/parts entries, a `_decode_b64` that degrades to `""` on bad base64, and depth-bounded recursion (`_MAX_MIME_DEPTH = 30`) so pathological/cyclic nesting can't overflow the stack.
+- The per-thread loop body in `fetch_unread` is now fully inside the `try/except … continue`, so any residual fetch-or-parse failure drops just that one thread and the sweep continues.
+
++7 regression tests (malformed headers/parts, bad/non-string base64, 5000-deep nesting, a self-referential `parts` cycle, and "one bad thread doesn't abort the sweep"). Two other audit findings were investigated and **refuted**: an `_html_to_text` crash (offline-ingest only; `html.parser` is permissive, no real trigger) and a `classify(body=None)` deref (already None-safe via `body = msg.body or ""`). Full suite: 1665 passed.
+
 ## v0.2.0-beta.128 — 2026-05-30
 
 ### Hardening: close the medium/low test-coverage gaps on the action/outbound surface
