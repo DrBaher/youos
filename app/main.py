@@ -40,6 +40,36 @@ STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 SESSION_COOKIE = "youos_session"
 SESSION_MAX_AGE = 86400  # 24 hours
 
+# Reject a request body larger than this up front (defense-in-depth so every
+# string/list field is bounded by default, not per-field whack-a-mole). The
+# largest legitimate body is a few capped 50 KB text fields, well under this.
+_MAX_BODY_BYTES = 2 * 1024 * 1024  # 2 MB
+
+
+def _host_allowed(request: Request, config: dict) -> bool:
+    """True if the request's Host header is one we serve. Blocks DNS rebinding:
+    a page on evil.com that re-resolves to 127.0.0.1 still sends Host=evil.com,
+    so an unauthenticated (no-PIN) localhost API can't be driven from a remote
+    page. Skipped for a bind-all host (can't enumerate; that's the exposed mode
+    where a PIN + the Origin check + cookie scoping apply)."""
+    from urllib.parse import urlsplit
+
+    from app.core.config import get_server_host, get_tailscale_hostname
+
+    server_host = (get_server_host(config) or "").strip().lower()
+    if server_host in ("0.0.0.0", "::", ""):  # bind-all / unset → can't allowlist
+        return True
+    raw = request.headers.get("host", "")
+    if not raw:
+        return True  # no Host header → a non-browser client; browsers (the only
+        # DNS-rebinding vector) always send Host, so a missing one isn't the threat
+    host = (urlsplit(f"//{raw}").hostname or "").lower()
+    allowed = {"127.0.0.1", "localhost", "::1", "testserver", server_host}  # testserver = Starlette TestClient
+    tailscale = (get_tailscale_hostname(config) or "").strip().lower()
+    if tailscale:
+        allowed.add(tailscale)
+    return host in allowed
+
 
 class PinAuthMiddleware(BaseHTTPMiddleware):
     """Redirect unauthenticated requests to /login when PIN is configured.
@@ -99,6 +129,17 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
         )
 
     async def dispatch(self, request: Request, call_next):
+        # Reject an oversized body up front — bounds every string/list field by
+        # default, regardless of per-field caps or auth state.
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                oversized = int(content_length) > _MAX_BODY_BYTES
+            except ValueError:
+                return JSONResponse({"detail": "invalid Content-Length"}, status_code=400)
+            if oversized:
+                return JSONResponse({"detail": "request body too large"}, status_code=413)
+
         # Re-read config (lru-cached, cleared on every save_config) per request
         # rather than the snapshot captured at construction. Otherwise a user
         # who sets a PIN / origin allowlist on a network-reachable instance
@@ -106,6 +147,10 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
         # window on the privacy-first product. The scheduler already re-reads
         # config each tick for the same reason.
         config = self._config_provider()
+        # Reject a foreign Host (DNS rebinding) BEFORE the no-PIN short-circuit,
+        # so a rebound evil.com page can't reach the unauthenticated API.
+        if not _host_allowed(request, config):
+            return JSONResponse({"detail": "host not allowed"}, status_code=421)
         if not is_auth_enabled(config):
             return await call_next(request)
 
