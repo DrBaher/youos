@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.140 — 2026-05-30
+
+### Hardening: the documented "set a PIN" command actually works now
+
+Third of the 2nd hardening pass. An exposed instance can now be locked down via the command the warnings point at.
+
+- **The documented PIN-enable command was broken.** `youos doctor`/`status` and the startup banner told a user on a network-reachable (LAN/Tailscale) host to run `youos config set server.pin <PIN>` — which **KeyErrored** (`server.pin` isn't a feature-flag), since the only working path was the web wizard. So the user told to secure an exposed instance couldn't, via any documented command, and stayed fully unauthenticated. Worse, `docs/REMOTE_ACCESS.md` showed `server.pin YOUR-PIN-HERE` (a plaintext write), but `verify_pin` treats a no-colon value as a legacy hash → a plaintext PIN can never match → permanent lockout while believing auth is on.
+- **Fix:** a real `youos config set-pin <PIN>` CLI command and a `POST /api/config/set-pin` endpoint, both of which hash the PIN (PBKDF2) via the existing `get_pin_hash` and write `server.pin` — never plaintext. `set_flag("server.pin", …)` (and `/api/config/set`) now reject with a helpful "use `youos config set-pin`" message instead of a raw KeyError. The three exposure-warning hints (`cli.py`, `doctor.py`, the startup banner) and `docs/REMOTE_ACCESS.md` (plaintext example removed, plus a lockout caveat) now point at the working command. The API endpoint takes effect immediately (in-process config-cache clear → the per-request auth re-read picks it up); the CLI applies on the next server start.
+
++6 regression tests (set-pin CLI + endpoint write a verifying hash; empty PIN → 400; `server.pin` flag form rejected with the hint via CLI + API). Full suite: 1708 passed.
+
 ## v0.2.0-beta.139 — 2026-05-30
 
 ### Hardening: `strict_local` no longer leaks the inbound body to the cloud via subject generation

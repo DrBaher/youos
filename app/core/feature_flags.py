@@ -611,6 +611,14 @@ def set_flag(key: str, raw_value: Any, *, config_path: Path | None = None) -> An
     for a value that doesn't fit the flag's type.
     """
     if key not in _BY_KEY:
+        if key == "server.pin":
+            # server.pin isn't a feature flag — it's a hashed credential. Point
+            # the user at the command that actually sets it (and hashes it),
+            # instead of a bare "unknown flag" KeyError or a plaintext write.
+            raise KeyError(
+                "server.pin is not a feature flag; set it with `youos config set-pin <PIN>` "
+                "(stored hashed, never plaintext)"
+            )
         raise KeyError(f"unknown flag {key!r}; known: {', '.join(known_keys())}")
     value = coerce_value(_BY_KEY[key], raw_value)
     cfg = copy.deepcopy(load_config(config_path))
