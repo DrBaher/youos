@@ -9,8 +9,11 @@ ships from this module.
 from __future__ import annotations
 
 import logging
+import os
+import re
 import threading
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from app.agent.escalation import assess_stakes
@@ -18,6 +21,11 @@ from app.agent.inbox_fetch import InboxMessage, fetch_unread
 from app.agent.needs_reply import NeedsReplyVerdict, SenderHistory, classify_many
 
 logger = logging.getLogger(__name__)
+
+try:
+    import fcntl  # POSIX-only; cross-process sweep locking degrades without it
+except ImportError:  # pragma: no cover — non-Unix
+    fcntl = None  # type: ignore[assignment]
 
 # Per-account sweep serialization. A scheduled tick and a manual / API triage
 # can fire for the same account at once (e.g. the user clicks "Run triage" just
@@ -27,19 +35,84 @@ logger = logging.getLogger(__name__)
 # constraint stops duplicate ROWS but not duplicate model spend. A non-blocking
 # per-account lock makes the second caller a no-op: the in-flight sweep already
 # covers the inbox, and skipping is cheaper than blocking an HTTP request for a
-# full sweep. These locks live for the process; the dict only ever grows by the
-# number of distinct accounts.
+# full sweep. The threading.Lock serializes within THIS process; a per-account
+# fcntl.flock lockfile (below) extends that ACROSS processes, so the `youos
+# triage` CLI racing the daemon scheduler can't each read the same daily-cap
+# count and overshoot it ~2x. Both halves are non-blocking — the second caller
+# skips. Locks/fds live for the process; the dict only grows by distinct account.
 _sweep_locks: dict[str, threading.Lock] = {}
 _sweep_locks_guard = threading.Lock()
 
 
-def _account_lock(account: str) -> threading.Lock:
-    with _sweep_locks_guard:
-        lk = _sweep_locks.get(account)
-        if lk is None:
-            lk = threading.Lock()
-            _sweep_locks[account] = lk
-        return lk
+def _sweep_lockfile(account: str) -> Path | None:
+    """Path to the per-account cross-process lockfile, or None when the var dir
+    is unavailable (then we degrade to intra-process locking only)."""
+    try:
+        from app.core.settings import get_var_dir
+
+        var = get_var_dir()
+        var.mkdir(parents=True, exist_ok=True)
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", account) or "default"
+        return var / f".sweep-{safe}.lock"
+    except Exception:
+        return None
+
+
+class _SweepLock:
+    """Per-account sweep lock serializing both within this process (a
+    ``threading.Lock``) and across processes (an advisory ``fcntl.flock`` on a
+    per-account lockfile). ``acquire`` is non-blocking: a busy account returns
+    False so the caller skips rather than blocking a worker."""
+
+    def __init__(self, account: str) -> None:
+        self._account = account
+        with _sweep_locks_guard:
+            lk = _sweep_locks.get(account)
+            if lk is None:
+                lk = threading.Lock()
+                _sweep_locks[account] = lk
+        self._tlock = lk
+        self._fd: int | None = None
+
+    def acquire(self) -> bool:
+        if not self._tlock.acquire(blocking=False):
+            return False
+        path = None if fcntl is None else _sweep_lockfile(self._account)
+        if path is None:
+            return True  # no cross-process layer available → intra-process only
+        fd = None
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            # Another PROCESS holds it (BlockingIOError ⊂ OSError) or flock
+            # failed — release the in-process lock and report busy.
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            self._tlock.release()
+            return False
+        self._fd = fd
+        return True
+
+    def release(self) -> None:
+        if self._fd is not None:
+            try:
+                fcntl.flock(self._fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            try:
+                os.close(self._fd)
+            except OSError:
+                pass
+            self._fd = None
+        self._tlock.release()
+
+
+def _account_lock(account: str) -> _SweepLock:
+    return _SweepLock(account)
 
 
 def _empty_sweep_accum() -> dict[str, Any]:
@@ -663,7 +736,7 @@ def run_triage(
     # in-flight sweep already covers the inbox, and running a second pass would
     # only burn model time and risk exceeding the daily cap.
     lock = _account_lock(account)
-    if not lock.acquire(blocking=False):
+    if not lock.acquire():
         logger.info(
             "triage: a sweep for %s is already in progress — skipping this %s run",
             account, trigger,
