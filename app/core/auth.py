@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from app.core.secure_io import write_secret
+
 # Methods that mutate server state — these are the CSRF-relevant ones.
 STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "DELETE", "PATCH"})
 
@@ -92,8 +94,9 @@ def save_sessions(sessions: dict[str, float], path: Path | None = None) -> None:
     """Write sessions dict to JSON file."""
     if path is None:
         path = SESSIONS_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(sessions), encoding="utf-8")
+    # 0o600: the dict key IS the session token; the auth middleware accepts it
+    # verbatim as the cookie, so a world-readable file is a local auth bypass.
+    write_secret(path, json.dumps(sessions))
 
 
 def persist_new_session(token: str, path: Path | None = None) -> None:
@@ -138,8 +141,7 @@ def add_api_token(path: Path | None = None) -> str:
     token = secrets.token_urlsafe(32)
     hashes = load_api_token_hashes(path)
     hashes.append(get_pin_hash(token))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(hashes), encoding="utf-8")
+    write_secret(path, json.dumps(hashes))  # 0o600: token hashes are crackable offline
     return token
 
 
@@ -149,7 +151,7 @@ def revoke_api_tokens(path: Path | None = None) -> int:
         path = _get_api_tokens_path()
     count = len(load_api_token_hashes(path))
     if path.exists():
-        path.write_text(json.dumps([]), encoding="utf-8")
+        write_secret(path, json.dumps([]))
     return count
 
 
