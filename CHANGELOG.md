@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.148 — 2026-05-30
+
+### Hardening: log-line forgery via gog stderr + an unbounded rate-limiter map
+
+Fourth and last of the 4th hardening pass — two LOW fixes.
+
+- **CRLF log-line forgery via gog/gws stderr.** When a `gog`/`gws` command failed, its stderr — which echoes attacker-influenced values (a crafted label, recipient, message metadata) — was embedded **raw** into the `GmailWriteError` text and then `%s`-logged with the default formatter (no formatter installed anywhere strips newlines). An embedded `\n` could start a fresh, fully-formed log line, forging a fake `[ALERT] sweep complete, 0 errors` entry to hide a real failure during incident triage; the same strings also persist into the `agent_audit`/`agent_actions` rows. A new `_clean_stderr` strips control chars (incl. newlines) and bounds the length at all eight stderr-into-message sites.
+- **RateLimiter per-key map grew past its cap.** `_evict_stale` only dropped keys whose timestamps were *all* expired, so under a sustained flood of distinct fresh keys (feasible on an IPv6 LAN/Tailscale deploy) eviction freed nothing and the map grew without bound. It's now an `OrderedDict` with LRU `move_to_end` on each touch and a `popitem(last=False)` hard cap, so `max_keys` is a real ceiling.
+
++2 regression tests (stderr strip defangs a forged `[ALERT]` line + bounds length; the limiter map stays ≤ `max_keys` under a 5 000-distinct-key flood and keeps the most-recent keys). Full suite: 1724 passed.
+
 ## v0.2.0-beta.147 — 2026-05-30
 
 ### Hardening: autoresearch integrity (weight drift, failure isolation, audit trail)
