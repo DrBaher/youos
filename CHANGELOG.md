@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.2.0-beta.134 — 2026-05-30
+
+### Hardening: credential/secret files are no longer world-readable
+
+Fourth of the post-b130 hardening series. Every secret writer used `Path.write_text`, which inherits the umask (typically 0o644), so credential material landed world-readable.
+
+- **Session-token file → local PIN-auth bypass (MEDIUM).** `var/sessions.json` stores the session token *as the dict key*, and the auth middleware accepts that value verbatim as the `SESSION_COOKIE`. At 0o644, any other local user could read the token and replay it as a cookie to bypass PIN auth on every state-changing endpoint (mint API tokens, trigger ingest/finetune, …) until the session expired.
+- **PIN hash + API-token hashes (LOW).** `youos_config.yaml` (the PBKDF2 PIN hash — a short PIN brute-forces offline in seconds) and `var/api_tokens.json` were likewise 0o644, exposing offline-cracking material.
+
+Fix: a new `app/core/secure_io.write_secret(path, text)` creates the file `0o600` from the start (no world-readable window) and chmods it (so a pre-existing 0o644 file is tightened too). All five secret writers route through it — `save_sessions`, `add_api_token`, `revoke_api_tokens` (auth), `save_config` (config), and the setup wizard's PIN write. Separately, DB bootstrap now chmods the `var/` directory to `0o700` and `youos.db` to `0o600` at creation, so the mailbox corpus (and the WAL/SHM siblings) aren't world-readable either.
+
++4 regression tests (write_secret create + tighten-existing; sessions/api-token/config 0o600; var-dir 0o700 + db 0o600). Full suite: 1693 passed.
+
 ## v0.2.0-beta.133 — 2026-05-30
 
 ### Hardening: a crafted message can no longer crash the nightly corpus ingest
