@@ -13,6 +13,8 @@ from typing import Any
 
 import yaml
 
+from app.core.secure_io import write_secret
+
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
 
@@ -270,8 +272,10 @@ def get_account_for_sender(sender: str, config: dict[str, Any] | None = None) ->
 
 def save_config(config: dict[str, Any], config_path: Path | None = None) -> None:
     path = config_path or CONFIG_PATH
-    path.write_text(
+    # 0o600: youos_config.yaml holds the PBKDF2 PIN hash (a short PIN brute-forces
+    # offline in seconds), so it must not be world-readable.
+    write_secret(
+        path,
         yaml.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False, width=120),
-        encoding="utf-8",
     )
     load_config.cache_clear()
