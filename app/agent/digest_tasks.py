@@ -165,6 +165,12 @@ def validate_digest(raw: Any) -> tuple[bool, str]:
     destn = str(raw.get("destination") or "agent").strip().lower()
     if destn not in _VALID_DESTINATIONS:
         return False, f"destination must be one of {list(_VALID_DESTINATIONS)}"
+    # 'then_archive' is an inbox-only behaviour: it archives the source messages
+    # after a real send. The 'agent' destination sends nothing (it stores the
+    # body for pickup), so archiving there would be an ungated mailbox mutation —
+    # reject it rather than silently ignore it (no silent no-op, no surprise edit).
+    if bool(raw.get("then_archive", False)) and destn != "inbox":
+        return False, "then_archive only applies to an 'inbox' digest (the 'agent' destination sends nothing to archive after)"
     return True, ""
 
 
