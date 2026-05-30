@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 
+from app.agent.inbox_fetch import fetch_unread
+
 
 def _b64(text: str) -> str:
     return base64.urlsafe_b64encode(text.encode("utf-8")).decode("ascii")
