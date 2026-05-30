@@ -559,6 +559,24 @@ def coerce_value(flag: dict, raw: Any) -> Any:
         if s not in flag["choices"]:
             raise ValueError(f"expected one of {flag['choices']}, got {raw!r}")
         return s
+    if flag["type"] == "int":
+        # Without this branch an int flag fell through to ``return raw`` and a
+        # non-numeric value (e.g. an empty /settings field, or ``"abc"`` via
+        # /api/config/set) was persisted verbatim — then every bare ``int(...)``
+        # read of it (e.g. the scheduler's interval) raised, killing the agent
+        # loop. Reject it here so set_flag raises -> the API returns 400.
+        if isinstance(raw, bool):  # bool is an int subclass; a flag value isn't a bool
+            raise ValueError(f"expected an integer, got {raw!r}")
+        try:
+            v = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"expected an integer, got {raw!r}") from exc
+        lo, hi = flag.get("min"), flag.get("max")
+        if lo is not None:
+            v = max(int(lo), v)
+        if hi is not None:
+            v = min(int(hi), v)
+        return v
     if flag["type"] == "float":
         try:
             v = float(raw)
