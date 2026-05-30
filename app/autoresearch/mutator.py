@@ -21,6 +21,10 @@ class ConfigSurface:
     max_val: float | None = None
     variants: list[Any] | None = None
     variant_index: int = 0  # for template_variant: which variant is current
+    # Snapshot of the FULL composite_weights dict taken before a composite-weight
+    # mutation, so revert can restore all three weights (normalization rewrites
+    # all of them; reverting only the mutated key leaves the rest skewed).
+    composite_snapshot: dict[str, float] | None = None
 
 
 # -- Numeric surface definitions ────────────────────────────────────
@@ -327,10 +331,15 @@ def apply_mutation(surface: ConfigSurface, configs_dir: Path) -> Any:
         new_value = _next_numeric_value(surface)
         if new_value == old_value:
             return old_value  # at boundary, no mutation possible
+        is_composite = surface.config_file == "autoresearch.yaml" and "composite_weights" in surface.yaml_key
+        if is_composite:
+            # Snapshot ALL weights before mutating, so revert can restore them
+            # (normalization below rewrites every weight, not just this one).
+            surface.composite_snapshot = dict(data.get("composite_weights") or {})
         _set_nested(data, surface.yaml_key, new_value)
         surface.current_value = new_value
         # Normalize composite weights if this is an autoresearch weight
-        if surface.config_file == "autoresearch.yaml" and "composite_weights" in surface.yaml_key:
+        if is_composite:
             _normalize_composite_weights(data)
     elif surface.mutation_type == "template_variant":
         new_index = (surface.variant_index + 1) % len(surface.variants)
@@ -350,14 +359,22 @@ def revert_mutation(surface: ConfigSurface, old_value: Any, configs_dir: Path) -
     file_path = configs_dir / surface.config_file
     raw = file_path.read_text(encoding="utf-8")
     data = yaml.safe_load(raw) or {}
-    _set_nested(data, surface.yaml_key, old_value)
-    surface.current_value = old_value
-    # For template variants, find the matching index
-    if surface.mutation_type == "template_variant" and surface.variants:
-        for i, v in enumerate(surface.variants):
-            if v.strip() == str(old_value).strip():
-                surface.variant_index = i
-                break
+    if surface.composite_snapshot is not None:
+        # Restore the WHOLE composite_weights dict — normalization changed all
+        # three, so restoring only the mutated key would leave the rest skewed
+        # and the sum != 1, silently corrupting the eval objective over time.
+        data["composite_weights"] = dict(surface.composite_snapshot)
+        surface.current_value = old_value
+        surface.composite_snapshot = None
+    else:
+        _set_nested(data, surface.yaml_key, old_value)
+        surface.current_value = old_value
+        # For template variants, find the matching index
+        if surface.mutation_type == "template_variant" and surface.variants:
+            for i, v in enumerate(surface.variants):
+                if v.strip() == str(old_value).strip():
+                    surface.variant_index = i
+                    break
     _write_yaml(file_path, data)
 
 
