@@ -147,3 +147,38 @@ def test_load_compare_thresholds_from_config(tmp_path):
     assert load_compare_thresholds(tmp_path) == (0.04, 0.02)
     # Missing file → defaults.
     assert load_compare_thresholds(tmp_path / "nope") == (0.01, 0.01)
+
+
+def test_composite_weight_mutate_then_revert_restores_exact_original(tmp_path):
+    """b147: normalization rewrites all three weights, so revert must restore the
+    WHOLE dict — restoring only the mutated key left the rest skewed (sum != 1),
+    silently corrupting the eval objective over successive nightly runs."""
+    from app.autoresearch.mutator import apply_mutation, get_mutable_surfaces, revert_mutation
+
+    orig = {"pass_rate": 0.5, "avg_keyword_hit": 0.3, "avg_confidence": 0.2}
+    (tmp_path / "autoresearch.yaml").write_text(yaml.safe_dump({"composite_weights": dict(orig)}))
+    (tmp_path / "retrieval").mkdir()
+    (tmp_path / "retrieval" / "defaults.yaml").write_text("top_k_reply_pairs: 5\n")
+    (tmp_path / "prompts.yaml").write_text("system_prompt_suffix: ''\n")
+    (tmp_path / "persona.yaml").write_text("modes: {}\n")
+
+    comp = next(s for s in get_mutable_surfaces(tmp_path)
+                if s.config_file == "autoresearch.yaml" and "composite_weights" in s.yaml_key)
+    old = apply_mutation(comp, tmp_path)
+    mutated = yaml.safe_load((tmp_path / "autoresearch.yaml").read_text())["composite_weights"]
+    assert mutated != orig and abs(sum(mutated.values()) - 1.0) < 1e-9
+
+    revert_mutation(comp, old, tmp_path)
+    restored = yaml.safe_load((tmp_path / "autoresearch.yaml").read_text())["composite_weights"]
+    assert restored == orig  # exactly the operator-set 0.5/0.3/0.2
+
+
+def test_load_composite_weights_renormalizes_skewed_file(tmp_path):
+    """b147: any on-disk drift (a historically-buggy revert) is corrected to
+    sum 1.0 on load so it can't bias scoring."""
+    (tmp_path / "autoresearch.yaml").write_text(
+        yaml.safe_dump({"composite_weights": {"pass_rate": 0.5, "avg_keyword_hit": 0.2857, "avg_confidence": 0.1905}})
+    )
+    reset_weight_cache()
+    w = load_composite_weights(tmp_path)
+    assert abs(sum(w.values()) - 1.0) < 1e-6

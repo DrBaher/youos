@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +26,8 @@ from app.autoresearch.scorer import (
     scorecard_from_eval_result,
 )
 from app.evaluation.service import EvalRequest, run_eval_suite
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -143,59 +146,69 @@ def run_autoresearch(
             # No actual change (boundary)
             continue
 
-        # Run eval with mutated config
-        candidate_result = run_eval_suite(
-            EvalRequest(config_tag=f"{run_tag}_iter{eval_count}"),
-            generate_fn=generate_fn,
-            database_url=database_url,
-            configs_dir=configs_dir,
-            persist=True,
-        )
-        eval_count += 1
-        candidate = scorecard_from_eval_result(candidate_result, configs_dir, case_weights=case_weights)
-        outcome = compare_scorecards(
-            current_baseline, candidate,
-            improve_threshold=improve_threshold, regress_threshold=regress_threshold,
-        )
+        try:
+            # Run eval with mutated config
+            candidate_result = run_eval_suite(
+                EvalRequest(config_tag=f"{run_tag}_iter{eval_count}"),
+                generate_fn=generate_fn,
+                database_url=database_url,
+                configs_dir=configs_dir,
+                persist=True,
+            )
+            eval_count += 1
+            candidate = scorecard_from_eval_result(candidate_result, configs_dir, case_weights=case_weights)
+            outcome = compare_scorecards(
+                current_baseline, candidate,
+                improve_threshold=improve_threshold, regress_threshold=regress_threshold,
+            )
 
-        kept = outcome == "improved"
-        if not kept:
-            revert_mutation(surface, old_value, configs_dir)
+            kept = outcome == "improved"
+            if not kept:
+                revert_mutation(surface, old_value, configs_dir)
 
-        iteration = IterationResult(
-            iteration=eval_count - 1,
-            surface_name=surface.name,
-            mutation_desc=mutation_desc,
-            baseline_composite=current_baseline.composite,
-            candidate_composite=candidate.composite,
-            outcome=outcome,
-            kept=kept,
-            baseline_pass=current_baseline.pass_rate,
-            candidate_pass=candidate.pass_rate,
-            baseline_kw=current_baseline.avg_keyword_hit,
-            candidate_kw=candidate.avg_keyword_hit,
-            baseline_conf=current_baseline.avg_confidence,
-            candidate_conf=candidate.avg_confidence,
-        )
-        report.iterations.append(iteration)
+            iteration = IterationResult(
+                iteration=eval_count - 1,
+                surface_name=surface.name,
+                mutation_desc=mutation_desc,
+                baseline_composite=current_baseline.composite,
+                candidate_composite=candidate.composite,
+                outcome=outcome,
+                kept=kept,
+                baseline_pass=current_baseline.pass_rate,
+                candidate_pass=candidate.pass_rate,
+                baseline_kw=current_baseline.avg_keyword_hit,
+                candidate_kw=candidate.avg_keyword_hit,
+                baseline_conf=current_baseline.avg_confidence,
+                candidate_conf=candidate.avg_confidence,
+            )
+            report.iterations.append(iteration)
 
-        log_iteration(
-            database_url,
-            run_tag=run_tag,
-            iteration=eval_count - 1,
-            surface_name=surface.name,
-            mutation_desc=mutation_desc,
-            baseline_composite=current_baseline.composite,
-            candidate_composite=candidate.composite,
-            outcome=outcome,
-            kept=kept,
-        )
+            log_iteration(
+                database_url,
+                run_tag=run_tag,
+                iteration=eval_count - 1,
+                surface_name=surface.name,
+                mutation_desc=mutation_desc,
+                baseline_composite=current_baseline.composite,
+                candidate_composite=candidate.composite,
+                outcome=outcome,
+                kept=kept,
+            )
 
-        if kept:
-            current_baseline = candidate
-            report.improvements_kept += 1
-        else:
-            report.reverted += 1
+            if kept:
+                current_baseline = candidate
+                report.improvements_kept += 1
+            else:
+                report.reverted += 1
+        except Exception as exc:
+            # A transient eval failure must NOT leave the mutated (unvalidated)
+            # config live or abort the rest of the run — revert and move on.
+            logger.warning("autoresearch: surface %s failed mid-eval, reverting: %s", surface.name, exc)
+            try:
+                revert_mutation(surface, old_value, configs_dir)
+            except Exception:
+                pass
+            continue
 
     report.total_eval_runs = eval_count
     report.final = current_baseline
