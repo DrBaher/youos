@@ -6,6 +6,7 @@ import os
 import re
 import signal
 import subprocess
+import threading
 from typing import Literal
 
 from fastapi import APIRouter, Request
@@ -37,6 +38,26 @@ from app.retrieval.service import RetrievalRequest, retrieve_context
 
 router = APIRouter(prefix="/draft", tags=["draft-stream"])
 logger = logging.getLogger(__name__)
+
+# Hard wall-clock ceiling on a streaming subprocess. The read loop blocks on the
+# child's stdout pipe with no per-read timeout, and proc.wait(timeout=120) only
+# runs AFTER the loop drains stdout — so without a watchdog a CLI that stalls
+# mid-stream (no EOF) would pin the worker indefinitely. A watchdog kills the
+# process group at this deadline, which closes stdout and unblocks the read.
+_STREAM_TIMEOUT = 120
+
+
+def _kill_proc_group(proc) -> None:
+    """Best-effort SIGKILL of the child's whole process group (closes its stdout
+    so a blocked stream read returns EOF). No-op if it already exited."""
+    if proc and proc.poll() is None:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
 
 
 class StreamBody(BaseModel):
@@ -208,6 +229,7 @@ def _stream_generate(body: StreamBody, settings):
                 return
 
     proc = None
+    watchdog = None
     try:
         if stream_local:
             # mlx_lm frames output as: <prelude> ===== <generated text> ===== <stats>.
@@ -228,6 +250,9 @@ def _stream_generate(body: StreamBody, settings):
                 start_new_session=True,
                 env={**os.environ, "PYTHONUNBUFFERED": "1"},
             )
+            watchdog = threading.Timer(_STREAM_TIMEOUT, _kill_proc_group, args=(proc,))
+            watchdog.daemon = True
+            watchdog.start()
             for piece in _iter_mlx_body(proc.stdout):
                 yield f"data: {json.dumps({'token': piece})}\n\n"
             proc.wait(timeout=120)
@@ -245,6 +270,9 @@ def _stream_generate(body: StreamBody, settings):
                 text=True,
                 start_new_session=True,
             )
+            watchdog = threading.Timer(_STREAM_TIMEOUT, _kill_proc_group, args=(proc,))
+            watchdog.daemon = True
+            watchdog.start()
             for line in proc.stdout:
                 # Emit each line including its trailing newline, blank lines too, so
                 # paragraph breaks survive streaming. The token carries its own
@@ -278,13 +306,11 @@ def _stream_generate(body: StreamBody, settings):
             logger.exception("draft stream: generation failed")
             yield f"data: {json.dumps({'token': '[generation failed — see server logs]'})}\n\n"
     finally:
-        # Don't leave a hung claude (or its child processes) running if we
-        # errored out or the client disconnected mid-stream.
-        if proc and proc.poll() is None:
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                proc.kill()
+        # Cancel the deadline watchdog and don't leave a hung child (or its
+        # process group) running if we errored / the client disconnected.
+        if watchdog is not None:
+            watchdog.cancel()
+        _kill_proc_group(proc)
 
     done_payload = {
         "done": True,

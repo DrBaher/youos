@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.141 — 2026-05-30
+
+### Hardening: streaming read deadline + gog negation-query parsing
+
+Fourth and last of the 2nd hardening pass — two LOW robustness fixes; the verified backlog is now cleared.
+
+- **The streaming-fallback subprocess had no enforced deadline.** On the no-LoRA path, `/draft/stream` streams from a `claude`/`mlx_lm` subprocess by iterating `proc.stdout` — which blocks on the pipe with no per-read timeout, and `proc.wait(timeout=120)` only runs *after* the loop drains stdout. So a CLI that stalled mid-stream (no EOF) pinned the worker until the client disconnected; the documented 120 s ceiling didn't actually hold (unlike the hardened `_run_subprocess`). Added a watchdog `threading.Timer` that SIGKILLs the process group at `_STREAM_TIMEOUT` (both the claude and mlx branches), which closes stdout so the blocked read returns EOF at the deadline; the watchdog is cancelled on normal completion. Verified: a 3600 s-stall child unblocks in the watchdog window.
+- **A negation `gog` query crashed search.** The Gmail/Drive query was passed as the **leading positional** right after the subcommand, so a query whose first token starts with `-` (e.g. `-from:noreply@x.com` — common negation syntax, and the digest query is settable via the config surface) was parsed by gog's Kong CLI as an unknown flag and exited non-zero, permanently failing that ingest/digest (gws/native pass the query as JSON and were unaffected). All three sites (`gmail_threads`, `google_docs`, `digest_tasks`) now place the query at the end behind a `--` end-of-flags separator.
+
++3 regression tests (watchdog kills a stalled child so the read unblocks; the digest + gmail-search queries reach gog after `--`). Full suite: 1711 passed.
+
 ## v0.2.0-beta.140 — 2026-05-30
 
 ### Hardening: the documented "set a PIN" command actually works now
