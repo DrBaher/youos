@@ -76,3 +76,16 @@ def test_dedup_keeps_first_when_quality_tied():
     result, removed = deduplicate_pairs(pairs, threshold=0.95)
     assert removed == 1
     assert len(result) == 1
+
+
+def test_dedup_bounds_per_comparison_text_length():
+    """b144: each O(n^2) comparison ran hybrid_similarity on the full
+    attacker-controlled inbound body. With the per-comparison text cap, many
+    huge bodies stay cheap, and near-dup semantics are unchanged."""
+    import time
+
+    big = "X" * 200_000
+    pairs = [(f"out{i}", big + str(i % 2), "id", 0.8) for i in range(50)]  # 50 pairs, huge bodies
+    t0 = time.perf_counter()
+    _result, _removed = deduplicate_pairs(pairs)
+    assert time.perf_counter() - t0 < 2.0  # bounded, not minutes

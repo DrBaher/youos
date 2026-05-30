@@ -100,6 +100,12 @@ def compute_open_slots(
     spread) over the next ``business_days`` weekdays, within work hours in the
     user's timezone, not overlapping ``busy``. Pure + deterministic given
     ``now``. Returns tz-aware (user-tz) ``(start, end)`` tuples."""
+    # A non-positive slot length makes the slot-scan loop never advance (step=0)
+    # or run backwards — an infinite loop that hangs the triage worker. No valid
+    # slots exist for it, so bail. (slot_minutes can come from config, which on a
+    # no-PIN instance is settable over the network.)
+    if slot_minutes <= 0:
+        return []
     try:
         zone = ZoneInfo(tz)
     except Exception:
