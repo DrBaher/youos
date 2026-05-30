@@ -350,10 +350,12 @@ def _lookup_sender_profile_safe(db_path: Path, email: str) -> dict[str, Any] | N
         exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sender_profiles'").fetchone()
         if not exists:
             return None
-        # Extract email address from "Name <email>" format
+        # Extract email address from "Name <email>" format. ``email`` is
+        # attacker-controlled; cap it and bound the local part ({1,64}) so this
+        # regex can't be driven into O(n^2) backtracking.
         import re
 
-        match = re.search(r"[\w.+-]+@[\w.-]+\.\w+", email)
+        match = re.search(r"[\w.+-]{1,64}@[\w.-]+\.\w+", (email or "")[:1024])
         if not match:
             return None
         clean_email = match.group(0).lower()
