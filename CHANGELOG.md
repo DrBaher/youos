@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.143 — 2026-05-30
+
+### Hardening: the LoRA adapter-promotion gate can no longer be silently defeated
+
+Second of the 3rd hardening pass — three flaws in the nightly adapter-promotion safety gate (the mechanism that stops a bad retrain from silently degrading every draft).
+
+- **Baseline self-defeating after a rollback (MEDIUM).** The gate compares this run's golden composite against the *prior run's* persisted composite. But on a rollback, the run still persisted the *rejected candidate's* (low) score as the next baseline — even though the live adapter is the rolled-back *previous* one. So one bad retrain permanently lowered the bar, letting the next regressed retrain "improve" past it and slip through. The persisted baseline now reflects the **actually-live** adapter (`composite_to_persist`): `baseline` after a successful `rolled_back`, the candidate otherwise.
+- **First-ever finetune bypassed the gate entirely (LOW).** On the first run `latest` is empty, so the pre-finetune snapshot returns False and the whole gate block (`if _adapter_snapshotted`) was skipped — including the degenerate-eval **hard refuse**. A first finetune that produced mostly-empty drafts was kept and served. Now, a finetuned-but-unsnapshotted run with a degenerate eval **discards** the untrustworthy adapter (`discard_adapter`) and falls back to the base model.
+- **Per-persona adapters had no rollback point (LOW).** `step_finetune_personas` overwrote `adapters/personas/<persona>/` with no snapshot, so a bad persona retrain destroyed the only copy. Each persona adapter is now snapshotted to `<persona>.previous` before retraining. (There's no per-persona golden eval yet, so this is a recovery *point*, not an automatic gate — full per-persona gating is deferred until a per-persona eval exists.)
+
++2 regression tests (the baseline-after-rollback rule across kept/rolled_back/rollback_failed; degenerate-discard clears the adapter). Full suite: 1714 passed.
+
 ## v0.2.0-beta.142 — 2026-05-30
 
 ### Hardening: token-auth event-loop DoS + world-readable OAuth token files
