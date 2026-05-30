@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.2.0-beta.133 — 2026-05-30
+
+### Hardening: a crafted message can no longer crash the nightly corpus ingest
+
+Third of the post-b130 hardening series. b129 hardened the *agent sweep* parser (`inbox_fetch`); the **corpus-ingestion** path (`gmail_threads.py`, which the nightly pipeline feeds the training corpus + retrieval) had the same bug classes and called raw stdlib parsers on attacker headers. Two confirmed `RecursionError` crashes there escaped the `ValueError`-only handler, aborted the whole run, and orphaned a `started` run-log row.
+
+- **Paren-bomb header → `RecursionError` (HIGH).** Python's `email.utils.getaddresses`/`parseaddr` recurse once per nested `(` comment; a `From`/`To`/`Cc` with ~1000 nested parens crashed the run (confirmed). Both calls now route through `_safe_getaddresses`/`_safe_parseaddr`, which cap the header (`_MAX_HEADER_CHARS`), bail on a paren bomb (`>50` parens), and catch `ValueError`/`RecursionError` → degrade to empty. Legit single-comment + multi-address headers still parse.
+- **Deeply-nested MIME → `RecursionError` (MEDIUM).** `_extract_payload_parts` recursed with no depth bound (b129 fixed this only on `inbox_fetch`). Added a `depth`/`_MAX_MIME_DEPTH = 30` cap + non-dict guard; a 6000-deep tree now returns empty instead of crashing.
+- **No per-item isolation (LOW).** The normalize step was a list comprehension (one bad thread sank the whole batch) and the directory import had no per-file guard (one corrupt `.json` sank the rest). Both are now isolated — a malformed thread / unreadable file is logged and skipped, good items still ingest; only a *total* failure marks the run failed (so the `started` row is never orphaned).
+- **Uncapped corpus body (LOW).** `_message_body_text` now caps the stored body at `_MAX_BODY_CHARS = 100_000` (b130 capped only `inbox_fetch`).
+- **Dash-leading addr-spec (INFO).** `-x@evil.com` (from a spoofed `From`) is rejected at both extraction chokepoints (`_normalize_email` and `sender._find_email`) — it's not a real address and gog's Kong parser reads it as a `--to` flag (exit 2). WhatsApp import also now refuses an oversized export before reading it into memory.
+
++7 regression tests (paren-bomb degrade, MIME depth bound, body cap, dash-leading reject, corrupt-file skip, oversize-export refuse). Full suite: 1689 passed.
+
 ## v0.2.0-beta.132 — 2026-05-30
 
 ### Hardening: ReDoS in draft verification + unbounded API request bodies
