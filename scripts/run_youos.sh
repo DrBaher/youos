@@ -31,4 +31,7 @@ HOST="${YOUOS_HOST:-127.0.0.1}"
 PORT="${YOUOS_PORT:-8765}"
 APP_MODULE="${YOUOS_APP_MODULE:-app.main:app}"
 
-exec "$PYTHON_BIN" -m uvicorn "$APP_MODULE" --host "$HOST" --port "$PORT"
+# --limit-concurrency bounds total in-flight requests so a flood of the
+# expensive draft endpoints can't exhaust the shared sync threadpool and freeze
+# the single-worker server (generous ceiling for a single-user instance).
+exec "$PYTHON_BIN" -m uvicorn "$APP_MODULE" --host "$HOST" --port "$PORT" --limit-concurrency 64
