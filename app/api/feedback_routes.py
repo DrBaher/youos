@@ -144,11 +144,22 @@ def scan_corpus_facts(request: Request) -> dict:
 
     total_extracted = 0
     for row in rows:
-        combined = f"{row['inbound_text'] or ''}\n{row['reply_text'] or ''}".strip()
-        if not combined:
+        reply = (row["reply_text"] or "").strip()
+        inbound = (row["inbound_text"] or "").strip()
+        if not (reply or inbound):
             continue
         try:
-            facts = extract_and_save(combined, db_path, sender_email=row["inbound_author"])
+            facts: list[dict] = []
+            # user_pref (sign-off / style) is learned ONLY from the user's own
+            # reply; the attacker-controlled inbound would otherwise inject a
+            # global 'default' fact pulled into every draft. Contact/project
+            # facts may still come from the inbound (they're sender-keyed).
+            if reply:
+                facts += extract_and_save(reply, db_path, sender_email=row["inbound_author"])
+            if inbound:
+                facts += extract_and_save(
+                    inbound, db_path, sender_email=row["inbound_author"], allow_user_pref=False
+                )
             total_extracted += len(facts)
         except Exception:
             logger.warning("Facts extraction failed for reply pair %s", row["id"], exc_info=True)
