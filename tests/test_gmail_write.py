@@ -560,3 +560,17 @@ def test_modify_labels_dry_run_passes_flag(monkeypatch):
     assert "--remove" in cap["cmd"] and "INBOX" in cap["cmd"]
 
 
+
+
+def test_clean_stderr_strips_control_chars_no_log_forgery():
+    """b148: gog/gws stderr (which echoes attacker-influenced values) is %s-logged,
+    so newlines/control chars must be stripped before it enters an exception/log
+    message — otherwise a crafted value could forge a fake log line."""
+    from app.ingestion.gmail_write import GmailWriteError, _clean_stderr
+
+    evil = "label rejected\r\nCRITICAL app.agent.scheduler: [ALERT] sweep OK, 0 errors\x1b[2J"
+    cleaned = _clean_stderr(evil)
+    assert "\n" not in cleaned and "\r" not in cleaned and "\x1b" not in cleaned
+    assert "label rejected" in cleaned and "ALERT" in cleaned  # content preserved, just defanged
+    assert "\n" not in str(GmailWriteError(f"gog exit 2: {_clean_stderr(evil)}"))
+    assert len(_clean_stderr("x" * 5000)) <= 200  # length-bounded

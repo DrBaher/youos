@@ -25,6 +25,7 @@ import base64
 import email.message
 import json
 import logging
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +34,15 @@ from typing import Any
 from app.core.secure_io import write_secret
 
 logger = logging.getLogger(__name__)
+
+
+def _clean_stderr(text: str | None, *, limit: int = 200) -> str:
+    """Strip control chars (incl. newlines) from gog/gws stderr before embedding
+    it in an exception/log message. The stderr echoes attacker-influenced values
+    (a crafted label, recipient, message metadata), so a raw newline could forge
+    a fake log line (CRLF) — these messages are %s-logged with the default
+    formatter — and a terminal escape could reach a TTY."""
+    return re.sub(r"[\x00-\x1f\x7f]+", " ", (text or "")).strip()[:limit]
 
 
 class GmailWriteError(RuntimeError):
@@ -166,7 +176,7 @@ def _gog_send_draft(*, account: str, draft_id: str, dry_run: bool) -> GmailSendR
         raise GmailWriteError("gog gmail drafts send timed out (30s)") from exc
 
     if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
+        stderr = _clean_stderr(result.stderr)
         raise GmailWriteError(f"gog send returned exit {result.returncode}: {stderr or 'no stderr'}")
 
     try:
@@ -236,7 +246,7 @@ def _gog_forward(*, account: str, message_id: str, to: str, note: str | None) ->
         raise GmailWriteError("gog gmail forward timed out (30s)") from exc
 
     if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
+        stderr = _clean_stderr(result.stderr)
         raise GmailWriteError(f"gog forward returned exit {result.returncode}: {stderr or 'no stderr'}")
 
     try:
@@ -295,7 +305,7 @@ def _gog_send_email(*, account: str, to: str, subject: str, body: str) -> GmailS
         raise GmailWriteError("gog gmail send timed out (30s)") from exc
 
     if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
+        stderr = _clean_stderr(result.stderr)
         raise GmailWriteError(f"gog send returned exit {result.returncode}: {stderr or 'no stderr'}")
 
     try:
@@ -364,7 +374,7 @@ def _gog_create_draft(
         raise GmailWriteError("gog gmail drafts create timed out (30s)") from exc
 
     if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
+        stderr = _clean_stderr(result.stderr)
         raise GmailWriteError(f"gog returned exit {result.returncode}: {stderr or 'no stderr'}")
 
     # The Google API returns a Draft resource: { "id": "...", "message": {...} }.
@@ -453,7 +463,7 @@ def _gws_create_draft(
         raise GmailWriteError("gws gmail drafts create timed out (30s)") from exc
 
     if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
+        stderr = _clean_stderr(result.stderr)
         raise GmailWriteError(f"gws returned exit {result.returncode}: {stderr or 'no stderr'}")
 
     try:
@@ -626,7 +636,7 @@ def list_labels(*, account: str) -> set[str]:
     """Return the set of existing label NAMES on the account (gog gmail labels list)."""
     r = _gog(["gog", "gmail", "labels", "list", "--account", account, "--json", "--no-input"])
     if r.returncode != 0:
-        raise GmailWriteError(f"gog labels list exit {r.returncode}: {(r.stderr or '').strip()[:160]}")
+        raise GmailWriteError(f"gog labels list exit {r.returncode}: {_clean_stderr(r.stderr, limit=160)}")
     try:
         payload = json.loads(r.stdout or "[]")
     except json.JSONDecodeError as exc:
@@ -653,7 +663,7 @@ def ensure_label(*, account: str, name: str, known: set[str] | None = None) -> N
     if r.returncode != 0:
         stderr = (r.stderr or "").strip().lower()
         if not ("already exists" in stderr or "exists" in stderr):  # race/case diff is fine
-            raise GmailWriteError(f"gog labels create {name!r} exit {r.returncode}: {(r.stderr or '').strip()[:160]}")
+            raise GmailWriteError(f"gog labels create {name!r} exit {r.returncode}: {_clean_stderr(r.stderr, limit=160)}")
     if known is not None:
         known.add(name)
 
@@ -691,7 +701,7 @@ def modify_message_labels(
         cmd.append("--dry-run")
     r = _gog(cmd)
     if r.returncode != 0:
-        raise GmailWriteError(f"gog messages modify exit {r.returncode}: {(r.stderr or '').strip()[:160]}")
+        raise GmailWriteError(f"gog messages modify exit {r.returncode}: {_clean_stderr(r.stderr, limit=160)}")
     try:
         payload = json.loads(r.stdout or "{}")
     except json.JSONDecodeError:

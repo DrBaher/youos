@@ -76,3 +76,15 @@ def test_stale_keys_are_evicted_when_over_capacity(monkeypatch):
     rl.is_allowed("fresh")  # triggers eviction since map now exceeds max_keys
     assert "fresh" in rl._requests
     assert all(not k.startswith("old-") for k in rl._requests)
+
+
+def test_rate_limiter_map_is_hard_bounded_under_fresh_key_flood():
+    """b148: _evict_stale only removed fully-stale keys, so a flood of distinct
+    fresh keys grew the map past max_keys. The LRU hard cap now bounds it."""
+    from app.core.rate_limit import RateLimiter
+
+    rl = RateLimiter(max_requests=100, window_seconds=60.0, max_keys=50)
+    for i in range(5000):
+        rl.is_allowed(f"key-{i}")  # all distinct + fresh
+    assert len(rl._requests) <= 50
+    assert "key-4999" in rl._requests and "key-0" not in rl._requests  # LRU keeps recent
