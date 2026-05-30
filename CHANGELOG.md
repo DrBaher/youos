@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.142 — 2026-05-30
+
+### Hardening: token-auth event-loop DoS + world-readable OAuth token files
+
+First of a third hardening pass (a 5-surface audit of auth/session crypto, frontend XSS, calendar/MCP, finetune/LoRA, and deps — frontend-XSS and the calendar surface came back **clean**). The two security findings:
+
+- **Token verification blocked the async event loop (DoS).** The auth middleware (`async def dispatch`) called `verify_api_token` **synchronously** — it runs a full PBKDF2 per stored hash — so on a PIN'd instance a flood of bogus `X-YouOS-Token` headers stalled the entire event loop, one PBKDF2 per request, blocking every other in-flight request. It now runs via `run_in_threadpool`, so PBKDF2 happens off the event loop and concurrent requests stay responsive.
+- **OAuth token files were world-readable (0o644).** The native/gws Google backends wrote the token JSON — which holds the **refresh_token + client_secret** — via plain `Path.write_text`, with no `chmod`. b134 hardened sessions/api_tokens/config/db but missed these three sites. All now route through `secure_io.write_secret` (0o600), so the long-lived Google credentials aren't readable by other local users.
+
++1 regression test (the refreshed OAuth token file ends up 0o600); the 71 existing auth/token tests confirm the threadpool offload is transparent. Full suite: 1712 passed.
+
 ## v0.2.0-beta.141 — 2026-05-30
 
 ### Hardening: streaming read deadline + gog negation-query parsing
