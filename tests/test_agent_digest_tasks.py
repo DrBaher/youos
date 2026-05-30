@@ -533,7 +533,17 @@ def test_run_due_digests_weekly_respects_weekday(db, monkeypatch):
     assert fri and fri[0]["status"] == "sent" and len(calls) == 1
 
 
-def test_query_from_text_cloud_unavailable_message():
-    # model='cloud' with the helper unable to build a fn → clear error, no raise
+def test_query_from_text_model_unavailable_message(monkeypatch):
+    # Force the tier unavailable (deterministic regardless of whether the claude
+    # CLI / warm server happen to exist in the test environment).
+    monkeypatch.setattr("app.core.completion.select_completion", lambda *a, **k: None)
     r = dt.query_from_text("x", model="cloud", complete_fn=None)
     assert r["ok"] is False and "manually" in r["error"]
+
+
+def test_query_from_text_cloud_routes_to_selector(monkeypatch):
+    # model='cloud' uses the shared selector; stub it so no real CLI is invoked.
+    monkeypatch.setattr("app.core.completion.select_completion",
+                        lambda model, **k: (lambda p: "category:promotions newer_than:7d") if model == "cloud" else None)
+    r = dt.query_from_text("newsletters", model="cloud", complete_fn=None)
+    assert r["ok"] is True and r["query"] == "category:promotions newer_than:7d"
