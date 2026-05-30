@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.127 — 2026-05-30
+
+### Hardening: cross-cutting audit of the agent action/outbound surface
+
+A full safety audit of every code path that sends mail or mutates the mailbox (rules → label/archive/star/mark/forward, digests, the send frontier) — three parallel deep audits (gating, correctness, test coverage). The headline result: **no outbound or mailbox-mutation gating holes** — the kill-switch covers all three send paths (`send_draft`/`forward_message`/`send_email`), no gate defaults to the unsafe value, and every `gog`-mutating call is reached only through a gating wrapper. Two real correctness bugs were found and fixed:
+
+- **`domain` predicate over-matched across domain boundaries.** A rule with a bare `domain: "me.com"` (written without the leading `@`) matched `bob@acme.com` via a substring `endswith`, so a routing rule could label/archive/forward the wrong mail. Now matches only at the domain boundary (`@`-anchored suffix or exact domain). *(A claimed `to_contains`/`cc_contains` "never matches" bug was investigated and found to be a false positive — verified against a real `gog` fetch that the `To`/`Cc` headers are populated.)*
+- **`then_archive` was silently ignored for `agent`-destination digests.** It's an inbox-only behaviour (archives source messages after a real send); the `agent` destination sends nothing, so archiving there would be an ungated mailbox mutation. `validate_digest` now rejects `then_archive` unless `destination: inbox` — no silent no-op, no surprise edit.
+
+Plus +19 tests closing the highest-value coverage gaps, prioritising the "wrong CLI shape only caught in prod" class: full command-shape + error-path coverage for `forward_message` and `send_email` (the two outbound senders that previously had thin/no direct tests), the forward daily-cap branch (must not orphan a claim), and the NULL `action_value` dedup that makes star/archive/forward at-most-once. Full suite: 1648 passed.
+
 ## v0.2.0-beta.126 — 2026-05-30
 
 ### Fix: the environment-dependent digest test (for real this time)
