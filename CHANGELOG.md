@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.147 — 2026-05-30
+
+### Hardening: autoresearch integrity (weight drift, failure isolation, audit trail)
+
+Third of the 4th hardening pass — three integrity gaps in the nightly self-improvement loop.
+
+- **Composite-weight revert was incomplete → silent drift (MEDIUM).** Mutating one composite weight runs `_normalize_composite_weights`, which rewrites **all three** to sum to 1 — but `revert_mutation` restored only the single mutated key, leaving the others skewed and the sum ≠ 1. The drift compounded every neutral/regressed nightly iteration, corrupting the very eval objective the loop uses to gate every other mutation. Now `apply_mutation` snapshots the whole `composite_weights` dict and `revert_mutation` restores it exactly; `load_composite_weights` also renormalizes any on-disk drift to sum 1.0 before scoring.
+- **Optimizer had no failure isolation (LOW).** The per-surface body (`apply_mutation → run_eval_suite → revert`) had no `try/except`, so a transient eval failure (local model down, OOM) left the mutated, unvalidated config persisted *and* aborted the whole run — and since the prompt template mutates first, the highest-impact draft-shaping knob is exactly what got stranded. The iteration body now reverts the surface and continues on any exception.
+- **Git audit trail under-reported changes (LOW).** `_git_commit_kept_change` staged only `retrieval/defaults.yaml` + `prompts.yaml`, so kept `persona.yaml` / `autoresearch.yaml` mutations were applied live but never committed (and the git-log run summary misrepresented the config state). All four mutable surfaces are now staged.
+
++2 regression tests (composite mutate+revert restores the exact original; load renormalizes a hand-skewed file). Full suite: 1722 passed.
+
 ## v0.2.0-beta.146 — 2026-05-30
 
 ### Hardening: a dismissed reply can't be resurrected, and agent-route fields are bounded
