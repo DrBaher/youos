@@ -20,6 +20,12 @@ CONFIGS_DIR = ROOT_DIR / "configs"
 # would otherwise stall fine-tuning for many minutes on a large organic corpus.
 DEDUP_MAX_PAIRS = 2000
 
+# The inbound text is attacker-influenced (a sender controls their body). Bound
+# the length fed to each O(n^2) hybrid_similarity comparison so a few huge bodies
+# can't make every comparison expensive. 2000 chars is plenty to detect a
+# near-duplicate (the threshold is 0.95).
+DEDUP_TEXT_CAP = 2000
+
 
 def parse_args() -> argparse.Namespace:
     # Same shape as scripts/finetune_lora.py: defaults resolved at call time
@@ -198,7 +204,9 @@ def deduplicate_pairs(
     while i < len(keep):
         j = i + 1
         while j < len(keep):
-            sim = hybrid_similarity(keep[i][1], keep[j][1])  # compare inbound texts
+            # Bound the text length so a huge attacker body can't make each of
+            # the O(n^2) comparisons expensive.
+            sim = hybrid_similarity(keep[i][1][:DEDUP_TEXT_CAP], keep[j][1][:DEDUP_TEXT_CAP])
             if sim >= threshold:
                 # Keep the one with higher quality; if tied, keep more recent (later in list)
                 q_i, q_j = keep[i][3], keep[j][3]

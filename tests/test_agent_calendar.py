@@ -77,3 +77,13 @@ def test_fetch_busy_nongog_raises(monkeypatch):
     import pytest
     with pytest.raises(NotImplementedError):
         calendar.fetch_busy("x@y.com", from_iso="a", to_iso="b")
+
+
+def test_compute_open_slots_non_positive_slot_minutes_does_not_hang():
+    """b144: slot_minutes<=0 made the slot-scan loop never advance (step=0),
+    hanging the triage worker. It must bail to [] instead."""
+    now = datetime(2026, 6, 1, 7, 0, tzinfo=timezone.utc)  # before work start (the hang shape)
+    assert calendar.compute_open_slots([], now=now, tz="UTC", slot_minutes=0) == []
+    assert calendar.compute_open_slots([], now=now, tz="UTC", slot_minutes=-5) == []
+    # a positive slot length still produces slots (no regression)
+    assert calendar.compute_open_slots([], now=now, tz="UTC", slot_minutes=30)
