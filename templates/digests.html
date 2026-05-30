@@ -95,7 +95,13 @@
       <div><label class="fld" for="destination">Destination</label>
         <select id="destination"><option value="agent">agent (pull via CLI/MCP/API — no send)</option><option value="inbox">inbox (email — send-gated)</option></select></div>
     </div>
-    <div style="margin-top:12px;"><label class="fld" for="query">Gmail query (which emails)</label>
+    <div style="margin-top:12px;"><label class="fld" for="qtext">Describe which emails (plain English &rarr; query)</label>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <input type="text" id="qtext" placeholder="e.g. newsletters and promos from the past week" style="flex:1 1 auto;">
+        <button class="btn btn-ghost" id="qbtn" type="button">&rarr; query</button>
+      </div>
+      <div class="vstatus" id="qstatus" style="margin-top:4px; min-height:1em;"></div></div>
+    <div style="margin-top:12px;"><label class="fld" for="query">Gmail query (which emails) &mdash; review/edit</label>
       <input type="text" id="query" placeholder="category:promotions newer_than:1d"></div>
     <div style="margin-top:12px;"><label class="fld" for="prompt">Summary prompt (what to make of them — blank = default)</label>
       <textarea id="prompt" rows="2" placeholder="e.g. What needs my attention? Flag anything time-sensitive; one line per email." style="background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:7px 9px;font-size:0.88rem;font-family:inherit;width:100%;resize:vertical;"></textarea></div>
@@ -267,6 +273,30 @@
       });
     }).catch(() => { list.textContent = "Could not load digests."; });
   }
+
+  // NL "which emails" → Gmail query (fills the query field for review/edit).
+  const qbtn = $("qbtn"), qtext = $("qtext"), qstatus = $("qstatus");
+  qbtn.addEventListener("click", () => {
+    const text = qtext.value.trim();
+    if (!text) return;
+    qstatus.className = "vstatus"; qstatus.textContent = "translating…"; qbtn.disabled = true;
+    fetch("/api/agent/digests/parse-query", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: text }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        qbtn.disabled = false;
+        if (d.ok && d.query) {
+          F.query.value = d.query;
+          qstatus.className = "vstatus ok"; qstatus.textContent = "filled the query below — review, preview, then save";
+          scheduleValidate();
+        } else {
+          qstatus.className = "vstatus err"; qstatus.textContent = "✕ " + (d.error || "could not translate");
+        }
+      })
+      .catch(() => { qbtn.disabled = false; qstatus.className = "vstatus err"; qstatus.textContent = "could not reach the translator"; });
+  });
+  qtext.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); qbtn.click(); } });
 
   resetForm(); loadAll();
 })();
