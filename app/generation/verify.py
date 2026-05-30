@@ -23,13 +23,24 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+# ``inbound``/``thread_history`` are attacker-controlled. The unbounded ``+`` on
+# the local part backtracks O(n^2) over a long no-``@`` run (50 KB ≈ 2 s, ~1 MB ≈
+# 13 min — it stalls the unattended sweep and pins the /draft worker). Bounding the
+# local part to its RFC-5321 max (64) makes each start position fail in ≤64 chars,
+# so matching is linear; ``_MAX_VERIFY_CHARS`` (below) caps total work as well.
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _URL_RE = re.compile(r"https?://[^\s<>()\[\]]+", re.IGNORECASE)
 _MONEY_RE = re.compile(
     r"[$€£]\s?\d[\d,.]*|\b\d[\d,.]*\s?(?:USD|EUR|GBP|dollars?|euros?|pounds?)\b",
     re.IGNORECASE,
 )
 _TIME_RE = re.compile(r"\b\d{1,2}:\d{2}\s?(?:am|pm)?\b|\b\d{1,2}\s?(?:am|pm)\b", re.IGNORECASE)
+
+# Hard cap on the text any of the above regexes scan. The inbound + thread
+# history are attacker-controlled and otherwise uncapped on this path (the
+# 4000-char prompt cap protects generation, not verify_draft). 20 KB is far
+# more than a real reply needs for grounding.
+_MAX_VERIFY_CHARS = 20_000
 
 
 @dataclass
@@ -60,11 +71,14 @@ def verify_draft(
     addresses (the participants) even if not quoted in the body."""
     from app.core.text_utils import strip_signature
 
-    d = draft or ""
+    # Cap every attacker-controlled input before any regex/lang-detect runs.
+    d = (draft or "")[:_MAX_VERIFY_CHARS]
+    inbound = (inbound or "")[:_MAX_VERIFY_CHARS]
     d_core = strip_signature(d)
-    hay = inbound or ""
+    hay = inbound
     if thread_history:
         hay += "\n" + "\n".join((h.get("text") or "") for h in thread_history)
+    hay = hay[:_MAX_VERIFY_CHARS]
     hay_l = hay.lower()
 
     blocking: list[str] = []
