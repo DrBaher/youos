@@ -62,6 +62,25 @@ _SIGNATURE_START = re.compile(
 )
 
 
+# Section markers the draft prompt uses as structure. Attacker email text that
+# starts a line with one of these would otherwise inject a competing instruction
+# block, so forged ones are defanged before untrusted text is embedded.
+_PROMPT_SECTION_MARKER = re.compile(
+    r"(?im)^([ \t]*)\[(?=(?:SYSTEM|TASK|EXEMPLARS|INBOUND MESSAGE|GROUNDING|"
+    r"STYLE ANCHOR|LANGUAGE|SENDER|PRIOR REPLY)\b)"
+)
+
+
+def neutralize_prompt_markers(text: str) -> str:
+    """Defang attacker-forged prompt section markers (``[TASK]``, ``[SYSTEM]``…)
+    at the start of a line in untrusted text, so an inbound message can't inject
+    a competing instruction block. Inserts a space after the bracket so the line
+    is no longer a structural marker but stays readable. No-op for normal text."""
+    if not text or "[" not in text:
+        return text
+    return _PROMPT_SECTION_MARKER.sub(r"\1[ ", text)
+
+
 def extract_new_content(text: str) -> str:
     """Return only the new (non-quoted) content of an email body.
 
