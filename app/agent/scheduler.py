@@ -145,6 +145,37 @@ def _notify_macos(*, title: str, message: str) -> None:
         pass
 
 
+def _webhook_url_allowed(url: str) -> bool:
+    """Guard the (user-configured) webhook URL against SSRF: require an http(s)
+    scheme and refuse a host that resolves to a loopback / private / link-local /
+    reserved address, so the one outbound request YouOS makes can't be pointed at
+    a cloud metadata endpoint or an internal service. Fails closed."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        infos = socket.getaddrinfo(parsed.hostname, port, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, OSError, ValueError):
+        return False  # unresolvable → don't send
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if (ip.is_loopback or ip.is_private or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return False
+    return True
+
+
 def _post_webhook(url: str, payload: dict[str, Any], secret: str) -> bool:
     """POST a JSON payload to ``url``. Best-effort, bounded, never raises.
 
@@ -153,13 +184,16 @@ def _post_webhook(url: str, payload: dict[str, Any], secret: str) -> bool:
     import json as _json
     import urllib.request
 
+    if not _webhook_url_allowed(url):
+        logger.warning("agent webhook push refused: %s is not an allowed external URL", url)
+        return False
     try:
         body = _json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=body, method="POST")
         req.add_header("Content-Type", "application/json")
         if secret:
             req.add_header("X-YouOS-Secret", secret)
-        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 — user-configured URL
+        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310 — validated external URL
             return 200 <= getattr(resp, "status", 200) < 300
     except Exception as exc:
         logger.info("agent webhook push failed: %s", exc)
