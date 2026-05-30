@@ -1,9 +1,22 @@
+import os
 import sqlite3
 from pathlib import Path
 
 from app.core.settings import get_settings
 
 SQLITE_BUSY_TIMEOUT_MS = 30000  # wait up to 30s for a lock before erroring
+
+
+def _secure_db_dir(db_path: Path) -> None:
+    """Keep the var/ directory owner-only (0o700) and the DB owner-rw (0o600).
+    The DB holds the full mailbox corpus; on a shared host the default umask
+    would leave both world-readable. Best-effort — never blocks bootstrap."""
+    for target, mode in ((db_path.parent, 0o700), (db_path, 0o600)):
+        try:
+            if target.exists():
+                os.chmod(target, mode)
+        except OSError:
+            pass
 
 
 def resolve_sqlite_path(database_url: str) -> Path:
@@ -43,6 +56,7 @@ def ensure_agent_schema(database_url: str) -> bool:
     db_path = resolve_sqlite_path(database_url)
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(db_path)
+    _secure_db_dir(db_path)
     try:
         _migrate_agent_pending_drafts(conn)
         _migrate_agent_audit(conn)
@@ -65,6 +79,7 @@ def bootstrap_database() -> Path:
     schema_sql = schema_path.read_text(encoding="utf-8")
 
     connection = sqlite3.connect(db_path)
+    _secure_db_dir(db_path)
     try:
         connection.executescript(schema_sql)
         _migrate_feedback_pairs(connection)
