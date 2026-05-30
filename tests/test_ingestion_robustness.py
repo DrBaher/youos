@@ -380,3 +380,63 @@ def test_run_gog_json_propagates_subprocess_timeout(monkeypatch):
 
 # Silence pytest-unused lint warnings for now.
 _ = (patch, time)
+
+
+# --- b133: ingest crash-isolation (paren bomb, deep MIME, caps, per-item) ----
+
+
+def test_addresses_paren_bomb_degrades_not_recursionerror():
+    from app.ingestion.gmail_threads import _addresses_from_text, _safe_parseaddr
+
+    bomb = "((((" * 1000 + "a@x.com" + "))))" * 1000
+    assert _addresses_from_text(bomb) == []        # was RecursionError -> aborted the run
+    assert _safe_parseaddr(bomb) == ("", "")
+    # legit headers still parse
+    assert [r["email"] for r in _addresses_from_text("Alice <a@x.com>, Bob <b@y.com>")] == ["a@x.com", "b@y.com"]
+    assert _safe_parseaddr("a@x.com (Alice)")[1] == "a@x.com"
+
+
+def test_extract_payload_parts_is_depth_bounded():
+    from app.ingestion.gmail_threads import _extract_payload_parts
+
+    node = {"mimeType": "text/plain", "body": {"data": "aGk="}}
+    for _ in range(6000):
+        node = {"mimeType": "multipart/mixed", "parts": [node]}
+    assert _extract_payload_parts(node, mime_type="text/plain") == []  # past cap, no RecursionError
+    shallow = {"mimeType": "multipart/mixed",
+               "parts": [{"mimeType": "text/plain", "body": {"data": "aGVsbG8="}}]}
+    assert _extract_payload_parts(shallow, mime_type="text/plain") == ["hello"]
+
+
+def test_message_body_text_is_capped():
+    from app.ingestion.gmail_threads import _MAX_BODY_CHARS, _message_body_text
+
+    assert len(_message_body_text({"body_text": "X" * (_MAX_BODY_CHARS + 50_000)})) == _MAX_BODY_CHARS
+
+
+def test_normalize_email_rejects_dash_leading():
+    from app.ingestion.gmail_threads import _normalize_email
+
+    assert _normalize_email("-x@evil.com") is None     # gog --to flag-injection shape
+    assert _normalize_email("  A@X.com ") == "a@x.com"
+
+
+def test_load_thread_payloads_skips_corrupt_file(tmp_path):
+    import json as _json
+
+    from app.ingestion.gmail_threads import _load_thread_payloads
+
+    (tmp_path / "good.json").write_text(_json.dumps({"thread_id": "t1", "messages": []}))
+    (tmp_path / "bad.json").write_text("{not valid json")
+    result = _load_thread_payloads(tmp_path, live=None)
+    assert len(result.payloads) == 1  # corrupt file skipped, good thread still loaded
+
+
+def test_whatsapp_refuses_oversize_export(tmp_path, monkeypatch):
+    from app.ingestion import whatsapp as wa
+
+    f = tmp_path / "chat.txt"
+    f.write_text("hello there")
+    monkeypatch.setattr(wa, "_MAX_EXPORT_BYTES", 1)
+    r = wa.ingest_whatsapp_export(f)
+    assert r.status == "failed" and "too large" in r.detail.lower()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -25,9 +26,47 @@ from app.ingestion.run_log import (
     start_ingest_run,
 )
 
+logger = logging.getLogger(__name__)
+
 # Hard cap on each `gog` CLI call so a stalled gog (auth prompt, network, token
 # refresh) can't hang ingestion / the nightly pipeline forever.
 GOG_TIMEOUT_SECONDS = 120
+
+# Corpus ingestion parses attacker-influenced mail (anyone can mail the user).
+# These bound the work / recursion so one crafted message can't crash or stall
+# the nightly run — the same defensive posture as app/agent/inbox_fetch.py.
+_MAX_MIME_DEPTH = 30          # bound _extract_payload_parts recursion (cyclic/deep parts)
+_MAX_BODY_CHARS = 100_000     # cap a stored body so a multi-MB message can't bloat the corpus
+_MAX_HEADER_CHARS = 4096      # cap a header before stdlib address parsing
+_MAX_HEADER_PARENS = 50       # bail on a paren-bomb header (getaddresses/parseaddr recurse per nlevel)
+
+
+def _safe_getaddresses(value: Any) -> list[tuple[str, str]]:
+    """``email.utils.getaddresses`` over an attacker-controlled header, guarded
+    against the stdlib's unbounded paren-comment recursion (a ~1000-deep nested
+    ``(((`` raises RecursionError) and runaway length. Degrades to ``[]``."""
+    if not isinstance(value, str):
+        return []
+    value = value[:_MAX_HEADER_CHARS]
+    if value.count("(") > _MAX_HEADER_PARENS or value.count(")") > _MAX_HEADER_PARENS:
+        return []
+    try:
+        return getaddresses([value])
+    except (ValueError, RecursionError):
+        return []
+
+
+def _safe_parseaddr(value: Any) -> tuple[str, str]:
+    """``email.utils.parseaddr`` with the same paren-bomb / length guard."""
+    if not isinstance(value, str):
+        return ("", "")
+    value = value[:_MAX_HEADER_CHARS]
+    if value.count("(") > _MAX_HEADER_PARENS or value.count(")") > _MAX_HEADER_PARENS:
+        return ("", "")
+    try:
+        return parseaddr(value)
+    except (ValueError, RecursionError):
+        return ("", "")
 
 # Gmail rate-limit retry: detect Google's quota-exceeded responses
 # (their wording varies — 429, "rate limit", "quota", "userRateLimitExceeded",
@@ -263,16 +302,27 @@ def ingest_gmail_threads(
                 run_id=ingestion_run_id,
             )
 
-        try:
-            normalized_threads = [
-                _normalize_thread_payload(
-                    payload,
-                    user_emails=user_emails,
-                    user_names=user_names,
+        # Per-payload isolation: one malformed/crafted thread (a ValueError, or a
+        # RecursionError from a paren-bomb header / deep MIME) must not sink the
+        # whole batch — skip it and keep the good threads, matching the b129
+        # inbox_fetch posture. Only a total failure marks the run failed.
+        normalized_threads = []
+        skipped = 0
+        for payload in thread_payloads:
+            try:
+                normalized_threads.append(
+                    _normalize_thread_payload(
+                        payload,
+                        user_emails=user_emails,
+                        user_names=user_names,
+                    )
                 )
-                for payload in thread_payloads
-            ]
-        except ValueError as exc:
+            except Exception as exc:
+                skipped += 1
+                logger.warning("gmail ingest: skipping a malformed thread payload: %s", exc)
+        if skipped:
+            logger.warning("gmail ingest: skipped %d malformed thread payload(s)", skipped)
+        if thread_payloads and not normalized_threads:
             finish_ingest_run(
                 connection,
                 run_id=ingestion_run_id,
@@ -282,13 +332,13 @@ def ingest_gmail_threads(
                     fetched=counts.fetched_threads,
                 ),
                 error_summary="Failed to normalize Gmail payloads",
-                error_detail=str(exc),
+                error_detail=f"all {skipped} thread payload(s) were malformed",
             )
             connection.commit()
             return IngestionResult(
                 source_type="gmail_thread",
                 status="failed",
-                detail=str(exc),
+                detail="all thread payloads were malformed",
                 run_id=ingestion_run_id,
             )
 
@@ -381,7 +431,12 @@ def _load_thread_payloads(
         json_files = sorted(path for path in export_path.rglob("*.json") if path.is_file())
         payloads: list[dict[str, Any]] = []
         for path in json_files:
-            payloads.extend(_load_thread_payload_file(path))
+            # One corrupt/invalid .json file must not sink the whole directory
+            # import — skip it (with a warning) and keep loading the rest.
+            try:
+                payloads.extend(_load_thread_payload_file(path))
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
+                logger.warning("gmail ingest: skipping unreadable file %s: %s", path, exc)
         return LoadThreadPayloadsResult(
             payloads=payloads,
             import_detail=str(export_path),
@@ -871,7 +926,7 @@ def _message_sender(payload: dict[str, Any]) -> tuple[str | None, str | None]:
 
     header_from = _header_value(payload, "From") or _header_value(payload, "from")
     if header_from:
-        name, email = parseaddr(header_from)
+        name, email = _safe_parseaddr(header_from)
         return name or None, _normalize_email(email)
 
     from_obj = payload.get("from")
@@ -934,7 +989,7 @@ def _recipient_list(value: Any) -> list[dict[str, str | None]]:
 
 def _addresses_from_text(value: str) -> list[dict[str, str | None]]:
     recipients: list[dict[str, str | None]] = []
-    for name, email in getaddresses([value]):
+    for name, email in _safe_getaddresses(value):
         recipient = {
             "name": name or None,
             "email": _normalize_email(email),
@@ -1000,23 +1055,27 @@ def _message_body_text(payload: dict[str, Any]) -> str:
     for field in direct_fields:
         value = _string(payload.get(field))
         if value:
-            return value
+            return value[:_MAX_BODY_CHARS]
 
     payload_obj = payload.get("payload")
     if isinstance(payload_obj, dict):
         text_parts = _extract_payload_parts(payload_obj, mime_type="text/plain")
         if text_parts:
-            return "\n".join(part for part in text_parts if part.strip()).strip()
+            return "\n".join(part for part in text_parts if part.strip()).strip()[:_MAX_BODY_CHARS]
 
         html_parts = _extract_payload_parts(payload_obj, mime_type="text/html")
         if html_parts:
-            return _html_to_text("\n".join(html_parts)).strip()
+            return _html_to_text("\n".join(html_parts)).strip()[:_MAX_BODY_CHARS]
 
     return ""
 
 
-def _extract_payload_parts(payload: dict[str, Any], *, mime_type: str) -> list[str]:
+def _extract_payload_parts(payload: dict[str, Any], *, mime_type: str, depth: int = 0) -> list[str]:
     parts: list[str] = []
+    # Depth-bound the walk: a deeply-nested (or cyclic) MIME ``parts`` tree from
+    # a crafted message would otherwise RecursionError and abort the whole run.
+    if depth > _MAX_MIME_DEPTH or not isinstance(payload, dict):
+        return parts
     if payload.get("mimeType") == mime_type:
         decoded = _decode_gmail_body(payload.get("body"))
         if decoded:
@@ -1024,7 +1083,7 @@ def _extract_payload_parts(payload: dict[str, Any], *, mime_type: str) -> list[s
 
     for part in payload.get("parts", []) or []:
         if isinstance(part, dict):
-            parts.extend(_extract_payload_parts(part, mime_type=mime_type))
+            parts.extend(_extract_payload_parts(part, mime_type=mime_type, depth=depth + 1))
     return parts
 
 
@@ -1425,7 +1484,12 @@ def _display_author(name: str | None, email: str | None) -> str | None:
 def _normalize_email(email: str | None) -> str | None:
     if not email:
         return None
-    return email.strip().lower()
+    normalized = email.strip().lower()
+    # A leading '-' in the addr-spec isn't a real address and, passed as gog's
+    # ``--to`` value, the Kong arg parser reads it as a flag (exit 2). Drop it.
+    if not normalized or normalized.startswith("-"):
+        return None
+    return normalized
 
 
 def _merge_identity_emails(
