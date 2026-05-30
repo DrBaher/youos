@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.0-beta.126 — 2026-05-30
+
+### Fix: the environment-dependent digest test (for real this time)
+
+b125 described fixing the flaky `query_from_text` cloud test, but the edit to `tests/test_agent_digest_tasks.py` never made it into the commit (a partial-apply slip during an infra hiccup) — so the env-dependent test was still on `main`: green in CI (no `claude` CLI) but failing locally (CLI present). Replaced it with two deterministic tests that stub `select_completion`, covering both the model-unavailable path and the cloud-routes-to-selector path. Full suite now passes locally (1635) as well as in CI.
+
 ## v0.2.0-beta.125 — 2026-05-30
 
 ### Fix: complete the NL-rule model choice + a flaky test
