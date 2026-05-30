@@ -627,8 +627,12 @@ def lookup_facts(
 
         # 2. Contact facts for sender email
         if sender:
-            m = re.search(r"[\w.+-]+@[\w.-]+\.\w+", sender.lower())
-            email = m.group(0) if m else sender.lower().strip()
+            # ``sender`` is attacker-controlled (anyone can mail the user). Cap it
+            # and bound the local part ({1,64}) so this email regex can't be
+            # driven into O(n^2) backtracking by a long no-'@' value.
+            s = sender.lower()[:1024]
+            m = re.search(r"[\w.+-]{1,64}@[\w.-]+\.\w+", s)
+            email = m.group(0) if m else s.strip()
             rows = conn.execute(
                 "SELECT type, key, fact FROM memory WHERE type = 'contact' AND lower(key) = ?",
                 (email,),

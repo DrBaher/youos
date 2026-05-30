@@ -176,3 +176,41 @@ def test_draft_compare_does_not_leak_exception_text(monkeypatch):
     blob = json.dumps(r.json())
     assert "see server logs" in blob
     assert "secret path" not in blob  # raw exception not echoed
+
+
+# --- b138: the attacker-controlled `sender` field must be length-bounded -----
+
+
+def test_draft_sender_field_is_length_bounded():
+    """b132 capped inbound_message/inbound_text but not `sender`; lookup_facts
+    runs an O(n^2) email regex on it, so an 80 KB no-'@' sender hung the worker."""
+    import pytest
+    from pydantic import ValidationError
+
+    from app.api.routes import DraftBody, DraftCompareBody
+
+    with pytest.raises(ValidationError):
+        DraftBody(inbound_message="hi", sender="x" * 1025)
+    with pytest.raises(ValidationError):
+        DraftCompareBody(inbound_text="hi", sender="x" * 1025)
+    # a normal "Name <email>" still validates.
+    assert DraftBody(inbound_message="hi", sender="Alice <a@x.com>").sender == "Alice <a@x.com>"
+
+
+def test_lookup_facts_bounded_on_huge_no_at_sender():
+    import sqlite3
+    import time
+
+    from app.generation.service import lookup_facts
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE memory (id INTEGER PRIMARY KEY, type TEXT, key TEXT, fact TEXT, "
+        "confidence REAL DEFAULT 0.8, tags TEXT DEFAULT '[]', "
+        "created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)"
+    )
+    conn.commit()
+    t0 = time.perf_counter()
+    lookup_facts(sender="x" * 100_000, inbound_text="hi", database_url="sqlite:///:memory:", conn=conn)
+    assert time.perf_counter() - t0 < 0.5  # was ~14s at 80k, longer at 100k
