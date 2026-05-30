@@ -9,9 +9,12 @@ the Gmail search query: ``in:inbox is:unread`` instead of ``in:sent``.
 from __future__ import annotations
 
 import base64
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -40,52 +43,85 @@ class InboxMessage:
     thread_history: list[dict[str, str]] = field(default_factory=list)
 
 
+# Email payloads are attacker-influenced (anyone can send the user mail), so the
+# parse helpers below defend against malformed MIME: non-dict headers/parts,
+# non-string / wrong-length base64 bodies, and pathologically deep ``parts``
+# nesting. They degrade (return empty/best-effort) rather than raise — a single
+# crafted message must never abort the sweep. ``_MAX_MIME_DEPTH`` bounds the
+# recursion well below CPython's limit; real mail nests only a few levels.
+_MAX_MIME_DEPTH = 30
+
+
 def _header(payload: dict[str, Any], name: str) -> str:
-    """Look up a Gmail header value (case-insensitive)."""
+    """Look up a Gmail header value (case-insensitive). Tolerates a malformed
+    header list (non-list, or non-dict entries)."""
+    if not isinstance(payload, dict):
+        return ""
     for h in payload.get("headers", []) or []:
-        if h.get("name", "").lower() == name.lower():
+        if isinstance(h, dict) and str(h.get("name", "")).lower() == name.lower():
             return h.get("value", "") or ""
     return ""
 
 
 def _all_headers(payload: dict[str, Any]) -> dict[str, str]:
-    """Flatten the payload's header list into a lowercased dict."""
+    """Flatten the payload's header list into a lowercased dict. Tolerates a
+    malformed header list (non-list, or non-dict entries)."""
     out: dict[str, str] = {}
+    if not isinstance(payload, dict):
+        return out
     for h in payload.get("headers", []) or []:
+        if not isinstance(h, dict):
+            continue
         name = (h.get("name") or "").lower()
         if name and name not in out:
             out[name] = h.get("value", "") or ""
     return out
 
 
+def _decode_b64(data: Any) -> str:
+    """Decode a Gmail urlsafe-base64 body to text, degrading to '' on any
+    malformed input (non-string, wrong length, non-ASCII)."""
+    if not isinstance(data, str):
+        return ""
+    try:
+        return base64.urlsafe_b64decode(data + "===").decode("utf-8", errors="replace")
+    except (ValueError, TypeError):  # binascii.Error (a ValueError) / bad input
+        return ""
+
+
 def _extract_text(payload: dict[str, Any]) -> str:
     """Pull ``text/plain`` (falling back to stripped ``text/html``) from a Gmail
-    payload. Walks ``parts`` recursively until a body is found."""
-    def walk(p: dict[str, Any]) -> str:
+    payload. Walks ``parts`` recursively (depth-bounded) until a body is found.
+    Tolerates malformed parts; never raises."""
+    def walk(p: Any, depth: int) -> str:
+        if depth > _MAX_MIME_DEPTH or not isinstance(p, dict):
+            return ""
         mime = p.get("mimeType", "")
         body = p.get("body", {}) or {}
-        data = body.get("data")
+        data = body.get("data") if isinstance(body, dict) else None
         if mime == "text/plain" and data:
-            return base64.urlsafe_b64decode(data + "===").decode("utf-8", errors="replace")
+            return _decode_b64(data)
         if mime == "text/html" and data:
-            html = base64.urlsafe_b64decode(data + "===").decode("utf-8", errors="replace")
-            return re.sub(r"<[^>]+>", " ", html)
+            return re.sub(r"<[^>]+>", " ", _decode_b64(data))
         for part in p.get("parts", []) or []:
-            r = walk(part)
+            r = walk(part, depth + 1)
             if r:
                 return r
         return ""
 
-    return walk(payload).strip()
+    return walk(payload, 0).strip()
 
 
 def _has_attachment(payload: dict[str, Any]) -> bool:
-    """True if any MIME part carries a filename (i.e. a real attachment)."""
-    def walk(p: dict[str, Any]) -> bool:
+    """True if any MIME part carries a filename (i.e. a real attachment).
+    Depth-bounded + malformed-part tolerant; never raises."""
+    def walk(p: Any, depth: int) -> bool:
+        if depth > _MAX_MIME_DEPTH or not isinstance(p, dict):
+            return False
         if (p.get("filename") or "").strip():
             return True
-        return any(walk(part) for part in p.get("parts", []) or [])
-    return walk(payload)
+        return any(walk(part, depth + 1) for part in p.get("parts", []) or [])
+    return walk(payload, 0)
 
 
 def message_age_days(received_at: str | None) -> float | None:
@@ -143,39 +179,45 @@ def fetch_unread(
             continue
         try:
             thread = source.get_thread(account=account, thread_id=thread_id)
-        except Exception:
-            # Individual thread fetch failures shouldn't kill the whole sweep.
-            continue
-        messages = thread.get("messages", []) or [thread]
-        msg = messages[-1]                                # latest = the unread one
-        payload = msg.get("payload", {}) or {}
-        sender = _header(payload, "From")
-        # Prior turns (everything before the latest) so generation can draft
-        # with conversation context. Keep the last 4 to bound the prompt;
-        # truncate each body to ~200 chars (matches the regex-thread budget).
-        thread_history: list[dict[str, str]] = []
-        for prev in messages[:-1][-4:]:
-            prev_payload = prev.get("payload", {}) or {}
-            prev_text = _extract_text(prev_payload)
-            if not prev_text:
-                continue
-            thread_history.append({
-                "sender": (_header(prev_payload, "From") or "")[:80],
-                "text": prev_text[:200],
-            })
-        results.append(
-            InboxMessage(
-                message_id=msg.get("id") or msg.get("messageId") or thread_id,
-                thread_id=thread_id,
-                account=account,
-                sender=sender,
-                sender_email=extract_email(sender),
-                subject=_header(payload, "Subject") or "(no subject)",
-                body=_extract_text(payload),
-                headers=_all_headers(payload),
-                received_at=_header(payload, "Date") or None,
-                has_attachment=_has_attachment(payload),
-                thread_history=thread_history,
+            # Parsing runs on attacker-influenced MIME, so keep it INSIDE the
+            # guard: a malformed message drops just that thread (continue), it
+            # never aborts the sweep. The parse helpers also degrade internally;
+            # this is the belt-and-suspenders boundary.
+            messages = thread.get("messages", []) or [thread]
+            msg = messages[-1]                                # latest = the unread one
+            payload = msg.get("payload", {}) or {}
+            sender = _header(payload, "From")
+            # Prior turns (everything before the latest) so generation can draft
+            # with conversation context. Keep the last 4 to bound the prompt;
+            # truncate each body to ~200 chars (matches the regex-thread budget).
+            thread_history: list[dict[str, str]] = []
+            for prev in messages[:-1][-4:]:
+                prev_payload = prev.get("payload", {}) or {}
+                prev_text = _extract_text(prev_payload)
+                if not prev_text:
+                    continue
+                thread_history.append({
+                    "sender": (_header(prev_payload, "From") or "")[:80],
+                    "text": prev_text[:200],
+                })
+            results.append(
+                InboxMessage(
+                    message_id=msg.get("id") or msg.get("messageId") or thread_id,
+                    thread_id=thread_id,
+                    account=account,
+                    sender=sender,
+                    sender_email=extract_email(sender),
+                    subject=_header(payload, "Subject") or "(no subject)",
+                    body=_extract_text(payload),
+                    headers=_all_headers(payload),
+                    received_at=_header(payload, "Date") or None,
+                    has_attachment=_has_attachment(payload),
+                    thread_history=thread_history,
+                )
             )
-        )
+        except Exception:
+            # A fetch OR parse failure on one thread shouldn't kill the whole
+            # sweep — skip it and keep going.
+            logger.warning("inbox fetch: skipping thread %s (fetch/parse failed)", thread_id, exc_info=True)
+            continue
     return results
