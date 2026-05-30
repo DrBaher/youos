@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.2.0-beta.144 — 2026-05-30
+
+### Hardening: two unattended-worker hangs (calendar slot scan + dedup)
+
+Third of the 3rd hardening pass — two LOW robustness fixes.
+
+- **`compute_open_slots` infinite loop on `slot_minutes ≤ 0`.** The slot-scan step is `timedelta(minutes=slot_minutes)`; at `0` the `while cursor + step <= win_end` loop never advances (and goes backwards if negative), hanging the triage worker when a meeting request is processed. `slot_minutes` can come from config, which on a no-PIN instance is settable over the network. Now guarded — a non-positive slot length returns no slots.
+- **Quadratic dedup ran on full attacker bodies.** The near-duplicate dedup (already capped at `DEDUP_MAX_PAIRS = 2000` pairs) called `hybrid_similarity` on the *full* inbound text per O(n²) comparison, so a few multi-MB bodies made every comparison expensive. The text fed to each comparison is now bounded (`DEDUP_TEXT_CAP = 2000` chars) — plenty to detect a 0.95-threshold near-duplicate; 50 pairs of 200 KB bodies now dedup in ~17 ms.
+
+**Deferred (audit finding, not shipped here):** dependency lock/hash pinning (ranges-only in `pyproject.toml`). The proper fix — a hash-pinned lockfile across the full mlx/torch/sentence-transformers stack plus install-flow rewiring — is an infra change that needs platform install validation and is too risky to fold into a code-hardening PR; tracked for a dedicated change.
+
++2 regression tests (non-positive slot length returns []; huge-body dedup stays bounded). Full suite: 1716 passed.
+
 ## v0.2.0-beta.143 — 2026-05-30
 
 ### Hardening: the LoRA adapter-promotion gate can no longer be silently defeated
