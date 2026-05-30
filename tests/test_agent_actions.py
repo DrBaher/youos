@@ -487,6 +487,30 @@ def test_forward_claim_is_atomic_cross_process(db):
     assert other is not None
 
 
+def test_undo_unknown_id_returns_404(db):
+    out = act.undo_action(db, 99999)
+    assert out["ok"] is False and out["http_status"] == 404
+
+
+def test_undo_gog_failure_rolls_back_to_applied_retryable(db, monkeypatch):
+    """A failed undo must not leave the row stuck in 'undoing' — it rolls back to
+    'applied' so the user can retry."""
+    monkeypatch.setattr(act, "_actions_config", lambda: _cfg())
+    monkeypatch.setattr(gmail_write, "ensure_label", lambda **k: None)
+    monkeypatch.setattr(gmail_write, "modify_message_labels",
+                        lambda **k: gmail_write.GmailModifyResult("m1", [], [], {}))
+    act.apply_mailbox_actions(db, "me@x.com", _msg(), [{"type": "archive", "value": None}])
+    aid = act.list_actions(db)[0]["id"]
+
+    def _boom(**k):
+        raise gmail_write.GmailWriteError("undo modify failed")
+
+    monkeypatch.setattr(gmail_write, "modify_message_labels", _boom)
+    out = act.undo_action(db, aid)
+    assert out["ok"] is False
+    assert act.get_action(db, aid)["status"] == "applied"   # rolled back, retryable
+
+
 def test_forward_daily_cap_does_not_orphan_a_claim(db, monkeypatch):
     """With the cap exhausted, a forward returns skipped_cap, does NOT send, and
     writes NO ledger row — so the (message,dest) stays forwardable next sweep."""
