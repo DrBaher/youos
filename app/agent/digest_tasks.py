@@ -330,18 +330,10 @@ def _fetch_for_digest(account: str, query: str, limit: int) -> list[dict[str, st
 
 def _summary_fn(model: str):
     """Pick a completion function for the summary, or None if unavailable.
-    'local' → warm model server (no egress); 'cloud' → Claude CLI."""
-    if model == "cloud":
-        try:
-            from app.generation.service import _call_claude_cli
-        except Exception:
-            return None
-        return lambda p: _call_claude_cli(p)
-    from app.core import model_server
+    'local' → warm model server (no egress); 'cloud' → frontier (Claude CLI)."""
+    from app.core.completion import select_completion
 
-    if model_server.is_enabled():
-        return lambda p: model_server.complete(p, max_tokens=400, temperature=0.2)
-    return None
+    return select_completion(model, max_tokens=400, temperature=0.2)
 
 
 def build_digest_body(items: list[dict[str, str]], *, model: str = "local",
@@ -410,30 +402,31 @@ def _clean_query(out: str | None) -> str:
     return ""
 
 
-def query_from_text(text: str, *, complete_fn=None) -> dict[str, Any]:
-    """Translate a plain-English "which emails" description into a Gmail query via
-    the warm local model. Returns ``{ok, query, error}`` and NEVER raises. The
-    caller shows the query so the user can review/edit it (it's an authoring aid,
-    not a live filter). ``complete_fn`` is injectable for tests."""
+def query_from_text(text: str, *, model: str = "local", complete_fn=None) -> dict[str, Any]:
+    """Translate a plain-English "which emails" description into a Gmail query.
+    ``model`` picks the translator — 'local' (warm on-device, default) or 'cloud'
+    (a frontier model; only the user's short description is sent, never email
+    content). Returns ``{ok, query, error}`` and NEVER raises. The caller shows
+    the query so the user can review/edit it (an authoring aid, not a live
+    filter). ``complete_fn`` is injectable for tests."""
     text = (text or "").strip()
     if not text:
         return {"ok": False, "query": "", "error": "describe the emails in a sentence first"}
 
     if complete_fn is None:
-        from app.core import model_server
+        from app.core.completion import select_completion
 
-        if not model_server.is_enabled():
+        complete_fn = select_completion(model, max_tokens=80, temperature=0.0)
+        if complete_fn is None:
+            where = "the cloud model" if model == "cloud" else "the local model"
             return {"ok": False, "query": "",
-                    "error": "the local model isn't running — write the Gmail query manually"}
-
-        def complete_fn(p: str) -> str:
-            return model_server.complete(p, max_tokens=80, temperature=0.0)
+                    "error": f"{where} isn't available — write the Gmail query manually"}
 
     try:
         out = complete_fn(_QUERY_PROMPT.replace("{text}", text))
     except Exception as exc:
-        logger.info("digest query translation skipped (model unavailable): %s", exc)
-        return {"ok": False, "query": "", "error": "couldn't reach the local model"}
+        logger.info("digest query translation failed: %s", exc)
+        return {"ok": False, "query": "", "error": "couldn't reach the model — write the Gmail query manually"}
 
     query = _clean_query(out)
     if not query:

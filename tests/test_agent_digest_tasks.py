@@ -531,3 +531,9 @@ def test_run_due_digests_weekly_respects_weekday(db, monkeypatch):
     assert wed == [] and calls == []                      # not its day yet
     fri = dt.run_due_digests(db, "me@x.com", now=datetime(2026, 5, 29, 9, 0, tzinfo=tz))   # Friday 9am
     assert fri and fri[0]["status"] == "sent" and len(calls) == 1
+
+
+def test_query_from_text_cloud_unavailable_message():
+    # model='cloud' with the helper unable to build a fn → clear error, no raise
+    r = dt.query_from_text("x", model="cloud", complete_fn=None)
+    assert r["ok"] is False and "manually" in r["error"]
