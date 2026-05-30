@@ -117,3 +117,29 @@ def test_cli_config_get_unknown_key_exits_nonzero(monkeypatch):
     monkeypatch.setattr(ff, "get_flag", boom)
     result = runner.invoke(app, ["config", "get", "nope"])
     assert result.exit_code == 1
+
+
+# --- b131: int flags must validate, not persist garbage that crashes reads ---
+
+
+def test_set_flag_int_rejects_non_numeric(tmp_path):
+    # A non-numeric int value used to fall through coerce_value and persist
+    # verbatim; the scheduler's bare int() read then raised and killed the loop.
+    # It must now raise ValueError -> the API returns 400, nothing is persisted.
+    cfgp = tmp_path / "c.yaml"
+    with pytest.raises(ValueError, match="integer"):
+        ff.set_flag("agent.interval_minutes", "abc", config_path=cfgp)
+    with pytest.raises(ValueError, match="integer"):
+        ff.set_flag("agent.interval_minutes", "", config_path=cfgp)
+    # bool is an int subclass but is not a valid flag int.
+    with pytest.raises(ValueError, match="integer"):
+        ff.set_flag("agent.interval_minutes", True, config_path=cfgp)
+    # A valid numeric string still coerces to int and round-trips.
+    assert ff.set_flag("agent.interval_minutes", "20", config_path=cfgp) == 20
+
+
+def test_coerce_value_int_clamps_to_bounds():
+    flag = {"type": "int", "min": 1, "max": 10}
+    assert ff.coerce_value(flag, "0") == 1
+    assert ff.coerce_value(flag, "99") == 10
+    assert ff.coerce_value(flag, "5") == 5

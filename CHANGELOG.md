@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.2.0-beta.131 — 2026-05-30
+
+### Hardening: a bad config value can no longer permanently kill the unattended agent loop
+
+First of the post-b130 hardening series (a 7-surface adversarial audit, each finding verified by a repro probe). Fixes the highest-severity item: a single malformed config value could silently and **permanently** stop the autonomous triage loop.
+
+- **`coerce_value` had no `int` branch (the root cause).** The 12 int-typed flags fell through to `return raw`, so `POST /api/config/set {"agent.interval_minutes":"abc"}` (or an empty `/settings` numeric field) *persisted the string verbatim*. The scheduler's bare `int()` read of it then raised `ValueError` — **outside** the loop's per-account `try/except` — and because `_loop` is a fire-and-forget asyncio task with no supervisor (and `start()` refuses to restart while the dead `Task` is still stored), the agent stopped sweeping forever until a process restart. `coerce_value` now parses + clamps int flags and raises on a non-numeric value, so `set_flag` → the existing `ValueError`→400 mapping rejects it at the door.
+- **Defense in depth — the read can't crash either.** `get_agent_config` now reads every numeric flag through `_safe_int`/`_safe_float`, which degrade to the default on a value poisoned by any other route (a hand-edited YAML), so the config read never raises.
+- **Defense in depth — the loop can't die.** Each tick now runs inside `_run_tick`, guarded by a top-level `try/except` in `_loop`: any unexpected error is logged and the loop waits out the interval and retries, so no single bad tick can ever kill the task.
+- **macOS agent-down alert no longer self-suppresses.** `_notify_macos` built the AppleScript by string interpolation; an exception text containing a backslash (e.g. a malformed-gog-stdout error) produced a syntax error and the "agent stopped drafting" notification silently never fired — exactly the failure it exists to surface. Now passes title/message as `osascript` argv data (verified: the old form returns rc≠0 on a backslash payload, the new form rc=0).
+
++5 regression tests (int coercion/clamp/reject, poisoned-config survival, a raising-tick that doesn't kill the loop, argv-not-interpolated notify). Full suite: 1679 passed.
+
 ## v0.2.0-beta.130 — 2026-05-30
 
 ### Hardening: sender parsing (ReDoS + multi-`@` spoofing) and inbound body/header sizing
