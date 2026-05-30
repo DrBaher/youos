@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.0-beta.125 — 2026-05-30
+
+### Fix: complete the NL-rule model choice + a flaky test
+
+Follow-up to b124, which landed the local|cloud model choice for the digest NL→query translator but — due to a partial apply — left the **rules NL→rule** side half-wired (the `/rules` box offered a local/cloud selector, but `parse_rule_text` / `RuleTextBody` ignored it). Completed here: `parse_rule_text(model=...)` now routes through the shared `select_completion`, and `POST /api/agent/rules/parse` accepts `model`. So both NL-authoring surfaces honour the choice.
+
+Also fixes a test that was environment-dependent (it assumed the `claude` CLI was absent, so it passed in CI but failed locally where the CLI exists) — the model-unavailable path is now exercised deterministically via a stub. +2 tests.
+
 ## v0.2.0-beta.124 — 2026-05-30
 
 ### NL authoring can use a frontier model (local | cloud)

@@ -121,33 +121,34 @@ def _coerce(rule: dict[str, Any]) -> dict[str, Any]:
     return rule
 
 
-def parse_rule_text(text: str, *, complete_fn=None) -> dict[str, Any]:
+def parse_rule_text(text: str, *, model: str = "local", complete_fn=None) -> dict[str, Any]:
     """Parse ``text`` into a structured rule. Returns
     ``{"ok": bool, "rule": dict|None, "error": str}`` and NEVER raises.
 
+    ``model`` picks the translator: 'local' (default, on-device) or 'cloud' (a
+    frontier model — only this short sentence is sent, never email content).
     ``ok`` is True only when the parsed rule also passes ``validate_rule``. Even
     when ``ok`` is False a best-effort ``rule`` may be returned (so the UI can
     pre-fill the builder and let the user fix it). ``complete_fn`` is injectable
-    for tests; by default it routes to the warm local model (temperature 0)."""
+    for tests."""
     text = (text or "").strip()
     if not text:
         return {"ok": False, "rule": None, "error": "describe the rule in a sentence first"}
 
     if complete_fn is None:
-        from app.core import model_server
+        from app.core.completion import select_completion
 
-        if not model_server.is_enabled():
+        complete_fn = select_completion(model, max_tokens=_MAX_TOKENS, temperature=0.0)
+        if complete_fn is None:
+            where = "the cloud model" if model == "cloud" else "the local model"
             return {"ok": False, "rule": None,
-                    "error": "the local model isn't running — build the rule manually below"}
-
-        def complete_fn(p: str) -> str:
-            return model_server.complete(p, max_tokens=_MAX_TOKENS, temperature=0.0)
+                    "error": f"{where} isn't available — build the rule manually below"}
 
     try:
         out = complete_fn(_PROMPT.replace("{text}", text))
     except Exception as exc:
-        logger.info("NL rule parse skipped (model unavailable): %s", exc)
-        return {"ok": False, "rule": None, "error": "couldn't reach the local model"}
+        logger.info("NL rule parse failed: %s", exc)
+        return {"ok": False, "rule": None, "error": "couldn't reach the model — build the rule manually below"}
 
     parsed = _extract_json(out)
     if not parsed or not isinstance(parsed.get("match"), dict):
