@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0-beta.138 — 2026-05-30
+
+### Hardening: ReDoS via the uncapped `sender` field
+
+First of a second hardening pass (a 5-surface audit of REST authz, SQL injection, the gog/gws CLI, the model server, and ReDoS — the areas the b131–b137 pass deliberately skipped). Fixes the one HIGH finding.
+
+- **O(n² ReDoS on the `/draft` `sender` field.** b132 capped `inbound_message`/`inbound_text`, but `sender` was `str | None = None` with no `max_length`. `lookup_facts` runs the same greedy email regex (`[\w.+-]+@…`) on it, so an 80 KB no-`@` `sender` backtracked **~14 s** and pinned a synchronous worker (`/draft/compare` calls generation twice, doubling it); on a no-PIN localhost deploy the API has no auth and is CSRF-reachable. The same raw regex was duplicated in `review_queue_routes._lookup_sender_profile_safe`, also missed by b130. Fixed three ways: `max_length=1024` on `DraftBody.sender` + `DraftCompareBody.sender`, and at both regex sites a `[:1024]` input slice plus a bounded local part (`{1,64}`) so matching is linear regardless of caller. The 80 KB case now returns in **~0.3 ms**; address extraction is unchanged.
+
++2 regression tests (oversize sender → 422; `lookup_facts` over a 100 KB sender stays under a generous wall-clock ceiling). Full suite: 1701 passed.
+
 ## v0.2.0-beta.137 — 2026-05-30
 
 ### Hardening: stored prompt-injection via emailed facts + digest subjects
