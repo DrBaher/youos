@@ -174,7 +174,9 @@ def retrieval_lookup(body: RetrievalLookupBody, request: Request) -> dict[str, o
 
 
 class DraftBody(BaseModel):
-    inbound_message: str = Field(min_length=1)
+    # max_length bounds the body a single request can submit so it can't pin a
+    # worker in downstream regex/O(n) work (mirrors the inbox_fetch body cap).
+    inbound_message: str = Field(min_length=1, max_length=50_000)
     mode: Literal["work", "personal"] | None = None
     audience_hint: str | None = None
     top_k_reply_pairs: int = Field(default=5, ge=1)
@@ -223,7 +225,7 @@ def draft_explain(draft_id: str = Query(..., min_length=1)) -> dict:
 
 
 class DraftCompareBody(BaseModel):
-    inbound_text: str = Field(min_length=1)
+    inbound_text: str = Field(min_length=1, max_length=50_000)
     sender: str | None = None
 
 

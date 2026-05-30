@@ -116,3 +116,42 @@ def test_issues_property_prefixes_severity():
     )
     assert any(s.startswith("[block]") for s in r.issues)
     assert any(s.startswith("[warn]") for s in r.issues)
+
+
+# --- b132: ReDoS bound on attacker inbound + API body-size caps -------------
+
+
+def test_verify_draft_bounded_on_huge_no_at_inbound():
+    """A long no-'@' inbound made _EMAIL_RE backtrack O(n^2) (50k≈2s, ~1MB≈13min),
+    stalling the unattended sweep / pinning the /draft worker. The RFC-64 local-
+    part bound + _MAX_VERIFY_CHARS cap make it linear and bounded."""
+    import time
+
+    payload = "x" * 1_000_000
+    t0 = time.perf_counter()
+    verify_draft("ok thanks", inbound="Can you confirm? " + payload)
+    assert time.perf_counter() - t0 < 1.0  # generous ceiling for slow CI
+
+
+def test_verify_grounding_semantics_unchanged_after_cap():
+    """The regex/cap change must not regress the grounding checks."""
+    assert any("invented email" in b
+               for b in verify_draft("mail made-up@evil.com", inbound="hi").blocking)
+    assert not any("invented email" in b
+                   for b in verify_draft("to real@known.com", inbound="cc real@known.com please").blocking)
+    assert any("invented link" in b
+               for b in verify_draft("see https://evil.com/x", inbound="hi").blocking)
+    assert not any("invented link" in b
+                   for b in verify_draft("see https://x.com/a", inbound="visit https://x.com/a").blocking)
+
+
+def test_draft_api_rejects_oversize_body():
+    """A single request can't submit an unbounded body to the generation paths."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    big = "x" * 50_001
+    assert client.post("/draft", json={"inbound_message": big}).status_code == 422
+    assert client.post("/draft/compare", json={"inbound_text": big}).status_code == 422

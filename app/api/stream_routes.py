@@ -38,7 +38,7 @@ router = APIRouter(prefix="/draft", tags=["draft-stream"])
 
 
 class StreamBody(BaseModel):
-    inbound_text: str = Field(min_length=1)
+    inbound_text: str = Field(min_length=1, max_length=50_000)
     tone_hint: Literal["shorter", "more_formal", "more_detail"] | None = None
     sender: str | None = None
     mode: Literal["reply", "compose"] | None = "reply"
