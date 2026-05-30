@@ -98,6 +98,7 @@
     <div style="margin-top:12px;"><label class="fld" for="qtext">Describe which emails (plain English &rarr; query)</label>
       <div style="display:flex; gap:8px; align-items:center;">
         <input type="text" id="qtext" placeholder="e.g. newsletters and promos from the past week" style="flex:1 1 auto;">
+        <select id="qmodel" title="which model translates the description"><option value="local">local</option><option value="cloud">cloud</option></select>
         <button class="btn btn-ghost" id="qbtn" type="button">&rarr; query</button>
       </div>
       <div class="vstatus" id="qstatus" style="margin-top:4px; min-height:1em;"></div></div>
