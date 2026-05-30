@@ -547,3 +547,13 @@ def test_query_from_text_cloud_routes_to_selector(monkeypatch):
                         lambda model, **k: (lambda p: "category:promotions newer_than:7d") if model == "cloud" else None)
     r = dt.query_from_text("newsletters", model="cloud", complete_fn=None)
     assert r["ok"] is True and r["query"] == "category:promotions newer_than:7d"
+
+
+def test_then_archive_rejected_for_agent_destination():
+    """then_archive is inbox-only (agent destination sends nothing to archive
+    after) — validate rejects it rather than silently ignoring it."""
+    assert dt.validate_digest({"name": "N", "query": "x", "destination": "inbox", "then_archive": True})[0]
+    ok, err = dt.validate_digest({"name": "N", "query": "x", "destination": "agent", "then_archive": True})
+    assert ok is False and "then_archive" in err
+    # default destination is agent → also rejected
+    assert dt.validate_digest({"name": "N", "query": "x", "then_archive": True})[0] is False

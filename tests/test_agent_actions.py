@@ -485,3 +485,32 @@ def test_forward_claim_is_atomic_cross_process(db):
     # a DIFFERENT destination is independent (own claim)
     other = act._claim_forward(db, account="me@x.com", message=_msg(), action={"type": "forward", "value": "k@b.com"})
     assert other is not None
+
+
+def test_forward_daily_cap_does_not_orphan_a_claim(db, monkeypatch):
+    """With the cap exhausted, a forward returns skipped_cap, does NOT send, and
+    writes NO ledger row — so the (message,dest) stays forwardable next sweep."""
+    monkeypatch.setattr(act, "_forward_config", lambda: _fwd_cfg())
+    calls = _stub_forward(monkeypatch)
+    res = act.apply_outbound_actions(db, "me@x.com", _msg(), [{"type": "forward", "value": "j@b.com"}],
+                                     remaining=0)
+    assert res[0]["status"] == "skipped_cap"
+    assert calls == []                              # nothing sent
+    assert act.list_actions(db) == []              # no orphan 'forwarding' row
+
+
+def test_has_status_matches_null_action_value(db):
+    """The dedup that makes star/archive/mark/forward at-most-once relies on
+    matching a NULL action_value — a regression to plain '= ?' would re-apply
+    (and for forward, re-send) every sweep."""
+    msg = _msg()
+    act._record(db, account="me@x.com", message=msg,
+                action={"type": "star", "value": None}, status="applied")
+    assert act._has_status(db, msg.message_id, {"type": "star", "value": None}, ("applied",)) is True
+    # a different action type with the same NULL value must NOT match
+    assert act._has_status(db, msg.message_id, {"type": "archive", "value": None}, ("applied",)) is False
+    # a valued action is matched on its value
+    act._record(db, account="me@x.com", message=msg,
+                action={"type": "label", "value": "Work"}, status="applied")
+    assert act._has_status(db, msg.message_id, {"type": "label", "value": "Work"}, ("applied",)) is True
+    assert act._has_status(db, msg.message_id, {"type": "label", "value": "Other"}, ("applied",)) is False
