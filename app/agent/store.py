@@ -151,10 +151,14 @@ def mark_amended(
     human verbatim edit — a real correction signal) or ``'machine'`` (a
     /regenerate re-draft the user never approved). Feedback capture only mines
     ``'user'`` amendments as gold correction pairs."""
+    # Only a pending/amended row can be amended. A dismissed (or sent) row must
+    # NOT be resurrected to 'amended' — that would re-arm it for send/auto-send
+    # past the dismissed-guards.
     return _update_status(
         database_url, row_id, status="amended",
         amended_draft=amended_draft,
         amended_by=amended_by,
+        require_status=("pending", "amended"),
     )
 
 
@@ -483,6 +487,7 @@ def _update_status(
     dismissed_at_now: bool = False,
     gmail_draft_id: str | None = None,
     dismissal_reason: str | None = None,
+    require_status: tuple[str, ...] | None = None,
 ) -> bool:
     sets = ["status = ?", "updated_at = CURRENT_TIMESTAMP"]
     params: list[Any] = [status]
@@ -503,7 +508,15 @@ def _update_status(
         sets.append("dismissal_reason = ?")
         params.append(dismissal_reason)
     params.append(row_id)
-    sql = f"UPDATE agent_pending_drafts SET {', '.join(sets)} WHERE id = ?"
+    where = "id = ?"
+    # An optional status precondition makes the transition atomic: e.g. an amend
+    # must not resurrect a dismissed (or sent) row — that would bypass the
+    # begin_send / due_for_auto_send dismissed-guards and send a reply the user
+    # killed. rowcount=0 (→ False, → 404) when the precondition fails.
+    if require_status:
+        where += f" AND status IN ({', '.join('?' for _ in require_status)})"
+        params.extend(require_status)
+    sql = f"UPDATE agent_pending_drafts SET {', '.join(sets)} WHERE {where}"
     with closing(_connect(database_url)) as conn:
         cur = conn.execute(sql, params)
         conn.commit()
