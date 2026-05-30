@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.132 — 2026-05-30
+
+### Hardening: ReDoS in draft verification + unbounded API request bodies
+
+Second of the post-b130 hardening series. Closes the second HIGH audit finding — a catastrophic-backtracking regex the b130 caps didn't cover.
+
+- **O(n²) ReDoS in `verify_draft` (`_EMAIL_RE`).** `verify_draft` is fed the **raw** `inbound_message` (+ thread history) — the 4000-char prompt cap protects *generation*, not verification — and `_EMAIL_RE`'s unbounded `+` local part backtracks O(n²) over a long no-`@` run. Measured **10k=112ms, 50k=2.1s, ~1MB≈13min**, single-threaded, on every needs-reply message in a sweep and on every `/draft` request. Two fixes: bound the local part to its RFC-5321 maximum (`{1,64}`) so each start position fails in ≤64 chars (matching becomes linear), and cap every attacker-controlled input (`inbound`, `thread_history`, `draft`) at `_MAX_VERIFY_CHARS = 20 000` before any regex or language-detect runs. The 1 MB case now completes in **~9 ms**; the grounding checks are unchanged.
+- **Unbounded API request bodies.** The generation request models accepted an arbitrarily large body (`Field(min_length=1)` with no `max_length`), so one request could pin a worker for minutes. Added `max_length=50_000` (mirroring the inbox_fetch body cap) to all seven inbound fields across `/draft`, `/draft/compare`, the feedback, stream, and review-queue compare endpoints — an oversize body now returns 422 before reaching generation.
+
++3 regression tests (1 MB inbound stays under a generous ceiling; grounding semantics preserved; oversize `/draft` + `/draft/compare` bodies → 422). Full suite: 1682 passed.
+
 ## v0.2.0-beta.131 — 2026-05-30
 
 ### Hardening: a bad config value can no longer permanently kill the unattended agent loop
