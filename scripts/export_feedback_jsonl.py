@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 from pathlib import Path
 
@@ -25,6 +26,15 @@ DEDUP_MAX_PAIRS = 2000
 # can't make every comparison expensive. 2000 chars is plenty to detect a
 # near-duplicate (the threshold is 0.95).
 DEDUP_TEXT_CAP = 2000
+
+
+def _chmod_600(path) -> None:
+    """Best-effort 0o600 — exported JSONL holds raw email bodies + drafts and
+    must not be world-readable on a shared host (mirrors secure_io / b134)."""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
 
 
 def parse_args() -> argparse.Namespace:
@@ -172,6 +182,7 @@ def export_dpo(args: argparse.Namespace) -> None:
     with open(output_path, "w", encoding="utf-8") as f:
         for pair in pairs:
             f.write(json.dumps(pair, ensure_ascii=False) + "\n")
+    _chmod_600(output_path)  # contains raw email bodies — not world-readable
 
     print(f"Exported {len(pairs)} DPO pairs to {output_path}")
 
@@ -440,10 +451,12 @@ def export(args: argparse.Namespace) -> None:
     with open(train_path, "w", encoding="utf-8") as f:
         for rec in train:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    _chmod_600(train_path)
 
     with open(valid_path, "w", encoding="utf-8") as f:
         for rec in valid:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    _chmod_600(valid_path)
 
     print(f"Exported {len(records)} pairs to {train_path}")
     print(f"  Train: {len(train)} pairs -> {train_path}")

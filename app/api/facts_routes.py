@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from app.db.bootstrap import resolve_sqlite_path
+from app.db.bootstrap import connect, resolve_sqlite_path
 
 router = APIRouter(prefix="/api/facts", tags=["facts"])
 
@@ -41,7 +41,7 @@ class FactBody(BaseModel):
 def list_facts(request: Request, type: str | None = None) -> dict:
     """Return all facts, optionally filtered by type."""
     db_path = _get_db_path(request)
-    conn = sqlite3.connect(db_path)
+    conn = connect(db_path)  # tuned: 30s busy_timeout + WAL (vs the 5s sqlite3 default)
     conn.row_factory = sqlite3.Row
     try:
         if type:
@@ -68,7 +68,7 @@ def create_fact(body: FactBody, request: Request) -> dict:
         raise HTTPException(status_code=400, detail=f"type must be one of: {', '.join(sorted(valid_types))}")
 
     db_path = _get_db_path(request)
-    conn = sqlite3.connect(db_path)
+    conn = connect(db_path)  # tuned: 30s busy_timeout + WAL (vs the 5s sqlite3 default)
     try:
         conn.execute(
             """
@@ -95,7 +95,7 @@ def create_fact(body: FactBody, request: Request) -> dict:
 def delete_fact(fact_id: int, request: Request) -> dict:
     """Delete a fact by ID."""
     db_path = _get_db_path(request)
-    conn = sqlite3.connect(db_path)
+    conn = connect(db_path)  # tuned: 30s busy_timeout + WAL (vs the 5s sqlite3 default)
     try:
         cur = conn.execute("DELETE FROM memory WHERE id = ?", (fact_id,))
         conn.commit()

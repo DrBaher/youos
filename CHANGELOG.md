@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.151 — 2026-05-30
+
+### Hardening: gog label option-injection, side-path busy_timeout, export perms
+
+Third and last of the 5th hardening pass — three LOW hygiene fixes.
+
+- **`gog labels create` option-injection.** The label name was passed as a bare positional *before* the flags, so a routing rule whose label value begins with `-` (e.g. `--dry-run`) was parsed by gog's CLI as a flag (silent no-op / unintended flag). Now the name goes after a `--` end-of-flags separator (matching the b133/b141 `--` hardening), and `validate_rule` rejects a `-`-leading label so the bad rule never persists.
+- **Side-path writers used the 5 s `sqlite3` default busy_timeout, not the tuned 30 s.** The nightly `build_sender_profiles` (which runs concurrently with the live server) and the facts API write routes opened raw `sqlite3.connect()`, so they gave up on a momentary lock 6× sooner than the Tier-0 agent path. Routed through `bootstrap.connect()` (30 s busy_timeout + WAL).
+- **Feedback-export JSONL was world-readable (0o644).** The DPO/SFT export files hold raw email bodies + drafts; the three write sites now `chmod 0o600` (the b134 secret-perms class, extended to the export path).
+
++3 regression tests (dash-leading label rejected; `ensure_label` puts the name after `--`; the DPO export file is 0o600). Full suite: 1733 passed.
+
 ## v0.2.0-beta.150 — 2026-05-30
 
 ### Hardening: DNS-rebinding Host guard + a global request-body size limit
