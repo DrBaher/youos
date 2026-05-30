@@ -179,7 +179,7 @@ async def _lifespan(app: FastAPI):
                 f"(host={host or '0.0.0.0'}"
                 + (", Tailscale enabled" if get_tailscale_hostname(config) else "")
                 + ") but no PIN is set — the web UI and API are UNAUTHENTICATED. "
-                "Set a PIN under `server.pin` in your config before exposing YouOS."
+                "Set a PIN: run `youos config set-pin <PIN>` before exposing YouOS."
             )
 
     # Pre-warm the local model server (load the model once, off the request path)

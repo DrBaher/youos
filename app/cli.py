@@ -261,7 +261,7 @@ def status():
         print(
             "  \u26a0\ufe0f  server.host is exposed but server.pin is empty. "
             "Anyone on your network can reach /triage. "
-            "Set a PIN: `youos config set server.pin <PIN>`"
+            "Set a PIN: `youos config set-pin <PIN>`"
         )
 
     print()
@@ -968,6 +968,32 @@ def config_set(
         typer.echo(f"Invalid value for {key}: {exc}", err=True)
         raise typer.Exit(1) from None
     typer.echo(f"✓ set {key} = {stored}")
+
+
+@config_app.command(name="set-pin")
+def config_set_pin(
+    pin: str = typer.Argument(help="The PIN to require for the web UI / API"),
+):
+    """Set the web-UI/API PIN (``server.pin``), stored HASHED (PBKDF2) — never
+    plaintext. This is the command the exposure warning points at; ``config set
+    server.pin`` is rejected because server.pin is a credential, not a flag."""
+    import copy
+
+    from app.core.auth import get_pin_hash
+    from app.core.config import load_config, save_config
+
+    pin = (pin or "").strip()
+    if not pin:
+        typer.echo("PIN must not be empty.", err=True)
+        raise typer.Exit(1)
+    cfg = copy.deepcopy(load_config() or {})
+    server = cfg.get("server")
+    if not isinstance(server, dict):
+        server = {}
+        cfg["server"] = server
+    server["pin"] = get_pin_hash(pin)
+    save_config(cfg)
+    typer.echo("✓ PIN set (stored hashed). Restart YouOS for it to take effect on a running server.")
 
 
 service_app = typer.Typer(help="Run the YouOS server reliably in the background (macOS launchd).")
