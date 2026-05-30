@@ -77,7 +77,12 @@ def _git_commit_kept_change(
     msg = f"autoresearch: keep {surface_name} {old_value} → {new_value} (composite {baseline_composite:.4f} → {candidate_composite:.4f})"
     try:
         subprocess.run(
-            ["git", "add", "configs/retrieval/defaults.yaml", "configs/prompts.yaml"],
+            # Stage ALL four mutable surfaces — persona.yaml + autoresearch.yaml
+            # were applied live but never committed, so the audit trail (and the
+            # git-log run summary) under-reported what the loop actually changed.
+            ["git", "add",
+             "configs/retrieval/defaults.yaml", "configs/prompts.yaml",
+             "configs/persona.yaml", "configs/autoresearch.yaml"],
             capture_output=True,
             timeout=10,
             cwd=ROOT_DIR,
