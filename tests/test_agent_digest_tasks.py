@@ -181,6 +181,24 @@ def test_validate_account():
 # --- body ------------------------------------------------------------------
 
 
+def test_query_from_text_translates_and_cleans():
+    # clean output
+    r = dt.query_from_text("newsletters from the past week", complete_fn=lambda p: "category:promotions newer_than:7d")
+    assert r["ok"] is True and r["query"] == "category:promotions newer_than:7d"
+    # messy output (code fence / 'Query:' prefix / quotes / trailing prose)
+    messy = "```\nQuery: \"from:jane@books.com\"\n```\nThat should work."
+    r2 = dt.query_from_text("from jane", complete_fn=lambda p: messy)
+    assert r2["ok"] is True and r2["query"] == "from:jane@books.com"
+
+
+def test_query_from_text_failure_modes():
+    assert dt.query_from_text("   ", complete_fn=lambda p: "x")["ok"] is False         # empty input
+    assert dt.query_from_text("x", complete_fn=lambda p: "   ")["ok"] is False          # blank output
+    def boom(p):
+        raise RuntimeError("model down")
+    assert dt.query_from_text("x", complete_fn=boom)["ok"] is False                     # model error
+
+
 def test_custom_prompt_drives_the_summary():
     seen = {}
     def cap(p):

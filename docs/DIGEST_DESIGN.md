@@ -12,7 +12,7 @@ are the user's to choose:
 
 | part | answers | example |
 |------|---------|---------|
-| **query** | *which* emails | `category:promotions newer_than:1d` |
+| **query** | *which* emails | `category:promotions newer_than:1d` (authorable in plain English → compiled to this) |
 | **prompt** | *what to make of them* | "Group by sender; flag anything time-sensitive; one line each." |
 | **destination** | *where the summary goes* | `inbox` or `agent` |
 
@@ -34,6 +34,18 @@ purpose. The prompt is the core instruction; YouOS still wraps it with the
 fetched items (sender/subject/date) and falls back to a plain list if the model
 is unavailable. Empty `prompt` ⇒ a sensible default ("concise skimmable digest").
 Local or cloud (`summary_model`) summarizes per the prompt.
+
+### 1b. "Which emails" in plain English → a Gmail query
+
+The `query` can be authored in plain English: a description (*"newsletters and
+promos from the past week"*) is translated by the warm local model into a Gmail
+query (`category:promotions newer_than:7d`) via `query_from_text` (same NL→
+structured pattern as `nl_rule`). The translation is an **authoring aid** — the
+compiled Gmail query is shown and editable, and it's what actually runs, so the
+fetch stays cheap, deterministic, dedup-friendly, and auditable. The user
+fine-tunes by re-describing or editing the query, watching the preview. (Truly
+semantic criteria Gmail can't express — "sounds like it needs a reply" — would
+need a per-message model filter; out of scope for now.)
 
 ## 2. Destination: `inbox` or `agent`
 

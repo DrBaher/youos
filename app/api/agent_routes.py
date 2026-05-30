@@ -475,6 +475,22 @@ def run_digest_now(body: DigestRunBody, request: Request) -> dict:
     return run_digest(_db_url(request), account, spec, dry_run=body.dry_run)
 
 
+class DigestQueryTextBody(BaseModel):
+    """A plain-English description of which emails a digest should include."""
+
+    text: str
+
+
+@router.post("/api/agent/digests/parse-query")
+def parse_digest_query_endpoint(body: DigestQueryTextBody) -> dict:
+    """Translate a plain-English 'which emails' description into a Gmail query via
+    the warm local model. Returns ``{ok, query, error}`` — the builder fills the
+    query field with it so the user can review/edit before saving. Never saves."""
+    from app.agent.digest_tasks import query_from_text
+
+    return query_from_text(body.text)
+
+
 @router.get("/api/agent/digests/pending")
 def list_pending_digests_endpoint(request: Request, account: str | None = Query(None)) -> dict:
     """Computed-but-not-yet-collected 'agent'-destination digests (status
