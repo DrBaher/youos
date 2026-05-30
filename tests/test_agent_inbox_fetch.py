@@ -176,3 +176,163 @@ def test_one_bad_thread_does_not_abort_the_sweep(monkeypatch):
     msgs = inbox_fetch.fetch_unread("me@x.com")
     bodies = [m.body for m in msgs]
     assert bodies == ["ok"]  # bad thread skipped, good thread survived
+
+
+# --- b130: body cap, charset-aware decode, RFC 2047 encoded-word headers ---
+
+
+def test_body_length_is_capped_at_fetch_time(monkeypatch):
+    # A multi-MB inbound body is stored + scored in full (O(size) per message).
+    # Cap it at fetch time so a giant body can't slow every sweep.
+    from app.agent.inbox_fetch import _MAX_BODY_CHARS
+
+    huge = _payload(frm="Bob <bob@x.com>", subject="big", text="X" * (_MAX_BODY_CHARS + 50_000))
+    _patch(monkeypatch, [{"id": "t1"}], {"t1": _thread(huge)})
+    msgs = fetch_unread("me@x.com")
+    assert len(msgs) == 1
+    assert len(msgs[0].body) == _MAX_BODY_CHARS
+
+
+def test_html_body_cap_bounds_the_tag_strip(monkeypatch):
+    # text/html is decoded then tag-stripped by a regex; the cap must apply
+    # before the regex so a huge HTML body can't blow it up.
+    from app.agent.inbox_fetch import _MAX_BODY_CHARS
+
+    html = "<p>" + "Y" * (_MAX_BODY_CHARS + 50_000) + "</p>"
+    payload = {"mimeType": "text/html", "body": {"data": _b64(html)}}
+    _patch(monkeypatch, [{"id": "t1"}], {"t1": _thread(payload)})
+    msgs = fetch_unread("me@x.com")
+    assert len(msgs) == 1
+    assert len(msgs[0].body) <= _MAX_BODY_CHARS
+
+
+def test_non_utf8_body_decoded_with_declared_charset(monkeypatch):
+    # A body declared ISO-8859-1 must decode with that charset, not get mangled
+    # by a hardcoded UTF-8 decode.
+    text = "Café costs £5"
+    payload = {
+        "mimeType": "text/plain",
+        "headers": [{"name": "Content-Type", "value": 'text/plain; charset="ISO-8859-1"'}],
+        "body": {"data": base64.urlsafe_b64encode(text.encode("latin-1")).decode("ascii")},
+    }
+    _patch(monkeypatch, [{"id": "t1"}], {"t1": _thread(payload)})
+    msgs = fetch_unread("me@x.com")
+    assert msgs[0].body == text
+
+
+def test_unknown_charset_falls_back_to_utf8(monkeypatch):
+    # A bogus charset label must not raise (LookupError) — fall back to UTF-8.
+    payload = {
+        "mimeType": "text/plain",
+        "headers": [{"name": "Content-Type", "value": 'text/plain; charset="x-bogus-9000"'}],
+        "body": {"data": _b64("hello")},
+    }
+    _patch(monkeypatch, [{"id": "t1"}], {"t1": _thread(payload)})
+    msgs = fetch_unread("me@x.com")
+    assert msgs[0].body == "hello"
+
+
+def test_rfc2047_encoded_words_in_from_and_subject_decoded(monkeypatch):
+    # =?utf-8?b?...?= display names / subjects must be decoded to readable text,
+    # and the email address must still parse out of the decoded From.
+    payload = {
+        "mimeType": "text/plain",
+        "headers": [
+            {"name": "From", "value": "=?UTF-8?B?w6lsw6lub3Jl?= <eleanor@x.com>"},
+            {"name": "Subject", "value": "=?UTF-8?B?w6lsw6lub3Jl?="},
+            {"name": "Date", "value": "Mon, 26 May 2026 09:00:00 +0000"},
+        ],
+        "body": {"data": _b64("hi")},
+    }
+    _patch(monkeypatch, [{"id": "t1"}], {"t1": _thread(payload)})
+    msgs = fetch_unread("me@x.com")
+    m = msgs[0]
+    assert m.sender == "élénore <eleanor@x.com>"
+    assert m.sender_email == "eleanor@x.com"
+    assert m.subject == "élénore"
+
+
+def test_decode_mime_words_degrades_on_garbage():
+    # Direct unit: malformed encoded-word must not raise — return input verbatim.
+    from app.agent.inbox_fetch import _decode_mime_words
+
+    assert _decode_mime_words("plain text") == "plain text"
+    assert _decode_mime_words("") == ""
+    # Unknown charset inside an encoded word → replacement, never a crash.
+    out = _decode_mime_words("=?x-bogus-9000?B?aGk=?=")
+    assert isinstance(out, str)
+
+
+# --- b130 review follow-ups: decode/header bounds + charset/decode coverage ---
+
+
+def test_decode_b64_caps_input_not_just_output():
+    # The body cap must bound the base64 *input* so a multi-MB body is never
+    # fully decoded into memory — and the 6x input multiplier must still let an
+    # all-4-byte-UTF-8 body reach the full char cap (a naive 4x cap under-caps it).
+    from app.agent.inbox_fetch import _decode_b64
+
+    huge_ascii = base64.urlsafe_b64encode(("X" * 5_000_000).encode()).decode("ascii")
+    assert len(_decode_b64(huge_ascii, "utf-8", 100)) == 100
+    emoji = base64.urlsafe_b64encode(("😀" * 200).encode()).decode("ascii")  # 4 bytes/char
+    assert len(_decode_b64(emoji, "utf-8", 100)) == 100
+    # Default (no max_chars) is unbounded passthrough — backwards compatible.
+    assert _decode_b64(base64.urlsafe_b64encode(b"hi").decode("ascii")) == "hi"
+
+
+def test_header_decode_is_length_bounded():
+    # From/Subject are attacker-controlled and reach the LLM prompt; bound them
+    # like the body. Both the plain and the RFC2047 paths must be capped.
+    from app.agent.inbox_fetch import _MAX_HEADER_CHARS, _decode_mime_words
+
+    assert len(_decode_mime_words("A" * 10_000_000)) == _MAX_HEADER_CHARS
+    enc = "=?utf-8?B?" + base64.b64encode(("é" * 5_000_000).encode()).decode("ascii") + "?="
+    assert len(_decode_mime_words(enc)) <= _MAX_HEADER_CHARS
+
+
+def test_non_utf8_body_unquoted_charset(monkeypatch):
+    # RFC 2045 makes the charset param a bare token; quoting is optional and
+    # often omitted. Pin the unquoted branch so a future regex tightening can't
+    # silently mojibake it while the quoted-charset test stays green.
+    text = "Café costs £5"
+    payload = {
+        "mimeType": "text/plain",
+        "headers": [{"name": "Content-Type", "value": "text/plain; charset=ISO-8859-1"}],
+        "body": {"data": base64.urlsafe_b64encode(text.encode("latin-1")).decode("ascii")},
+    }
+    _patch(monkeypatch, [{"id": "t1"}], {"t1": _thread(payload)})
+    assert fetch_unread("me@x.com")[0].body == text
+
+
+def test_inner_part_charset_governs_multipart_decode(monkeypatch):
+    # The realistic shape: a multipart container with NO Content-Type wrapping an
+    # ISO-8859-1 inner text part. Charset must be read from the recursed part, not
+    # the container, or every non-UTF-8 multipart message mojibakes.
+    text = "Café £5"
+    inner = {
+        "mimeType": "text/plain",
+        "headers": [{"name": "Content-Type", "value": "text/plain; charset=ISO-8859-1"}],
+        "body": {"data": base64.urlsafe_b64encode(text.encode("latin-1")).decode("ascii")},
+    }
+    top = {"mimeType": "multipart/alternative", "parts": [inner]}  # container has no charset
+    _patch(monkeypatch, [{"id": "t1"}], {"t1": _thread(top)})
+    assert fetch_unread("me@x.com")[0].body == text
+
+
+def test_thread_history_prior_turn_from_rfc2047_decoded(monkeypatch):
+    # The prior-turn From feeds the drafter as conversation context, so it must be
+    # RFC2047-decoded too (the only decode call site no other test reaches).
+    prior = {
+        "mimeType": "text/plain",
+        "headers": [
+            {"name": "From", "value": "=?UTF-8?B?w6lsw6lub3Jl?= <eleanor@x.com>"},
+            {"name": "Date", "value": "Mon, 26 May 2026 09:00:00 +0000"},
+        ],
+        "body": {"data": _b64("earlier turn")},
+    }
+    latest = _payload(frm="You <you@x.com>", subject="Re: hi", text="thanks")
+    thread = {"id": "t1", "messages": [{"id": "m1", "payload": prior}, {"id": "m2", "payload": latest}]}
+    _patch(monkeypatch, [{"id": "t1"}], {"t1": thread})
+    m = fetch_unread("me@x.com")[0]
+    assert m.thread_history[0]["sender"] == "élénore <eleanor@x.com>"
+    assert "=?" not in m.thread_history[0]["sender"]

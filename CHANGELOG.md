@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.2.0-beta.130 — 2026-05-30
+
+### Hardening: sender parsing (ReDoS + multi-`@` spoofing) and inbound body/header sizing
+
+Follow-up to the b129 ingestion-robustness audit — closes the confirmed `app/core/sender.py` and body/header-sizing findings on the attacker-controlled `From` header and message body. Each fix was reproduced before and after, then the whole diff was put through a 4-lens adversarial review (DoS-completeness, regression, correctness, coverage) with every finding verified by an independent repro probe.
+
+- **`From`-header ReDoS (medium).** `_EMAIL_RE` backtracks O(n²) on a long run of non-`@` characters; a 100 KB no-`@` `From` header hung for **~34 s** (measured). Address parsing now pulls the addr-spec from inside angle brackets (linear `rfind`/`find`, no regex) and caps the scan window (`_MAX_ADDR_SCAN = 1024`) before the regex ever runs — the same input now returns in **~0.03 ms**.
+- **Multi-`@` mis-extraction + display-name spoofing (medium).** `Name <a@b@c.com>` used to extract the wrong address (`b@c.com`, domain `c.com`), and `evil@attacker.com <real@good.com>` returned the *display-name* address — both mis-routing skip/VIP/whitelist/domain rules. Extraction now takes the angle-bracket addr-spec verbatim, rejects an ambiguous multi-`@` single token (→ `unknown`, fail-safe) rather than guessing, and still handles address lists (first valid token). `extract_email`/`extract_domain`/`classify_sender` all route through one hardened helper.
+- **Uncapped inbound body (medium).** A multi-MB body was stored and scored in full (O(size) per message). The body is now capped at fetch time (`_MAX_BODY_CHARS = 50 000`), and the cap is enforced on the base64 **input** so a 100 MB body decodes in **0.9 MB / 0.4 ms** instead of **266 MB / 174 ms** — bounding both the decode allocation and the text/html tag-strip regex. The `From`/`Subject` headers (same stored/logged/LLM-prompt consumers) are bounded the same way (`_MAX_HEADER_CHARS = 4096`).
+- **Charset + RFC 2047 (low).** Bodies now decode with the part's declared `Content-Type` charset (e.g. `ISO-8859-1`) instead of a hardcoded UTF-8, falling back to UTF-8 for an unknown/invalid label; `=?utf-8?B?…?=` encoded-word `From`/`Subject`/prior-turn display names are decoded to readable text. Both degrade (never raise) on malformed input.
+
++16 regression tests (ReDoS bound, multi-`@`/spoof rejection, no-regression on normal shapes, body/decode/header caps incl. multibyte, quoted+unquoted+inner-part charsets, encoded-word headers + thread-history decode). Three review findings were verified and **refuted** (a trailing-`<…>` regression that only triggers on malformed headers the stdlib also rejects, and two "untested branch" claims disproven by tracing the existing suite). Full suite: 1674 passed.
+
 ## v0.2.0-beta.129 — 2026-05-30
 
 ### Hardening: malformed inbound email can no longer abort the triage sweep
