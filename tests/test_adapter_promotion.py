@@ -95,3 +95,31 @@ def test_gate_rolls_back_on_degenerate_eval_even_without_baseline(tmp_path):
                           latest_dir=latest, previous_dir=prev, eval_degenerate=True)
     assert res["action"] == "rolled_back"
     assert (latest / "adapters.safetensors").read_text() == "GOOD"
+
+
+# --- b143: promotion-gate baseline + degenerate-first-run discard ------------
+
+
+def test_composite_to_persist_uses_baseline_after_rollback():
+    """After a rollback the LIVE adapter is the previous snapshot (baseline), so
+    persisting the rejected candidate would lower the bar and defeat the gate."""
+    from app.evaluation.promotion import composite_to_persist
+
+    assert composite_to_persist("rolled_back", 0.30, 0.80) == 0.80  # bad candidate not persisted
+    assert composite_to_persist("kept", 0.85, 0.80) == 0.85
+    assert composite_to_persist("rollback_failed", 0.30, 0.80) == 0.30  # bad adapter still live
+    assert composite_to_persist("rolled_back", 0.30, None) is None
+
+
+def test_discard_adapter_clears_files(tmp_path):
+    """First-ever degenerate finetune has no snapshot to roll back to — discard
+    the untrustworthy adapter rather than serve it."""
+    from app.evaluation.promotion import discard_adapter
+
+    d = tmp_path / "latest"
+    d.mkdir()
+    (d / "adapter.safetensors").write_text("x")
+    (d / "adapter_config.json").write_text("{}")
+    assert discard_adapter(d) is True
+    assert list(d.iterdir()) == []
+    assert discard_adapter(d) is False  # nothing left to discard

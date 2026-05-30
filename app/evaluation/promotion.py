@@ -115,3 +115,37 @@ def gate_after_eval(
         "candidate": candidate_composite,
         "baseline": baseline_composite,
     }
+
+
+def composite_to_persist(
+    gate_action: str, candidate: float | None, baseline: float | None
+) -> float | None:
+    """The golden composite to persist as the NEXT run's baseline.
+
+    After a successful ``rolled_back``, the live adapter is the pre-finetune
+    snapshot (whose score is ``baseline``), NOT the rejected candidate — so we
+    must persist ``baseline``. Persisting the (lower) candidate would lower the
+    bar so the next regressed retrain could 'improve' past it, silently defeating
+    the gate. ``rollback_failed`` keeps the candidate (the bad adapter IS still
+    live, so its score is the honest baseline); ``kept`` keeps the candidate."""
+    if gate_action == "rolled_back":
+        return baseline
+    return candidate
+
+
+def discard_adapter(latest_dir: Path | str) -> bool:
+    """Remove the adapter files from ``latest`` (no rollback target available).
+
+    Used when a FIRST-EVER finetune produces a degenerate eval: there's no prior
+    snapshot to restore to, so serve nothing (fall back to the base model)
+    rather than keep an untrustworthy adapter the gate can't validate. Returns
+    True if anything was removed."""
+    latest = Path(latest_dir)
+    files = _adapter_files(latest)
+    if not files:
+        return False
+    real = latest.resolve() if latest.exists() else latest
+    for f in list(real.iterdir()):
+        if f.is_file():
+            f.unlink()
+    return True
