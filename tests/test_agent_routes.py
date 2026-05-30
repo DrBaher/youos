@@ -439,6 +439,7 @@ def test_digests_page_renders_with_builder(authed_client):
     html = r.text
     assert "/static/youos.css" in html
     assert 'id="query"' in html and 'id="schedule"' in html and 'id="weekday"' in html
+    assert 'id="qtext"' in html and "/api/agent/digests/parse-query" in html   # NL→query box
     assert "/api/agent/digests/validate" in html
     assert 'href="/digests"' in authed_client.get("/triage").text   # in shared nav
 
@@ -455,6 +456,21 @@ def test_digest_update_delete_out_of_range_404(authed_client):
     # index checks happen before any config write, so these 404 without mutating
     assert authed_client.put("/api/agent/digests/999", json={"name": "N", "query": "x"}).status_code == 404
     assert authed_client.delete("/api/agent/digests/999").status_code == 404
+
+
+def test_digest_parse_query_endpoint(authed_client, monkeypatch):
+    import app.core.model_server as ms
+
+    # model off → ok=False, never 500
+    monkeypatch.setattr(ms, "is_enabled", lambda: False)
+    off = authed_client.post("/api/agent/digests/parse-query", json={"text": "newsletters this week"})
+    assert off.status_code == 200 and off.json()["ok"] is False
+    # model on → returns the translated query
+    monkeypatch.setattr(ms, "is_enabled", lambda: True)
+    monkeypatch.setattr(ms, "complete", lambda *a, **k: "category:promotions newer_than:7d")
+    on = authed_client.post("/api/agent/digests/parse-query", json={"text": "newsletters this week"})
+    assert on.status_code == 200 and on.json()["ok"] is True
+    assert on.json()["query"] == "category:promotions newer_than:7d"
 
 
 def test_digest_pending_and_collect_endpoints(authed_client):
