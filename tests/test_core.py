@@ -123,3 +123,11 @@ def test_extract_email_unchanged_on_normal_inputs():
     assert extract_email("a@x.com, b@y.com") == "a@x.com"               # list → first valid
     assert extract_email(None) is None
     assert extract_email("no-email-here") is None
+
+
+def test_extract_email_rejects_dash_leading_local_part():
+    # A '-'-leading addr-spec breaks gog's --to (Kong reads it as a flag), so it
+    # must never become a stored sender_email / recipient.
+    assert extract_email("<-x@evil.com>") is None
+    assert extract_domain("<-x@evil.com>") is None
+    assert extract_email("Bob <bob@x.com>") == "bob@x.com"  # normal unaffected
