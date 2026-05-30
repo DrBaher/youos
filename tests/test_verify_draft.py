@@ -155,3 +155,24 @@ def test_draft_api_rejects_oversize_body():
     big = "x" * 50_001
     assert client.post("/draft", json={"inbound_message": big}).status_code == 422
     assert client.post("/draft/compare", json={"inbound_text": big}).status_code == 422
+
+
+def test_draft_compare_does_not_leak_exception_text(monkeypatch):
+    """b136: a generation failure must return a static message, not raw
+    exception text (which can carry filesystem paths / config keys)."""
+    import json
+
+    from fastapi.testclient import TestClient
+
+    import app.api.routes as routes
+    from app.main import app
+
+    def _boom(*a, **k):
+        raise RuntimeError("secret path /Users/x/.config/leak")
+
+    monkeypatch.setattr(routes, "generate_draft", _boom)
+    r = TestClient(app).post("/draft/compare", json={"inbound_text": "hi"})
+    assert r.status_code == 200
+    blob = json.dumps(r.json())
+    assert "see server logs" in blob
+    assert "secret path" not in blob  # raw exception not echoed
