@@ -47,3 +47,30 @@ def test_set_valid_flag_returns_ok(monkeypatch):
     body = r.json()
     assert body == {"ok": True, "key": "generation.multi_candidate.enabled", "value": True}
     assert captured == {"k": "generation.multi_candidate.enabled", "v": "true"}
+
+
+# --- b140: PIN-set endpoint (hashed) + helpful rejection of the flag form -----
+
+
+def test_config_set_pin_endpoint_hashes_and_saves(monkeypatch):
+    import app.core.config as cfgmod
+    from app.core.auth import verify_pin
+
+    saved: dict = {}
+    monkeypatch.setattr(cfgmod, "load_config", lambda *a, **k: {})
+    monkeypatch.setattr(cfgmod, "save_config", lambda cfg, *a, **k: saved.update(cfg=cfg))
+    r = client.post("/api/config/set-pin", json={"pin": "1234"})
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    stored = saved["cfg"]["server"]["pin"]
+    assert stored.startswith("pbkdf2:") and verify_pin("1234", stored)  # hashed, not plaintext
+
+
+def test_config_set_pin_endpoint_rejects_empty():
+    r = client.post("/api/config/set-pin", json={"pin": "   "})
+    assert r.status_code == 400
+
+
+def test_config_set_server_pin_flag_via_api_rejected_with_hint():
+    r = client.post("/api/config/set", json={"key": "server.pin", "value": "1234"})
+    assert r.status_code == 400
+    assert "set-pin" in r.json()["detail"]
