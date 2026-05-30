@@ -84,6 +84,22 @@ def _thread(payload):
     return {"messages": [{"id": "m1", "payload": payload}]}
 
 
+def _patch(monkeypatch, thread_list, threads_by_id):
+    """Install a fake source that lists ``thread_list`` and returns the matching
+    thread per id (supports multiple threads, unlike the single-thread _install)."""
+    class _MultiSource:
+        def search_threads(self, *, account, query, max_threads):
+            return thread_list
+
+        def get_thread(self, *, account, thread_id):
+            return threads_by_id[thread_id]
+
+    monkeypatch.setattr(
+        "app.ingestion.adapters.get_google_source",
+        lambda backend=None: _MultiSource(),
+    )
+
+
 def test_malformed_headers_do_not_raise(monkeypatch):
     # headers is not a list / entries are not dicts → degrade, not crash.
     bad = {"headers": "not-a-list", "mimeType": "text/plain",
