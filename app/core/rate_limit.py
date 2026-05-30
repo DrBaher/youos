@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections import defaultdict
+from collections import OrderedDict
 
 
 class RateLimiter:
@@ -19,7 +19,10 @@ class RateLimiter:
         self.max_requests = max_requests
         self.window_seconds = window_seconds
         self.max_keys = max_keys
-        self._requests: dict[str, list[float]] = defaultdict(list)
+        # OrderedDict so we can evict least-recently-touched keys (move_to_end on
+        # each touch) — max_keys is then a HARD ceiling, not just a stale-only
+        # sweep that frees nothing under a flood of fresh distinct keys.
+        self._requests: OrderedDict[str, list[float]] = OrderedDict()
         self._lock = threading.Lock()
 
     def is_allowed(self, key: str) -> bool:
@@ -33,14 +36,19 @@ class RateLimiter:
 
             if len(timestamps) >= self.max_requests:
                 self._requests[key] = timestamps
+                self._requests.move_to_end(key)
                 return False
 
             timestamps.append(now)
             self._requests[key] = timestamps
-            # Opportunistically drop keys whose entries have all expired so the
-            # map stays bounded when many distinct client IPs are seen.
+            self._requests.move_to_end(key)  # mark recently-used (LRU order)
+            # Bound the map: drop fully-stale keys, then — if a flood of fresh
+            # distinct keys means eviction freed nothing — drop the least-
+            # recently-touched keys so the map can never grow past max_keys.
             if len(self._requests) > self.max_keys:
                 self._evict_stale(cutoff)
+                while len(self._requests) > self.max_keys:
+                    self._requests.popitem(last=False)
             return True
 
     def _evict_stale(self, cutoff: float) -> None:
