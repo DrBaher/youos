@@ -135,3 +135,39 @@ def test_restore_snapshot_rejects_traversal_path(tmp_path: Path):
     snap_root = db.parent / "snapshots"
     with pytest.raises(ValueError):
         restore_snapshot(db, snap_root / ".." / ".." / "etc" / "passwd")
+
+
+def test_restore_is_not_corrupted_by_a_lingering_wal(tmp_path):
+    """b149: shutil.copy2 over a live WAL DB left the old -wal/-shm sidecars, so
+    SQLite replayed the stale (pre-restore) frames onto the snapshot — restore
+    did the OPPOSITE of its purpose. The backup-API restore must read back the
+    snapshot content even with a non-empty -wal open."""
+    import os
+    import stat
+
+    db = tmp_path / "var" / "youos.db"
+    db.parent.mkdir(parents=True)
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("CREATE TABLE t(v TEXT)")
+    conn.execute("INSERT INTO t VALUES ('SNAPSHOT')")
+    conn.commit()
+    conn.close()
+
+    snap = create_snapshot(db, tier="manual")
+    assert oct(stat.S_IMODE(os.stat(snap).st_mode)) == "0o600"  # snapshot not world-readable
+
+    # Drift the DB AND hold a connection with a non-empty -wal open across restore.
+    live = sqlite3.connect(db)
+    live.execute("PRAGMA journal_mode=WAL")
+    live.execute("UPDATE t SET v='POST_SNAPSHOT'")
+    live.execute("INSERT INTO t VALUES ('WAL_RESIDUE')")
+    live.commit()
+    restore_snapshot(db, snap)
+    live.close()
+
+    conn = sqlite3.connect(db)
+    rows = [r[0] for r in conn.execute("SELECT v FROM t").fetchall()]
+    conn.close()
+    assert rows == ["SNAPSHOT"]  # the snapshot, not the WAL residue / post-snapshot edit
+    assert oct(stat.S_IMODE(os.stat(db).st_mode)) == "0o600"  # restored DB not world-readable

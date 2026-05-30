@@ -91,3 +91,33 @@ def test_backward_compat_similarity_ratio():
     assert similarity_ratio("hello", "hello") == 1.0
     assert similarity_ratio("", "") == 1.0
     assert similarity_ratio("hello", "") == 0.0
+
+
+def test_similarity_ratio_is_length_bounded_against_quadratic_dos():
+    """b149: SequenceMatcher.ratio() is O(n*m) on adversarial input (~50s at
+    n=40000); the inputs are attacker-controlled on the CSRF-able submit routes,
+    so the sink bounds the length. Normal-length results are unchanged."""
+    import time
+
+    from app.core.diff import similarity_ratio
+
+    a = "".join(chr(33 + (i % 90)) for i in range(1_000_000))
+    t0 = time.perf_counter()
+    similarity_ratio(a, a[::-1])
+    assert time.perf_counter() - t0 < 1.0  # bounded, not ~minutes
+    assert similarity_ratio("same text", "same text") == 1.0
+    assert similarity_ratio("hello world", "hello there") == similarity_ratio("hello world"[:4000], "hello there"[:4000])
+
+
+def test_submit_body_draft_fields_are_length_bounded():
+    """b149: generated_draft/edited_reply feed similarity_ratio + were uncapped."""
+    import pytest
+    from pydantic import ValidationError
+
+    from app.api.feedback_routes import SubmitBody
+    from app.api.review_queue_routes import ReviewSubmitBody
+
+    with pytest.raises(ValidationError):
+        SubmitBody(inbound_text="hi", generated_draft="x" * 50_001, edited_reply="y")
+    with pytest.raises(ValidationError):
+        ReviewSubmitBody(reply_pair_id=1, inbound_text="hi", generated_draft="y", edited_reply="x" * 50_001)
