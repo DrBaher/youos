@@ -375,7 +375,10 @@ _QUERY_PROMPT = """You translate a plain-English description of which emails to 
 
 Output ONLY the Gmail query on a single line — no quotes, no prose, no explanation.
 
-Use standard Gmail operators: from: to: subject: label: category:{primary|social|promotions|updates|forums} newer_than:Nd older_than:Nd has:attachment is:unread is:important is:starred in:inbox, plus keyword / "phrase" terms combined with AND / OR / - .
+Use standard Gmail operators: from: to: subject: label:
+category:{primary|social|promotions|updates|forums} newer_than:Nd older_than:Nd
+has:attachment is:unread is:important is:starred in:inbox, plus keyword /
+"phrase" terms combined with AND / OR / - .
 
 Examples:
 Description: newsletters and promos from the past week
