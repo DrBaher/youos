@@ -508,7 +508,7 @@ def review_queue_next(
 
 class ReviewSubmitBody(BaseModel):
     reply_pair_id: int
-    inbound_text: str = Field(min_length=1)
+    inbound_text: str = Field(min_length=1, max_length=50_000)
     generated_draft: str = Field(min_length=1)
     edited_reply: str = Field(min_length=1)
     feedback_note: str | None = None
@@ -721,7 +721,7 @@ def trigger_autoresearch() -> dict:
 
 
 class CompareBody(BaseModel):
-    inbound_text: str = Field(min_length=1)
+    inbound_text: str = Field(min_length=1, max_length=50_000)
     sender: str | None = None
 
 

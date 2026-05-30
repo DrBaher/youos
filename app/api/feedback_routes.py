@@ -157,7 +157,7 @@ def scan_corpus_facts(request: Request) -> dict:
 
 
 class GenerateBody(BaseModel):
-    inbound_text: str = Field(min_length=1)
+    inbound_text: str = Field(min_length=1, max_length=50_000)
     tone_hint: Literal["shorter", "more_formal", "more_detail"] | None = None
     sender: str | None = None
     mode: Literal["reply", "compose"] | None = "reply"
@@ -250,7 +250,7 @@ def feedback_generate(body: GenerateBody, request: Request) -> dict:
 
 
 class SubmitBody(BaseModel):
-    inbound_text: str = Field(min_length=1)
+    inbound_text: str = Field(min_length=1, max_length=50_000)
     generated_draft: str = Field(min_length=1)
     edited_reply: str = Field(min_length=1)
     feedback_note: str | None = None
