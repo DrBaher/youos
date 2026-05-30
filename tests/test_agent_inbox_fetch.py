@@ -153,12 +153,24 @@ def test_deeply_nested_parts_do_not_recurse_overflow(monkeypatch):
 
 
 def test_one_bad_thread_does_not_abort_the_sweep(monkeypatch):
-    # A thread whose parsing would explode is skipped; the good one still returns.
-    cyclic = {"mimeType": "multipart/mixed"}
-    cyclic["parts"] = [cyclic]  # self-referential → would infinite-loop without the depth cap
+    # b129 widened the per-thread guard to cover PARSING, not just the fetch.
+    # Force a deterministic parse-time exception on the bad thread (a payload
+    # marked _boom) and assert the good thread still triages.
+    import app.agent.inbox_fetch as inbox_fetch
+
+    real_extract = inbox_fetch._extract_text
+
+    def _boom_extract(payload):
+        if isinstance(payload, dict) and payload.get("_boom"):
+            raise RuntimeError("simulated parse failure")
+        return real_extract(payload)
+
+    monkeypatch.setattr(inbox_fetch, "_extract_text", _boom_extract)
+
+    bad = {"mimeType": "text/plain", "_boom": True, "body": {"data": _b64("x")}}
     good = {"mimeType": "text/plain", "body": {"data": _b64("ok")}}
     _patch(monkeypatch, [{"id": "bad"}, {"id": "good"}],
-           {"bad": _thread(cyclic), "good": _thread(good)})
-    msgs = fetch_unread("me@x.com")
+           {"bad": _thread(bad), "good": _thread(good)})
+    msgs = inbox_fetch.fetch_unread("me@x.com")
     bodies = [m.body for m in msgs]
-    assert "ok" in bodies  # the good thread survived
+    assert bodies == ["ok"]  # bad thread skipped, good thread survived
