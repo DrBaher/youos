@@ -59,3 +59,11 @@ draft_limiter = RateLimiter(max_requests=10, window_seconds=60.0)
 
 
 RATE_LIMIT_RESPONSE = {"detail": "Rate limit exceeded. Max 10 drafts/minute."}
+
+# Process-global cap on CONCURRENT draft generations. Each generate_draft shells
+# out to a claude/mlx subprocess; the review-queue endpoints fan out up to
+# batch_size of them per request, and the per-request ThreadPoolExecutor only
+# bounds fan-out WITHIN one request. This semaphore bounds it across ALL requests
+# + endpoints, so a flood can't spawn unbounded subprocesses and exhaust the
+# shared sync threadpool. Acquire it around each generate_draft call.
+draft_concurrency = threading.BoundedSemaphore(6)
