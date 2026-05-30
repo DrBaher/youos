@@ -985,6 +985,21 @@ def confirm_send(row_id: int, request: Request, body: ConfirmSendBody | None = N
     # 1) Apply the user's final edit, if any (tagged 'user' so it counts as a
     #    real correction for the feedback loop).
     if b.amended_draft is not None and b.amended_draft.strip():
+        pre = store.get(db, row_id)
+        if not pre:
+            raise HTTPException(404, "pending row not found")
+        # A Gmail draft created BEFORE this edit (e.g. auto_push during the
+        # sweep) predates it, and there's no in-place update primitive — so
+        # push's idempotent fast path would SEND THE OLD, un-approved body and
+        # silently drop the operator's edit. Refuse rather than send content the
+        # operator never approved.
+        if pre.get("gmail_draft_id"):
+            raise HTTPException(
+                409,
+                "this row already has a Gmail draft created before your edit; the edit can't be "
+                "applied in place. Dismiss and re-draft, or call confirm_send without amended_draft "
+                "to send the existing draft as-is.",
+            )
         if not store.mark_amended(db, row_id, amended_draft=b.amended_draft, amended_by="user"):
             raise HTTPException(404, "pending row not found")
 
