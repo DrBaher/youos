@@ -267,7 +267,7 @@ def run_doctor_checks_full() -> tuple[bool, list[str], list[str]]:
             warnings.append(
                 f"server.host = {host!r} is exposed (non-loopback) but server.pin "
                 "is empty. Anyone on your network can reach /triage. "
-                "Set a PIN: `youos config set server.pin <PIN>`. "
+                "Set a PIN: `youos config set-pin <PIN>`. "
                 "See docs/REMOTE_ACCESS.md."
             )
     except Exception:
