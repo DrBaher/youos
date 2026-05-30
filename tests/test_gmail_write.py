@@ -421,3 +421,94 @@ def test_native_translates_credentials_runtime_error_to_gmail_write_error(monkey
 
     with pytest.raises(GmailWriteError, match="No stored Google credentials"):
         create_draft(account="me@x.com", thread_id="t", to_email="them@y.com", subject="s", body="b")
+
+
+# --- forward_message (outbound; verified gog shape) -------------------------
+
+
+def test_gog_forward_builds_expected_command_and_parses_id(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(subprocess, "run", _fake_run(captured, stdout='{"id": "sent-9"}'))
+    monkeypatch.setattr(gmail_write, "get_ingestion_google_backend", lambda: "gog", raising=False)
+    res = gmail_write.forward_message(account="me@x.com", message_id="m1", to="j@b.com")
+    assert res.message_id == "sent-9" and res.to == "j@b.com"
+    cmd = captured["cmd"]
+    assert cmd[:4] == ["gog", "gmail", "forward", "m1"]
+    assert "--to" in cmd and "j@b.com" in cmd
+    assert "--account" in cmd and "--json" in cmd and "--no-input" in cmd
+    assert "--note" not in cmd          # omitted when no note given
+
+
+def test_gog_forward_includes_note_when_given(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(subprocess, "run", _fake_run(captured, stdout='{"id": "s1"}'))
+    monkeypatch.setattr(gmail_write, "get_ingestion_google_backend", lambda: "gog", raising=False)
+    gmail_write.forward_message(account="me@x.com", message_id="m1", to="j@b.com", note="fyi")
+    cmd = captured["cmd"]
+    assert "--note" in cmd and "fyi" in cmd
+
+
+def test_gog_forward_raises_on_nonzero_exit(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", _fake_run({}, returncode=1, stderr="nope"))
+    monkeypatch.setattr(gmail_write, "get_ingestion_google_backend", lambda: "gog", raising=False)
+    with pytest.raises(gmail_write.GmailWriteError):
+        gmail_write.forward_message(account="me@x.com", message_id="m1", to="j@b.com")
+
+
+def test_gog_forward_raises_on_non_json(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", _fake_run({}, stdout="not json"))
+    monkeypatch.setattr(gmail_write, "get_ingestion_google_backend", lambda: "gog", raising=False)
+    with pytest.raises(gmail_write.GmailWriteError):
+        gmail_write.forward_message(account="me@x.com", message_id="m1", to="j@b.com")
+
+
+def test_gog_forward_raises_on_missing_cli(monkeypatch):
+    def _boom(cmd, *a, **k):
+        raise FileNotFoundError("gog")
+    monkeypatch.setattr(subprocess, "run", _boom)
+    monkeypatch.setattr(gmail_write, "get_ingestion_google_backend", lambda: "gog", raising=False)
+    with pytest.raises(gmail_write.GmailWriteError):
+        gmail_write.forward_message(account="me@x.com", message_id="m1", to="j@b.com")
+
+
+def test_forward_unsupported_backend_raises_notimplemented(monkeypatch):
+    monkeypatch.setattr(gmail_write, "get_ingestion_google_backend", lambda: "gws", raising=False)
+    with pytest.raises(NotImplementedError):
+        gmail_write.forward_message(account="me@x.com", message_id="m1", to="j@b.com", backend="gws")
+
+
+# --- send_email (new outbound mail; verified gog shape) ---------------------
+
+
+def test_gog_send_email_builds_expected_command_and_parses_id(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(subprocess, "run", _fake_run(captured, stdout='{"id": "dg-1"}'))
+    monkeypatch.setattr(gmail_write, "get_ingestion_google_backend", lambda: "gog", raising=False)
+    res = gmail_write.send_email(account="me@x.com", to="me@x.com", subject="YouOS digest: N", body="hello")
+    assert res.message_id == "dg-1"
+    cmd = captured["cmd"]
+    assert cmd[:3] == ["gog", "gmail", "send"]
+    assert "--to" in cmd and "me@x.com" in cmd
+    assert "--subject" in cmd and "YouOS digest: N" in cmd
+    assert "--body" in cmd and "hello" in cmd
+    assert "--account" in cmd and "--json" in cmd and "--no-input" in cmd
+
+
+def test_gog_send_email_raises_on_nonzero_exit(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", _fake_run({}, returncode=1, stderr="bad"))
+    monkeypatch.setattr(gmail_write, "get_ingestion_google_backend", lambda: "gog", raising=False)
+    with pytest.raises(gmail_write.GmailWriteError):
+        gmail_write.send_email(account="me@x.com", to="me@x.com", subject="s", body="b")
+
+
+def test_gog_send_email_raises_on_non_json(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", _fake_run({}, stdout="<html>"))
+    monkeypatch.setattr(gmail_write, "get_ingestion_google_backend", lambda: "gog", raising=False)
+    with pytest.raises(gmail_write.GmailWriteError):
+        gmail_write.send_email(account="me@x.com", to="me@x.com", subject="s", body="b")
+
+
+def test_send_email_unsupported_backend_raises_notimplemented(monkeypatch):
+    monkeypatch.setattr(gmail_write, "get_ingestion_google_backend", lambda: "native", raising=False)
+    with pytest.raises(NotImplementedError):
+        gmail_write.send_email(account="me@x.com", to="me@x.com", subject="s", body="b", backend="native")
