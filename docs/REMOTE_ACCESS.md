@@ -38,11 +38,13 @@ The first column is the IP, the second is the hostname. Use the hostname (e.g. `
 ### 2. Set a PIN (required — protects the exposed UI)
 
 ```bash
-# Replace `YOUR-PIN-HERE` with a real PIN; never commit it.
-youos config set server.pin YOUR-PIN-HERE
+# Stored HASHED (PBKDF2), never plaintext. Pass your real PIN as the argument.
+youos config set-pin <PIN>
 ```
 
 PIN can be any string — 6+ characters recommended. You'll be prompted for it once per device (then it's cookied).
+
+> Do **not** hand-edit `server.pin` in `youos_config.yaml` — a plaintext value there can never match (it's compared as a hash), locking you out. Use `youos config set-pin` (or `POST /api/config/set-pin`), which hashes it. The CLI applies on the next server start; the API endpoint takes effect immediately.
 
 > **Don't skip this.** Once you bind the server to a non-loopback interface, anyone on your Tailnet can reach it. The PIN is what limits access to you.
 

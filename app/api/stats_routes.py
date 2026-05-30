@@ -109,11 +109,44 @@ def set_config_flag(body: ConfigSetRequest) -> dict:
 
     try:
         value = set_flag(body.key, body.value)
-    except KeyError:
-        raise HTTPException(status_code=400, detail=f"Unknown flag: {body.key}") from None
+    except KeyError as exc:
+        # server.pin gets a helpful message (use /api/config/set-pin); other
+        # unknown keys get the generic one.
+        detail = str(exc).strip("'") if body.key == "server.pin" else f"Unknown flag: {body.key}"
+        raise HTTPException(status_code=400, detail=detail) from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid value for {body.key}: {exc}") from None
     return {"ok": True, "key": body.key, "value": value}
+
+
+class ConfigSetPinRequest(BaseModel):
+    pin: str
+
+
+@router.post("/api/config/set-pin")
+def set_config_pin(body: ConfigSetPinRequest) -> dict:
+    """Set the web-UI/API PIN (``server.pin``), stored HASHED (PBKDF2).
+
+    On a no-PIN instance this is the open bootstrap path (auth is off until a PIN
+    exists); once a PIN is set the auth middleware gates this endpoint like any
+    other. Takes effect immediately — save_config clears the per-request config
+    cache the auth middleware re-reads."""
+    import copy
+
+    from app.core.auth import get_pin_hash
+    from app.core.config import load_config, save_config
+
+    pin = (body.pin or "").strip()
+    if not pin:
+        raise HTTPException(status_code=400, detail="PIN must not be empty")
+    cfg = copy.deepcopy(load_config() or {})
+    server = cfg.get("server")
+    if not isinstance(server, dict):
+        server = {}
+        cfg["server"] = server
+    server["pin"] = get_pin_hash(pin)
+    save_config(cfg)
+    return {"ok": True}
 
 
 @router.post("/api/config/identity")

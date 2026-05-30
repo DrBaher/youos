@@ -143,3 +143,30 @@ def test_coerce_value_int_clamps_to_bounds():
     assert ff.coerce_value(flag, "0") == 1
     assert ff.coerce_value(flag, "99") == 10
     assert ff.coerce_value(flag, "5") == 5
+
+
+# --- b140: server.pin is a credential, set via `config set-pin`, not a flag ---
+
+
+def test_set_flag_server_pin_rejected_with_hint():
+    with pytest.raises(KeyError, match="set-pin"):
+        ff.set_flag("server.pin", "1234")
+
+
+def test_cli_config_set_pin_writes_hashed(monkeypatch):
+    import app.core.config as cfgmod
+    from app.core.auth import verify_pin
+
+    saved: dict = {}
+    monkeypatch.setattr(cfgmod, "load_config", lambda *a, **k: {})
+    monkeypatch.setattr(cfgmod, "save_config", lambda cfg, *a, **k: saved.update(cfg=cfg))
+    result = runner.invoke(app, ["config", "set-pin", "1234"])
+    assert result.exit_code == 0
+    stored = saved["cfg"]["server"]["pin"]
+    assert stored.startswith("pbkdf2:") and verify_pin("1234", stored)  # hashed, never plaintext
+
+
+def test_cli_config_set_server_pin_flag_errors_with_hint():
+    result = runner.invoke(app, ["config", "set", "server.pin", "1234"])
+    assert result.exit_code == 1
+    assert "set-pin" in result.output  # points at the working command
