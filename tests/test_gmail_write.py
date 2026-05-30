@@ -574,3 +574,24 @@ def test_clean_stderr_strips_control_chars_no_log_forgery():
     assert "label rejected" in cleaned and "ALERT" in cleaned  # content preserved, just defanged
     assert "\n" not in str(GmailWriteError(f"gog exit 2: {_clean_stderr(evil)}"))
     assert len(_clean_stderr("x" * 5000)) <= 200  # length-bounded
+
+
+def test_ensure_label_passes_name_after_end_of_flags(monkeypatch):
+    """b151: the label name goes after '--' so a '-'-leading name can't be parsed
+    by gog as a flag (option injection)."""
+    import app.ingestion.gmail_write as gw
+
+    captured: dict = {}
+
+    class _R:
+        returncode = 0
+        stderr = ""
+
+    def _cap(cmd, **k):
+        captured["cmd"] = cmd
+        return _R()
+
+    monkeypatch.setattr(gw, "list_labels", lambda *, account, **k: [])
+    monkeypatch.setattr(gw, "_gog", _cap)
+    gw.ensure_label(account="me@x.com", name="Work")
+    assert captured["cmd"][-2:] == ["--", "Work"]
