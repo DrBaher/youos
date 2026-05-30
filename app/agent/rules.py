@@ -377,9 +377,12 @@ def _rule_matches(
     if "sender" in match and se != str(match["sender"]).strip().lower():
         return False
     if "domain" in match:
-        d = str(match["domain"]).strip().lower()
-        bare = d.lstrip("@")
-        if not (se.endswith(d) or se.endswith("@" + bare) or dom == bare):
+        # Match at the domain boundary only. A bare ``se.endswith(d)`` would
+        # over-match across boundaries — e.g. domain "me.com" (written without
+        # the leading @) matching "bob@acme.com" — so route on the @-anchored
+        # suffix or an exact domain equality instead.
+        bare = str(match["domain"]).strip().lower().lstrip("@")
+        if not (se.endswith("@" + bare) or dom == bare):
             return False
     if "intent" in match:
         want = str(match["intent"]).strip().lower()

@@ -368,3 +368,24 @@ def test_message_age_days_survives_overflow_year():
     from app.agent.inbox_fetch import message_age_days
 
     assert message_age_days("Mon, 01 Jan 99999999999999 00:00:00 +0000") is None
+
+
+def test_domain_predicate_matches_at_boundary_only():
+    """Regression: a bare domain ('me.com', no @) must NOT match across domain
+    boundaries (e.g. 'bob@acme.com'); only the @-anchored suffix / exact domain."""
+    from app.agent.rules import _rule_matches
+
+    # bare form
+    m = {"domain": "me.com"}
+    assert _rule_matches(m, sender_email="x@me.com", domain="me.com",
+                         intents=None, cold_outreach=False) is True
+    assert _rule_matches(m, sender_email="bob@acme.com", domain="acme.com",
+                         intents=None, cold_outreach=False) is False   # the leak
+    assert _rule_matches(m, sender_email="bob@home.com", domain="home.com",
+                         intents=None, cold_outreach=False) is False
+    # @-prefixed form behaves the same on the legit case
+    m2 = {"domain": "@me.com"}
+    assert _rule_matches(m2, sender_email="x@me.com", domain="me.com",
+                         intents=None, cold_outreach=False) is True
+    assert _rule_matches(m2, sender_email="x@notme.com", domain="notme.com",
+                         intents=None, cold_outreach=False) is False
