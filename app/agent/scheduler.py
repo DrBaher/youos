@@ -32,9 +32,29 @@ _FAILURES_ATTR = "_agent_sweep_failures"
 _WEBHOOK_ATTR = "_agent_webhook_state"
 
 
+def _safe_int(value: Any, default: int) -> int:
+    """``int(value)`` that degrades to ``default`` on a non-numeric value.
+    Guards the config read against a poisoned int flag (e.g. a hand-edited YAML
+    or a value persisted before coerce_value validated it) — a bad value must
+    never raise out of get_agent_config and kill the agent loop."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: Any, default: float) -> float:
+    """``float(value)`` that degrades to ``default`` on a non-numeric value."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def get_agent_config() -> dict[str, Any]:
     """Read ``agent.*`` settings from ``youos_config.yaml``. All keys have
-    safe defaults so a missing section is fine."""
+    safe defaults so a missing section is fine. Numeric reads degrade to their
+    default on a malformed value so a poisoned flag can't crash the loop."""
     from app.core.config import load_config
 
     cfg = load_config() or {}
@@ -43,7 +63,7 @@ def get_agent_config() -> dict[str, Any]:
         a = {}
     return {
         "enabled": bool(a.get("enabled", False)),
-        "interval_minutes": max(1, int(a.get("interval_minutes", 15))),
+        "interval_minutes": max(1, _safe_int(a.get("interval_minutes", 15), 15)),
         # b58: accept either a list (programmatic YAML edit) or a comma-
         # separated string (the textarea form set via ``youos config set
         # agent.accounts ...``). Empty falls back to ``user.emails`` in
@@ -51,8 +71,8 @@ def get_agent_config() -> dict[str, Any]:
         # touch this flag at all.
         "accounts": _parse_skip_senders(a.get("accounts")),
         "window": str(a.get("window", "24h")),
-        "limit": int(a.get("limit", 25)),
-        "threshold": float(a.get("threshold", 0.6)),
+        "limit": _safe_int(a.get("limit", 25), 25),
+        "threshold": _safe_float(a.get("threshold", 0.6), 0.6),
         "notify_macos": bool(a.get("notify_macos", True)),
         # δ: free-form text prepended to every triage draft's prompt — e.g.
         # "today I'm out of office; politely decline meetings." Stored as
@@ -65,7 +85,7 @@ def get_agent_config() -> dict[str, Any]:
         # ``strict_local`` refuses cloud fallback during triage only.
         "skip_senders": _parse_skip_senders(a.get("skip_senders")),
         "vip_senders": _parse_skip_senders(a.get("vip_senders")),
-        "daily_draft_cap": max(0, int(a.get("daily_draft_cap", 50))),
+        "daily_draft_cap": max(0, _safe_int(a.get("daily_draft_cap", 50), 50)),
         "strict_local": bool(a.get("strict_local", False)),
         # Proactive push: POST a digest summary to a user-configured webhook
         # after a sweep so an absent user (or their Telegram/OpenClaw bot) is
@@ -73,7 +93,7 @@ def get_agent_config() -> dict[str, Any]:
         # makes an outbound request, metadata-only.
         "notify_webhook_url": str(a.get("notify_webhook_url") or "").strip(),
         "notify_webhook_secret": str(a.get("notify_webhook_secret") or "").strip(),
-        "notify_min_interval_minutes": max(0, int(a.get("notify_min_interval_minutes", 10))),
+        "notify_min_interval_minutes": max(0, _safe_int(a.get("notify_min_interval_minutes", 10), 10)),
     }
 
 
@@ -103,13 +123,20 @@ def _notify_macos(*, title: str, message: str) -> None:
     """Best-effort macOS notification via ``osascript``. Silently no-ops on
     non-Darwin or if the call fails — agent uptime > notification fidelity."""
     try:
-        # Quote-escape title + message so the AppleScript string literal stays valid
-        # for ASCII-y payloads. Truncate aggressively (Notification Center truncates
-        # at ~120 chars anyway).
-        t = title.replace('"', "'")[:60]
-        m = message.replace('"', "'")[:160]
+        # Pass title + message as osascript argv (NOT interpolated into the
+        # AppleScript source), so a backslash / quote / control char in the text
+        # can't make the script a syntax error and silently drop the alert —
+        # which would hide exactly the agent-died failure this notification
+        # exists to surface. Truncate (Notification Center truncates ~120 anyway).
         subprocess.run(
-            ["osascript", "-e", f'display notification "{m}" with title "{t}"'],
+            [
+                "osascript",
+                "-e", "on run argv",
+                "-e", "display notification (item 1 of argv) with title (item 2 of argv)",
+                "-e", "end run",
+                message[:200],
+                title[:80],
+            ],
             capture_output=True,
             timeout=5,
         )
@@ -291,93 +318,109 @@ def _run_one_sweep(account: str, cfg: dict[str, Any]) -> int:
     return result.persisted
 
 
+async def _run_tick(app) -> int:
+    """One scheduler tick: read config, sweep each enabled account, run due
+    digests, notify. Returns the seconds to wait before the next tick. May
+    raise — _loop guards it so a bad tick can never kill the loop."""
+    cfg = get_agent_config()
+    # 60s minimum interval — guardrail against accidental tight-loop config.
+    interval = max(60, cfg["interval_minutes"] * 60)
+    if cfg["enabled"]:
+        accounts = _resolve_accounts(cfg["accounts"])
+        total_persisted = 0
+        # Per-account consecutive-failure tracking persists across ticks so
+        # a silently-dying agent gets exactly one notification on the first
+        # failure (debounced), not spam every tick and not silence.
+        failures: dict[str, int] = getattr(app.state, _FAILURES_ATTR, {})
+        for account in accounts:
+            try:
+                n = await asyncio.get_event_loop().run_in_executor(
+                    None, partial(_run_one_sweep, account, cfg)
+                )
+                total_persisted += int(n)
+                # Recovery: announce once on every channel (not just macOS)
+                # if it had been failing, and clear the failure debounce so a
+                # later re-failure isn't wrongly suppressed.
+                if failures.get(account, 0) > 0:
+                    for k in [k for k in _LAST_ALERT_TS if k.endswith(f":{account}") and k.startswith("sweep_fail:")]:
+                        _LAST_ALERT_TS.pop(k, None)
+                    _alert(
+                        cfg, kind="recovered", account=account,
+                        title="YouOS",
+                        message=f"Agent recovered — sweeps for {account} are working again.",
+                    )
+                failures[account] = 0
+                # Proactive push (opt-in, off unless a webhook URL is set).
+                if cfg.get("notify_webhook_url"):
+                    try:
+                        await asyncio.get_event_loop().run_in_executor(
+                            None, partial(_maybe_push_webhook, app, account, cfg)
+                        )
+                    except Exception as exc:
+                        logger.info("agent webhook push errored: %s", exc)
+            except Exception as exc:
+                prev = failures.get(account, 0)
+                failures[account] = prev + 1
+                # Classify the failure into an actionable alert (auth /
+                # rate-limit / network / unknown) and fire on every channel
+                # — not just a log line. _alert debounces per (kind,
+                # account), so a recurring cause (expired auth every tick)
+                # alerts once per window rather than spamming.
+                from app.agent.alerts import classify_sweep_failure
+
+                fc = classify_sweep_failure(str(exc))
+                logger.warning(
+                    "agent loop: sweep for %s failed (%s, %dx): %s",
+                    account, fc.kind, prev + 1, exc,
+                )
+                _alert(cfg, kind=f"sweep_fail:{fc.kind}", account=account,
+                       title=fc.title, message=fc.message)
+        setattr(app.state, _FAILURES_ATTR, failures)
+
+        # Scheduled digest tasks (collect → summarize → send one digest).
+        # No-op unless agent.digests.enabled; the per-period claim makes
+        # repeated ticks idempotent, so checking every tick is safe.
+        # Failure-isolated — a digest error never disrupts the sweep loop.
+        try:
+            from app.agent.digest_tasks import run_due_digests
+            from app.core.settings import get_settings
+
+            db_url = get_settings().database_url
+            for account in accounts:
+                await asyncio.get_event_loop().run_in_executor(
+                    None, partial(run_due_digests, db_url, account)
+                )
+        except Exception as exc:
+            logger.info("digest tasks step errored: %s", exc)
+
+        if total_persisted > 0 and cfg["notify_macos"]:
+            s = "s" if total_persisted != 1 else ""
+            _notify_macos(
+                title="YouOS",
+                message=f"{total_persisted} new draft{s} ready in /triage",
+            )
+    return interval
+
+
 async def _loop(app) -> None:
     """The agent loop body. Sleeps via the ``stop`` event so shutdown is
     immediate — it doesn't have to wait the full ``interval_minutes`` for
-    the next tick before noticing the server is going down."""
+    the next tick before noticing the server is going down.
+
+    Each tick runs inside a guard: an unexpected error (a transient backend
+    failure, a poisoned config) is logged and the loop waits out the interval
+    and retries — so a single bad tick can never kill this fire-and-forget
+    task, which start() cannot restart once it has died."""
     while True:
-        cfg = get_agent_config()
-        if cfg["enabled"]:
-            accounts = _resolve_accounts(cfg["accounts"])
-            total_persisted = 0
-            # Per-account consecutive-failure tracking persists across ticks so
-            # a silently-dying agent gets exactly one notification on the first
-            # failure (debounced), not spam every tick and not silence.
-            failures: dict[str, int] = getattr(app.state, _FAILURES_ATTR, {})
-            for account in accounts:
-                try:
-                    n = await asyncio.get_event_loop().run_in_executor(
-                        None, partial(_run_one_sweep, account, cfg)
-                    )
-                    total_persisted += int(n)
-                    # Recovery: announce once on every channel (not just macOS)
-                    # if it had been failing, and clear the failure debounce so a
-                    # later re-failure isn't wrongly suppressed.
-                    if failures.get(account, 0) > 0:
-                        for k in [k for k in _LAST_ALERT_TS if k.endswith(f":{account}") and k.startswith("sweep_fail:")]:
-                            _LAST_ALERT_TS.pop(k, None)
-                        _alert(
-                            cfg, kind="recovered", account=account,
-                            title="YouOS",
-                            message=f"Agent recovered — sweeps for {account} are working again.",
-                        )
-                    failures[account] = 0
-                    # Proactive push (opt-in, off unless a webhook URL is set).
-                    if cfg.get("notify_webhook_url"):
-                        try:
-                            await asyncio.get_event_loop().run_in_executor(
-                                None, partial(_maybe_push_webhook, app, account, cfg)
-                            )
-                        except Exception as exc:
-                            logger.info("agent webhook push errored: %s", exc)
-                except Exception as exc:
-                    prev = failures.get(account, 0)
-                    failures[account] = prev + 1
-                    # Classify the failure into an actionable alert (auth /
-                    # rate-limit / network / unknown) and fire on every channel
-                    # — not just a log line. _alert debounces per (kind,
-                    # account), so a recurring cause (expired auth every tick)
-                    # alerts once per window rather than spamming.
-                    from app.agent.alerts import classify_sweep_failure
-
-                    fc = classify_sweep_failure(str(exc))
-                    logger.warning(
-                        "agent loop: sweep for %s failed (%s, %dx): %s",
-                        account, fc.kind, prev + 1, exc,
-                    )
-                    _alert(cfg, kind=f"sweep_fail:{fc.kind}", account=account,
-                           title=fc.title, message=fc.message)
-            setattr(app.state, _FAILURES_ATTR, failures)
-
-            # Scheduled digest tasks (collect → summarize → send one digest).
-            # No-op unless agent.digests.enabled; the per-period claim makes
-            # repeated ticks idempotent, so checking every tick is safe.
-            # Failure-isolated — a digest error never disrupts the sweep loop.
-            try:
-                from app.agent.digest_tasks import run_due_digests
-                from app.core.settings import get_settings
-
-                db_url = get_settings().database_url
-                for account in accounts:
-                    await asyncio.get_event_loop().run_in_executor(
-                        None, partial(run_due_digests, db_url, account)
-                    )
-            except Exception as exc:
-                logger.info("digest tasks step errored: %s", exc)
-
-            if total_persisted > 0 and cfg["notify_macos"]:
-                s = "s" if total_persisted != 1 else ""
-                _notify_macos(
-                    title="YouOS",
-                    message=f"{total_persisted} new draft{s} ready in /triage",
-                )
-
+        try:
+            interval = await _run_tick(app)
+        except Exception:
+            logger.exception("agent loop: tick failed; retrying next interval")
+            interval = 15 * 60
         # Wait for either the configured interval or a shutdown signal.
         stop: asyncio.Event | None = getattr(app.state, _STOP_EVENT_ATTR, None)
         if stop is None:
             return
-        # 60s minimum interval — guardrail against accidental tight-loop config.
-        interval = max(60, cfg["interval_minutes"] * 60)
         try:
             await asyncio.wait_for(stop.wait(), timeout=interval)
             return  # shutdown
