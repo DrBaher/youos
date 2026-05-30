@@ -187,6 +187,10 @@ def validate_rule(raw: Any) -> tuple[bool, str]:
             return False, "a 'label' rule needs a non-empty 'value' (the label name)"
         if "," in name:
             return False, "a label name cannot contain a comma"
+        if name.startswith("-"):
+            # A '-'-leading name is parsed by the gog CLI as a flag (option
+            # injection); Gmail label names never legitimately begin with a dash.
+            return False, "a label name cannot begin with '-'"
         if name.lower().startswith(_RESERVED_LABEL_PREFIX):
             return False, f"label names starting with {_RESERVED_LABEL_PREFIX!r} are reserved"
     if action == "forward":
