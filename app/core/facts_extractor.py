@@ -518,6 +518,7 @@ def extract_and_save(
     sender_email: str | None = None,
     project_name: str | None = None,
     use_llm: bool = False,
+    allow_user_pref: bool = True,
 ) -> list[dict]:
     """Convenience wrapper: extract → deduplicate → save → return saved facts.
 
@@ -527,11 +528,19 @@ def extract_and_save(
         sender_email: Optional email key for contact facts.
         project_name: Optional project name key for project facts.
         use_llm: If True and rule extraction finds nothing, fall back to LLM extraction.
+        allow_user_pref: When False, drop ``user_pref`` candidates before saving.
+            ``user_pref`` facts are keyed to the global ``"default"`` and pulled
+            into EVERY draft, so they must only be learned from FIRST-PARTY text
+            (the user's own writing) — never from attacker-controlled inbound
+            email, which would otherwise inject a global standing instruction.
     """
     candidates = extract_facts(note, sender_email=sender_email, project_name=project_name)
 
     if use_llm and len(candidates) == 0 and len(note.strip()) > 30:
         candidates = extract_facts_llm(note, sender_email=sender_email)
+
+    if not allow_user_pref:
+        candidates = [c for c in candidates if c.get("type") != "user_pref"]
 
     new_facts = filter_new_facts(candidates, db_path)
     return save_facts(new_facts, db_path)
