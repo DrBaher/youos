@@ -289,3 +289,75 @@ def test_parse_skip_senders_empty_inputs():
     assert _parse_skip_senders(None) == []
     assert _parse_skip_senders("") == []
     assert _parse_skip_senders([]) == []
+
+
+# --- b131: the unattended loop must survive poisoned config + bad ticks -------
+
+
+def test_get_agent_config_survives_poisoned_numeric_flags(monkeypatch):
+    """A non-numeric int/float persisted out-of-band (hand-edited YAML, or set
+    before validation) must degrade to the default, never raise — a raise here
+    used to kill the whole agent loop permanently."""
+    monkeypatch.setattr(
+        "app.core.config.load_config",
+        lambda *a, **k: {"agent": {
+            "interval_minutes": "garbage", "limit": "x", "threshold": "y",
+            "daily_draft_cap": "z", "notify_min_interval_minutes": "w",
+        }},
+    )
+    from app.agent.scheduler import get_agent_config
+
+    cfg = get_agent_config()
+    assert cfg["interval_minutes"] == 15
+    assert cfg["limit"] == 25
+    assert cfg["threshold"] == 0.6
+    assert cfg["daily_draft_cap"] == 50
+    assert cfg["notify_min_interval_minutes"] == 10
+
+
+def test_loop_survives_a_tick_that_raises(monkeypatch):
+    """A tick that raises (e.g. an unexpected error reading config) must be
+    logged and retried, NOT propagate out and kill the fire-and-forget task."""
+    from app.agent import scheduler
+
+    ticks = {"n": 0}
+
+    def _raise():
+        ticks["n"] += 1
+        raise RuntimeError("simulated tick failure")
+
+    monkeypatch.setattr(scheduler, "get_agent_config", _raise)
+
+    app = SimpleNamespace(state=SimpleNamespace())
+    app.state._agent_loop_stop = asyncio.Event()
+
+    async def _stop_soon():
+        await asyncio.sleep(0.05)
+        app.state._agent_loop_stop.set()
+
+    async def _run():
+        # If the RuntimeError propagated, asyncio.run would re-raise and fail.
+        await asyncio.gather(scheduler._loop(app), _stop_soon())
+
+    asyncio.run(_run())
+    assert ticks["n"] >= 1  # the loop ran the (raising) tick and kept its footing
+
+
+def test_notify_macos_passes_text_as_argv_not_interpolated(monkeypatch):
+    """Title/message go to osascript as argv data, so a backslash/quote can't
+    make the AppleScript a syntax error and silently drop the agent-died alert."""
+    import subprocess as _sub
+
+    from app.agent import scheduler
+
+    captured: dict = {}
+
+    def _capture(args, **k):
+        captured["args"] = args
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(_sub, "run", _capture)
+    scheduler._notify_macos(title="YouOS", message=r'err C:\x "q"')
+    args = captured["args"]
+    assert r'err C:\x "q"' in args  # message passed verbatim as data
+    assert "display notification (item 1 of argv) with title (item 2 of argv)" in args
