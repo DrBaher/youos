@@ -9,11 +9,11 @@ Follow-up to the b127 audit — adds tests for the error/edge branches the audit
 - **Send frontier** (`send_pending_row`): the `dry_run` path (calls gog `--dry-run`, rolls the claim back to `draft_created`, never finalizes), `NotImplementedError`→501 and unexpected-`Exception`→500 (both roll back so a row never stays stuck in `sending`), and a dismissed-after-push row refusing to send (409, gog never called).
 - **Undo** (`undo_action`): unknown id→404, and a gog-failure during undo rolling `undoing`→`applied` back (retryable) instead of leaving the row stuck.
 - **Digests**: `_is_due` late-hour no-wrap (fires 23:30, not 01:00 next day), `then_archive` failure isolation (a failing archive doesn't fail the run or inflate the count), `_fetch_for_digest` nonzero-exit→`RuntimeError` + wrapper-dict parse + id-less drop, the empty-model-output→plain-list fallback, and a collected agent-digest not re-produced in the same period.
-- **`modify_message_labels`**: empty add/remove is a no-op (no gog call), `dry_run` passes `--dry-run`, unsupported backend raises.
+- **`modify_message_labels`**: empty add/remove is a no-op (no gog call), `dry_run` passes `--dry-run`.
 - **Rules**: `_rule_matches` tolerates a non-numeric age at runtime (no crash, no match), and `evaluate_outbound_actions` collapses duplicate forwards to one.
 - **`select_completion`** (new `tests/test_completion.py`): local-when-enabled, None-when-disabled, unknown-tier→local, cloud→Claude CLI.
 
-+23 tests. Full suite: 1666 passed.
++22 tests. Full suite: 1665 passed.
 
 ## v0.2.0-beta.127 — 2026-05-30
 
