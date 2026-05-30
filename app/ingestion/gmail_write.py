@@ -659,7 +659,9 @@ def ensure_label(*, account: str, name: str, known: set[str] | None = None) -> N
     existing = known if known is not None else list_labels(account=account)
     if name in existing:
         return
-    r = _gog(["gog", "gmail", "labels", "create", name, "--account", account, "--json", "--no-input"])
+    # `--` end-of-flags before the label name so a name beginning with '-'
+    # (an option-injection via a crafted rule value) isn't parsed as a gog flag.
+    r = _gog(["gog", "gmail", "labels", "create", "--account", account, "--json", "--no-input", "--", name])
     if r.returncode != 0:
         stderr = (r.stderr or "").strip().lower()
         if not ("already exists" in stderr or "exists" in stderr):  # race/case diff is fine
