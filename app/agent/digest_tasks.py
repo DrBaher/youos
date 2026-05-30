@@ -312,9 +312,11 @@ def _fetch_for_digest(account: str, query: str, limit: int) -> list[dict[str, st
     # max_messages=50 digest would silently only ever see 10. Pass --max so the
     # configured cap actually applies.
     cmd = [
-        "gog", "gmail", "messages", "search", query,
+        "gog", "gmail", "messages", "search",
         "--account", account, "--max", str(max(1, int(limit))),
         "--json", "--results-only", "--no-input",
+        # `--` end-of-flags so a negation query ("-from:x") isn't read as a flag.
+        "--", query,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if result.returncode != 0:

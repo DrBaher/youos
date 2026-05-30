@@ -394,7 +394,6 @@ def _gog_drive_search(
         "gog",
         "drive",
         "search",
-        query,
         "--account",
         account,
         "--json",
@@ -405,6 +404,8 @@ def _gog_drive_search(
         command.append("--raw-query")
     if max_docs is not None:
         command.extend(["--max", str(max_docs)])
+    # `--` end-of-flags so a negation query ("-from:x") isn't read as a flag.
+    command.extend(["--", query])
 
     payload = _run_gog_json(command)
     results = _coerce_list_payload(payload, command_name="gog drive search")
