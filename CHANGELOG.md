@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0-beta.123 — 2026-05-30
+
+### Digests: describe "which emails" in plain English
+
+The digest **query** can now be authored in natural language. Type a description — *"newsletters and promos from the past week"*, *"unread mail from real people this week"*, *"anything with an invoice attached last month"* — and the warm local model (falling back to Claude) translates it into a Gmail query (`category:promotions newer_than:7d`, …) via `query_from_text`, the same NL→structured pattern as the rules box.
+
+It's an **authoring aid**: the compiled Gmail query is shown and **editable**, and it's what actually runs — so the fetch stays cheap, deterministic, dedup-friendly, and auditable. You fine-tune by re-describing or editing the query and watching the preview, independently from tuning the summary `prompt`. New `POST /api/agent/digests/parse-query` + a "describe which emails" box on the `/digests` builder. (Truly semantic criteria Gmail can't express are out of scope — that'd need a per-message model filter.)
+
++3 tests. Read-only authoring — no send path touched; digests still off by default.
+
 ## v0.2.0-beta.122 — 2026-05-29
 
 ### Digest destination: `agent` (pull, no send) or `inbox` (email)

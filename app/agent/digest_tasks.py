@@ -370,6 +370,74 @@ def build_digest_body(items: list[dict[str, str]], *, model: str = "local",
     return header + listing
 
 
+# --- NL → Gmail query (author the "which emails" part in plain English) ---------
+_QUERY_PROMPT = """You translate a plain-English description of which emails to include into a Gmail search query.
+
+Output ONLY the Gmail query on a single line — no quotes, no prose, no explanation.
+
+Use standard Gmail operators: from: to: subject: label: category:{primary|social|promotions|updates|forums} newer_than:Nd older_than:Nd has:attachment is:unread is:important is:starred in:inbox, plus keyword / "phrase" terms combined with AND / OR / - .
+
+Examples:
+Description: newsletters and promos from the past week
+Query: category:promotions newer_than:7d
+
+Description: unread mail from real people this week
+Query: category:primary is:unread newer_than:7d
+
+Description: anything with an invoice or receipt attached in the last month
+Query: has:attachment (invoice OR receipt) newer_than:30d
+
+Description: emails from my accountant jane@books.com
+Query: from:jane@books.com
+
+Description: {text}
+Query:"""
+
+
+def _clean_query(out: str | None) -> str:
+    """Pull a single-line Gmail query out of the model output (strip code fences,
+    a 'Query:' prefix, surrounding quotes)."""
+    for line in (out or "").splitlines():
+        s = line.strip().strip("`").strip()
+        if s.lower().startswith("query:"):
+            s = s[6:].strip()
+        s = s.strip('"').strip()
+        if s:
+            return s[:500]
+    return ""
+
+
+def query_from_text(text: str, *, complete_fn=None) -> dict[str, Any]:
+    """Translate a plain-English "which emails" description into a Gmail query via
+    the warm local model. Returns ``{ok, query, error}`` and NEVER raises. The
+    caller shows the query so the user can review/edit it (it's an authoring aid,
+    not a live filter). ``complete_fn`` is injectable for tests."""
+    text = (text or "").strip()
+    if not text:
+        return {"ok": False, "query": "", "error": "describe the emails in a sentence first"}
+
+    if complete_fn is None:
+        from app.core import model_server
+
+        if not model_server.is_enabled():
+            return {"ok": False, "query": "",
+                    "error": "the local model isn't running — write the Gmail query manually"}
+
+        def complete_fn(p: str) -> str:
+            return model_server.complete(p, max_tokens=80, temperature=0.0)
+
+    try:
+        out = complete_fn(_QUERY_PROMPT.replace("{text}", text))
+    except Exception as exc:
+        logger.info("digest query translation skipped (model unavailable): %s", exc)
+        return {"ok": False, "query": "", "error": "couldn't reach the local model"}
+
+    query = _clean_query(out)
+    if not query:
+        return {"ok": False, "query": "", "error": "couldn't turn that into a query — try rephrasing"}
+    return {"ok": True, "query": query, "error": ""}
+
+
 def _claim_period(database_url: str, name: str, account: str, period_key: str) -> int | None:
     """Atomically claim a digest period by inserting its 'sending' row. Returns
     the row id, or None if this (digest, account, period) was already claimed —
