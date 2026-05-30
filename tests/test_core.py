@@ -1,7 +1,9 @@
 """Tests for core utilities."""
 
+import time
+
 from app.core.diff import is_meaningfully_different, similarity_ratio
-from app.core.sender import classify_sender, extract_domain
+from app.core.sender import classify_sender, extract_domain, extract_email
 from app.core.text_utils import decode_html_entities, strip_quoted_text
 
 # ── diff tests ──
@@ -73,3 +75,51 @@ def test_extract_domain():
     assert extract_domain("Alice <alice@example.com>") == "example.com"
     assert extract_domain(None) is None
     assert extract_domain("no-email-here") is None
+
+
+# ── sender hardening (b130): the From header is attacker-controlled ──
+
+
+def test_extract_email_redos_is_bounded():
+    # A long no-'@' From header used to make _EMAIL_RE backtrack O(n^2)
+    # (~34s at 100KB). It must now return quickly via the length cap +
+    # short-circuit, with a generous wall-clock ceiling for slow CI.
+    payload = "A" * 100_000
+    t0 = time.perf_counter()
+    assert extract_email(payload) is None
+    assert classify_sender(payload) == "unknown"
+    assert extract_domain(payload) is None
+    # A bracketed-but-no-'@' header is the other ReDoS shape.
+    assert extract_email("<" + "a" * 100_000 + ">") is None
+    assert time.perf_counter() - t0 < 2.0
+
+
+def test_multi_at_address_is_rejected_not_misrouted():
+    # ``Name <a@b@c.com>`` is a malformed single addr-spec. Old code returned
+    # the wrong address ``b@c.com`` (domain ``c.com``), mis-routing
+    # skip/VIP/whitelist/domain rules. Reject it instead of guessing.
+    bad = "Name <a@b@c.com>"
+    assert extract_email(bad) is None
+    assert extract_domain(bad) is None
+    assert classify_sender(bad) == "unknown"
+
+
+def test_angle_bracket_address_wins_over_display_name_spoof():
+    # A fake address in the display name must not beat the real addr-spec in
+    # angle brackets (old code returned the first regex match — the spoof).
+    spoof = "evil@attacker.com <real@good.com>"
+    assert extract_email(spoof) == "real@good.com"
+    assert extract_domain(spoof) == "good.com"
+    # …and classification follows the real address, not the spoofed display name,
+    # so a personal-domain spoof can't flip external→personal routing.
+    assert classify_sender("real@gmail.com <client@acme-corp.com>") == "external_client"
+
+
+def test_extract_email_unchanged_on_normal_inputs():
+    # Hardening must not regress the common shapes.
+    assert extract_email("sarah@company.com") == "sarah@company.com"
+    assert extract_email("Sarah <sarah@company.com>") == "sarah@company.com"
+    assert extract_email("(sarah@company.com)") == "sarah@company.com"  # punctuation-wrapped
+    assert extract_email("a@x.com, b@y.com") == "a@x.com"               # list → first valid
+    assert extract_email(None) is None
+    assert extract_email("no-email-here") is None

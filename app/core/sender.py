@@ -11,6 +11,11 @@ SenderType = Literal["internal", "external_client", "personal", "automated", "un
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
 
+# A ``From`` header is attacker-controlled and length-unbounded. ``_EMAIL_RE``
+# backtracks O(n^2) on a long run of non-``@`` characters (a 100 KB no-``@``
+# header hangs ~30 s), so we bound the window the regex is ever handed.
+_MAX_ADDR_SCAN = 1024
+
 _TITLE_PREFIXES = re.compile(r"^(dr\.?|prof\.?|mr\.?|mrs\.?|ms\.?|sir)\s+", re.IGNORECASE)
 
 
@@ -83,38 +88,72 @@ _PERSONAL_DOMAINS = frozenset(
 )
 
 
-def extract_domain(author: str | None) -> str | None:
-    """Extract domain from an email address in the author string."""
+def _find_email(author: str | None) -> str | None:
+    """Return the bare ``local@domain`` address from an author/``From`` field,
+    or ``None``. Hardened against two attacker-controlled hazards:
+
+    * **ReDoS** — a long no-``@`` header makes ``_EMAIL_RE`` backtrack O(n^2).
+      We pull the address from inside angle brackets (linear ``rfind``/``find``,
+      no regex) and cap the scan window, so the regex only ever sees a bounded
+      string that already contains an ``@``.
+    * **Multi-``@`` spoofing** — ``Name <a@b@c.com>`` would otherwise yield the
+      wrong address (``b@c.com``) and mis-route skip/VIP/whitelist/domain rules,
+      and ``evil@spoof.com <real@host.com>`` would return the display-name
+      address. We take the addr-spec verbatim from inside angle brackets and
+      reject an ambiguous multi-``@`` single token rather than guess.
+    """
     if not author:
         return None
-    match = _EMAIL_RE.search(author)
-    if not match:
+    # Prefer the addr-spec inside angle brackets (RFC 5322 "Display Name <addr>").
+    # rfind/find are linear and run before any regex, so a huge display name (or
+    # a huge bracket-less header) can't blow up the scan.
+    lt = author.rfind("<")
+    if lt != -1:
+        gt = author.find(">", lt + 1)
+        candidate = (author[lt + 1 : gt] if gt != -1 else author[lt + 1 :]).strip()
+    else:
+        candidate = author.strip()
+    candidate = candidate[:_MAX_ADDR_SCAN]
+    if "@" not in candidate:
         return None
-    return match.group().split("@", 1)[1].lower()
+    if candidate.count("@") == 1:
+        match = _EMAIL_RE.search(candidate)
+        return match.group() if match else None
+    # More than one "@": either a malformed single addr-spec (``a@b@c.com`` →
+    # reject, never mis-extract) or an address list (``a@x.com, b@y.com`` → take
+    # the first valid single-``@`` token).
+    for token in re.split(r"[\s,;]+", candidate):
+        if token.count("@") != 1:
+            continue
+        match = _EMAIL_RE.search(token)
+        if match:
+            return match.group()
+    return None
+
+
+def extract_domain(author: str | None) -> str | None:
+    """Extract the domain from an email address in the author string."""
+    email = _find_email(author)
+    if not email:
+        return None
+    return email.split("@", 1)[1].lower()
 
 
 def extract_email(author: str | None) -> str | None:
     """Extract the full ``local@domain`` email address from an ``author``
     field that may be ``"Name <email@host>"`` or just an email. Lowercased.
     Returns ``None`` if no email is found."""
-    if not author:
-        return None
-    match = _EMAIL_RE.search(author)
-    if not match:
-        return None
-    return match.group().lower()
+    email = _find_email(author)
+    return email.lower() if email else None
 
 
 def classify_sender(author: str | None) -> SenderType:
     """Classify a sender into a category based on their email address."""
-    if not author:
+    email = _find_email(author)
+    if not email:
         return "unknown"
 
-    match = _EMAIL_RE.search(author)
-    if not match:
-        return "unknown"
-
-    email = match.group().lower()
+    email = email.lower()
     local, domain = email.split("@", 1)
 
     # Check automated first (overrides domain checks)

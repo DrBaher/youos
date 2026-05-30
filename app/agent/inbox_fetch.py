@@ -51,6 +51,45 @@ class InboxMessage:
 # the recursion well below CPython's limit; real mail nests only a few levels.
 _MAX_MIME_DEPTH = 30
 
+# Inbound bodies are attacker-influenced and length-unbounded; the stored body
+# is later scored/classified in full (O(size) per message), so cap it at fetch
+# time. 50 KB is far more than any reply needs as context. The cap is enforced on
+# the base64 INPUT (see ``_decode_b64``) so a multi-MB body is never fully
+# decoded into memory, which also bounds the text/html tag-stripping regex below.
+_MAX_BODY_CHARS = 50_000
+
+# The ``From``/``Subject`` headers are attacker-influenced too and reach the same
+# stored/logged/LLM-prompt consumers as the body, so bound them the same way. A
+# real header never legitimately needs more than a few hundred chars.
+_MAX_HEADER_CHARS = 4096
+
+
+def _decode_mime_words(value: str) -> str:
+    """Decode RFC 2047 encoded-words in a header value (``=?utf-8?B?...?=``) to a
+    readable Unicode string. Bounded to ``_MAX_HEADER_CHARS`` (the header is
+    attacker-controlled). Returns the input unchanged when there is nothing to
+    decode or on any decode error; never raises (degrade, don't crash)."""
+    if not value:
+        return ""
+    value = value[:_MAX_HEADER_CHARS]
+    if "=?" not in value:
+        return value
+    from email.header import decode_header
+    try:
+        parts = decode_header(value)
+    except (ValueError, UnicodeDecodeError):
+        return value
+    out: list[str] = []
+    for chunk, enc in parts:
+        if isinstance(chunk, bytes):
+            try:
+                out.append(chunk.decode(enc or "utf-8", errors="replace"))
+            except (LookupError, TypeError):  # unknown/invalid charset label
+                out.append(chunk.decode("utf-8", errors="replace"))
+        else:
+            out.append(chunk)
+    return "".join(out)
+
 
 def _header(payload: dict[str, Any], name: str) -> str:
     """Look up a Gmail header value (case-insensitive). Tolerates a malformed
@@ -78,15 +117,46 @@ def _all_headers(payload: dict[str, Any]) -> dict[str, str]:
     return out
 
 
-def _decode_b64(data: Any) -> str:
+def _charset_of(part: Any) -> str:
+    """Best-effort charset label from a part's ``Content-Type`` header
+    (e.g. ``text/plain; charset="ISO-8859-1"``). Defaults to UTF-8. Tolerates a
+    malformed header list; never raises."""
+    if not isinstance(part, dict):
+        return "utf-8"
+    for h in part.get("headers", []) or []:
+        if isinstance(h, dict) and (h.get("name") or "").lower() == "content-type":
+            m = re.search(r'charset="?([\w.:+-]+)"?', h.get("value", "") or "", re.IGNORECASE)
+            if m:
+                return m.group(1)
+    return "utf-8"
+
+
+def _decode_b64(data: Any, charset: str = "utf-8", max_chars: int | None = None) -> str:
     """Decode a Gmail urlsafe-base64 body to text, degrading to '' on any
-    malformed input (non-string, wrong length, non-ASCII)."""
+    malformed input (non-string, wrong length). Decodes with ``charset`` (from
+    the part's ``Content-Type``) and falls back to UTF-8 for an unknown/invalid
+    charset label; undecodable bytes are replaced rather than raised.
+
+    When ``max_chars`` is given, the base64 *input* is capped first so a
+    multi-MB attacker body is never fully materialised in memory, and the
+    decoded text is then sliced to ``max_chars``."""
     if not isinstance(data, str):
         return ""
+    if max_chars is not None:
+        # base64 expands 3 bytes → 4 chars and one UTF-8 char is at most 4 bytes,
+        # so 6*max_chars input chars always decode to ≥ max_chars characters.
+        # Rounded down to a whole 4-char base64 group so truncation stays valid.
+        keep = (6 * max_chars) & ~0b11
+        data = data[:keep]
     try:
-        return base64.urlsafe_b64decode(data + "===").decode("utf-8", errors="replace")
+        raw = base64.urlsafe_b64decode(data + "===")
     except (ValueError, TypeError):  # binascii.Error (a ValueError) / bad input
         return ""
+    try:
+        text = raw.decode(charset, errors="replace")
+    except (LookupError, TypeError):  # unknown/invalid charset label
+        text = raw.decode("utf-8", errors="replace")
+    return text if max_chars is None else text[:max_chars]
 
 
 def _extract_text(payload: dict[str, Any]) -> str:
@@ -100,9 +170,10 @@ def _extract_text(payload: dict[str, Any]) -> str:
         body = p.get("body", {}) or {}
         data = body.get("data") if isinstance(body, dict) else None
         if mime == "text/plain" and data:
-            return _decode_b64(data)
+            return _decode_b64(data, _charset_of(p), _MAX_BODY_CHARS)
         if mime == "text/html" and data:
-            return re.sub(r"<[^>]+>", " ", _decode_b64(data))
+            html = _decode_b64(data, _charset_of(p), _MAX_BODY_CHARS)
+            return re.sub(r"<[^>]+>", " ", html)
         for part in p.get("parts", []) or []:
             r = walk(part, depth + 1)
             if r:
@@ -186,7 +257,7 @@ def fetch_unread(
             messages = thread.get("messages", []) or [thread]
             msg = messages[-1]                                # latest = the unread one
             payload = msg.get("payload", {}) or {}
-            sender = _header(payload, "From")
+            sender = _decode_mime_words(_header(payload, "From"))
             # Prior turns (everything before the latest) so generation can draft
             # with conversation context. Keep the last 4 to bound the prompt;
             # truncate each body to ~200 chars (matches the regex-thread budget).
@@ -197,7 +268,7 @@ def fetch_unread(
                 if not prev_text:
                     continue
                 thread_history.append({
-                    "sender": (_header(prev_payload, "From") or "")[:80],
+                    "sender": _decode_mime_words(_header(prev_payload, "From") or "")[:80],
                     "text": prev_text[:200],
                 })
             results.append(
@@ -207,7 +278,7 @@ def fetch_unread(
                     account=account,
                     sender=sender,
                     sender_email=extract_email(sender),
-                    subject=_header(payload, "Subject") or "(no subject)",
+                    subject=_decode_mime_words(_header(payload, "Subject")) or "(no subject)",
                     body=_extract_text(payload),
                     headers=_all_headers(payload),
                     received_at=_header(payload, "Date") or None,
