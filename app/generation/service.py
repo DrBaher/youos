@@ -823,15 +823,29 @@ def _subject_fallback(inbound_text: str) -> str | None:
     return None
 
 
-def generate_subject(inbound_text: str, draft: str, database_url: str, configs_dir: Path) -> str | None:
-    """Generate a subject line for the draft reply."""
+def generate_subject(
+    inbound_text: str,
+    draft: str,
+    database_url: str,
+    configs_dir: Path,
+    fallback_model: str | None = None,
+) -> str | None:
+    """Generate a subject line for the draft reply.
+
+    ``fallback_model`` is the per-request fallback decision already resolved by
+    the caller (``"none"`` under strict_local). It MUST be honored here — reading
+    the global ``get_model_fallback()`` instead would ship the inbound body to
+    the cloud Claude CLI during a strict-local unattended sweep when the local
+    model is unavailable, breaking the never-egress invariant. Falls back to the
+    global only when the caller didn't thread a decision.
+    """
     # Try rule-based fallback first
     fallback = _subject_fallback(inbound_text)
     if fallback is not None:
         return fallback
 
-    # Only call Claude CLI if fallback returned None and model fallback != 'none'
-    model_fallback = get_model_fallback()
+    # Only use a model if fallback != 'none'
+    model_fallback = fallback_model if fallback_model is not None else get_model_fallback()
     if model_fallback == "none":
         return None
 
@@ -846,8 +860,13 @@ def generate_subject(inbound_text: str, draft: str, database_url: str, configs_d
         # and stalled draft generation by 120s on every benchmark case).
         if _local_model_available():
             result = _call_local_model(prompt, max_tokens=30, use_adapter=False)
-        else:
+        elif model_fallback == "claude":
             result = _call_claude_cli(prompt)
+        else:
+            # No local model and the resolved fallback isn't Claude — don't
+            # silently egress to a backend the request didn't ask for; skip
+            # the (optional) subject instead.
+            return None
         # Clean up: remove quotes, "Subject:" prefix
         result = result.strip().strip('"').strip("'")
         if result.lower().startswith("subject:"):
@@ -2257,8 +2276,11 @@ def generate_draft(
         config=_get_repair_config(),
     )
 
-    # Generate subject line
-    suggested_subject = generate_subject(request.inbound_message, draft, database_url, configs_dir)
+    # Generate subject line — thread the per-request fallback decision so
+    # strict_local (fallback_model == "none") is honored here too.
+    suggested_subject = generate_subject(
+        request.inbound_message, draft, database_url, configs_dir, fallback_model=fallback_model
+    )
 
     # Capture the draft event (exemplars/intent/sender_type/confidence the
     # draft was produced with) for the nightly's training signal. Fault-

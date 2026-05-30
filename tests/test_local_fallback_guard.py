@@ -120,3 +120,30 @@ def test_strict_local_empty_does_not_touch_cloud(monkeypatch):
             svc.DraftRequest(inbound_message="hi", use_local_model=True, use_adapter=True, strict_local=True),
             database_url="sqlite:///x", configs_dir=Path("/tmp"),
         )
+
+
+def test_generate_subject_honors_strict_local_no_cloud_egress(monkeypatch):
+    """b139: generate_subject must honor the per-request fallback_model. Under
+    strict_local (fallback_model='none') it must NOT call the cloud Claude CLI
+    even when the local model is down and the GLOBAL fallback says 'claude'."""
+    from app.generation import service as svc
+
+    calls = {"claude": 0}
+    monkeypatch.setattr(svc, "_subject_fallback", lambda t: None)       # force the model branch
+    monkeypatch.setattr(svc, "_local_model_available", lambda: False)   # no local model
+    monkeypatch.setattr(svc, "get_model_fallback", lambda: "claude")    # GLOBAL says claude
+    monkeypatch.setattr(svc, "_call_claude_cli",
+                        lambda *a, **k: calls.__setitem__("claude", calls["claude"] + 1) or "leaked")
+
+    # strict_local: the inbound body must NOT reach the cloud.
+    assert svc.generate_subject("private", "draft", "sqlite:///x", Path("."), fallback_model="none") is None
+    assert calls["claude"] == 0
+
+    # explicit claude fallback still uses the cloud (interactive path intact).
+    assert svc.generate_subject("body", "draft", "sqlite:///x", Path("."), fallback_model="claude") == "leaked"
+    assert calls["claude"] == 1
+
+    # a non-claude/non-local fallback (e.g. ollama) must not silently egress to claude.
+    calls["claude"] = 0
+    assert svc.generate_subject("body", "draft", "sqlite:///x", Path("."), fallback_model="ollama") is None
+    assert calls["claude"] == 0

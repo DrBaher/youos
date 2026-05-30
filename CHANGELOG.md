@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0-beta.139 — 2026-05-30
+
+### Hardening: `strict_local` no longer leaks the inbound body to the cloud via subject generation
+
+Second of the 2nd hardening pass. Closes a `strict_local` invariant violation.
+
+- **`generate_subject` ignored the per-request fallback decision.** `generate_draft` honors `strict_local` by setting `fallback_model="none"` for the main draft, but `generate_subject` independently read the *global* `get_model_fallback()`. So during an unattended **strict-local** sweep — local model unavailable (cold start / not on PATH / a failure) and a non-`none` global fallback configured for interactive use — subject generation shipped the inbound email body (first 500 chars) + the draft to the cloud `claude` CLI, silently, exactly the egress `strict_local` exists to prevent. `generate_subject` now takes a `fallback_model` parameter (threaded from the caller's already-resolved decision), honors `"none"`, and only reaches the cloud when the resolved model is actually `"claude"` (a non-claude/non-local fallback like `"ollama"` returns no subject rather than silently egressing to Claude — which also fixes a pre-existing misroute).
+
++1 regression test (strict-local + no local model + global="claude" must not invoke the Claude CLI for the subject; explicit-claude still does). Full suite: 1702 passed.
+
 ## v0.2.0-beta.138 — 2026-05-30
 
 ### Hardening: ReDoS via the uncapped `sender` field
