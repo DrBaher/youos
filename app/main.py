@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.agent_routes import router as agent_router
@@ -142,7 +143,11 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
             auth_header = request.headers.get("authorization", "")
             if auth_header[:7].lower() == "bearer ":
                 api_token = auth_header[7:].strip()
-        if api_token and verify_api_token(api_token):
+        # verify_api_token runs PBKDF2 (per stored hash) — offload it to the
+        # threadpool so a flood of bogus X-YouOS-Token headers can't block the
+        # async event loop (one full PBKDF2 per request) and stall every other
+        # in-flight request.
+        if api_token and await run_in_threadpool(verify_api_token, api_token):
             if not self._token_origin_check_passes(request, token_allowed_origins):
                 return JSONResponse(
                     {"detail": "origin not allowed for token auth"},
