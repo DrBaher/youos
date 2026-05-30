@@ -664,9 +664,12 @@ def _setup_pin(config: dict) -> dict:
 
     import yaml as _yaml
 
-    CONFIG_PATH.write_text(
+    from app.core.secure_io import write_secret
+
+    # 0o600: this write persists the PIN hash, so keep the config owner-only.
+    write_secret(
+        CONFIG_PATH,
         _yaml.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False, width=120),
-        encoding="utf-8",
     )
     return config
 
