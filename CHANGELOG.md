@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0-beta.135 — 2026-05-30
+
+### Hardening: per-account sweep lock now serializes across processes
+
+Fifth of the post-b130 hardening series. The per-account sweep lock that keeps two overlapping sweeps from each consuming the daily cap was a process-local `threading.Lock` — it only serialized threads/async tasks **within one process**. A second process (the `youos triage` CLI racing the daemon scheduler) had its own lock dict, so both could sweep the same account at once, each read `count_sent_today` independently, and overshoot `daily_send_cap`/`daily_draft_cap`/the mailbox-action cap by up to ~2×. (Bounded in practice — live auto-send is off by default — but the cap is the runaway-loop guardrail.)
+
+`_account_lock` now returns a `_SweepLock` that holds **both** the in-process `threading.Lock` and a non-blocking advisory `fcntl.flock` on a per-account lockfile (`var/.sweep-<account>.lock`). A busy account — held by another thread *or another process* — makes `acquire()` return False so the second caller skips, exactly as before. Degrades to intra-process-only locking if `fcntl` is unavailable.
+
++1 regression test (a foreign `flock` holder blocks `acquire()`, then releasing it lets the next caller in); the existing intra-process skip test still passes. Full suite: 1694 passed.
+
 ## v0.2.0-beta.134 — 2026-05-30
 
 ### Hardening: credential/secret files are no longer world-readable
