@@ -476,19 +476,23 @@ def run_digest_now(body: DigestRunBody, request: Request) -> dict:
 
 
 class DigestQueryTextBody(BaseModel):
-    """A plain-English description of which emails a digest should include."""
+    """A plain-English description of which emails a digest should include.
+    ``model`` picks the translator: 'local' (default, on-device) or 'cloud'
+    (a frontier model — only this short description is sent, never email)."""
 
     text: str
+    model: str = "local"
 
 
 @router.post("/api/agent/digests/parse-query")
 def parse_digest_query_endpoint(body: DigestQueryTextBody) -> dict:
     """Translate a plain-English 'which emails' description into a Gmail query via
-    the warm local model. Returns ``{ok, query, error}`` — the builder fills the
-    query field with it so the user can review/edit before saving. Never saves."""
+    the local or a frontier model. Returns ``{ok, query, error}`` — the builder
+    fills the query field with it so the user can review/edit before saving.
+    Never saves."""
     from app.agent.digest_tasks import query_from_text
 
-    return query_from_text(body.text)
+    return query_from_text(body.text, model=body.model)
 
 
 @router.get("/api/agent/digests/pending")
