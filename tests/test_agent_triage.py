@@ -584,7 +584,7 @@ def test_concurrent_sweep_is_skipped_when_account_locked(mocked_environment, mon
     monkeypatch.setattr("app.agent.triage.fetch_unread", _count_fetch)
 
     lock = triage._account_lock("you@example.com")
-    assert lock.acquire(blocking=False)
+    assert lock.acquire()
     try:
         result = triage.run_triage(
             account="you@example.com",
@@ -1124,3 +1124,27 @@ def test_thread_summary_persisted_for_long_threads(monkeypatch, tmp_path):
     rows = store.list_pending(f"sqlite:///{db}", status="pending", tier="draft")
     assert len(rows) == 1
     assert rows[0]["thread_summary"] == "Pricing agreed; start date open."
+
+
+def test_sweep_lock_is_cross_process(monkeypatch, tmp_path):
+    """b135: the per-account sweep lock must serialize ACROSS processes, not just
+    threads — else the `youos triage` CLI racing the daemon each reads the same
+    daily-cap count and overshoots it ~2x. Simulate a second process by holding
+    the flock on an independent fd."""
+    import fcntl
+    import os
+
+    from app.agent import triage
+
+    monkeypatch.setattr(triage, "_sweep_lockfile", lambda acct: tmp_path / f".sweep-{acct}.lock")
+    foreign = os.open(tmp_path / ".sweep-acct.lock", os.O_CREAT | os.O_RDWR, 0o600)
+    fcntl.flock(foreign, fcntl.LOCK_EX | fcntl.LOCK_NB)  # "process B" holds it
+    try:
+        assert triage._account_lock("acct").acquire() is False  # blocked across processes
+    finally:
+        fcntl.flock(foreign, fcntl.LOCK_UN)
+        os.close(foreign)
+    # once the other process releases, this process can acquire.
+    lk = triage._account_lock("acct")
+    assert lk.acquire() is True
+    lk.release()
