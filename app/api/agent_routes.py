@@ -81,7 +81,9 @@ def get_agent_pending(row_id: int, request: Request) -> dict:
 
 
 class AmendBody(BaseModel):
-    amended_draft: str = Field(min_length=1)
+    # max_length bounds the stored/sent body so a multi-MB POST can't bloat the
+    # row or be pushed as an oversized email (mirrors the b132 inbound caps).
+    amended_draft: str = Field(min_length=1, max_length=50_000)
 
 
 @router.post("/api/agent/pending/{row_id}/amend")
@@ -100,8 +102,11 @@ class RegenerateBody(BaseModel):
     still sounds like the user, instead of having to write the reply itself.
     """
 
-    instruction: str | None = Field(default=None, description="Free-form steer, e.g. 'shorter; decline the meeting'")
-    tone_hint: str | None = Field(default=None)
+    instruction: str | None = Field(
+        default=None, max_length=4_000,
+        description="Free-form steer, e.g. 'shorter; decline the meeting'",
+    )
+    tone_hint: str | None = Field(default=None, max_length=200)
     mode: str | None = Field(default=None, pattern="^(internal|client|personal)$")
     persist: bool = Field(default=True, description="Store as amended_draft; False = preview only")
 
@@ -276,7 +281,7 @@ def validate_rule_endpoint(body: RuleBody) -> dict:
 class RuleTextBody(BaseModel):
     """A plain-English rule description to parse into structured form."""
 
-    text: str
+    text: str = Field(max_length=4_000)
 
 
 @router.post("/api/agent/rules/parse")
@@ -480,7 +485,7 @@ class DigestQueryTextBody(BaseModel):
     ``model`` picks the translator: 'local' (default, on-device) or 'cloud'
     (a frontier model — only this short description is sent, never email)."""
 
-    text: str
+    text: str = Field(max_length=4_000)
     model: str = "local"
 
 
@@ -952,7 +957,8 @@ class ConfirmSendBody(BaseModel):
     """
 
     amended_draft: str | None = Field(
-        default=None, description="Final edited reply text; omit to send the existing draft as-is."
+        default=None, max_length=50_000,
+        description="Final edited reply text; omit to send the existing draft as-is.",
     )
     backend: str | None = Field(default=None)
 

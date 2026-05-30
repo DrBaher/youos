@@ -941,3 +941,30 @@ def test_trigger_autoresearch_refuses_concurrent_run():
         assert out["status"] == "already_running"
     finally:
         rq._autoresearch_lock.release()
+
+
+def test_agent_route_string_fields_are_length_bounded():
+    """b146: the agent-route string fields lacked max_length (b132 missed this
+    surface); an unbounded body is a cheap memory/prompt DoS."""
+    import pytest
+    from pydantic import ValidationError
+
+    from app.api.agent_routes import (
+        AmendBody,
+        ConfirmSendBody,
+        DigestQueryTextBody,
+        RegenerateBody,
+        RuleTextBody,
+    )
+
+    with pytest.raises(ValidationError):
+        AmendBody(amended_draft="x" * 50_001)
+    with pytest.raises(ValidationError):
+        ConfirmSendBody(amended_draft="x" * 50_001)
+    with pytest.raises(ValidationError):
+        RegenerateBody(instruction="x" * 4_001)
+    with pytest.raises(ValidationError):
+        RuleTextBody(text="x" * 4_001)
+    with pytest.raises(ValidationError):
+        DigestQueryTextBody(text="x" * 4_001)
+    assert AmendBody(amended_draft="normal edit").amended_draft == "normal edit"
