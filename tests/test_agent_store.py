@@ -394,3 +394,20 @@ def test_noise_candidates_skips_null_or_empty_sender_email(db_url):
     cands = store.noise_dismissal_candidates(db_url, min_count=2)
     assert len(cands) == 1
     assert cands[0]["sender_email"] == "valid@x.com"
+
+
+def test_amend_refuses_to_resurrect_a_dismissed_row(db_url):
+    """b146: amending a dismissed row must NOT flip it back to 'amended' — that
+    would bypass the begin_send / due_for_auto_send dismissed-guards and send a
+    reply the user deliberately killed."""
+    from app.agent import store
+
+    rid = store.upsert_pending(db_url, **_DEFAULTS)
+    assert store.mark_dismissed(db_url, rid) is True
+    # the amend must be refused (rowcount 0 → False) and the status stays dismissed
+    assert store.mark_amended(db_url, rid, amended_draft="sneaky edit", amended_by="user") is False
+    assert store.get(db_url, rid)["status"] == "dismissed"
+    # a pending row still amends normally
+    rid2 = store.upsert_pending(db_url, **{**_DEFAULTS, "message_id": "m-amendable"})
+    assert store.mark_amended(db_url, rid2, amended_draft="ok edit", amended_by="user") is True
+    assert store.get(db_url, rid2)["status"] == "amended"
