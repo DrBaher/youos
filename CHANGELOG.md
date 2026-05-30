@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.145 — 2026-05-30
+
+### Hardening: confirm_send can't drop an approved edit, and the review-queue can't be DoSed
+
+First of a fourth hardening pass (a 5-surface audit of the orchestrator REST API, streaming/SSE, log-injection, action-framework TOCTOU, and autoresearch). The three HIGH findings:
+
+- **`confirm_send` could send the operator's *un-approved* draft (never-send-boundary).** When an orchestrator approves an **edited** reply (`amended_draft`) on a row that was already auto-pushed to Gmail Drafts (the normal `agent.auto_push` workflow), the edit was stored — but `push_pending_row`'s idempotent fast path returned the OLD draft id and `send_pending_row` sent the **existing, un-edited** draft, while the API returned `ok:true`. So an operator could edit out a wrong figure, confirm, and the original wrong reply would go to the recipient. `confirm_send` now checks for a pre-existing `gmail_draft_id` *before* applying the edit and returns **409** (there's no in-place draft-update primitive) rather than send content the operator never approved. *(The narrower autonomous amend-after-auto-push edge needs a draft-dirty flag — tracked separately.)*
+- **Review-queue draft endpoints had no rate-limit and no *global* concurrency cap.** `GET /review-queue/next?batch_size=50` (+ `/next-stream`, POST `/compare`) fans out up to 50 `claude`/`mlx` subprocesses; the 4-worker cap was *per request*, so concurrent (unauth + CSRF-able GET) requests pinned the shared 40-thread sync pool and froze the single-worker server. Added the per-IP `draft_limiter` (429) on all three endpoints **and** a process-global `BoundedSemaphore(6)` around every `generate_draft`, so total concurrent draft subprocesses are bounded regardless of request count. Also added `--limit-concurrency 64` to the prod uvicorn launcher.
+- **`POST /review-queue/trigger-autoresearch` spawned a 2-hour subprocess per call.** No lock, no rate-limit → N rapid (CSRF-able) POSTs = N concurrent 2-hour `nightly_pipeline` runs saturating the host. Now guarded by a process-wide `threading.Lock` (returns `already_running` if one is in progress) + a 2/min limiter.
+
++2 regression tests (confirm_send 409 + never-sends on a stale-draft edit; trigger-autoresearch refuses a concurrent run). Full suite: 1718 passed.
+
 ## v0.2.0-beta.144 — 2026-05-30
 
 ### Hardening: two unattended-worker hangs (calendar slot scan + dedup)

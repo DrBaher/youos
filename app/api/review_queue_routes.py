@@ -6,6 +6,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -14,11 +15,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.config import get_review_batch_size, get_review_draft_model
 from app.core.diff import hybrid_similarity, similarity_ratio
+from app.core.rate_limit import RATE_LIMIT_RESPONSE, RateLimiter, draft_concurrency, draft_limiter
 from app.core.sender import classify_sender
 from app.core.text_utils import decode_html_entities, strip_quoted_text
 from app.db.bootstrap import connect, resolve_sqlite_path
@@ -27,6 +29,12 @@ from app.generation.service import DraftRequest, _adapter_available, generate_dr
 router = APIRouter(prefix="/review-queue", tags=["review-queue"])
 
 _RQ_MAX_WORKERS = 4  # parallel draft generation threads
+
+# /trigger-autoresearch spawns a ~2-hour nightly_pipeline subprocess; guard it so
+# a flood (CSRF-able on a no-PIN deploy) can't spawn many concurrent heavyweight
+# runs. The lock allows only one at a time; the limiter throttles the requests.
+_autoresearch_lock = threading.Lock()
+_autoresearch_limiter = RateLimiter(max_requests=2, window_seconds=60.0)
 
 
 def _resolve_use_local_model() -> bool:
@@ -56,15 +64,17 @@ def _generate_draft_for_candidate(
     display_inbound = decode_html_entities(cand["inbound_text"])
     clean_inbound = strip_quoted_text(display_inbound)
     try:
-        draft_response = generate_draft(
-            DraftRequest(
-                inbound_message=clean_inbound,
-                sender=cand["inbound_author"],
-                use_local_model=use_local_model,
-            ),
-            database_url=database_url,
-            configs_dir=configs_dir,
-        )
+        # Bound total concurrent draft subprocesses across all requests/endpoints.
+        with draft_concurrency:
+            draft_response = generate_draft(
+                DraftRequest(
+                    inbound_message=clean_inbound,
+                    sender=cand["inbound_author"],
+                    use_local_model=use_local_model,
+                ),
+                database_url=database_url,
+                configs_dir=configs_dir,
+            )
         return {
             "reply_pair_id": cand["reply_pair_id"],
             "inbound_text": display_inbound,
@@ -452,6 +462,11 @@ def review_queue_next(
     batch_size: int = Query(default=None, ge=1, le=50),
     exclude_ids: str = Query(default=""),
 ) -> dict:
+    # Throttle this batch draft-generation endpoint (each batch fans out up to 50
+    # claude/mlx subprocesses) so a flood can't pin the worker pool.
+    client_ip = request.client.host if request.client else "unknown"
+    if not draft_limiter.is_allowed(client_ip):
+        return JSONResponse(status_code=429, content=RATE_LIMIT_RESPONSE)
     db_path = _get_db_path(request)
     settings = _get_settings(request)
 
@@ -524,6 +539,9 @@ def review_queue_next_stream(
     exclude_ids: str = Query(default=""),
 ) -> StreamingResponse:
     """Stream review queue items one by one as SSE, generating drafts progressively."""
+    client_ip = request.client.host if request.client else "unknown"
+    if not draft_limiter.is_allowed(client_ip):
+        return JSONResponse(status_code=429, content=RATE_LIMIT_RESPONSE)
     db_path = _get_db_path(request)
     settings = _get_settings(request)
 
@@ -704,10 +722,18 @@ def review_queue_submit(body: ReviewSubmitBody, request: Request) -> dict:
 
 
 @router.post("/trigger-autoresearch")
-def trigger_autoresearch() -> dict:
-    """Fire off the autoresearch loop in the background after a batch is complete."""
-    import subprocess
-    import threading
+def trigger_autoresearch(request: Request) -> dict:
+    """Fire off the autoresearch loop in the background after a batch is complete.
+
+    Each call spawns a ~2-hour nightly_pipeline subprocess, so it's guarded by a
+    process-wide lock (only one runs at a time) plus a rate limit — a flood
+    (CSRF-able on a no-PIN deploy) could otherwise saturate the host with
+    concurrent heavyweight runs."""
+    client_ip = request.client.host if request.client else "unknown"
+    if not _autoresearch_limiter.is_allowed(client_ip):
+        return JSONResponse(status_code=429, content={"detail": "autoresearch is rate limited"})
+    if not _autoresearch_lock.acquire(blocking=False):
+        return {"status": "already_running", "message": "Autoresearch is already running."}
 
     def _run() -> None:
         try:
@@ -716,6 +742,8 @@ def trigger_autoresearch() -> dict:
             subprocess.run([str(venv_python), str(script), "--autoresearch-only"], timeout=7200)
         except Exception:
             pass
+        finally:
+            _autoresearch_lock.release()
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
@@ -730,20 +758,24 @@ class CompareBody(BaseModel):
 @router.post("/compare")
 def draft_compare(body: CompareBody, request: Request) -> dict:
     """Compare Qwen+LoRA adapter vs Qwen base (no adapter)."""
+    client_ip = request.client.host if request.client else "unknown"
+    if not draft_limiter.is_allowed(client_ip):
+        return JSONResponse(status_code=429, content=RATE_LIMIT_RESPONSE)
     settings = _get_settings(request)
     clean_inbound = strip_quoted_text(body.inbound_text)
 
     # Adapter draft (with LoRA adapter + exemplars)
     try:
-        adapter_response = generate_draft(
-            DraftRequest(
-                inbound_message=clean_inbound,
-                sender=body.sender,
-                use_adapter=True,
-            ),
-            database_url=settings.database_url,
-            configs_dir=settings.configs_dir,
-        )
+        with draft_concurrency:
+            adapter_response = generate_draft(
+                DraftRequest(
+                    inbound_message=clean_inbound,
+                    sender=body.sender,
+                    use_adapter=True,
+                ),
+                database_url=settings.database_url,
+                configs_dir=settings.configs_dir,
+            )
         adapter_draft = adapter_response.draft
         adapter_confidence = adapter_response.confidence
         exemplar_count = len(adapter_response.precedent_used)
@@ -755,17 +787,18 @@ def draft_compare(body: CompareBody, request: Request) -> dict:
 
     # Base draft (no adapter, no exemplars)
     try:
-        base_response = generate_draft(
-            DraftRequest(
-                inbound_message=clean_inbound,
-                sender=body.sender,
-                use_adapter=False,
-                top_k_reply_pairs=0,
-                top_k_chunks=0,
-            ),
-            database_url=settings.database_url,
-            configs_dir=settings.configs_dir,
-        )
+        with draft_concurrency:
+            base_response = generate_draft(
+                DraftRequest(
+                    inbound_message=clean_inbound,
+                    sender=body.sender,
+                    use_adapter=False,
+                    top_k_reply_pairs=0,
+                    top_k_chunks=0,
+                ),
+                database_url=settings.database_url,
+                configs_dir=settings.configs_dir,
+            )
         base_draft = base_response.draft
     except Exception:
         logger.exception("review-queue compare: base draft generation failed")

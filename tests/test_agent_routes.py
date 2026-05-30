@@ -892,3 +892,52 @@ def test_regenerate_preview_does_not_persist(authed_client, monkeypatch):
     row = authed_client.get(f"/api/agent/pending/{row_id}").json()
     assert row["status"] == "pending"  # untouched
     assert not row.get("amended_draft")
+
+
+def test_confirm_send_refuses_stale_draft_when_edited(authed_client, monkeypatch, tmp_path):
+    """b145: editing (amended_draft) a row that already has a Gmail draft created
+    BEFORE the edit must NOT silently send the old, un-approved body. confirm_send
+    rejects with 409 and never calls send."""
+    import sqlite3
+
+    import pytest
+
+    from app.agent import send as send_mod
+
+    # Past the send gate (step 0) so we reach the edit check.
+    monkeypatch.setattr(send_mod, "_send_config", lambda: {"enabled": True, "kill_switch": False})
+    # Tripwire: a send must never happen on this path.
+    monkeypatch.setattr(send_mod, "send_pending_row",
+                        lambda *a, **k: pytest.fail("send must not run when the edit can't reach the draft"))
+
+    rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
+    row_id = rows[0]["id"]
+    # Simulate an auto-push that created a Gmail draft before review.
+    conn = sqlite3.connect(tmp_path / "var" / "youos.db")
+    conn.execute("UPDATE agent_pending_drafts SET gmail_draft_id='gd_pre' WHERE id=?", (row_id,))
+    conn.commit()
+    conn.close()
+
+    r = authed_client.post(
+        f"/api/agent/pending/{row_id}/confirm_send",
+        json={"amended_draft": "EDITED — corrected the figure"},
+    )
+    assert r.status_code == 409
+    assert "already has a Gmail draft" in r.json()["detail"]
+
+
+def test_trigger_autoresearch_refuses_concurrent_run():
+    """b145: a second trigger while one is in progress returns already_running
+    (no second 2-hour subprocess spawned)."""
+    from types import SimpleNamespace
+
+    from app.api import review_queue_routes as rq
+
+    rq._autoresearch_limiter.reset()
+    rq._autoresearch_lock.acquire()  # simulate a run in progress
+    try:
+        req = SimpleNamespace(client=SimpleNamespace(host="1.2.3.4"))
+        out = rq.trigger_autoresearch(req)
+        assert out["status"] == "already_running"
+    finally:
+        rq._autoresearch_lock.release()
