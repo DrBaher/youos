@@ -40,6 +40,11 @@ def load_composite_weights(configs_dir: Path | None = None) -> dict[str, float]:
                 "avg_keyword_hit": float(weights.get("avg_keyword_hit", _DEFAULT_WEIGHTS["avg_keyword_hit"])),
                 "avg_confidence": float(weights.get("avg_confidence", _DEFAULT_WEIGHTS["avg_confidence"])),
             }
+            # Renormalize to sum 1.0 so any on-disk drift (a historically-buggy
+            # mutate+revert left the weights skewed) can't bias scoring.
+            total = sum(result.values())
+            if total > 0 and abs(total - 1.0) > 1e-6:
+                result = {k: v / total for k, v in result.items()}
             if use_cache:
                 _cached_weights = result
             return result
