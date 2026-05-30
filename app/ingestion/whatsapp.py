@@ -30,6 +30,10 @@ Example:
 # Regex: MM/DD/YY, H:MM AM/PM - Sender: Message
 LINE_RE = re.compile(r"^(\d{1,2}/\d{1,2}/\d{2,4},\s*\d{1,2}:\d{2}\s*[APap][Mm])\s*-\s*(.+?):\s(.+)$")
 
+# Refuse a WhatsApp export larger than this before read_text loads it all into
+# memory. 64 MB is far beyond any real chat export.
+_MAX_EXPORT_BYTES = 64 * 1024 * 1024
+
 
 @dataclass(slots=True)
 class ParsedMessage:
@@ -178,6 +182,14 @@ def ingest_whatsapp_export(
             source_type="whatsapp_export",
             status="failed",
             detail=f"File not found: {export_path}",
+        )
+
+    # Refuse an oversized export before reading the whole file into memory.
+    if export_path.stat().st_size > _MAX_EXPORT_BYTES:
+        return IngestionResult(
+            source_type="whatsapp_export",
+            status="failed",
+            detail=f"Export too large ({export_path.stat().st_size} bytes; cap {_MAX_EXPORT_BYTES}).",
         )
 
     text = export_path.read_text(encoding="utf-8")

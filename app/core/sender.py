@@ -118,7 +118,7 @@ def _find_email(author: str | None) -> str | None:
         return None
     if candidate.count("@") == 1:
         match = _EMAIL_RE.search(candidate)
-        return match.group() if match else None
+        return _reject_dash_leading(match.group()) if match else None
     # More than one "@": either a malformed single addr-spec (``a@b@c.com`` →
     # reject, never mis-extract) or an address list (``a@x.com, b@y.com`` → take
     # the first valid single-``@`` token).
@@ -127,8 +127,17 @@ def _find_email(author: str | None) -> str | None:
             continue
         match = _EMAIL_RE.search(token)
         if match:
-            return match.group()
+            return _reject_dash_leading(match.group())
     return None
+
+
+def _reject_dash_leading(email: str | None) -> str | None:
+    """Drop an addr-spec whose local part starts with ``-``. It isn't a real
+    address and, passed as gog's ``--to`` value, the Kong arg parser reads it as
+    a flag (exit 2) — fail closed rather than emit a poisoned recipient."""
+    if email and email.startswith("-"):
+        return None
+    return email
 
 
 def extract_domain(author: str | None) -> str | None:
