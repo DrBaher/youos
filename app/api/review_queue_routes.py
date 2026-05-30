@@ -745,8 +745,9 @@ def draft_compare(body: CompareBody, request: Request) -> dict:
         adapter_draft = adapter_response.draft
         adapter_confidence = adapter_response.confidence
         exemplar_count = len(adapter_response.precedent_used)
-    except Exception as exc:
-        adapter_draft = f"[generation failed: {exc}]"
+    except Exception:
+        logger.exception("review-queue compare: adapter draft generation failed")
+        adapter_draft = "[generation failed — see server logs]"
         adapter_confidence = "error"
         exemplar_count = 0
 
@@ -764,8 +765,9 @@ def draft_compare(body: CompareBody, request: Request) -> dict:
             configs_dir=settings.configs_dir,
         )
         base_draft = base_response.draft
-    except Exception as exc:
-        base_draft = f"[generation failed: {exc}]"
+    except Exception:
+        logger.exception("review-queue compare: base draft generation failed")
+        base_draft = "[generation failed — see server logs]"
 
     # Compute improvement hint based on similarity
     try:

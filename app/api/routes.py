@@ -1,3 +1,4 @@
+import logging
 import os
 from collections import deque
 from datetime import datetime, timezone
@@ -20,6 +21,7 @@ from app.generation.service import DraftRequest, generate_draft
 from app.retrieval.service import RetrievalRequest, retrieve_context
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # In-memory store for last 20 draft traces
 _draft_traces: deque[dict[str, Any]] = deque(maxlen=20)
@@ -243,8 +245,9 @@ def draft_compare(body: DraftCompareBody, request: Request) -> dict:
         retrieval_draft = retrieval_resp.draft
         retrieval_confidence = retrieval_resp.confidence
         exemplar_count = len(retrieval_resp.precedent_used)
-    except Exception as exc:
-        retrieval_draft = f"[generation failed: {exc}]"
+    except Exception:
+        logger.exception("draft compare: retrieval draft generation failed")
+        retrieval_draft = "[generation failed — see server logs]"
         retrieval_confidence = "error"
         exemplar_count = 0
 
@@ -260,8 +263,9 @@ def draft_compare(body: DraftCompareBody, request: Request) -> dict:
             configs_dir=settings.configs_dir,
         )
         baseline_draft = baseline_resp.draft
-    except Exception as exc:
-        baseline_draft = f"[generation failed: {exc}]"
+    except Exception:
+        logger.exception("draft compare: baseline draft generation failed")
+        baseline_draft = "[generation failed — see server logs]"
 
     return {
         "retrieval_draft": retrieval_draft,
