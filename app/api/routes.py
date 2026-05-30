@@ -185,7 +185,9 @@ class DraftBody(BaseModel):
     top_k_chunks: int = Field(default=3, ge=1)
     account_email: str | None = None
     tone_hint: Literal["shorter", "more_formal", "more_detail"] | None = None
-    sender: str | None = None
+    # max_length bounds the attacker-controlled sender so the email-extraction
+    # regex in lookup_facts can't be driven into O(n^2) backtracking.
+    sender: str | None = Field(default=None, max_length=1024)
 
 
 @router.post("/draft")
@@ -228,7 +230,9 @@ def draft_explain(draft_id: str = Query(..., min_length=1)) -> dict:
 
 class DraftCompareBody(BaseModel):
     inbound_text: str = Field(min_length=1, max_length=50_000)
-    sender: str | None = None
+    # max_length bounds the attacker-controlled sender so the email-extraction
+    # regex in lookup_facts can't be driven into O(n^2) backtracking.
+    sender: str | None = Field(default=None, max_length=1024)
 
 
 @router.post("/draft/compare")
