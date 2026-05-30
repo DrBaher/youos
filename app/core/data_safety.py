@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
 import re
-import shutil
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -11,6 +11,15 @@ from typing import Any
 
 from app.core.settings import Settings
 from app.db.bootstrap import resolve_sqlite_path
+
+
+def _chmod_600(path: Path) -> None:
+    """Best-effort 0o600 on a DB copy — snapshots/backups are full email-DB
+    copies and must not be world-readable (mirrors secure_io / bootstrap)."""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
 
 # NB: facts are stored in the `memory` table (there is no `facts` table); the
 # previous "facts" entry never matched, so a real drop went undetected.
@@ -176,6 +185,7 @@ def create_snapshot(db_path: Path, *, tier: str = "manual") -> Path:
     finally:
         conn.close()
 
+    _chmod_600(out_path)  # the snapshot is a full copy of the email DB
     return out_path
 
 
@@ -282,5 +292,24 @@ def restore_snapshot(db_path: Path, snapshot_path: Path, *, dry_run: bool = Fals
                 dst.close()
         finally:
             src.close()
-    shutil.copy2(snapshot_path, db_path)
+        _chmod_600(backup_path)
+
+    # Restore via the SQLite backup API, NOT shutil.copy2. Copying the snapshot
+    # over a live WAL DB leaves the old youos.db-wal/-shm sidecars in place, and
+    # SQLite then replays those stale (pre-restore) frames onto the snapshot on
+    # the next open — silently discarding the restore or producing a malformed
+    # DB. Writing the snapshot content THROUGH a real connection lets SQLite
+    # handle WAL correctly; checkpoint(TRUNCATE) then folds + clears it.
+    snap = sqlite3.connect(snapshot_path)
+    try:
+        live = sqlite3.connect(db_path)
+        try:
+            snap.backup(live)
+            live.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            live.commit()
+        finally:
+            live.close()
+    finally:
+        snap.close()
+    _chmod_600(db_path)  # don't leave the restored DB world-readable
     return backup_path

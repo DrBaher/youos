@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.149 — 2026-05-30
+
+### Hardening: snapshot-restore no longer corrupts the DB + a measured difflib DoS
+
+First of a fifth hardening pass (the last coverage gaps — subprocess, CSRF, WAL, PII-logs, non-agent caps). The data-loss bug + the measured DoS:
+
+- **`restore_snapshot` silently corrupted the DB (HIGH, data loss on a recovery path).** It `shutil.copy2`'d the snapshot over the *live* WAL database but never checkpointed or removed the existing `youos.db-wal`/`-shm` sidecars — so on the next open SQLite replayed the **stale pre-restore WAL frames** onto the freshly-copied snapshot, silently discarding the restore or producing a malformed DB (the recovery path did the *opposite* of its purpose). It's CSRF-reachable on a no-PIN deploy. Restore now goes **through the SQLite backup API** (snapshot → a real live connection, which handles WAL) + `wal_checkpoint(TRUNCATE)`, verified to read back the snapshot even with a non-empty `-wal` held open across the restore.
+- **Quadratic `difflib` CPU-exhaustion DoS (MEDIUM).** `generated_draft`/`edited_reply` on `/feedback/submit` and `/review-queue/submit` were uncapped and fed `SequenceMatcher.ratio()`, which is O(n·m) on adversarial input — **measured ~50 s at n=40 000**, and CSRF-reachable, so a few concurrent multi-MB requests hang the unattended server. Fixed at the **sink** — `similarity_ratio` now bounds each input to 4 000 chars (1 MB now ~0 ms; normal results unchanged) — plus `max_length` on the four draft fields (and `feedback_note`).
+- **Snapshots + pre-restore backups were world-readable (LOW).** `conn.backup`/copy created them under the umask (0o644) — full email-DB copies. Now `0o600` (snapshot, pre-restore backup, and the restored live DB).
+
++3 regression tests (restore survives a lingering `-wal` + perms 0o600; `similarity_ratio` bounded on 1 MB input + unchanged for normal text; the four draft fields reject oversize). Full suite: 1727 passed.
+
 ## v0.2.0-beta.148 — 2026-05-30
 
 ### Hardening: log-line forgery via gog stderr + an unbounded rate-limiter map
