@@ -529,3 +529,39 @@ def test_send_email_unsupported_backend_raises_notimplemented(monkeypatch):
     from app.ingestion.gmail_write import send_email
     with pytest.raises(NotImplementedError):
         send_email(account="me@x.com", to="me@x.com", subject="s", body="b", backend="native")
+
+
+# --- modify_message_labels branches ----------------------------------------
+
+
+def test_modify_labels_empty_is_noop_without_calling_gog(monkeypatch):
+    called = {"n": 0}
+    monkeypatch.setattr("app.ingestion.gmail_write.subprocess.run",
+                        lambda *a, **k: called.__setitem__("n", called["n"] + 1))
+    from app.ingestion.gmail_write import modify_message_labels
+    res = modify_message_labels(account="me@x.com", message_id="m1", add=[], remove=[])
+    assert res.added == [] and res.removed == []
+    assert called["n"] == 0                              # no gog call for a no-op
+
+
+def test_modify_labels_dry_run_passes_flag(monkeypatch):
+    cap = {}
+
+    def _run(cmd, *a, **k):
+        cap["cmd"] = cmd
+        return SimpleNamespace(returncode=0, stdout="{}", stderr="")
+
+    monkeypatch.setattr("app.ingestion.gmail_write.subprocess.run", _run)
+    monkeypatch.setattr("app.core.config.get_ingestion_google_backend", lambda: "gog")
+    from app.ingestion.gmail_write import modify_message_labels
+    modify_message_labels(account="me@x.com", message_id="m1", add=["X"], remove=["INBOX"], dry_run=True)
+    assert "--dry-run" in cap["cmd"]
+    assert "--add" in cap["cmd"] and "X" in cap["cmd"]
+    assert "--remove" in cap["cmd"] and "INBOX" in cap["cmd"]
+
+
+def test_modify_labels_unsupported_backend_raises(monkeypatch):
+    monkeypatch.setattr("app.core.config.get_ingestion_google_backend", lambda: "gws")
+    from app.ingestion.gmail_write import modify_message_labels
+    with pytest.raises(NotImplementedError):
+        modify_message_labels(account="me@x.com", message_id="m1", add=["X"], remove=[])
