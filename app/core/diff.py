@@ -4,6 +4,14 @@ from __future__ import annotations
 
 from difflib import SequenceMatcher
 
+# SequenceMatcher.ratio() is O(n*m) on adversarial input (a large distinct-char
+# alphabet defeats difflib's autojunk heuristic — measured ~50s at n=40000). The
+# inputs are attacker-controlled (draft/edited-reply on the CSRF-able submit
+# routes), so bound the length here — at the SINK — so no caller can re-introduce
+# the blowup. 4000 chars is far more than a real reply needs for a similarity
+# signal, and the result is unchanged for normal-length text.
+_MAX_RATIO_CHARS = 4000
+
 
 def similarity_ratio(a: str, b: str) -> float:
     """Returns 0.0 (completely different) to 1.0 (identical)."""
@@ -11,7 +19,7 @@ def similarity_ratio(a: str, b: str) -> float:
         return 1.0
     if not a or not b:
         return 0.0
-    return SequenceMatcher(None, a, b).ratio()
+    return SequenceMatcher(None, a[:_MAX_RATIO_CHARS], b[:_MAX_RATIO_CHARS]).ratio()
 
 
 def token_similarity(a: str, b: str) -> float:
