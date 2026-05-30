@@ -68,3 +68,15 @@ def test_empty_text_short_circuits():
     r = parse_rule_text("   ", complete_fn=lambda p: "should not be called")
     assert r["ok"] is False
     assert r["rule"] is None
+
+
+def test_parse_rule_text_model_routing(monkeypatch):
+    # model='cloud' routes through the shared selector; stub so no CLI runs
+    monkeypatch.setattr("app.core.completion.select_completion",
+                        lambda model, **k: (lambda p: '{"match":{"subject_contains":"x"},"action":"archive","value":null}'))
+    r = parse_rule_text("archive x", model="cloud")
+    assert r["ok"] is True and r["rule"]["action"] == "archive"
+    # unavailable tier → clear error, no raise
+    monkeypatch.setattr("app.core.completion.select_completion", lambda *a, **k: None)
+    r2 = parse_rule_text("archive x", model="cloud")
+    assert r2["ok"] is False and "manually" in r2["error"]
