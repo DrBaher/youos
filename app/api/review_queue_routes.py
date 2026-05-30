@@ -526,9 +526,9 @@ def review_queue_next(
 class ReviewSubmitBody(BaseModel):
     reply_pair_id: int
     inbound_text: str = Field(min_length=1, max_length=50_000)
-    generated_draft: str = Field(min_length=1)
-    edited_reply: str = Field(min_length=1)
-    feedback_note: str | None = None
+    generated_draft: str = Field(min_length=1, max_length=50_000)
+    edited_reply: str = Field(min_length=1, max_length=50_000)
+    feedback_note: str | None = Field(default=None, max_length=10_000)
     rating: int = Field(default=4, ge=1, le=5)
 
 
