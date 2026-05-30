@@ -389,3 +389,27 @@ def test_domain_predicate_matches_at_boundary_only():
                          intents=None, cold_outreach=False) is True
     assert _rule_matches(m2, sender_email="x@notme.com", domain="notme.com",
                          intents=None, cold_outreach=False) is False
+
+
+def test_rule_matches_tolerates_bad_numeric_age_at_runtime():
+    """validate_rule rejects a non-numeric age at save, but _rule_matches must
+    also defend (a future caller might bypass validation) — no crash, no match."""
+    from app.agent.rules import _rule_matches
+
+    m = {"older_than_days": "soon"}
+    assert _rule_matches(m, sender_email="a@b.com", domain="b.com",
+                         intents=None, cold_outreach=False, age_days=10.0) is False
+
+
+def test_evaluate_outbound_collapses_duplicate_forwards():
+    """Two rules forwarding to the same destination collapse to one action (else
+    apply_outbound_actions would attempt two claims for the same send)."""
+    from app.agent.rules import evaluate_outbound_actions
+
+    rules = [
+        {"match": {"subject_contains": "x"}, "action": "forward", "value": "j@b.com"},
+        {"match": {"domain": "@b.com"}, "action": "forward", "value": "j@b.com"},
+    ]
+    out = evaluate_outbound_actions(rules, sender_email="a@b.com", domain="b.com",
+                                    subject="x", body="")
+    assert out == [{"type": "forward", "value": "j@b.com"}]
