@@ -45,10 +45,10 @@ class InboxMessage:
 
 # Email payloads are attacker-influenced (anyone can send the user mail), so the
 # parse helpers below defend against malformed MIME: non-dict headers/parts,
-# non-string / wrong-length base64 bodies, and pathologically deep ``parts``
-# nesting. They degrade (return empty/best-effort) rather than raise — a single
-# crafted message must never abort the sweep. ``_MAX_MIME_DEPTH`` bounds the
-# recursion well below CPython's limit; real mail nests only a few levels.
+# non-string / wrong-length base64 bodies, and pathologically deep (or cyclic)
+# ``parts`` nesting. They degrade (return empty/best-effort) rather than raise —
+# a single crafted message must never abort the sweep. ``_MAX_MIME_DEPTH`` bounds
+# the recursion well below CPython's limit; real mail nests only a few levels.
 _MAX_MIME_DEPTH = 30
 
 
