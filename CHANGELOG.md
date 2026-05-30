@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.150 — 2026-05-30
+
+### Hardening: DNS-rebinding Host guard + a global request-body size limit
+
+Second of the 5th hardening pass — two network-exposure MEDIUMs, both in the auth middleware.
+
+- **DNS-rebinding to the unauthenticated localhost API.** In the documented no-PIN localhost mode the middleware short-circuited (auth disabled) before any Host/Origin check, and there was no `TrustedHostMiddleware` — so a page on `evil.com` that rebinds DNS to `127.0.0.1` could `fetch('http://evil.com:8765/api/config/set-pin', …)` and drive every state-changing endpoint (set-pin takeover, ingest/finetune, snapshot-restore, token-mint) with no auth. It now checks the `Host` header **before** the no-PIN short-circuit against an allowlist (loopback + the configured `server.host` + the Tailscale hostname), rejecting a foreign Host with 421. A bind-all host (`0.0.0.0`, the exposed mode that expects a PIN) is skipped since it can't be enumerated, and a *missing* Host is allowed (browsers — the only rebinding vector — always send one). PIN'd instances were already safe (hostname-scoped cookie + Origin check).
+- **No global request-body size limit.** Per-field `max_length` is whack-a-mole — any current or future uncapped string/list field buffered the full body in memory before validation. The middleware now rejects any request whose `Content-Length` exceeds 2 MB with 413 (the largest legitimate body is a few capped 50 KB text fields), bounding every sink by default.
+
++3 regression tests (foreign Host → 421 incl. end-to-end, loopback/testserver/missing-Host/bind-all allowed; oversized body → 413; normal body unaffected). Full suite: 1730 passed.
+
 ## v0.2.0-beta.149 — 2026-05-30
 
 ### Hardening: snapshot-restore no longer corrupts the DB + a measured difflib DoS
