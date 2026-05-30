@@ -97,6 +97,7 @@
     <label class="fld" for="nlText">Describe it in plain English (optional)</label>
     <div style="display:flex; gap:8px; align-items:center;">
       <input type="text" id="nlText" placeholder="e.g. archive newsletters older than a week" style="flex:1 1 auto;">
+      <select id="nlModel" title="which model parses the description"><option value="local">local</option><option value="cloud">cloud</option></select>
       <button class="btn btn-ghost" id="nlBtn" type="button">Parse</button>
     </div>
     <div class="vstatus" id="nlStatus" style="margin:5px 0 0; min-height:1em;"></div>

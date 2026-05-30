@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.0-beta.124 — 2026-05-30
+
+### NL authoring can use a frontier model (local | cloud)
+
+The setup translators — NL → Gmail query (digests) and NL → rule — can now run on a **frontier (cloud) model**, not just the local one. These translate the user's own short description (a query phrase / rule sentence), never email content, so cloud carries no message-content egress — and the frontier model translates noticeably better (e.g. avoids the local model's `newer_than`/`older_than` slip). Default stays **local**; cloud is an explicit per-call choice via a small model select on each NL box. New shared `app/core/completion.py` `select_completion(model)` backs both translators and the digest summary. `POST /api/agent/rules/parse` and `/api/agent/digests/parse-query` take an optional `model` field. +1 test.
+
 ## v0.2.0-beta.123 — 2026-05-30
 
 ### Digests: describe "which emails" in plain English
