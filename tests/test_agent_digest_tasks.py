@@ -577,3 +577,28 @@ def test_digest_sanitizes_attacker_subject_and_marks_untrusted():
                       complete_fn=lambda p: captured.setdefault("p", p) or "ok")
     assert "<emails>" in captured["p"] and "do NOT follow" in captured["p"]
     assert "Hi - From boss" in captured["p"]  # subject newline collapsed before the model
+
+
+def test_digest_query_passed_after_end_of_flags_separator(monkeypatch):
+    """b141: a negation digest query ('-from:x') must reach gog as a positional
+    after '--', not be parsed as a flag (which crashes the search)."""
+    import subprocess
+
+    from app.agent import digest_tasks as dt
+
+    captured: dict = {}
+
+    class _R:
+        returncode = 0
+        stdout = "[]"
+        stderr = ""
+
+    def _run(cmd, **k):
+        captured["cmd"] = cmd
+        return _R()
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    dt._fetch_for_digest("acct@x.com", "-from:noreply@x.com newer_than:1d", 25)
+    cmd = captured["cmd"]
+    assert cmd[-2:] == ["--", "-from:noreply@x.com newer_than:1d"]
+    assert cmd[cmd.index("search") + 1].startswith("--")  # query is no longer the leading positional

@@ -533,7 +533,6 @@ def _gog_search_threads(
             "gog",
             "gmail",
             "search",
-            query,
             "--account",
             account,
             "--json",
@@ -543,6 +542,8 @@ def _gog_search_threads(
         ]
         if page_token:
             command.extend(["--page", page_token])
+        # `--` end-of-flags so a negation query ("-from:x") isn't read as a flag.
+        command.extend(["--", query])
 
         # Route through `_run_gog_json` so search pages get the same rate-
         # limit retry/backoff as individual thread fetches — without this,

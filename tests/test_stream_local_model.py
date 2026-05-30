@@ -174,3 +174,28 @@ def test_stream_falls_back_to_claude_without_adapter(monkeypatch):
     assert captured["cmd"][0] == "claude"
     assert done["model_used"] == "claude"
     assert "Hi there.\n" in tokens
+
+
+def test_stream_watchdog_kills_a_stalled_subprocess():
+    """b141: the streaming read loop has no per-read timeout, so a stalled CLI
+    would pin the worker. The deadline watchdog must kill the process group,
+    closing stdout so the blocked read returns EOF."""
+    import subprocess
+    import threading
+    import time
+
+    from app.api.stream_routes import _kill_proc_group
+
+    proc = subprocess.Popen(
+        ["python3", "-c", "import time; time.sleep(3600)"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
+    )
+    wd = threading.Timer(0.3, _kill_proc_group, args=(proc,))
+    wd.daemon = True
+    wd.start()
+    t0 = time.perf_counter()
+    for _line in proc.stdout:  # blocks until the watchdog closes stdout
+        pass
+    wd.cancel()
+    assert time.perf_counter() - t0 < 5.0   # unblocked, not waiting out the 3600s sleep
+    assert proc.poll() is not None          # process group was killed

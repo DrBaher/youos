@@ -440,3 +440,25 @@ def test_whatsapp_refuses_oversize_export(tmp_path, monkeypatch):
     monkeypatch.setattr(wa, "_MAX_EXPORT_BYTES", 1)
     r = wa.ingest_whatsapp_export(f)
     assert r.status == "failed" and "too large" in r.detail.lower()
+
+
+def test_gmail_search_query_passed_after_end_of_flags_separator(monkeypatch):
+    """b141: gog gmail search must receive the query after '--' so a negation
+    query ('-from:x') isn't parsed as a flag (gws/native are unaffected)."""
+    import pytest
+
+    from app.ingestion import gmail_threads as gt
+
+    captured: dict = {}
+
+    class _Stop(Exception):
+        pass
+
+    def _cap(command):
+        captured["cmd"] = command
+        raise _Stop()
+
+    monkeypatch.setattr(gt, "_run_gog_json", _cap)
+    with pytest.raises(_Stop):
+        gt._gog_search_threads(account="me@x.com", query="-from:noreply@x.com", max_threads=10)
+    assert captured["cmd"][-2:] == ["--", "-from:noreply@x.com"]
