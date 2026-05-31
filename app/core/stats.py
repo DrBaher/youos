@@ -341,10 +341,12 @@ def get_model_status(configs_dir: Path) -> dict:
     local_available = shutil.which("mlx_lm") is not None
     if not local_available:
         gen_model = "claude"
-    elif adapter_exists:
-        gen_model = "qwen2.5-1.5b-lora"
     else:
-        gen_model = "qwen2.5-1.5b-base"
+        # b174: derive the label from the configured base model so it tracks a
+        # model migration (Qwen2.5-1.5B -> Qwen3-4B) instead of lying.
+        from app.core.config import model_label
+
+        gen_model = model_label(with_adapter=adapter_exists)
 
     # Benchmark trend
     benchmark_trend: list[dict] = []

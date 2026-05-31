@@ -23,6 +23,9 @@ from app.core.config import (
     get_user_name,
     get_user_names,
 )
+from app.core.config import (
+    model_label as _model_label,
+)
 from app.core.sender import classify_sender, extract_domain, first_name_from_display_name
 from app.core.settings import get_adapter_path
 from app.core.text_utils import neutralize_prompt_markers, strip_quoted_text
@@ -2074,13 +2077,17 @@ def _local_draft_once(
             prompt, max_tokens=max_tokens, adapter_path=persona_adapter_path,
             temperature=temperature, top_p=top_p, seed=seed,
         )
-        return draft, f"qwen2.5-1.5b-lora-{sender_type_hint}"
+        # b174: derive the label from the configured base so it tracks a model
+        # migration; keep the per-persona ``-<type>`` suffix.
+        return draft, f"{_model_label(with_adapter=True)}-{sender_type_hint}"
     with_adapter = request.use_adapter and _adapter_available()
     draft = _call_local_model(
         prompt, max_tokens=max_tokens, use_adapter=with_adapter,
         temperature=temperature, top_p=top_p, seed=seed,
     )
-    return draft, ("qwen2.5-1.5b-lora" if with_adapter else "qwen2.5-1.5b-base")
+    # b174: label derived from the configured base (no longer a hardcoded
+    # qwen2.5 string) so it doesn't lie after a model migration.
+    return draft, _model_label(with_adapter=with_adapter)
 
 
 def _generate_via_ollama(
