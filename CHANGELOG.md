@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.152 — 2026-05-31
+
+### Hardening: snapshot/backup filename collision + atomic, integrity-checked writes
+
+First of the 6th hardening pass. Fixes a data-loss cluster in `app/core/data_safety.py` where snapshot and pre-restore-backup filenames used 1-second granularity (`youos-<YYYYmmdd-HHMMSS>.db`) and were written non-atomically.
+
+- **(HIGH) A second restore in the same second destroyed the only copy of the live DB.** `restore_snapshot` names its pre-restore backup `youos.pre-restore-<ts>.db` at 1-second granularity. A restore completes in ~3 ms, so the natural "I picked the wrong snapshot, restore again" flow lands two restores in the same wall-clock second — the second backup overwrote the first, silently destroying the user's last copy of the live DB (the data accumulated since the last snapshot, which has no other backup), while the API still advertised `original_db_backed_up_to`. Backup names now carry sub-second + `os.urandom(4)` entropy and are written with `O_CREAT|O_EXCL`, so an existing backup is never clobbered.
+- **(MED) Two snapshots in the same second collided and silently overwrote the earlier recovery point.** Same root cause in `create_snapshot`; same sub-second + random-suffix fix (verified: two frozen-clock creates now leave two distinct files).
+- **(MED) A 0-byte snapshot silently wiped the live DB on restore.** A crash mid-create left a 0-byte `youos-<ts>.db` that `list_snapshots` accepted; `restore_snapshot` opened it as a valid-but-empty SQLite DB (`quick_check` reports 'ok' on an empty file) and restored it over live data. Snapshots are now written atomically (`O_EXCL` temp → `quick_check` → `fsync` → `os.replace`) so only complete, valid files ever appear under the final name, and `restore_snapshot` now refuses an empty / corrupt / table-less snapshot **before** touching the live DB.
+
++4 regression tests. Full suite: 1737 passed.
+
 ## v0.2.0-beta.151 — 2026-05-30
 
 ### Hardening: gog label option-injection, side-path busy_timeout, export perms

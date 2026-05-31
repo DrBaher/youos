@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -171,3 +172,90 @@ def test_restore_is_not_corrupted_by_a_lingering_wal(tmp_path):
     conn.close()
     assert rows == ["SNAPSHOT"]  # the snapshot, not the WAL residue / post-snapshot edit
     assert oct(stat.S_IMODE(os.stat(db).st_mode)) == "0o600"  # restored DB not world-readable
+
+
+class _FrozenClock:
+    """Freeze data_safety's clock so the timestamp portion of every snapshot
+    filename is identical — isolating whether the random suffix prevents
+    collisions."""
+
+    _FIXED = datetime(2026, 5, 31, 9, 0, 0, tzinfo=timezone.utc)
+
+    @staticmethod
+    def now(tz=None):  # noqa: ANN001 - mirrors datetime.now signature
+        return _FrozenClock._FIXED
+
+
+def test_two_snapshots_same_instant_do_not_collide(tmp_path: Path, monkeypatch):
+    """b152: two snapshots created in the same clock-second (frozen here) must
+    not overwrite each other's recovery point."""
+    db = tmp_path / "var" / "youos.db"
+    _mk_db(db)
+    monkeypatch.setattr("app.core.data_safety.datetime", _FrozenClock)
+
+    s1 = create_snapshot(db, tier="manual")
+    s2 = create_snapshot(db, tier="manual")
+    assert s1 != s2
+    assert s1.exists() and s2.exists()
+    assert len(list_snapshots(db)) == 2
+    # no half-written temp left behind
+    assert not list((db.parent / "snapshots" / "manual").glob("*.tmp"))
+
+
+def test_two_restores_same_instant_keep_both_pre_restore_backups(tmp_path: Path, monkeypatch):
+    """b152 (HIGH): the pre-restore backup is the only copy of the current live
+    DB. Two restores in the same second must produce two distinct backups, not
+    silently clobber the first (which destroyed the user's last copy)."""
+    db = tmp_path / "var" / "youos.db"
+    _mk_db(db)
+    snap = create_snapshot(db, tier="manual")  # real timestamp, before freezing
+    monkeypatch.setattr("app.core.data_safety.datetime", _FrozenClock)
+
+    b1 = restore_snapshot(db, snap)
+    b2 = restore_snapshot(db, snap)
+    assert b1 != b2
+    assert b1.exists() and b2.exists()
+
+
+def test_restore_rejects_empty_snapshot(tmp_path: Path):
+    """b152: a 0-byte snapshot (a crash mid-create) opens as a valid-but-empty
+    SQLite DB; restoring it would silently wipe the live DB. Refuse it and leave
+    the live DB intact."""
+    db = tmp_path / "var" / "youos.db"
+    _mk_db(db)
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO reply_pairs DEFAULT VALUES")
+    conn.commit()
+    conn.close()
+
+    snap_dir = db.parent / "snapshots" / "manual"
+    snap_dir.mkdir(parents=True, exist_ok=True)
+    empty = snap_dir / "youos-20260531-000000-000000-aaaaaa.db"
+    empty.touch()
+    assert empty.stat().st_size == 0
+
+    with pytest.raises(ValueError):
+        restore_snapshot(db, empty)
+
+    conn = sqlite3.connect(db)
+    count = conn.execute("SELECT COUNT(*) FROM reply_pairs").fetchone()[0]
+    conn.close()
+    assert count == 1  # live DB untouched
+
+
+def test_restore_rejects_snapshot_with_no_tables(tmp_path: Path):
+    """b152: a non-empty but table-less DB (header only) is also a wipe vector —
+    quick_check reports 'ok' on it. Refuse it before touching the live DB."""
+    db = tmp_path / "var" / "youos.db"
+    _mk_db(db)
+    snap_dir = db.parent / "snapshots" / "manual"
+    snap_dir.mkdir(parents=True, exist_ok=True)
+    headerless = snap_dir / "youos-20260531-000000-000001-bbbbbb.db"
+    c = sqlite3.connect(headerless)
+    c.execute("PRAGMA user_version=1")  # writes a 100-byte header, zero tables
+    c.commit()
+    c.close()
+    assert headerless.stat().st_size > 0
+
+    with pytest.raises(ValueError):
+        restore_snapshot(db, headerless)
