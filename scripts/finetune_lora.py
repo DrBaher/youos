@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import sqlite3
 import subprocess
 from datetime import datetime, timezone
@@ -88,6 +90,27 @@ def compute_auto_config(train_count: int) -> dict[str, int | float]:
     return {"iters": iters, "num_layers": num_layers, "learning_rate": learning_rate}
 
 
+def _promote_adapter(staging_dir: Path, adapter_dir: Path) -> bool:
+    """Atomically promote a freshly-trained adapter from ``staging_dir`` into the
+    live ``adapter_dir`` (b163).
+
+    Validates ``adapters.safetensors`` before promoting so a half-written /
+    corrupt train never lands in the served dir, then ``os.replace``s it (atomic
+    within a filesystem) so the served file flips old-complete → new-complete with
+    no truncated window. Returns True on success."""
+    from app.core.model_server import _safetensors_ok
+
+    staged = staging_dir / "adapters.safetensors"
+    if not staged.exists() or not _safetensors_ok(staged):
+        return False
+    adapter_dir.mkdir(parents=True, exist_ok=True)
+    os.replace(staged, adapter_dir / "adapters.safetensors")
+    cfg = staging_dir / "adapter_config.json"
+    if cfg.exists():
+        os.replace(cfg, adapter_dir / "adapter_config.json")
+    return True
+
+
 def run_training(args: argparse.Namespace) -> None:
     data_dir = Path(args.data_dir)
     adapter_dir = Path(args.adapter_dir)
@@ -153,6 +176,12 @@ def run_training(args: argparse.Namespace) -> None:
         return
 
     adapter_dir.mkdir(parents=True, exist_ok=True)
+    # Train into a STAGING dir, then atomically promote on success — a killed /
+    # disk-full / sleep-mid-train run never leaves a half-written adapter in the
+    # live served dir (which model_server would otherwise choke on) (b163).
+    staging_dir = adapter_dir.parent / f"{adapter_dir.name}.staging"
+    shutil.rmtree(staging_dir, ignore_errors=True)
+    staging_dir.mkdir(parents=True, exist_ok=True)
 
     # DPO mode
     dpo_path = ROOT_DIR / "data" / "dpo_train.jsonl"
@@ -171,7 +200,7 @@ def run_training(args: argparse.Namespace) -> None:
         "--data",
         str(data_dir),
         "--adapter-path",
-        str(adapter_dir),
+        str(staging_dir),
         "--iters",
         str(iters),
         "--batch-size",
@@ -192,7 +221,17 @@ def run_training(args: argparse.Namespace) -> None:
     if result.returncode != 0:
         print(f"Training failed (exit {result.returncode}):")
         print(result.stderr)
+        shutil.rmtree(staging_dir, ignore_errors=True)
         return
+
+    # Validate + atomically promote the staged adapter into the live dir. If the
+    # train produced no valid adapter (corrupt/empty), DON'T touch the live dir —
+    # keep serving the previous good adapter rather than wedging on a bad one.
+    if not _promote_adapter(staging_dir, adapter_dir):
+        print("Training produced no valid adapter (staging adapters.safetensors missing/corrupt); not promoting.")
+        shutil.rmtree(staging_dir, ignore_errors=True)
+        return
+    shutil.rmtree(staging_dir, ignore_errors=True)
 
     print(result.stdout)
 
