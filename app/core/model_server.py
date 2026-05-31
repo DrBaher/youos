@@ -145,15 +145,49 @@ def ensure_running(*, startup_timeout: float = 40.0) -> bool:
 
 
 def stop() -> None:
-    """Terminate the managed server (whole process group)."""
+    """Terminate the managed server (whole process group) AND reap it.
+
+    SIGTERM the group, then ``wait()`` with a short deadline so the child is
+    actually reaped; if it ignores SIGTERM, escalate to SIGKILL and wait again,
+    only then drop the handle (mirrors the kill-then-communicate pattern in
+    generation/service.py). Without the wait() the long-lived FastAPI parent
+    accumulated a persistent zombie — or a ~3GB stray for a SIGTERM-ignoring
+    worker — on every adapter retrain/restart (b154)."""
     global _proc
     with _lock:
-        if _proc is not None and _proc.poll() is None:
-            try:
-                os.killpg(os.getpgid(_proc.pid), signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                _proc.terminate()
+        proc = _proc
         _proc = None
+        if proc is None:
+            return
+        if proc.poll() is not None:
+            # Already exited — reap it so it doesn't linger as a zombie.
+            try:
+                proc.wait(timeout=1)
+            except Exception:
+                pass
+            return
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            try:
+                proc.terminate()
+            except ProcessLookupError:
+                pass
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            # Worker ignored SIGTERM — escalate to SIGKILL on the whole group.
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
 
 
 def restart() -> bool:
