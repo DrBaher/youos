@@ -18,6 +18,14 @@ logger = logging.getLogger(__name__)
 class EvalRequest:
     case_key: str | None = None  # run specific case; None = run all
     config_tag: str = "default"  # label for this run set
+    # Scope the suite to a STABLE subset by case_key prefix (e.g. "golden-").
+    # The full benchmark_cases table is rotated weekly to ~30+ cases; the
+    # autoresearch loop re-generates an UNCACHED draft per case per iteration,
+    # so running all of them is the dominant cost. Restricting to the small,
+    # fixed golden set keeps each iteration cheap and the score comparable
+    # night-to-night. None = no prefix filter (run all). Ignored when
+    # ``case_key`` is set (single-case run wins).
+    case_prefix: str | None = None
 
 
 @dataclass
@@ -264,7 +272,12 @@ def seed_benchmark_cases_from_golden(conn: sqlite3.Connection, golden_path: Path
     return inserted
 
 
-def load_benchmark_cases(conn: sqlite3.Connection, case_key: str | None = None) -> list[dict[str, Any]]:
+def load_benchmark_cases(
+    conn: sqlite3.Connection,
+    case_key: str | None = None,
+    *,
+    case_prefix: str | None = None,
+) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     # Auto-seed from golden.yaml on a fresh/empty instance so eval and the
     # autoresearch loop don't crash on a missing or unseeded benchmark_cases table.
@@ -275,10 +288,32 @@ def load_benchmark_cases(conn: sqlite3.Connection, case_key: str | None = None) 
     if count == 0:
         seed_benchmark_cases_from_golden(conn)
     if case_key:
+        # Single-case run wins over a prefix scope.
         rows = conn.execute("SELECT * FROM benchmark_cases WHERE case_key = ?", (case_key,)).fetchall()
+    elif case_prefix:
+        # Prefix scope (e.g. "golden-"). On an instance whose benchmark_cases
+        # have been rotated to non-golden keys, the golden subset may be absent
+        # even though the table is non-empty — re-seed from golden.yaml so the
+        # stable subset autoresearch wants is always present, then filter.
+        rows = conn.execute(
+            "SELECT * FROM benchmark_cases WHERE case_key LIKE ? ESCAPE '\\'",
+            (_like_prefix(case_prefix),),
+        ).fetchall()
+        if not rows:
+            seed_benchmark_cases_from_golden(conn)
+            rows = conn.execute(
+                "SELECT * FROM benchmark_cases WHERE case_key LIKE ? ESCAPE '\\'",
+                (_like_prefix(case_prefix),),
+            ).fetchall()
     else:
         rows = conn.execute("SELECT * FROM benchmark_cases").fetchall()
     return [dict(r) for r in rows]
+
+
+def _like_prefix(prefix: str) -> str:
+    """Build a LIKE pattern matching ``prefix*`` with %/_/\\ in the prefix escaped."""
+    escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"{escaped}%"
 
 
 def run_eval_suite(
@@ -295,7 +330,14 @@ def run_eval_suite(
     db_path = resolve_sqlite_path(database_url)
     conn = connect(db_path)
     try:
-        cases = load_benchmark_cases(conn, request.case_key)
+        cases = load_benchmark_cases(conn, request.case_key, case_prefix=request.case_prefix)
+        # Log how many cases this suite is actually scoring so a prefix scope
+        # (e.g. golden-only) is never a silent truncation in the run output.
+        if request.case_prefix:
+            logger.info(
+                "eval suite '%s': %d case(s) matching prefix %r",
+                request.config_tag, len(cases), request.case_prefix,
+            )
         case_results: list[CaseResult] = []
 
         for case in cases:
