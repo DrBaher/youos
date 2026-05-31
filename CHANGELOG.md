@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.163 — 2026-05-31
+
+### Hardening: never serve/train on a half-written artifact (adapter + corpus)
+
+Sixth of the 7th hardening pass. Makes the finetune pipeline atomic end-to-end so a killed/disk-full/sleep-mid-run never leaves a corrupt artifact in a served/trained path.
+
+- **(MED) A half-written LoRA adapter was served by the warm model server.** The mlx trainer wrote `adapters.safetensors` straight into the live `latest/` dir (no temp+rename), so a finetune killed mid-write (laptop sleep, OOM, disk-full — which skips the b153 timeout self-heal because the process dies) left a truncated adapter that `mlx_lm.server` then loaded and choked on, wedging all drafting ~24 h until the next good nightly. **Two-part fix:** (1) `finetune_lora` now trains into a **staging** dir and atomically `os.replace`s the validated adapter into `latest/` only on exit 0 — a corrupt train never touches the live dir, so the previous good adapter keeps serving. (2) `model_server` now structurally validates `adapters.safetensors` (8-byte header length + JSON-parseable header, no mlx load) in `_adapter_arg`/`_adapter_sig` before serving it — so even an externally-corrupted adapter is skipped in favour of the base model rather than wedging the server.
+- **(LOW) The exported `train.jsonl` was truncated in place.** `export()` / `export_dpo` wrote via `open(path, "w")`, so a kill/OOM/disk-full mid-write left a syntactically-valid **partial** JSONL that finetune (guarded only by `train_count >= 3`) would silently train on, then mark the rows `used_in_finetune=1` — permanently retiring never-trained pairs. The train/valid/dpo files are now written atomically (temp + `fsync` + `os.replace`).
+
++5 regression tests. Full suite: 1788 passed.
+
 ## v0.2.0-beta.162 — 2026-05-31
 
 ### Hardening: retention for the append-only agent tables + autoresearch log
