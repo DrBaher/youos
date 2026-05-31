@@ -732,6 +732,13 @@ def trigger_autoresearch(request: Request) -> dict:
     client_ip = request.client.host if request.client else "unknown"
     if not _autoresearch_limiter.is_allowed(client_ip):
         return JSONResponse(status_code=429, content={"detail": "autoresearch is rate limited"})
+    # The in-process lock only guards this server process; the launchd nightly
+    # runs separately, so also consult the cross-process pipeline lock before
+    # spawning (the spawned run self-guards too, but this gives honest feedback).
+    from app.core.proc_lock import NIGHTLY_PIPELINE_LOCK, is_locked
+
+    if is_locked(NIGHTLY_PIPELINE_LOCK):
+        return {"status": "already_running", "message": "A nightly/autoresearch run is already in progress."}
     if not _autoresearch_lock.acquire(blocking=False):
         return {"status": "already_running", "message": "Autoresearch is already running."}
 

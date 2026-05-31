@@ -821,6 +821,18 @@ def main() -> None:
     args = parser.parse_args()
     verbose = args.verbose
 
+    # Cross-process singleton guard. The launchd 01:00 nightly and an API
+    # /trigger-autoresearch-spawned run are *separate processes* with no shared
+    # in-process lock, so without this they race on the config files (torn
+    # _write_yaml reads) and the git index (a swallowed index.lock abort drops a
+    # kept config change). Non-blocking: a second run bails. The OS releases the
+    # flock when this process exits.
+    from app.core.proc_lock import NIGHTLY_PIPELINE_LOCK, acquire_singleton
+
+    if not acquire_singleton(NIGHTLY_PIPELINE_LOCK):
+        print("[pipeline] Another nightly/autoresearch run is already in progress — exiting.")
+        return
+
     if args.autoresearch_only:
         print("YouOS Autoresearch (on-demand trigger)")
         step_autoresearch(verbose=verbose)

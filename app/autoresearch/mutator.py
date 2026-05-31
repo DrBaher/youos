@@ -419,8 +419,31 @@ def _set_nested(data: dict[str, Any], key: str, value: Any) -> None:
 
 
 def _write_yaml(path: Path, data: dict[str, Any]) -> None:
-    """Write YAML preserving block scalar style for multi-line strings."""
-    path.write_text(
-        yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False, width=120),
-        encoding="utf-8",
+    """Write YAML preserving block scalar style for multi-line strings.
+
+    Atomic: these config files are read live by the API server and by a
+    concurrent autoresearch process, so a plain truncate-then-write exposes a
+    torn read (an empty/partial YAML parsed as a broken config). Render fully,
+    write to a temp file in the same directory, fsync, then os.replace (an
+    atomic rename on the same filesystem).
+    """
+    import os
+    import tempfile
+
+    path = Path(path)
+    rendered = yaml.dump(
+        data, default_flow_style=False, allow_unicode=True, sort_keys=False, width=120
     )
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(rendered)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
