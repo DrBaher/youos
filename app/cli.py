@@ -200,6 +200,7 @@ def setup(
 def status():
     """Show corpus size, model status, last run."""
     from app.core.config import (
+        get_base_model,
         get_display_name,
         get_ingestion_accounts,
         get_last_ingest_at,
@@ -300,7 +301,7 @@ def status():
     conn.close()
 
     # Model info
-    model_used = config.get("model", {}).get("base", "Qwen/Qwen2.5-1.5B-Instruct")
+    model_used = config.get("model", {}).get("base", get_base_model())
     adapter_path = get_adapter_path() / "adapters.safetensors"
     if adapter_path.exists():
         mtime = os.path.getmtime(adapter_path)
@@ -1052,9 +1053,11 @@ def model_show():
     """Show the currently configured model."""
     import yaml
 
+    from app.core.config import get_base_model
+
     config_path = ROOT_DIR / "youos_config.yaml"
     config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
-    base = config.get("model", {}).get("base", "Qwen/Qwen2.5-1.5B-Instruct")
+    base = config.get("model", {}).get("base", get_base_model())
     adapter = get_adapter_path() / "adapters.safetensors"
     typer.echo(f"Base model:  {base}")
     typer.echo(f"Adapter:     {'✅ trained' if adapter.exists() else '❌ not trained yet'}")
