@@ -286,7 +286,11 @@ def _stream_generate(body: StreamBody, settings):
                 proc.wait(timeout=120)
                 if proc.returncode != 0:
                     raise RuntimeError("mlx_lm generate failed")
-                model_used = "qwen2.5-1.5b-lora"  # streamed from the local LoRA adapter
+                # Streamed from the local LoRA adapter; derive the label from the
+                # configured base so it tracks a model migration (b174).
+                from app.core.config import model_label
+
+                model_used = model_label(_get_base_model_id(), with_adapter=True)
             else:
                 # No trained adapter (or no mlx_lm): stream via the Claude CLI. Pass
                 # the prompt via -p so one beginning with '-' isn't parsed as a flag;
