@@ -179,6 +179,30 @@ def get_model_fallback(config: dict[str, Any] | None = None) -> str:
     return cfg.get("model", {}).get("fallback", "none")
 
 
+def cloud_escalation_enabled(config: dict[str, Any] | None = None) -> bool:
+    """Whether the cloud (Claude) drafting escape hatch is enabled (b175).
+
+    DEFAULT FALSE. When false, drafting is local-only / uses the existing
+    fallback chain exactly as before and no inbound mail ever leaves the device
+    via the new opt-in lever. When true, Claude MAY draft hard cases, but ONLY
+    on explicit interactive draft requests that also opt in
+    (``DraftRequest.allow_cloud_escalation``) and NEVER on any background / eval
+    path. Reads ``drafting.cloud_escalation.enabled``; fail-closed (any
+    malformed config -> False).
+    """
+    try:
+        cfg = config or load_config()
+        draft_cfg = cfg.get("drafting", {})
+        if not isinstance(draft_cfg, dict):
+            return False
+        esc = draft_cfg.get("cloud_escalation", {})
+        if not isinstance(esc, dict):
+            return False
+        return bool(esc.get("enabled", False))
+    except Exception:
+        return False
+
+
 def get_server_port(config: dict[str, Any] | None = None) -> int:
     cfg = config or load_config()
     return int(cfg.get("server", {}).get("port", 8901))
