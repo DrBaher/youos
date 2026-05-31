@@ -458,8 +458,16 @@ def query_from_text(text: str, *, model: str = "local", complete_fn=None) -> dic
 
 def _claim_period(database_url: str, name: str, account: str, period_key: str) -> int | None:
     """Atomically claim a digest period by inserting its 'sending' row. Returns
-    the row id, or None if this (digest, account, period) was already claimed —
-    the UNIQUE index makes this the cross-process at-most-once point."""
+    the row id, or None if this (digest, account, period) is already owned by a
+    live/sent run — the UNIQUE index makes this the cross-process at-most-once
+    point.
+
+    If a prior run left the row in a recoverable state — 'error' (a transient
+    send failure) or 'abandoned' (a crash mid-run, flipped by
+    reap_stale_digest_runs) — this RE-CLAIMS it (one-shot retry) so the period
+    isn't wedged for its whole duration. The per-message dedup
+    (agent_digest_items, written only on a successful send) prevents a retry from
+    re-including already-sent messages (b156)."""
     import sqlite3
 
     from app.agent.store import _connect
@@ -467,13 +475,51 @@ def _claim_period(database_url: str, name: str, account: str, period_key: str) -
     try:
         with closing(_connect(database_url)) as conn:
             cur = conn.execute(
-                "INSERT INTO agent_digest_runs (name, account, period_key, status) VALUES (?, ?, ?, 'sending')",
+                "INSERT INTO agent_digest_runs (name, account, period_key, status, updated_at) "
+                "VALUES (?, ?, ?, 'sending', CURRENT_TIMESTAMP)",
                 (name, account, period_key),
             )
             conn.commit()
             return cur.lastrowid
     except sqlite3.IntegrityError:
+        # Row exists. Reclaim ONLY a recoverable failure / reaped zombie.
+        with closing(_connect(database_url)) as conn:
+            cur = conn.execute(
+                "UPDATE agent_digest_runs SET status = 'sending', updated_at = CURRENT_TIMESTAMP "
+                "WHERE name = ? AND account = ? AND period_key = ? AND status IN ('error', 'abandoned')",
+                (name, account, period_key),
+            )
+            conn.commit()
+            if cur.rowcount and cur.rowcount > 0:
+                row = conn.execute(
+                    "SELECT id FROM agent_digest_runs WHERE name = ? AND account = ? AND period_key = ?",
+                    (name, account, period_key),
+                ).fetchone()
+                return row[0] if row else None
         return None
+
+
+def reap_stale_digest_runs(database_url: str, *, older_than_minutes: int = 10) -> int:
+    """Flip digest runs stranded in 'sending' to 'abandoned' so their period can
+    be re-claimed and retried (b156).
+
+    A crash between _claim_period and the terminal _update_run leaves a zombie
+    'sending' row that _period_done counts as done, permanently disabling that
+    digest's period. Bounded by ``older_than_minutes`` so a genuinely slow
+    summarize/send isn't yanked mid-flight (every _update_run refreshes
+    updated_at). 'abandoned' is NOT in _period_done's done-set, so the next tick
+    re-runs it; dedup prevents re-sending already-included messages. Returns the
+    number reaped. Mirrors store.reap_stale_sending for agent_pending_drafts."""
+    from app.agent.store import _connect
+
+    with closing(_connect(database_url)) as conn:
+        cur = conn.execute(
+            "UPDATE agent_digest_runs SET status = 'abandoned', updated_at = CURRENT_TIMESTAMP "
+            "WHERE status = 'sending' AND datetime(updated_at) <= datetime('now', ?)",
+            (f"-{int(older_than_minutes)} minutes",),
+        )
+        conn.commit()
+        return cur.rowcount or 0
 
 
 def _undigested(database_url: str, name: str, account: str,
@@ -540,7 +586,7 @@ def _update_run(database_url: str, run_id: int | None, status: str, *,
         return
     from app.agent.store import _connect
 
-    sets = ["status = ?"]
+    sets = ["status = ?", "updated_at = CURRENT_TIMESTAMP"]
     params: list[Any] = [status]
     if message_count is not None:
         sets.append("message_count = ?")
@@ -660,6 +706,14 @@ def run_digest(database_url: str, account: str, spec: DigestSpec, *,
     # them (only after a successful send — a failed send leaves them eligible).
     _record_digested(database_url, spec.name, account, [it["id"] for it in items], period)
 
+    # FINALIZE the run as 'sent' BEFORE archiving (b156). Archiving is a
+    # best-effort tail; doing it first meant a crash mid-archive left the row
+    # stuck 'sending' with the mail already gone — the reaper would then reclaim
+    # the period and (dedup aside) the run never reached a terminal state. Marking
+    # 'sent' now makes the send durable and keeps the reaper off this row.
+    _update_run(database_url, run_id, "sent", message_count=len(items), body=body,
+                sent_message_id=res.message_id, detail=f"sent to {to}")
+
     archived = 0
     if spec.then_archive:
         for it in items:
@@ -668,9 +722,7 @@ def run_digest(database_url: str, account: str, spec: DigestSpec, *,
                 archived += 1
             except Exception as exc:
                 logger.info("digest archive of %s failed: %s", it["id"], exc)
-
-    _update_run(database_url, run_id, "sent", message_count=len(items), body=body,
-                sent_message_id=res.message_id, detail=f"sent to {to}; archived {archived}")
+        _update_run(database_url, run_id, "sent", detail=f"sent to {to}; archived {archived}")
     return {"status": "sent", "name": spec.name, "period": period, "to": to,
             "count": len(items), "sent_message_id": res.message_id, "archived": archived}
 
@@ -687,6 +739,12 @@ def run_due_digests(database_url: str, account: str, *, now: datetime | None = N
     specs = load_digests()
     if not specs:
         return []
+    # Reclaim any run stranded in 'sending' by a crash so its period isn't
+    # permanently wedged (b156); cheap + idempotent, like ensure_agent_schema.
+    try:
+        reap_stale_digest_runs(database_url)
+    except Exception as exc:
+        logger.info("digest reaper skipped: %s", exc)
     now_local = now or datetime.now(_user_tz())
     out: list[dict[str, Any]] = []
     for spec in specs:

@@ -441,18 +441,25 @@ def _migrate_agent_digest_runs(connection: sqlite3.Connection) -> None:
             name TEXT NOT NULL,
             account TEXT NOT NULL,
             period_key TEXT NOT NULL,           -- 'YYYY-MM-DD' (daily) | 'YYYY-Www' (weekly)
-            status TEXT NOT NULL,               -- sending|sent|ready|collected|empty|blocked|error
+            status TEXT NOT NULL,               -- sending|sent|ready|collected|empty|blocked|error|abandoned
             message_count INTEGER DEFAULT 0,
             sent_message_id TEXT,
             body TEXT,                          -- computed digest (for 'agent'-destination pickup)
             detail TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    # body column added later — backfill on existing tables.
+    # body / updated_at columns added later — backfill on existing tables.
     cols = {row[1] for row in connection.execute("PRAGMA table_info(agent_digest_runs)").fetchall()}
     if "body" not in cols:
         connection.execute("ALTER TABLE agent_digest_runs ADD COLUMN body TEXT")
+    if "updated_at" not in cols:
+        # Can't ALTER ADD COLUMN with a non-constant DEFAULT CURRENT_TIMESTAMP;
+        # add it nullable then backfill from created_at so reap_stale_digest_runs
+        # can age existing rows (b156).
+        connection.execute("ALTER TABLE agent_digest_runs ADD COLUMN updated_at TEXT")
+        connection.execute("UPDATE agent_digest_runs SET updated_at = created_at WHERE updated_at IS NULL")
     # At-most-once per period: only one writer can claim (name, account, period).
     connection.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_digest_runs_period "
