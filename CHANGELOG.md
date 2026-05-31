@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.157 — 2026-05-31
+
+### Hardening: native OAuth backend (token↔account binding + symlink/dir perms)
+
+Sixth and last of the 6th hardening pass. Hardens the native Google-API ingestion backend (`ingestion.google_backend: native` — the `youos[google]` extra, off by default; `gog` is the default backend).
+
+- **(MED) The native backend never verified the loaded token belonged to the requested account.** Token files are keyed by account email, but the token *inside* was used without checking its identity — a swapped or mis-consented token would silently read/draft the **wrong mailbox** with no error. Both native auth helpers (`NativeSource._load_credentials` and `gmail_write._native_gmail_service`) now verify identity via Gmail `getProfile` (cached per token-file version) and **refuse on a definitive mismatch**. An inability to determine identity (transient profile error / libs absent) does not fail an otherwise-valid token — only a real mismatch raises. Not network-reachable (the account comes from `youos setup`, not the API); this closes a silent wrong-mailbox correctness/data-crossing gap.
+- **(LOW) `write_secret` followed symlinks; the token dir was created world-traversable.** Added `os.O_NOFOLLOW` to `write_secret` so a pre-planted symlink at a secret path fails with `ELOOP` instead of being written through (no-op on platforms lacking the flag), and a best-effort `chmod 0o700` on the token directory. The exploitable cross-user attack was already blocked by the existing `var/` 0o700 wall; this is defense-in-depth and also covers a token dir configured **outside** `var/`.
+
++7 regression tests. Full suite: 1765 passed. **Completes the 6th hardening pass (b152–b157, 16 verified findings).**
+
 ## v0.2.0-beta.156 — 2026-05-31
 
 ### Hardening: digest scheduler reentrancy / crash recovery
