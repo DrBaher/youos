@@ -12,7 +12,7 @@ from typing import Any
 from app.autoresearch.optimizer import format_report, run_autoresearch
 from app.core.settings import get_settings, get_var_dir
 from app.db.bootstrap import resolve_sqlite_path
-from app.generation.service import DraftRequest, generate_draft
+from app.generation.service import EVAL_SEED, DraftRequest, generate_draft
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 
@@ -171,6 +171,13 @@ def _generate_for_eval(
     uses ``request.top_k or config.top_k``, and DraftRequest's default top_k=5
     is truthy, so without this the config's top_k mutations would be silently
     overridden by the default and never take effect in the eval.
+
+    ``deterministic=True`` (b166) forces greedy (temperature=0) + a fixed seed
+    so re-scoring the same config yields the same composite. Without it the
+    default sampling made the composite swing ±0.14 night-to-night, swamping the
+    0.01 keep-threshold and turning the self-improvement loop into a random
+    walk. This is scoped to the eval path only — production drafting goes through
+    generate_draft with deterministic left False and is unchanged.
     """
     from app.retrieval.service import _load_retrieval_config
 
@@ -181,6 +188,8 @@ def _generate_for_eval(
             use_exemplar_cache=False,
             top_k_reply_pairs=rc.top_k_reply_pairs,
             top_k_chunks=rc.top_k_chunks,
+            deterministic=True,
+            seed=EVAL_SEED,
         ),
         database_url=database_url,
         configs_dir=configs_dir,
