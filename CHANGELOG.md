@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.159 — 2026-05-31
+
+### Hardening: warm model-server lifecycle (recover wedged/partial starts, no restart churn)
+
+Second of the 7th hardening pass. Fixes `app/core/model_server.py` lifecycle races that left the warm server stuck or churning. Kill/reap was factored into `_reap_locked()` (assumes `_lock` held) so the new failure paths never call `stop()` from inside the lock — which would re-acquire the non-reentrant `_lock` and self-deadlock.
+
+- **(MED) A wedged server was never recovered.** If startup timed out with the child still alive (booting forever / wedged, never answering `/health`), `_proc` was left set, so every later `ensure_running()` re-skipped the spawn and blocked the full timeout, ~3 GB pinned until a manual restart. `ensure_running` now reaps the alive child inline at the timeout-exhaustion path and clears `_proc` so the next call respawns fresh.
+- **(LOW) A partial start leaked a stuck handle.** Same timeout path: a spawn that succeeded but never became healthy left an alive, unkilled dud the next call refused to replace. Same inline-reap fix.
+- **(MED) Concurrent post-retrain threads each tore down + respawned the server.** The adapter-reload decision (`is_healthy()` + sig mismatch → restart) was made *outside* `_lock`, and `_adapter_sig()` does GIL-releasing `stat()`, so 2-5 threads each committed a full stop+respawn of the 3 GB server. The reload decision is now made under `_lock` and re-stamps `_started_adapter_sig` before respawning, so the first thread reloads and the rest see the current sig and return.
+
++2 regression tests (updated the reload test for the in-lock respawn; new wedged-timeout reap test). Full suite: 1770 passed.
+
 ## v0.2.0-beta.158 — 2026-05-31
 
 ### Hardening: snapshot concurrency lock + tier pruning
