@@ -134,7 +134,7 @@ def _stub(monkeypatch, *, load_config, persona, once_seen):
 
     drafts = {0.3: " ".join(["w"] * 10), 0.7: " ".join(["w"] * 30), 1.0: " ".join(["w"] * 200)}
 
-    def fake_once(prompt, *, max_tokens, temperature, top_p, request, sender_type_hint):
+    def fake_once(prompt, *, max_tokens, temperature, top_p, request, sender_type_hint, seed=None):
         once_seen.append(temperature)
         return drafts.get(temperature, " ".join(["w"] * 30)), "qwen2.5-1.5b-base"
 

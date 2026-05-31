@@ -200,6 +200,16 @@ class DraftRequest:
     # None (default) = normal selection. Pinning "mlx" still requires the local
     # model to be available — otherwise it falls through the usual chain.
     backend_override: str | None = None
+    # Eval-only determinism (b166). When True, decoding is forced to greedy
+    # (temperature=0 / argmax) and seeded, OVERRIDING config decoding and the
+    # multi-candidate temperature spread, so re-scoring the same config yields
+    # the same composite. The autoresearch/golden eval sets this; production
+    # drafting leaves it False and keeps the config/model-default behavior.
+    deterministic: bool = False
+    # Seed used when ``deterministic`` is True (defaults to EVAL_SEED). Passed to
+    # the mlx_lm subprocess (--seed) and the warm model server so both paths are
+    # reproducible.
+    seed: int | None = None
 
 
 @dataclass(slots=True)
@@ -1309,6 +1319,10 @@ EXEMPLAR_INBOUND_CHARS: int = 400
 PRIOR_REPLY_CHARS: int = 200
 SUBPROCESS_TIMEOUT: int = 120
 
+# Fixed seed for eval/golden generations (b166). Any constant works; it only has
+# to be stable so re-scoring the same config produces the same composite.
+EVAL_SEED = 1234
+
 
 def _estimate_tokens(text: str) -> int:
     """Estimate token count using a simple word-count * 1.4 approximation."""
@@ -1694,6 +1708,7 @@ def _call_local_model(
     adapter_path: Path | None = None,
     temperature: float | None = None,
     top_p: float | None = None,
+    seed: int | None = None,
 ) -> str:
     """Run mlx_lm against the base model, optionally with a LoRA adapter.
 
@@ -1702,6 +1717,11 @@ def _call_local_model(
     instead of the global `<models>/adapters/latest/`. Falls back to
     ADAPTER_PATH when `use_adapter=True` and `adapter_path` is None
     (preserves the historical behavior).
+
+    ``seed`` (b166) pins the PRNG for reproducible eval generation. When set it
+    is passed to both the warm model server and the cold mlx_lm subprocess. The
+    mlx_lm CLI flag is ``--seed`` (verified against mlx-lm 0.31.3); combined
+    with ``temperature=0`` this gives deterministic greedy/argmax decoding.
     """
     # Prefer the warm server (no per-draft model reload) for the common case: the
     # global adapter (or base). It serves a single adapter loaded at startup, so a
@@ -1712,7 +1732,9 @@ def _call_local_model(
 
         if model_server.is_enabled() and model_server.ensure_running():
             try:
-                return model_server.complete(prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p)
+                return model_server.complete(
+                    prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p, seed=seed
+                )
             except Exception:
                 logger.warning("warm model server call failed; falling back to subprocess", exc_info=True)
 
@@ -1739,6 +1761,9 @@ def _call_local_model(
         cmd.extend(["--temp", str(temperature)])
     if top_p is not None:
         cmd.extend(["--top-p", str(top_p)])
+    # Eval-only: pin the PRNG so re-scoring the same config is reproducible.
+    if seed is not None:
+        cmd.extend(["--seed", str(seed)])
     result = _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT)
     if result.returncode != 0:
         raise RuntimeError(f"mlx_lm generate failed (exit {result.returncode}): {result.stderr.strip()}")
@@ -1753,11 +1778,13 @@ def _local_draft_once(
     top_p: float | None,
     request: "DraftRequest",
     sender_type_hint: str | None,
+    seed: int | None = None,
 ) -> tuple[str, str]:
     """Produce one local-model draft, honoring the Phase-3 adapter precedence.
 
     Returns ``(draft, model_used)``. Factored out so both the single-draft
     path and multi-candidate generation share the exact same adapter routing.
+    ``seed`` (b166) is threaded to ``_call_local_model`` for reproducible eval.
     """
     persona_adapter_path: Path | None = None
     if request.use_adapter and _persona_routing_enabled():
@@ -1765,13 +1792,13 @@ def _local_draft_once(
     if persona_adapter_path is not None:
         draft = _call_local_model(
             prompt, max_tokens=max_tokens, adapter_path=persona_adapter_path,
-            temperature=temperature, top_p=top_p,
+            temperature=temperature, top_p=top_p, seed=seed,
         )
         return draft, f"qwen2.5-1.5b-lora-{sender_type_hint}"
     with_adapter = request.use_adapter and _adapter_available()
     draft = _call_local_model(
         prompt, max_tokens=max_tokens, use_adapter=with_adapter,
-        temperature=temperature, top_p=top_p,
+        temperature=temperature, top_p=top_p, seed=seed,
     )
     return draft, ("qwen2.5-1.5b-lora" if with_adapter else "qwen2.5-1.5b-base")
 
@@ -1784,14 +1811,21 @@ def _generate_via_ollama(
     num_predict: int = 400,
     temperature: float | None = None,
     top_p: float | None = None,
+    seed: int | None = None,
 ) -> str:
-    """Generate via Ollama HTTP API."""
+    """Generate via Ollama HTTP API.
+
+    ``seed`` (b166) maps to Ollama's ``options.seed`` so the eval is
+    reproducible when the local model is unavailable and Ollama is the backend.
+    """
     import urllib.request
 
     # Preserve the historical 0.7 default when temperature isn't configured.
     options: dict[str, Any] = {"temperature": 0.7 if temperature is None else temperature, "num_predict": num_predict}
     if top_p is not None:
         options["top_p"] = top_p
+    if seed is not None:
+        options["seed"] = seed
     payload = json.dumps({"model": model, "prompt": prompt, "stream": False, "options": options}).encode()
     req = urllib.request.Request(f"{base_url}/api/generate", data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
@@ -2128,6 +2162,17 @@ def generate_draft(
     max_tokens = _compute_max_tokens(avg_reply_words, persona=persona, intent=detected_intent)
     # Decoding params (default None -> each backend keeps its current default).
     temperature, top_p = _resolve_decoding(detected_intent, confidence)
+    # Eval-only determinism (b166): force greedy (temp=0) + a fixed seed,
+    # overriding any config decoding, so re-scoring the same config yields the
+    # same composite. top_p is irrelevant under argmax, so drop it. The
+    # multi-candidate temperature spread is also bypassed below — a spread is
+    # inherently non-greedy and would reintroduce variance. Production drafting
+    # leaves request.deterministic False and is completely unaffected.
+    eval_seed: int | None = None
+    if getattr(request, "deterministic", False):
+        temperature = 0.0
+        top_p = None
+        eval_seed = request.seed if request.seed is not None else EVAL_SEED
 
     # Greeting/closing resolved once — reused by candidate ranking and the
     # post-generation repair pass below.
@@ -2158,7 +2203,9 @@ def generate_draft(
             #   3. base model otherwise
             # `model_used` is honest about which adapter actually ran.
             mc = _multi_candidate_config()
-            if mc["enabled"]:
+            # Deterministic eval bypasses the temperature spread: a spread is
+            # inherently non-greedy and would reintroduce night-to-night variance.
+            if mc["enabled"] and not getattr(request, "deterministic", False):
                 # Generate a temperature spread, then keep the best-scoring draft.
                 raw: list[tuple[str, str, float | None]] = []
                 for t in mc["temperatures"]:
@@ -2187,7 +2234,7 @@ def generate_draft(
             else:
                 draft, model_used = _local_draft_once(
                     prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p,
-                    request=request, sender_type_hint=sender_type_hint,
+                    request=request, sender_type_hint=sender_type_hint, seed=eval_seed,
                 )
         elif fallback_model == "ollama":
             from app.core.config import get_ollama_config
@@ -2197,7 +2244,7 @@ def generate_draft(
             ollama_url = ollama_cfg.get("base_url", "http://localhost:11434")
             draft = _generate_via_ollama(
                 prompt, model=ollama_model, base_url=ollama_url, num_predict=max_tokens,
-                temperature=temperature, top_p=top_p,
+                temperature=temperature, top_p=top_p, seed=eval_seed,
             )
             model_used = f"ollama:{ollama_model}"
         elif fallback_model == "claude":
@@ -2235,7 +2282,7 @@ def generate_draft(
             try:
                 _rd, _rm = _local_draft_once(
                     prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p,
-                    request=request, sender_type_hint=sender_type_hint,
+                    request=request, sender_type_hint=sender_type_hint, seed=eval_seed,
                 )
                 if not _is_empty_draft(_rd):
                     draft, model_used = _rd, _rm
