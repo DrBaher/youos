@@ -176,6 +176,61 @@ def test_stream_falls_back_to_claude_without_adapter(monkeypatch):
     assert "Hi there.\n" in tokens
 
 
+def test_stream_fast_fails_when_generation_cap_exhausted(monkeypatch):
+    """b154: /draft/stream must acquire the global draft_concurrency slot and,
+    when the cap is full, shed load (busy event) instead of spawning yet another
+    ~3GB model child up to the 120s stream lifetime."""
+    _stub_pipeline(monkeypatch)
+    monkeypatch.setattr(sr, "_local_model_available", lambda: True)
+    monkeypatch.setattr(sr, "_adapter_available", lambda: True)
+    monkeypatch.setattr("app.core.model_server.is_enabled", lambda: False)
+
+    def no_popen(*a, **k):
+        raise AssertionError("must not spawn a subprocess when the generation cap is full")
+
+    monkeypatch.setattr(sr.subprocess, "Popen", no_popen)
+
+    # Drain every generation slot so the stream cannot acquire one.
+    sem = sr.draft_concurrency
+    held = 0
+    while sem.acquire(blocking=False):
+        held += 1
+    assert held > 0
+    try:
+        tokens, done = _collect(_stream_generate(StreamBody(inbound_text="hi"), MagicMock()))
+        assert done is not None and done.get("busy") is True
+        assert done["model_used"] is None
+        assert any("busy" in t.lower() for t in tokens)
+    finally:
+        for _ in range(held):
+            sem.release()
+
+
+def test_stream_releases_slot_after_serving(monkeypatch):
+    """The slot must be returned after a normal stream so it isn't leaked."""
+    _stub_pipeline(monkeypatch)
+    monkeypatch.setattr(sr, "_local_model_available", lambda: True)
+    monkeypatch.setattr(sr, "_adapter_available", lambda: False)  # claude path
+    monkeypatch.setattr(sr.subprocess, "Popen", lambda cmd, **kw: _FakeProc(["Hi.\n"]))
+
+    sem = sr.draft_concurrency
+    # count free slots before
+    before = 0
+    while sem.acquire(blocking=False):
+        before += 1
+    for _ in range(before):
+        sem.release()
+
+    _collect(_stream_generate(StreamBody(inbound_text="hi"), MagicMock()))
+
+    after = 0
+    while sem.acquire(blocking=False):
+        after += 1
+    for _ in range(after):
+        sem.release()
+    assert after == before  # slot returned, not leaked
+
+
 def test_stream_watchdog_kills_a_stalled_subprocess():
     """b141: the streaming read loop has no per-read timeout, so a stalled CLI
     would pin the worker. The deadline watchdog must kill the process group,

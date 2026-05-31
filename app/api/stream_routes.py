@@ -7,13 +7,14 @@ import re
 import signal
 import subprocess
 import threading
+from contextlib import contextmanager
 from typing import Literal
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.core.rate_limit import RATE_LIMIT_RESPONSE, draft_limiter
+from app.core.rate_limit import RATE_LIMIT_RESPONSE, draft_concurrency, draft_limiter
 from app.core.sender import classify_sender, extract_domain
 from app.core.text_utils import strip_quoted_text
 from app.generation.service import (
@@ -58,6 +59,22 @@ def _kill_proc_group(proc) -> None:
                 proc.kill()
             except ProcessLookupError:
                 pass
+
+
+@contextmanager
+def _try_generation_slot(sem):
+    """Non-blocking acquire of the global generation semaphore.
+
+    Yields True if a slot was free (released on exit), False if the cap is full
+    so the caller can fast-fail instead of holding a worker. A blocking acquire
+    here would pin the request's threadpool worker while N draws are in flight;
+    /draft/stream should shed load instead (b154)."""
+    got = sem.acquire(blocking=False)
+    try:
+        yield got
+    finally:
+        if got:
+            sem.release()
 
 
 class StreamBody(BaseModel):
@@ -196,134 +213,145 @@ def _stream_generate(body: StreamBody, settings):
 
     stream_local = _local_model_available() and _adapter_available()
 
-    # Fastest path: stream from the warm model server (no per-draft reload) when
-    # it's enabled and healthy. Falls through to the per-request subprocess /
-    # Claude paths below on any failure.
-    if stream_local:
-        from app.core import model_server
+    # Bound concurrent generations across ALL endpoints (stream + review-queue)
+    # with the same global semaphore. /draft/stream previously spawned mlx_lm /
+    # claude subprocesses (and consumed the warm-server) WITHOUT it, so one
+    # client could pile up ~3GB model children up to the stream timeout. Try-
+    # acquire so a full cap fast-fails this stream instead of pinning a worker.
+    with _try_generation_slot(draft_concurrency) as got_slot:
+        if not got_slot:
+            yield f"data: {json.dumps({'token': '[server busy — generation capacity full, please retry]'})}\n\n"
+            yield f"data: {json.dumps({'done': True, 'confidence': 0.0, 'precedent_used': precedent_used, 'model_used': None, 'busy': True})}\n\n"
+            return
 
-        if model_server.is_enabled() and model_server.ensure_running():
-            streamed_any = False
-            failed = False
-            try:
-                for piece in model_server.stream(prompt, max_tokens=400):
-                    streamed_any = True
-                    yield f"data: {json.dumps({'token': piece})}\n\n"
-            except Exception:
-                failed = True
-            # Return unless it failed before producing anything — only then is it
-            # safe to fall through and re-stream from the subprocess/Claude path.
-            if streamed_any or not failed:
-                done_payload = {
-                    "done": True,
-                    "confidence": confidence,
-                    "precedent_used": precedent_used,
-                    "exemplar_cache_hit": exemplar_cache_hit,
-                    "exemplar_cache_key": exemplar_cache_key,
-                    "length_flag": length_flag,
-                    "repairs": repairs,
-                    "candidates": candidates,
-                    "model_used": model_server.model_label(),
-                }
-                yield f"data: {json.dumps(done_payload)}\n\n"
-                return
-
-    proc = None
-    watchdog = None
-    try:
+        # Fastest path: stream from the warm model server (no per-draft reload) when
+        # it's enabled and healthy. Falls through to the per-request subprocess /
+        # Claude paths below on any failure.
         if stream_local:
-            # mlx_lm frames output as: <prelude> ===== <generated text> ===== <stats>.
-            # Stream only the body between the delimiters; PYTHONUNBUFFERED so the
-            # child flushes tokens as generated instead of buffering to the end.
-            cmd = [
-                "mlx_lm", "generate",
-                "--model", _get_base_model_id(),
-                "--adapter-path", str(get_adapter_path()),
-                "--prompt", prompt,
-                "--max-tokens", "400",
-            ]
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                start_new_session=True,
-                env={**os.environ, "PYTHONUNBUFFERED": "1"},
-            )
-            watchdog = threading.Timer(_STREAM_TIMEOUT, _kill_proc_group, args=(proc,))
-            watchdog.daemon = True
-            watchdog.start()
-            for piece in _iter_mlx_body(proc.stdout):
-                yield f"data: {json.dumps({'token': piece})}\n\n"
-            proc.wait(timeout=120)
-            if proc.returncode != 0:
-                raise RuntimeError("mlx_lm generate failed")
-            model_used = "qwen2.5-1.5b-lora"  # streamed from the local LoRA adapter
-        else:
-            # No trained adapter (or no mlx_lm): stream via the Claude CLI. Pass
-            # the prompt via -p so one beginning with '-' isn't parsed as a flag;
-            # new session so we can kill the whole process group on cleanup.
-            proc = subprocess.Popen(
-                ["claude", "--print", "-p", prompt],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                start_new_session=True,
-            )
-            watchdog = threading.Timer(_STREAM_TIMEOUT, _kill_proc_group, args=(proc,))
-            watchdog.daemon = True
-            watchdog.start()
-            for line in proc.stdout:
-                # Emit each line including its trailing newline, blank lines too, so
-                # paragraph breaks survive streaming. The token carries its own
-                # newline; the client must not add one.
-                yield f"data: {json.dumps({'token': line})}\n\n"
-            proc.wait(timeout=120)
-            if proc.returncode != 0:
-                raise RuntimeError("claude CLI failed")
-            model_used = "claude"  # streamed via the Claude CLI
-    except Exception:
-        # Fallback: generate full draft non-streaming
-        try:
-            response = generate_draft(
-                DraftRequest(
-                    inbound_message=body.inbound_text,
-                    tone_hint=body.tone_hint,
-                    sender=body.sender,
-                    mode=body.mode,
-                ),
-                database_url=settings.database_url,
-                configs_dir=settings.configs_dir,
-            )
-            yield f"data: {json.dumps({'token': response.draft})}\n\n"
-            confidence = response.confidence
-            precedent_used = response.precedent_used
-            length_flag = response.length_flag
-            repairs = response.repairs
-            candidates = response.candidates
-            model_used = response.model_used
-        except Exception:
-            logger.exception("draft stream: generation failed")
-            yield f"data: {json.dumps({'token': '[generation failed — see server logs]'})}\n\n"
-    finally:
-        # Cancel the deadline watchdog and don't leave a hung child (or its
-        # process group) running if we errored / the client disconnected.
-        if watchdog is not None:
-            watchdog.cancel()
-        _kill_proc_group(proc)
+            from app.core import model_server
 
-    done_payload = {
-        "done": True,
-        "confidence": confidence,
-        "precedent_used": precedent_used,
-        "exemplar_cache_hit": exemplar_cache_hit,
-        "exemplar_cache_key": exemplar_cache_key,
-        "length_flag": length_flag,
-        "repairs": repairs,
-        "candidates": candidates,
-        "model_used": model_used,
-    }
-    yield f"data: {json.dumps(done_payload)}\n\n"
+            if model_server.is_enabled() and model_server.ensure_running():
+                streamed_any = False
+                failed = False
+                try:
+                    for piece in model_server.stream(prompt, max_tokens=400):
+                        streamed_any = True
+                        yield f"data: {json.dumps({'token': piece})}\n\n"
+                except Exception:
+                    failed = True
+                # Return unless it failed before producing anything — only then is it
+                # safe to fall through and re-stream from the subprocess/Claude path.
+                if streamed_any or not failed:
+                    done_payload = {
+                        "done": True,
+                        "confidence": confidence,
+                        "precedent_used": precedent_used,
+                        "exemplar_cache_hit": exemplar_cache_hit,
+                        "exemplar_cache_key": exemplar_cache_key,
+                        "length_flag": length_flag,
+                        "repairs": repairs,
+                        "candidates": candidates,
+                        "model_used": model_server.model_label(),
+                    }
+                    yield f"data: {json.dumps(done_payload)}\n\n"
+                    return
+
+        proc = None
+        watchdog = None
+        try:
+            if stream_local:
+                # mlx_lm frames output as: <prelude> ===== <generated text> ===== <stats>.
+                # Stream only the body between the delimiters; PYTHONUNBUFFERED so the
+                # child flushes tokens as generated instead of buffering to the end.
+                cmd = [
+                    "mlx_lm", "generate",
+                    "--model", _get_base_model_id(),
+                    "--adapter-path", str(get_adapter_path()),
+                    "--prompt", prompt,
+                    "--max-tokens", "400",
+                ]
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    start_new_session=True,
+                    env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                )
+                watchdog = threading.Timer(_STREAM_TIMEOUT, _kill_proc_group, args=(proc,))
+                watchdog.daemon = True
+                watchdog.start()
+                for piece in _iter_mlx_body(proc.stdout):
+                    yield f"data: {json.dumps({'token': piece})}\n\n"
+                proc.wait(timeout=120)
+                if proc.returncode != 0:
+                    raise RuntimeError("mlx_lm generate failed")
+                model_used = "qwen2.5-1.5b-lora"  # streamed from the local LoRA adapter
+            else:
+                # No trained adapter (or no mlx_lm): stream via the Claude CLI. Pass
+                # the prompt via -p so one beginning with '-' isn't parsed as a flag;
+                # new session so we can kill the whole process group on cleanup.
+                proc = subprocess.Popen(
+                    ["claude", "--print", "-p", prompt],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    start_new_session=True,
+                )
+                watchdog = threading.Timer(_STREAM_TIMEOUT, _kill_proc_group, args=(proc,))
+                watchdog.daemon = True
+                watchdog.start()
+                for line in proc.stdout:
+                    # Emit each line including its trailing newline, blank lines too, so
+                    # paragraph breaks survive streaming. The token carries its own
+                    # newline; the client must not add one.
+                    yield f"data: {json.dumps({'token': line})}\n\n"
+                proc.wait(timeout=120)
+                if proc.returncode != 0:
+                    raise RuntimeError("claude CLI failed")
+                model_used = "claude"  # streamed via the Claude CLI
+        except Exception:
+            # Fallback: generate full draft non-streaming
+            try:
+                response = generate_draft(
+                    DraftRequest(
+                        inbound_message=body.inbound_text,
+                        tone_hint=body.tone_hint,
+                        sender=body.sender,
+                        mode=body.mode,
+                    ),
+                    database_url=settings.database_url,
+                    configs_dir=settings.configs_dir,
+                )
+                yield f"data: {json.dumps({'token': response.draft})}\n\n"
+                confidence = response.confidence
+                precedent_used = response.precedent_used
+                length_flag = response.length_flag
+                repairs = response.repairs
+                candidates = response.candidates
+                model_used = response.model_used
+            except Exception:
+                logger.exception("draft stream: generation failed")
+                yield f"data: {json.dumps({'token': '[generation failed — see server logs]'})}\n\n"
+        finally:
+            # Cancel the deadline watchdog and don't leave a hung child (or its
+            # process group) running if we errored / the client disconnected.
+            if watchdog is not None:
+                watchdog.cancel()
+            _kill_proc_group(proc)
+
+        done_payload = {
+            "done": True,
+            "confidence": confidence,
+            "precedent_used": precedent_used,
+            "exemplar_cache_hit": exemplar_cache_hit,
+            "exemplar_cache_key": exemplar_cache_key,
+            "length_flag": length_flag,
+            "repairs": repairs,
+            "candidates": candidates,
+            "model_used": model_used,
+        }
+        yield f"data: {json.dumps(done_payload)}\n\n"
 
 
 @router.post("/stream")

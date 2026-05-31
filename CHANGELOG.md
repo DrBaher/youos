@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.154 — 2026-05-31
+
+### Hardening: generation subprocess lifecycle (concurrency cap + reaping)
+
+Third of the 6th hardening pass. Bounds and reaps the model subprocesses.
+
+- **(MED) `/draft/stream` bypassed the global generation cap.** The `draft_concurrency` `BoundedSemaphore(6)` — built to bound concurrent generations across *all* endpoints — was acquired by the review-queue draft path but **not** by `/draft/stream`, which spawned `mlx_lm`/`claude` children (and consumed the warm server) without it. One client could pile up ~3 GB model subprocesses up to the 120 s stream lifetime; the cap also failed to bound stream + review-queue together. The stream path now acquires the slot **non-blocking** (so a full cap sheds load via a `busy` SSE event instead of pinning a threadpool worker), wraps the warm-server + both `Popen` paths + the fallback, and releases on exit.
+- **(LOW) `model_server.stop()` leaked a zombie / stray on every restart.** It SIGTERM'd the process group then dropped the handle **without `wait()`**, so the long-lived FastAPI parent accumulated a persistent zombie (or, for a SIGTERM-ignoring worker, a ~3 GB stray) on each adapter retrain/restart. `stop()` now `wait()`s with a 5 s deadline, escalates to SIGKILL on the group if SIGTERM is ignored, and reaps before dropping the handle — mirroring the kill-then-communicate pattern in `generation/service.py`.
+
++4 regression tests. Full suite: 1748 passed.
+
 ## v0.2.0-beta.153 — 2026-05-31
 
 ### Hardening: finetune-corpus poisoning + unbounded export size
