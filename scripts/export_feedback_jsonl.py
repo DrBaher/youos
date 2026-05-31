@@ -38,6 +38,26 @@ def _chmod_600(path) -> None:
         pass
 
 
+def _atomic_write_jsonl(path, records) -> None:
+    """Write JSONL records atomically: temp + fsync + os.replace (b163).
+
+    A plain ``open(path, "w")`` truncates in place, so a kill / OOM / disk-full
+    mid-write leaves a syntactically-valid PARTIAL JSONL that finetune (guarded
+    only by ``train_count >= 3``) would silently train on — then mark the rows
+    ``used_in_finetune=1``, permanently retiring never-trained pairs. Writing
+    through a temp means the final path only ever holds a complete file. 0o600
+    (raw email bodies)."""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        for rec in records:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+    _chmod_600(path)
+
+
 # --- training-data sanitization / poison screen (b153) -----------------------
 # The inbound side of every pair is attacker-influenced (a sender writes their
 # own email body) and flows verbatim into the LoRA fine-tuning corpus. A crafted
@@ -281,10 +301,7 @@ def export_dpo(args: argparse.Namespace) -> None:
 
     output_path = ROOT_DIR / "data" / "dpo_train.jsonl"
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        for pair in pairs:
-            f.write(json.dumps(pair, ensure_ascii=False) + "\n")
-    _chmod_600(output_path)  # contains raw email bodies — not world-readable
+    _atomic_write_jsonl(output_path, pairs)
 
     print(f"Exported {len(pairs)} DPO pairs to {output_path}")
 
@@ -630,16 +647,8 @@ def export(args: argparse.Namespace) -> None:
         valid_path = output_dir / "valid.jsonl"
 
     train_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(train_path, "w", encoding="utf-8") as f:
-        for rec in train:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    _chmod_600(train_path)
-
-    with open(valid_path, "w", encoding="utf-8") as f:
-        for rec in valid:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    _chmod_600(valid_path)
+    _atomic_write_jsonl(train_path, train)
+    _atomic_write_jsonl(valid_path, valid)
 
     print(f"Exported {len(records)} pairs to {train_path}")
     print(f"  Train: {len(train)} pairs -> {train_path}")
