@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.0-beta.155 — 2026-05-31
+
+### Hardening: bounded auth stores (API tokens + sessions)
+
+Fourth of the 6th hardening pass. Bounds the append-only auth maps.
+
+- **(MED) API-token verify was O(n) PBKDF2 per request.** `add_api_token` appended hashes without limit and `verify_api_token` PBKDF2-scanned **all** of them on every request — measured 20 ms at 1 token → 4.1 s at 200, and 80 concurrent bogus verifies serialized to ~30 s across the threadpool (a post-auth / self-inflicted DoS that survives restart). Now: tokens are capped (`MAX_API_TOKENS = 16`, rotate oldest), each entry stores a short plaintext prefix so `verify_api_token` runs **at most one** PBKDF2 (the entry whose prefix matches), and `POST /api/token` is rate-limited (5 / 60 s per IP). Legacy flat-list token files still verify (full scan, bounded by the cap going forward).
+- **(LOW) Session maps grew unbounded.** `persist_new_session` / `sessions.json` and the in-memory `PinAuthMiddleware.sessions` dict grew 1:1 per login with no cap, and the in-memory dict — which authorizes requests and never re-seeds from disk at runtime — never pruned expired entries on insert. Now `sessions` is an `OrderedDict`; `register_session` sweeps aged-out entries and evicts oldest-FIFO at `MAX_SESSIONS = 500` on every mint, and `persist_new_session` count-bounds the file too.
+
++9 regression tests. Full suite: 1754 passed.
+
 ## v0.2.0-beta.154 — 2026-05-31
 
 ### Hardening: generation subprocess lifecycle (concurrency cap + reaping)
