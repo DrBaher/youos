@@ -595,3 +595,21 @@ def test_ensure_label_passes_name_after_end_of_flags(monkeypatch):
     monkeypatch.setattr(gw, "_gog", _cap)
     gw.ensure_label(account="me@x.com", name="Work")
     assert captured["cmd"][-2:] == ["--", "Work"]
+
+
+def test_gws_draft_refuses_unmapped_account(monkeypatch):
+    """b161: a configured gws_credentials map missing the requested account must
+    refuse (GmailWriteError) rather than silently draft to the ambient mailbox."""
+    import app.ingestion.gmail_write as gw
+
+    monkeypatch.setattr(
+        "app.ingestion.adapters._load_gws_credentials",
+        lambda: {"work@x.com": "/creds/work.json"},
+    )
+
+    def _no_run(*a, **k):
+        raise AssertionError("must not invoke gws for an unmapped account")
+
+    monkeypatch.setattr(gw.subprocess, "run", _no_run)
+    with pytest.raises(gw.GmailWriteError, match="refusing to fall back"):
+        gw._gws_create_draft(account="other@x.com", thread_id=None, to_email="x@y.com", subject="s", body="b")

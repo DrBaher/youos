@@ -431,7 +431,7 @@ def _gws_create_draft(
     """
     import os
 
-    from app.ingestion.adapters import _load_gws_credentials
+    from app.ingestion.adapters import _resolve_gws_credentials_file
 
     rfc = _build_rfc822(to_email=to_email, subject=subject, body=body)
     raw_b64 = base64.urlsafe_b64encode(rfc).decode("ascii")
@@ -446,10 +446,15 @@ def _gws_create_draft(
         "--json", json.dumps(request_body),
     ]
 
-    # Mirror the read path: select the per-account credentials file so the
-    # draft is written to the intended mailbox, not the ambient default.
+    # Mirror the read path: select the per-account credentials file so the draft
+    # is written to the intended mailbox, not the ambient default. On a configured
+    # multi-account instance, refuse rather than silently draft to the wrong
+    # mailbox (b161).
     env = os.environ.copy()
-    creds = _load_gws_credentials().get(account)
+    try:
+        creds = _resolve_gws_credentials_file(account)
+    except ValueError as exc:
+        raise GmailWriteError(str(exc)) from exc
     if creds:
         env["GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE"] = str(creds)
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0-beta.161 — 2026-05-31
+
+### Hardening: gws per-account identity binding (case-insensitive + refuse-on-miss)
+
+Fourth of the 7th hardening pass. Closes the gws analog of the b157 native-token wrong-mailbox gap in `app/ingestion/{adapters,gmail_write}.py`.
+
+- **(MED) gws credential lookup was exact-case and silently fell back to the ambient mailbox on a miss.** `gws` is single-account-per-credential, so the wrong credentials file reads/drafts the **wrong mailbox**. The lookup keyed `gws_credentials` by exact case, but `user.emails` is network-settable (via `/api/config/identity`) with case preserved — a casing mismatch (e.g. `Work@X.com` vs `work@x.com`) missed the map and used the ambient credentials, ingesting the ambient mailbox's threads (and drafting) under the wrong account with no error. Both the read path (`GwsSource._run_json`) and the write path (`_gws_create_draft`) now go through one resolver that normalizes both sides with `.strip().lower()`, and — when a per-account map IS configured but the requested account isn't in it — **refuses** (raises `ValueError` / `GmailWriteError`) rather than silently using ambient credentials. A single-account instance with no map keeps the ambient fallback.
+
++5 regression tests. Full suite: 1779 passed.
+
 ## v0.2.0-beta.160 — 2026-05-31
 
 ### Hardening: auto-feedback corpus integrity (dedup, down-weight, per-sender cap)
