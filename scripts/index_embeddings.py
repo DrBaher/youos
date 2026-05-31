@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 """Index embeddings for chunks and reply_pairs.
 
-Processes rows with NULL embedding, stores results in DB.
-Interruptible and resumable — skips already-embedded rows.
+Processes rows with a NULL embedding OR a stale embedding (one produced by a
+different embedding model than the currently-configured one). Stores results in
+the DB. Interruptible and resumable — skips rows already embedded by the current
+model.
+
+Self-heal (b177): when the embedding model changes, rows tagged with the old
+``embedding_model_id`` are re-embedded automatically on the next run. Legacy
+rows with ``embedding_model_id IS NULL`` predate the tag and are treated as
+matching the current model (no forced re-embed on upgrade) — they only get
+(re)embedded if their ``embedding`` itself is NULL.
 
 Usage:
-    python3 scripts/index_embeddings.py              # index all unembedded rows
+    python3 scripts/index_embeddings.py              # index NULL + stale rows
     python3 scripts/index_embeddings.py --limit 100  # index only N rows
     python3 scripts/index_embeddings.py --table reply_pairs  # only reply pairs
-    python3 scripts/index_embeddings.py --dry-run    # show count of unembedded rows
+    python3 scripts/index_embeddings.py --reindex    # force re-embed ALL rows
+    python3 scripts/index_embeddings.py --dry-run    # show count of pending rows
 """
 
 from __future__ import annotations
@@ -64,8 +73,27 @@ def _ensure_embedding_columns(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def _count_unembedded(conn: sqlite3.Connection, table: str) -> int:
-    row = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE embedding IS NULL").fetchone()
+def _pending_where(model_id: str, *, reindex: bool) -> tuple[str, tuple]:
+    """SQL WHERE clause (and params) selecting rows that need (re)embedding.
+
+    - ``--reindex``: every row (force a full rebuild in the current space).
+    - default: rows with no embedding at all, OR rows tagged with a *different*
+      embedding model than the current one (stale — vectors in another space).
+      Legacy rows (``embedding_model_id IS NULL``) are trusted as current and
+      only picked up when their ``embedding`` is NULL.
+    """
+    if reindex:
+        return "1=1", ()
+    return (
+        "embedding IS NULL "
+        "OR (embedding_model_id IS NOT NULL AND embedding_model_id != ?)",
+        (model_id,),
+    )
+
+
+def _count_pending(conn: sqlite3.Connection, table: str, model_id: str, *, reindex: bool) -> int:
+    where, params = _pending_where(model_id, reindex=reindex)
+    row = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE {where}", params).fetchone()  # noqa: S608
     return row[0] if row else 0
 
 
@@ -92,8 +120,13 @@ def _index_table(
     *,
     limit: int | None = None,
     dry_run: bool = False,
+    reindex: bool = False,
 ) -> int:
-    """Index unembedded rows in a single table. Returns number of rows processed."""
+    """Index pending rows in a single table. Returns number of rows processed.
+
+    "Pending" = NULL embedding, or an embedding tagged with a different model
+    than the current one (stale), or — with ``reindex`` — every row.
+    """
     # Pre-first-ingest the chunks/reply_pairs tables don't exist yet.
     # `_ensure_embedding_columns` already no-ops in that case; mirror it
     # here so the indexer completes cleanly on a fresh instance instead
@@ -102,39 +135,69 @@ def _index_table(
         print(f"  {table}: table not created yet (pre-ingest)")
         return 0
 
-    total_unembedded = _count_unembedded(conn, table)
-    if dry_run:
-        print(f"  {table}: {total_unembedded} unembedded rows")
-        return 0
-
-    if total_unembedded == 0:
-        print(f"  {table}: all rows already embedded")
-        return 0
-
-    target = min(total_unembedded, limit) if limit else total_unembedded
-    print(f"  {table}: {total_unembedded} unembedded rows, will process {target}")
-
     # Snapshot the model id once per run rather than re-resolving per row —
-    # consistent with what _load_model() will use, and cheap.
+    # consistent with what _load_model() will use, and cheap. Needed for the
+    # staleness query too, so resolve it before counting.
     model_id = get_embedding_model_id()
 
+    total_pending = _count_pending(conn, table, model_id, reindex=reindex)
+    if dry_run:
+        label = "rows (forced reindex)" if reindex else "rows pending (NULL or stale)"
+        print(f"  {table}: {total_pending} {label} [model={model_id}]")
+        return 0
+
+    if total_pending == 0:
+        print(f"  {table}: all rows already embedded with {model_id}")
+        return 0
+
+    target = min(total_pending, limit) if limit else total_pending
+    print(f"  {table}: {total_pending} pending rows, will process {target} [model={model_id}]")
+
+    where, where_params = _pending_where(model_id, reindex=reindex)
+
+    # Fail loud BEFORE touching any data if the embedding model can't load:
+    # warm it once up front. A systemic load failure (wrong model id, missing
+    # weights, MLX/Metal context unavailable) must abort the run rather than let
+    # the per-row loop below mass-overwrite valid vectors with empty-blob
+    # markers (the b177 data-loss footgun). One cheap probe embed surfaces it.
+    try:
+        _ = get_embedding("warmup")
+    except Exception as exc:
+        raise RuntimeError(
+            f"Embedding model {model_id!r} failed to load/run; aborting before "
+            f"writing any rows to avoid corrupting the existing index: {exc}"
+        ) from exc
+
+    # Id cursor for monotonic pagination. Necessary for ``--reindex`` (WHERE is
+    # always-true, so re-querying without a cursor would keep returning the same
+    # first batch forever) and harmless in the default path (where each UPDATE
+    # also removes the row from the predicate).
+    cursor_id = 0
     processed = 0
+    # Guard against a systemic mid-run failure (e.g. the model context dies
+    # after warmup): abort instead of marching through the whole table writing
+    # empty blobs over good data.
+    consecutive_failures = 0
+    max_consecutive_failures = 20
     while processed < target:
         batch_limit = min(BATCH_SIZE, target - processed)
         conn.row_factory = sqlite3.Row
         if table == "chunks":
             rows = conn.execute(
-                "SELECT id, content FROM chunks WHERE embedding IS NULL LIMIT ?",
-                (batch_limit,),
+                f"SELECT id, content, embedding FROM chunks "  # noqa: S608
+                f"WHERE ({where}) AND id > ? ORDER BY id LIMIT ?",
+                (*where_params, cursor_id, batch_limit),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT id, inbound_text, reply_text FROM reply_pairs WHERE embedding IS NULL LIMIT ?",
-                (batch_limit,),
+                f"SELECT id, inbound_text, reply_text, embedding FROM reply_pairs "  # noqa: S608
+                f"WHERE ({where}) AND id > ? ORDER BY id LIMIT ?",
+                (*where_params, cursor_id, batch_limit),
             ).fetchall()
 
         if not rows:
             break
+        cursor_id = rows[-1]["id"]
 
         for row in rows:
             text = _get_text_for_row(row, table)
@@ -146,6 +209,7 @@ def _index_table(
                     (b"", model_id, row["id"]),
                 )
                 processed += 1
+                consecutive_failures = 0
                 continue
 
             try:
@@ -155,15 +219,26 @@ def _index_table(
                     f"UPDATE {table} SET embedding = ?, embedding_model_id = ? WHERE id = ?",
                     (blob, model_id, row["id"]),
                 )
+                consecutive_failures = 0
             except Exception as exc:
                 print(f"  WARNING: failed to embed {table} id={row['id']}: {exc}")
-                # Store empty blob to avoid infinite retry; tag with current
-                # model_id so a later model swap re-tries instead of repeating
-                # the same failure forever.
-                conn.execute(
-                    f"UPDATE {table} SET embedding = ?, embedding_model_id = ? WHERE id = ?",
-                    (b"", model_id, row["id"]),
-                )
+                consecutive_failures += 1
+                # Do NOT clobber an existing valid embedding with an empty blob:
+                # a transient embed failure must never destroy good data. Only
+                # write the empty-blob marker when the row had nothing usable to
+                # begin with (NULL/empty), so we don't infinitely retry it.
+                had_valid = row["embedding"] is not None and len(row["embedding"]) >= 4
+                if not had_valid:
+                    conn.execute(
+                        f"UPDATE {table} SET embedding = ?, embedding_model_id = ? WHERE id = ?",
+                        (b"", model_id, row["id"]),
+                    )
+                if consecutive_failures >= max_consecutive_failures:
+                    conn.commit()
+                    raise RuntimeError(
+                        f"{consecutive_failures} consecutive embedding failures on "
+                        f"{table} — aborting to protect the existing index. Last error: {exc}"
+                    ) from exc
 
             processed += 1
 
@@ -183,7 +258,12 @@ def main() -> None:
         default=None,
         help="Only process this table",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Show unembedded counts without processing")
+    parser.add_argument("--dry-run", action="store_true", help="Show pending counts without processing")
+    parser.add_argument(
+        "--reindex",
+        action="store_true",
+        help="Force re-embed ALL rows with the current embedding model (full rebuild)",
+    )
     args = parser.parse_args()
 
     settings = get_settings()
@@ -201,7 +281,9 @@ def main() -> None:
         start = time.time()
         total = 0
         for table in tables:
-            total += _index_table(conn, table, limit=args.limit, dry_run=args.dry_run)
+            total += _index_table(
+                conn, table, limit=args.limit, dry_run=args.dry_run, reindex=args.reindex
+            )
 
         if not args.dry_run:
             elapsed = time.time() - start

@@ -124,10 +124,40 @@ def get_ingestion_google_backend(config: dict[str, Any] | None = None) -> str:
 # baheros) overrides ``model.base`` for the exact weights to load.
 DEFAULT_BASE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
 
+# Dedicated embedding model, DECOUPLED from the drafting base (b177). The
+# drafting base migrated to Qwen3-4B (b174), but the ~11.7k stored vectors were
+# built with Qwen2.5-1.5B. Tying embeddings to ``model.base`` silently moved
+# query vectors into a different (and differently-dimensioned) space than the
+# stored index, breaking semantic retrieval. The embedding model is now a
+# separate concern: it defaults to the small, fast, already-downloaded
+# Qwen2.5-1.5B-Instruct so the existing index stays valid and retrieval keeps
+# working immediately. Swapping ``model.base`` no longer changes the embedder.
+DEFAULT_EMBEDDING_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
+
 
 def get_base_model(config: dict[str, Any] | None = None) -> str:
     cfg = config or load_config()
     return cfg.get("model", {}).get("base", DEFAULT_BASE_MODEL)
+
+
+def get_embedding_model(config: dict[str, Any] | None = None) -> str:
+    """Resolve the embedding model id, independent of the drafting base (b177).
+
+    Resolution order:
+    1. ``model.embedding_model`` in config (explicit pin), then
+    2. ``DEFAULT_EMBEDDING_MODEL`` (the stable 1.5B the existing index uses).
+
+    This intentionally does NOT fall back to ``model.base`` — that coupling is
+    exactly the b177 bug. The legacy ``embeddings.model_id`` override (read in
+    ``app.core.embeddings.get_embedding_model_id``) still takes precedence over
+    this for backward compatibility.
+    """
+    cfg = config or load_config()
+    model_cfg = cfg.get("model", {}) if isinstance(cfg, dict) else {}
+    override = model_cfg.get("embedding_model") if isinstance(model_cfg, dict) else None
+    if isinstance(override, str) and override.strip():
+        return override.strip()
+    return DEFAULT_EMBEDDING_MODEL
 
 
 def model_label(base: str | None = None, *, with_adapter: bool) -> str:
