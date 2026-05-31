@@ -103,34 +103,35 @@ def ensure_running(*, startup_timeout: float = 40.0) -> bool:
     # server. The server's own spawn tests clear this env var to test the logic.
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return is_healthy()
-    if is_healthy():
-        # Running, but if the adapter was retrained since it loaded, reload it so
-        # drafts use the new voice model rather than the stale one.
-        if _adapter_sig() != _started_adapter_sig:
-            return restart()
+    # Fast path: already healthy AND serving the current adapter.
+    if is_healthy() and _adapter_sig() == _started_adapter_sig:
         return True
     with _lock:
-        # Re-check under the lock — another thread may have started it.
-        if is_healthy():
+        # Re-check UNDER the lock so concurrent post-retrain threads don't each
+        # tear down + respawn the server: the first to win reloads and stamps
+        # _started_adapter_sig; the rest see it current here and return (b159).
+        if is_healthy() and _adapter_sig() == _started_adapter_sig:
             return True
-        if _proc is not None and _proc.poll() is None:
-            # Process is up but not yet answering /health — wait it out below.
-            pass
-        else:
-            cmd = [sys.executable, "-m", "mlx_lm.server", "--model", get_base_model(), "--port", str(_port())]
-            adapter = _adapter_arg()
-            if adapter:
-                cmd.extend(["--adapter-path", adapter])
-            try:
-                _proc = subprocess.Popen(  # noqa: S603
-                    cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                )
-            except Exception:
-                _proc = None
-                return False
+        # We own the (re)start. Reap any existing handle first — a stale-adapter
+        # healthy server (reload), a wedged server (alive but never /health), or a
+        # half-started dud. _reap_locked (NOT stop(), which would re-acquire the
+        # held lock and deadlock) kills + reaps it so we spawn fresh.
+        if _proc is not None:
+            _reap_locked()
+        cmd = [sys.executable, "-m", "mlx_lm.server", "--model", get_base_model(), "--port", str(_port())]
+        adapter = _adapter_arg()
+        if adapter:
+            cmd.extend(["--adapter-path", adapter])
+        try:
+            _proc = subprocess.Popen(  # noqa: S603
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except Exception:
+            _proc = None
+            return False
         # Poll /health until the model finishes loading.
         deadline = time.monotonic() + startup_timeout
         while time.monotonic() < deadline:
@@ -141,53 +142,66 @@ def ensure_running(*, startup_timeout: float = 40.0) -> bool:
                 _started_adapter_sig = _adapter_sig()  # remember what it loaded
                 return True
             time.sleep(0.5)
+        # Startup timed out but the child is still ALIVE (booting too slowly, or
+        # wedged and never answering /health). Reap it inline so the NEXT call
+        # respawns fresh instead of re-skipping the spawn and blocking the full
+        # timeout again forever (the wedged/partial-start leak, b159).
+        _reap_locked()
     return False
 
 
-def stop() -> None:
-    """Terminate the managed server (whole process group) AND reap it.
+def _reap_locked() -> None:
+    """Kill (whole process group) and reap the current ``_proc``, then clear it.
 
-    SIGTERM the group, then ``wait()`` with a short deadline so the child is
-    actually reaped; if it ignores SIGTERM, escalate to SIGKILL and wait again,
-    only then drop the handle (mirrors the kill-then-communicate pattern in
-    generation/service.py). Without the wait() the long-lived FastAPI parent
-    accumulated a persistent zombie — or a ~3GB stray for a SIGTERM-ignoring
-    worker — on every adapter retrain/restart (b154)."""
+    The CALLER MUST already hold ``_lock``. Used by stop() and by
+    ensure_running's failure/reload paths — calling stop() from inside the lock
+    would re-acquire the non-reentrant ``_lock`` and self-deadlock (b159).
+
+    SIGTERM the group, wait() with a short deadline so the child is reaped; if it
+    ignores SIGTERM, escalate to SIGKILL and wait again (mirrors the
+    kill-then-communicate pattern in generation/service.py). Without the wait()
+    the long-lived FastAPI parent accumulated a persistent zombie — or a ~3GB
+    stray for a SIGTERM-ignoring worker — on every retrain/restart (b154)."""
     global _proc
-    with _lock:
-        proc = _proc
-        _proc = None
-        if proc is None:
-            return
-        if proc.poll() is not None:
-            # Already exited — reap it so it doesn't linger as a zombie.
-            try:
-                proc.wait(timeout=1)
-            except Exception:
-                pass
-            return
+    proc = _proc
+    _proc = None
+    if proc is None:
+        return
+    if proc.poll() is not None:
+        # Already exited — reap it so it doesn't linger as a zombie.
         try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            proc.wait(timeout=1)
+        except Exception:
+            pass
+        return
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            pass
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        # Worker ignored SIGTERM — escalate to SIGKILL on the whole group.
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             try:
-                proc.terminate()
+                proc.kill()
             except ProcessLookupError:
                 pass
         try:
             proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            # Worker ignored SIGTERM — escalate to SIGKILL on the whole group.
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                try:
-                    proc.kill()
-                except ProcessLookupError:
-                    pass
-            try:
-                proc.wait(timeout=5)
-            except Exception:
-                pass
+        except Exception:
+            pass
+
+
+def stop() -> None:
+    """Terminate the managed server (whole process group) AND reap it (b154)."""
+    with _lock:
+        _reap_locked()
 
 
 def restart() -> bool:
