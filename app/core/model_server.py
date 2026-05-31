@@ -233,12 +233,26 @@ def restart() -> bool:
     return ensure_running()
 
 
-def _payload(prompt: str, *, max_tokens: int, temperature: float | None, top_p: float | None, stream: bool) -> dict:
+def _payload(
+    prompt: str,
+    *,
+    max_tokens: int,
+    temperature: float | None,
+    top_p: float | None,
+    stream: bool,
+    seed: int | None = None,
+) -> dict:
     body: dict = {"prompt": prompt, "max_tokens": max_tokens, "stream": stream}
     if temperature is not None:
         body["temperature"] = temperature
     if top_p is not None:
         body["top_p"] = top_p
+    # b166: pin the PRNG for reproducible eval. mlx_lm.server (the warm server)
+    # accepts an OpenAI-style ``seed`` field; unknown fields are ignored by the
+    # server, and the eval also forces temperature=0 (greedy/argmax), so the
+    # output is deterministic even if a given server build ignores ``seed``.
+    if seed is not None:
+        body["seed"] = seed
     return body
 
 
@@ -248,12 +262,13 @@ def complete(
     max_tokens: int = 300,
     temperature: float | None = None,
     top_p: float | None = None,
+    seed: int | None = None,
     timeout: float = 120.0,
 ) -> str:
     """One-shot completion via the warm server. Raises on transport/HTTP error."""
     r = httpx.post(
         f"{_base_url()}/v1/completions",
-        json=_payload(prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p, stream=False),
+        json=_payload(prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p, stream=False, seed=seed),
         timeout=timeout,
     )
     r.raise_for_status()
