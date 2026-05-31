@@ -361,6 +361,14 @@ def ingest_gmail_threads(
                 target_db_path=target_db_path,
                 warning_count=warning_count,
             )
+            if status == "no_new_rows":
+                logger.info(
+                    "gmail ingest: no new rows (empty delta) for %s "
+                    "(discovered=%d fetched=%d)",
+                    import_detail,
+                    counts.discovered_threads,
+                    counts.fetched_threads,
+                )
             finish_ingest_run(
                 connection,
                 run_id=ingestion_run_id,
@@ -373,7 +381,13 @@ def ingest_gmail_threads(
                     stored_reply_pairs=counts.reply_pairs,
                 ),
                 error_summary=error_summary,
-                error_detail=detail if status != "completed" else None,
+                # Only attach an error_detail for genuine non-success statuses.
+                # "completed"/"no_new_rows" are successes (no error to record).
+                error_detail=(
+                    detail
+                    if status not in {"completed", "no_new_rows"}
+                    else None
+                ),
             )
             connection.commit()
             return IngestionResult(
@@ -777,10 +791,17 @@ def _gmail_run_outcome(
     )
     useful_rows = counts.inbound_documents + counts.reply_pairs
     if useful_rows == 0:
+        # Empty delta: the fetch ran cleanly (no exception, no load/normalize
+        # failure -- those return "failed" earlier in ingest_gmail_threads) but
+        # the window held nothing new to store. This is normal -- e.g. a SENT-only
+        # nightly window for an account the user only sends from -- and must NOT
+        # be reported as a failure, or the CLI exits nonzero and the nightly
+        # watermark never advances, re-scanning the same widening window forever
+        # (b169). Reserve "failed" for genuine fetch/parse/transport errors.
         return (
-            "failed",
-            f"{base_detail} YouOS fetched input but no useful Gmail corpus rows landed.",
-            "No useful Gmail rows landed",
+            "no_new_rows",
+            f"{base_detail} No new Gmail corpus rows landed (empty delta).",
+            None,
         )
     if warning_count > 0:
         return (
