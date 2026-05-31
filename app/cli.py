@@ -1223,6 +1223,19 @@ def snapshot_create(
     print(str(snap))
 
 
+@app.command("store-prune")
+def store_prune(
+    days: int = typer.Option(90, "--days", help="Delete aged telemetry/terminal agent rows older than N days"),
+):
+    """Prune aged append-only agent tables + VACUUM (bounds DB / snapshot growth)."""
+    from app.agent.store import prune_agent_tables
+
+    settings = get_settings()
+    removed = prune_agent_tables(settings.database_url, older_than_days=days)
+    total = sum(removed.values())
+    print(f"Pruned {total} rows (>{days}d): {removed}")
+
+
 @app.command("snapshot-list")
 def snapshot_list():
     """List available snapshots."""

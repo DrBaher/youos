@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -256,6 +257,28 @@ def _write_jsonl_entry(report: AutoresearchReport, configs_dir: Path) -> None:
     }
     with open(jsonl_path, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, default=str) + "\n")
+    _trim_jsonl(jsonl_path, _AUTORESEARCH_JSONL_MAX_LINES)
+
+
+# Keep the append-only run log bounded — stats.py reads only the last few lines,
+# so an unbounded file is pure waste (b162).
+_AUTORESEARCH_JSONL_MAX_LINES = 365
+
+
+def _trim_jsonl(path: Path, max_lines: int) -> None:
+    """Atomically keep only the last ``max_lines`` of an append-only jsonl file
+    (O_EXCL-free temp + os.replace, matching the data_safety atomic-write style)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.readlines()
+        if len(lines) <= max_lines:
+            return
+        tmp = path.with_name(path.name + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.writelines(lines[-max_lines:])
+        os.replace(tmp, path)
+    except OSError:
+        pass
 
 
 def _dry_run_report(
