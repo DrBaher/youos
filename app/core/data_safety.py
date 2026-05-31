@@ -4,10 +4,16 @@ import json
 import os
 import re
 import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX (Windows); YouOS targets darwin
+    fcntl = None  # type: ignore[assignment]
 
 from app.core.settings import Settings
 from app.db.bootstrap import resolve_sqlite_path
@@ -141,6 +147,14 @@ def _snapshot_root(db_path: Path) -> Path:
 
 _TIER_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
+# The only tiers create_snapshot will write. prune_snapshots knows the retention
+# for exactly these; an arbitrary tier (e.g. via the create-snapshot route's
+# query param) would write full-DB-copy snapshots that prune never reclaimed →
+# unbounded disk-fill (b158). _DEFAULT_STRAY_KEEP bounds any pre-existing stray
+# tier dir so prune reclaims it too.
+_SNAPSHOT_TIERS = ("hourly", "daily", "manual")
+_DEFAULT_STRAY_KEEP = 5
+
 
 def _validate_tier(tier: str) -> str:
     """Reject tier values that aren't a single safe path component.
@@ -151,6 +165,36 @@ def _validate_tier(tier: str) -> str:
     if not _TIER_RE.match(tier):
         raise ValueError(f"Invalid snapshot tier: {tier!r} (expected alphanumerics, '-' or '_')")
     return tier
+
+
+@contextmanager
+def _snapshot_lock(db_path: Path):
+    """Cross-process exclusive lock serializing ALL snapshot writers — create,
+    restore, prune (b158).
+
+    Two restores (or a restore racing the nightly's create/prune) otherwise run
+    concurrently: the restore handler is a sync def on the AnyIO threadpool (true
+    parallelism), and the nightly is a separate process, so a threading.Lock is
+    insufficient. An ``fcntl.flock(LOCK_EX)`` on ``var/.snapshot.lock`` makes
+    take-backup-then-overwrite atomic vs. any other snapshot writer. Degrades to
+    a no-op where fcntl is unavailable (non-POSIX)."""
+    if fcntl is None:  # pragma: no cover - non-POSIX
+        yield
+        return
+    lock_dir = db_path.parent
+    try:
+        lock_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    fd = os.open(lock_dir / ".snapshot.lock", os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 def _ensure_within(root: Path, candidate: Path) -> Path:
@@ -257,12 +301,15 @@ def _assert_restorable(snapshot_path: Path) -> None:
 
 def create_snapshot(db_path: Path, *, tier: str = "manual") -> Path:
     _validate_tier(tier)
-    out_dir = _snapshot_root(db_path) / tier
-    out_dir.mkdir(parents=True, exist_ok=True)
-    # Sub-second stamp + random suffix so same-second snapshots never collide;
-    # _atomic_db_copy makes the write atomic + integrity-checked.
-    out_path = out_dir / f"youos-{_utc_stamp()}-{os.urandom(3).hex()}.db"
-    _atomic_db_copy(db_path, out_path)
+    if tier not in _SNAPSHOT_TIERS:
+        raise ValueError(f"Unknown snapshot tier: {tier!r} (expected one of {_SNAPSHOT_TIERS})")
+    with _snapshot_lock(db_path):
+        out_dir = _snapshot_root(db_path) / tier
+        out_dir.mkdir(parents=True, exist_ok=True)
+        # Sub-second stamp + random suffix so same-second snapshots never collide;
+        # _atomic_db_copy makes the write atomic + integrity-checked.
+        out_path = out_dir / f"youos-{_utc_stamp()}-{os.urandom(3).hex()}.db"
+        _atomic_db_copy(db_path, out_path)
     return out_path
 
 
@@ -323,25 +370,46 @@ def prune_snapshots(
     hourly, daily, manual = _load_snapshot_retention(
         keep_hourly=keep_hourly, keep_daily=keep_daily, keep_manual=keep_manual,
     )
+    keep_by_tier = {"hourly": hourly, "daily": daily, "manual": manual}
     root = _snapshot_root(db_path)
     removed: dict[str, int] = {"hourly": 0, "daily": 0, "manual": 0}
-    for tier, keep in (("hourly", hourly), ("daily", daily), ("manual", manual)):
-        tier_dir = root / tier
-        if not tier_dir.exists():
-            continue
-        files = sorted(tier_dir.glob("youos-*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
-        for old in files[keep:]:
-            old.unlink(missing_ok=True)
-            removed[tier] += 1
+    if not root.exists():
+        return removed
+    with _snapshot_lock(db_path):
+        # Iterate EVERY tier dir (not just the three known ones) so a stray tier
+        # — e.g. a pre-existing one created before the create-time allowlist —
+        # is still reclaimed under a default cap instead of growing forever.
+        for tier_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+            tier = tier_dir.name
+            keep = keep_by_tier.get(tier, _DEFAULT_STRAY_KEEP)
+            pairs = _snapshot_files_by_mtime(tier_dir.glob("youos-*.db"))
+            for old, _mtime in pairs[keep:]:
+                old.unlink(missing_ok=True)
+                removed[tier] = removed.get(tier, 0) + 1
     return removed
+
+
+def _snapshot_files_by_mtime(paths) -> list[tuple[Path, float]]:
+    """Return (path, mtime) pairs newest-first, dropping any file that vanished.
+
+    Materializing the stat BEFORE sorting (vs. ``stat`` inside the sort key)
+    avoids a FileNotFoundError when a concurrent prune/restore unlinks a file
+    between the glob and the stat (b158)."""
+    pairs: list[tuple[Path, float]] = []
+    for p in paths:
+        try:
+            pairs.append((p, p.stat().st_mtime))
+        except OSError:
+            continue  # vanished mid-iteration — skip
+    pairs.sort(key=lambda t: t[1], reverse=True)
+    return pairs
 
 
 def list_snapshots(db_path: Path) -> list[Path]:
     root = _snapshot_root(db_path)
     if not root.exists():
         return []
-    files = sorted(root.glob("*/*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files
+    return [p for p, _ in _snapshot_files_by_mtime(root.glob("*/*.db"))]
 
 
 def restore_snapshot(db_path: Path, snapshot_path: Path, *, dry_run: bool = False) -> Path:
@@ -363,27 +431,32 @@ def restore_snapshot(db_path: Path, snapshot_path: Path, *, dry_run: bool = Fals
         return backup_path
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    if db_path.exists():
-        # Atomic, O_EXCL, WAL-consistent: never silently overwrite an existing
-        # pre-restore backup, and never truncate it on a crash mid-write.
-        _atomic_db_copy(db_path, backup_path)
+    # Hold the cross-process snapshot lock across take-backup-THEN-overwrite so a
+    # concurrent restore can't capture this restore's intermediate content as its
+    # "original" backup (false-confidence rollback target), and the nightly's
+    # create/prune can't race the live-DB overwrite (b158).
+    with _snapshot_lock(db_path):
+        if db_path.exists():
+            # Atomic, O_EXCL, WAL-consistent: never silently overwrite an existing
+            # pre-restore backup, and never truncate it on a crash mid-write.
+            _atomic_db_copy(db_path, backup_path)
 
-    # Restore via the SQLite backup API, NOT shutil.copy2. Copying the snapshot
-    # over a live WAL DB leaves the old youos.db-wal/-shm sidecars in place, and
-    # SQLite then replays those stale (pre-restore) frames onto the snapshot on
-    # the next open — silently discarding the restore or producing a malformed
-    # DB. Writing the snapshot content THROUGH a real connection lets SQLite
-    # handle WAL correctly; checkpoint(TRUNCATE) then folds + clears it.
-    snap = sqlite3.connect(snapshot_path)
-    try:
-        live = sqlite3.connect(db_path)
+        # Restore via the SQLite backup API, NOT shutil.copy2. Copying the snapshot
+        # over a live WAL DB leaves the old youos.db-wal/-shm sidecars in place, and
+        # SQLite then replays those stale (pre-restore) frames onto the snapshot on
+        # the next open — silently discarding the restore or producing a malformed
+        # DB. Writing the snapshot content THROUGH a real connection lets SQLite
+        # handle WAL correctly; checkpoint(TRUNCATE) then folds + clears it.
+        snap = sqlite3.connect(snapshot_path)
         try:
-            snap.backup(live)
-            live.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            live.commit()
+            live = sqlite3.connect(db_path)
+            try:
+                snap.backup(live)
+                live.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                live.commit()
+            finally:
+                live.close()
         finally:
-            live.close()
-    finally:
-        snap.close()
-    _chmod_600(db_path)  # don't leave the restored DB world-readable
+            snap.close()
+        _chmod_600(db_path)  # don't leave the restored DB world-readable
     return backup_path
