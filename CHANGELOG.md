@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.153 — 2026-05-31
+
+### Hardening: finetune-corpus poisoning + unbounded export size
+
+Second of the 6th hardening pass. Hardens `scripts/export_feedback_jsonl.py`, where attacker-influenced inbound email text flows into the LoRA training corpus.
+
+- **(HIGH) Attacker-controlled email text became an unsanitized training pair.** A crafted inbound email (replied to and captured as a pair) was written verbatim into `train.jsonl` — including prompt-injection / jailbreak phrasing, raw control bytes (`\x07`, `\x1b…`), and chat-template role tokens (`<|im_start|>`) — and trained into the adapter, where it persists across restarts and steers every future draft. (The model only drafts human-reviewed replies, but a human may not notice e.g. an injected payment line.) Added `sanitize_training_text()` (strip control bytes except `\t\n\r`, per-field char cap) applied at the single `build_record`/DPO sink, plus `is_poisoned_text()` (injection/jailbreak + role-token screen) that **drops** matching pairs from the corpus before training.
+- **(MED) Unbounded export size could fill disk and wedge the nightly.** Only the O(n²) dedup step was capped (`DEDUP_MAX_PAIRS`), not the write — a large/old mailbox 3×-oversampled into a multi-GB `train.jsonl`. Added `MAX_EXPORT_PAIRS = 5000`: keep the highest-quality/most-recent N before oversampling, and clamp the post-oversample count to the same budget.
+- **(LOW) DPO `--chosen` hygiene.** The manual `--dpo` path could place auto-captured / self-labeled (`organic`) content in the preferred `chosen` tier. Now excludes `feedback_note LIKE 'auto-captured%'` and `organic=1` rows from `chosen` (column-guarded for older DBs), screens both sides for poison, sanitizes the written values, and bounds the emitted pair count. (The nightly never passes `--dpo`; no auto-DPO is wired.)
+
++7 regression tests. Full suite: 1744 passed.
+
 ## v0.2.0-beta.152 — 2026-05-31
 
 ### Hardening: snapshot/backup filename collision + atomic, integrity-checked writes
