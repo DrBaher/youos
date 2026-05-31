@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from app.evaluation.service import EvalRequest, EvalSuiteResult, run_eval_suite
-from app.generation.service import DraftRequest, generate_draft
+from app.generation.service import EVAL_SEED, DraftRequest, generate_draft
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 
@@ -18,9 +18,22 @@ def _generate_for_eval(
     database_url: str,
     configs_dir: Path,
 ) -> dict[str, Any]:
-    """Wrap generate_draft for the eval runner interface."""
+    """Wrap generate_draft for the eval runner interface.
+
+    Deterministic eval (b170): greedy (temperature=0) + a fixed seed and no
+    cloud fallback so a re-run of the suite yields the same scorecard. This is
+    the eval table (``run_eval_suite``), not the golden gate, but it is still
+    an eval path — pinning it keeps eval numbers reproducible. Production
+    drafting goes through generate_draft with deterministic left False and is
+    unchanged.
+    """
     response = generate_draft(
-        DraftRequest(inbound_message=prompt_text),
+        DraftRequest(
+            inbound_message=prompt_text,
+            deterministic=True,
+            seed=EVAL_SEED,
+            no_cloud_fallback=True,
+        ),
         database_url=database_url,
         configs_dir=configs_dir,
     )

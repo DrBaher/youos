@@ -186,7 +186,7 @@ def main() -> None:
     parser.add_argument("--db-path", type=Path, default=resolve_sqlite_path(get_settings().database_url))
     args = parser.parse_args()
 
-    from app.generation.service import DraftRequest, generate_draft
+    from app.generation.service import EVAL_SEED, DraftRequest, generate_draft
 
     database_url = f"sqlite:///{args.db_path}"
     # Instance-aware: use the active instance's configs, not the repo's.
@@ -194,7 +194,15 @@ def main() -> None:
 
     def _generate(prompt_text, *, database_url, configs_dir):
         response = generate_draft(
-            DraftRequest(inbound_message=prompt_text),
+            # Deterministic eval (b170): greedy + fixed seed + no cloud
+            # fallback so re-running the golden suite yields the same
+            # composite. Eval-path only; production drafting is unchanged.
+            DraftRequest(
+                inbound_message=prompt_text,
+                deterministic=True,
+                seed=EVAL_SEED,
+                no_cloud_fallback=True,
+            ),
             database_url=database_url,
             configs_dir=configs_dir,
         )
