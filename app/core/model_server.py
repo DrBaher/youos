@@ -37,11 +37,32 @@ _lock = threading.Lock()
 _started_adapter_sig: float | None = None
 
 
+def _safetensors_ok(path) -> bool:
+    """Cheap structural validity check for a ``.safetensors`` file — its 8-byte
+    little-endian header length plus a JSON-parseable header — WITHOUT loading
+    mlx. A killed / disk-full / sleep-mid-train finetune can leave a truncated
+    adapters.safetensors in the live dir; this keeps the warm server from loading
+    it (and wedging all drafting) — it falls back to the base model instead (b163)."""
+    try:
+        size = path.stat().st_size
+        if size < 8:
+            return False
+        with open(path, "rb") as f:
+            n = int.from_bytes(f.read(8), "little")
+            if n <= 0 or 8 + n > size:
+                return False
+            header = f.read(n)
+        json.loads(header)  # the header must be valid JSON
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def _adapter_sig() -> float | None:
-    """A signature (mtime) of the global adapter, or None if untrained."""
+    """A signature (mtime) of the global adapter, or None if untrained/corrupt."""
     a = get_adapter_path() / "adapters.safetensors"
     try:
-        return a.stat().st_mtime if a.exists() else None
+        return a.stat().st_mtime if (a.exists() and _safetensors_ok(a)) else None
     except OSError:
         return None
 
@@ -70,9 +91,11 @@ def _base_url() -> str:
 
 
 def _adapter_arg() -> str | None:
-    """The global adapter path if one is trained, else None (base model)."""
+    """The global adapter path if one is trained AND structurally valid, else None
+    (base model) — never hand mlx_lm.server a truncated adapter to choke on (b163)."""
     adapter = get_adapter_path()
-    return str(adapter) if (adapter / "adapters.safetensors").exists() else None
+    a = adapter / "adapters.safetensors"
+    return str(adapter) if (a.exists() and _safetensors_ok(a)) else None
 
 
 def model_label() -> str:
