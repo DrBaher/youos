@@ -53,10 +53,26 @@ def summarize_draft_events(database_url: str) -> dict:
     under (intent, sender_type, confidence, length_flag). This summarizes them
     so the loop can see *where* drafting is weak — e.g. an intent whose drafts
     are frequently off the target length, or a cohort that draws mostly
-    low-confidence retrieval. Where a draft can be matched to an edit outcome
-    (a best-effort join to ``draft_history`` on inbound+draft text), it also
-    reports the average edit distance by condition. The model's own drafts are
-    never training targets; this is analysis/observability for the loop.
+    low-confidence retrieval. Where a draft can be matched to a real edit
+    outcome, it also reports the average edit distance by condition.
+
+    Outcome linkage (b167): the ground-truth edit signal — what the user
+    *actually* sent vs. the draft — lives in ``feedback_pairs.edit_distance_pct``
+    (~70k rows on a live instance, organic-backfilled from real sent mail), NOT
+    in ``draft_history`` (a near-empty legacy table whose ``edit_distance_pct``
+    is effectively never populated, so the old join matched 0 and the outcome
+    dicts were always ``{}``). The only stable key shared by ``draft_events`` and
+    ``feedback_pairs`` is ``inbound_text``: the draft *text* differs between them
+    (``draft_events`` logs the produced draft; ``feedback_pairs.generated_draft``
+    is the organic/full reply), so an inbound+draft join still matches ~nothing.
+    We therefore join on ``inbound_text`` alone, first collapsing
+    ``feedback_pairs`` to one mean edit-distance per inbound so the
+    many-feedback-rows-per-inbound fan-out can't double-count a cohort. ``matched``
+    is an honest coverage counter (distinct ``draft_events`` rows that found any
+    outcome) so a low/zero join rate stays visible, not silently swallowed.
+
+    The model's own drafts are never training targets; this is
+    analysis/observability for the loop.
     """
     from app.db.bootstrap import resolve_sqlite_path
 
@@ -109,32 +125,44 @@ def summarize_draft_events(database_url: str) -> dict:
         except sqlite3.OperationalError:
             pass
 
-        # Best-effort outcome correlation: join to draft_history on the only
-        # available linkage (inbound + draft text). Not unique — same draft can
-        # recur — so this is indicative, not exact; `matched` reports coverage.
+        # Outcome correlation (b167): join draft_events -> feedback_pairs on the
+        # only stable shared key (inbound_text). feedback_pairs is first collapsed
+        # to one mean edit-distance per inbound (CTE `outcome_by_inbound`) so the
+        # many-rows-per-inbound fan-out can't inflate a cohort's `n` or skew its
+        # average. The draft *text* is deliberately NOT part of the join: it
+        # differs between the tables (see docstring), so an inbound+draft join
+        # matches ~nothing — which was the original always-zero bug.
+        _OUTCOME_CTE = (
+            "WITH outcome_by_inbound AS ("
+            "  SELECT inbound_text, AVG(edit_distance_pct) AS ed"
+            "  FROM feedback_pairs"
+            "  WHERE edit_distance_pct IS NOT NULL"
+            "  GROUP BY inbound_text"
+            ")"
+        )
         for key, col in (("avg_edit_distance_by_sender_type", "sender_type"), ("avg_edit_distance_by_confidence", "confidence")):
             try:
                 rows = conn.execute(
-                    f"""SELECT COALESCE(de.{col}, 'unknown') AS k,
-                               ROUND(AVG(dh.edit_distance_pct), 3) AS avg_ed,
+                    f"""{_OUTCOME_CTE}
+                        SELECT COALESCE(de.{col}, 'unknown') AS k,
+                               ROUND(AVG(o.ed), 3) AS avg_ed,
                                COUNT(*) AS n
                         FROM draft_events de
-                        JOIN draft_history dh
-                          ON de.inbound_text = dh.inbound_text
-                         AND de.generated_draft = dh.generated_draft
-                        WHERE dh.edit_distance_pct IS NOT NULL
+                        JOIN outcome_by_inbound o
+                          ON de.inbound_text = o.inbound_text
                         GROUP BY k""",  # noqa: S608
                 ).fetchall()
                 summary["outcome"][key] = {str(r["k"]): {"avg_edit_distance": r["avg_ed"], "n": int(r["n"])} for r in rows}
             except sqlite3.OperationalError:
                 pass
 
+        # Honest coverage: distinct draft_events rows that found ANY outcome.
+        # A zero here means the join isn't landing — surfaced, not swallowed.
         try:
             matched = conn.execute(
-                """SELECT COUNT(*) FROM draft_events de
-                   JOIN draft_history dh
-                     ON de.inbound_text = dh.inbound_text AND de.generated_draft = dh.generated_draft
-                   WHERE dh.edit_distance_pct IS NOT NULL"""
+                f"""{_OUTCOME_CTE}
+                   SELECT COUNT(*) FROM draft_events de
+                   JOIN outcome_by_inbound o ON de.inbound_text = o.inbound_text"""
             ).fetchone()[0]
             summary["outcome"]["matched"] = int(matched)
         except sqlite3.OperationalError:
