@@ -187,6 +187,15 @@ class DraftRequest:
     # an error placeholder rather than falling back. Interactive /feedback
     # is unaffected; this is strictly per-request.
     strict_local: bool = False
+    # Eval-only: an empty local-model output must NOT shell out to the (slow,
+    # possibly-unauthenticated) Claude CLI. The autoresearch/golden eval sets
+    # this so a degenerate empty draft is recorded as empty/failed and the suite
+    # moves on, instead of throwing 200× `claude CLI failed (exit 1)` in the
+    # launchd environment where the cloud CLI isn't logged in. Distinct from
+    # ``strict_local`` (an agent-safety control) so the two intents stay
+    # independent; either one disables the cloud fallback. Production drafting
+    # leaves this False and keeps its normal fallback behavior. (b168)
+    no_cloud_fallback: bool = False
     # When False, bypass the exemplar cache so this draft reflects the CURRENT
     # retrieval config rather than a previously-cached exemplar selection. The
     # autoresearch eval sets this False — otherwise the cache pins the same
@@ -2193,6 +2202,13 @@ def generate_draft(
     # Acts BELOW the backend_override (the cross-model comparison takes
     # precedence — that one explicitly wants to compare each backend).
     if getattr(request, "strict_local", False) and not request.backend_override:
+        fallback_model = "none"
+    # b168: eval-only no-cloud-fallback. Forces fallback_model='none' for the
+    # autoresearch/golden eval so an empty local output fails soft (raises here,
+    # caught per-case by run_eval_suite → empty draft) instead of shelling to the
+    # unauthenticated Claude CLI 200× per run. Like strict_local, this sits below
+    # backend_override (the cross-model comparison explicitly wants each backend).
+    if getattr(request, "no_cloud_fallback", False) and not request.backend_override:
         fallback_model = "none"
     candidates: list[dict[str, Any]] = []
     try:
