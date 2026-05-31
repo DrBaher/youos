@@ -167,25 +167,102 @@ def _ensure_within(root: Path, candidate: Path) -> Path:
     return resolved
 
 
-def create_snapshot(db_path: Path, *, tier: str = "manual") -> Path:
-    _validate_tier(tier)
-    now = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    out_dir = _snapshot_root(db_path) / tier
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"youos-{now}.db"
+def _utc_stamp() -> str:
+    """Timestamp with sub-second precision for snapshot filenames.
 
-    conn = sqlite3.connect(db_path)
+    The old ``%Y%m%d-%H%M%S`` (1-second granularity) let two snapshots — or two
+    pre-restore backups — created in the same second collide on filename and
+    silently overwrite each other. A restore completes in ~3ms, so two
+    back-to-back restores land in the same second by default and the pre-restore
+    backup (the only copy of the live DB) was being destroyed (b152)."""
+    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+
+
+def _fsync_path(path: Path) -> None:
+    """Best-effort fsync so a complete snapshot survives a crash (durability)."""
     try:
-        conn.execute("PRAGMA wal_checkpoint(FULL)")
-        backup_conn = sqlite3.connect(out_path)
+        fd = os.open(path, os.O_RDONLY)
         try:
-            conn.backup(backup_conn)
+            os.fsync(fd)
         finally:
-            backup_conn.close()
+            os.close(fd)
+    except OSError:
+        pass
+
+
+def _atomic_db_copy(db_path: Path, final_path: Path) -> None:
+    """Write a WAL-consistent, integrity-checked copy of ``db_path`` to
+    ``final_path`` *atomically*.
+
+    The copy is written to an ``O_EXCL`` temp in the same directory, verified
+    with ``quick_check``, fsynced, then ``os.replace``'d into ``final_path`` —
+    so only a complete, valid DB ever appears under the final name. A crash
+    mid-write leaves only a ``.tmp`` (which the ``youos-*.db`` glob ignores)
+    rather than a 0-byte file that ``restore`` would later treat as a valid,
+    empty DB and silently restore over live data. ``O_EXCL`` also means a
+    symlink planted at the temp path raises rather than redirecting the copy."""
+    tmp_path = final_path.with_name(final_path.name + ".tmp")
+    fd = os.open(tmp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(fd)
+    try:
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("PRAGMA wal_checkpoint(FULL)")
+            dst = sqlite3.connect(tmp_path)
+            try:
+                conn.backup(dst)
+                ok = dst.execute("PRAGMA quick_check").fetchone()
+                if not ok or ok[0] != "ok":
+                    raise sqlite3.DatabaseError(f"snapshot failed integrity check: {ok}")
+            finally:
+                dst.close()
+        finally:
+            conn.close()
+        _fsync_path(tmp_path)
+        os.replace(tmp_path, final_path)
+    except BaseException:
+        try:
+            tmp_path.unlink(missing_ok=True)  # never leave a half-written temp behind
+        except OSError:
+            pass
+        raise
+    _chmod_600(final_path)  # the copy is a full email DB
+
+
+def _assert_restorable(snapshot_path: Path) -> None:
+    """Refuse to restore a snapshot that would silently wipe the live DB.
+
+    A 0-byte file (e.g. left by a crash mid-create before atomic writes existed,
+    or any externally-truncated file) opens as a *valid but empty* SQLite DB —
+    ``quick_check`` reports 'ok' and restoring it discards all real data. So we
+    reject an empty file, a file that fails ``quick_check``, and a DB with no
+    user tables, BEFORE touching the live DB. We deliberately do NOT require the
+    full ``_REQUIRED_TABLES`` set — a legitimate snapshot may predate a table —
+    only that the snapshot carries real schema, which the wipe-case never does."""
+    if snapshot_path.stat().st_size == 0:
+        raise ValueError(f"Refusing to restore an empty snapshot: {snapshot_path}")
+    conn = sqlite3.connect(snapshot_path)
+    try:
+        ok = conn.execute("PRAGMA quick_check").fetchone()
+        if not ok or ok[0] != "ok":
+            raise ValueError(f"Snapshot failed integrity check ({ok}): {snapshot_path}")
+        tables = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchone()[0]
+        if not tables:
+            raise ValueError(f"Refusing to restore a snapshot with no tables: {snapshot_path}")
     finally:
         conn.close()
 
-    _chmod_600(out_path)  # the snapshot is a full copy of the email DB
+
+def create_snapshot(db_path: Path, *, tier: str = "manual") -> Path:
+    _validate_tier(tier)
+    out_dir = _snapshot_root(db_path) / tier
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # Sub-second stamp + random suffix so same-second snapshots never collide;
+    # _atomic_db_copy makes the write atomic + integrity-checked.
+    out_path = out_dir / f"youos-{_utc_stamp()}-{os.urandom(3).hex()}.db"
+    _atomic_db_copy(db_path, out_path)
     return out_path
 
 
@@ -275,24 +352,21 @@ def restore_snapshot(db_path: Path, snapshot_path: Path, *, dry_run: bool = Fals
     if not snapshot_path.exists():
         raise FileNotFoundError(f"Snapshot not found: {snapshot_path}")
 
-    backup_path = db_path.parent / f"youos.pre-restore-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.db"
+    # Validate the snapshot BEFORE we overwrite the live DB — a 0-byte/corrupt
+    # snapshot would otherwise silently wipe real data.
+    _assert_restorable(snapshot_path)
+
+    # Sub-second + random name so a 2nd restore in the same second can't clobber
+    # this backup — it's the user's ONLY copy of the current live DB.
+    backup_path = db_path.parent / f"youos.pre-restore-{_utc_stamp()}-{os.urandom(4).hex()}.db"
     if dry_run:
         return backup_path
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
     if db_path.exists():
-        # Use the SQLite backup API so the pre-restore copy is consistent even
-        # when the DB is in WAL mode (a plain file copy can miss WAL contents).
-        src = sqlite3.connect(db_path)
-        try:
-            dst = sqlite3.connect(backup_path)
-            try:
-                src.backup(dst)
-            finally:
-                dst.close()
-        finally:
-            src.close()
-        _chmod_600(backup_path)
+        # Atomic, O_EXCL, WAL-consistent: never silently overwrite an existing
+        # pre-restore backup, and never truncate it on a crash mid-write.
+        _atomic_db_copy(db_path, backup_path)
 
     # Restore via the SQLite backup API, NOT shutil.copy2. Copying the snapshot
     # over a live WAL DB leaves the old youos.db-wal/-shm sidecars in place, and
