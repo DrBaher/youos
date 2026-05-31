@@ -32,6 +32,15 @@ DEFAULT_DB = resolve_sqlite_path(get_settings().database_url)
 
 ACCOUNTS = get_ingestion_accounts()
 
+# Aspirational quality TARGET for the golden-eval step's reported pass/fail.
+# step_golden_eval returns True only when the post-finetune composite clears
+# this; the log line and the returned/JSON result are kept consistent (b170).
+# This is a "are we at the quality target yet" SIGNAL — it is NOT the adapter
+# promotion threshold. Promotion is a separate don't-regress decision (see
+# app.evaluation.promotion): a sub-target but non-regressing adapter is still
+# SERVED so the self-improvement loop keeps moving. The two legitimately differ.
+GOLDEN_PASS_BAR = 0.5
+
 
 def _run_step(name: str, cmd: list[str], timeout: int = 600) -> bool:
     """Run a subprocess step. Returns True on success."""
@@ -601,7 +610,7 @@ def _count_feedback_pairs(db_path: Path) -> int:
 
 
 def step_golden_eval(verbose: bool = False) -> bool:
-    """Run golden evaluation and return True if composite score >= 0.5."""
+    """Run golden evaluation and return True iff composite >= GOLDEN_PASS_BAR."""
 
     # Skip if DB doesn't exist or < 5 feedback pairs
     if not DEFAULT_DB.exists():
@@ -617,7 +626,7 @@ def step_golden_eval(verbose: bool = False) -> bool:
 
     try:
         from app.core.settings import get_settings
-        from app.generation.service import DraftRequest, generate_draft
+        from app.generation.service import EVAL_SEED, DraftRequest, generate_draft
         from scripts.run_golden_eval import run_golden_eval, save_results
 
         # Build a REAL generator. The bug: run_golden_eval() was called with no
@@ -631,7 +640,21 @@ def step_golden_eval(verbose: bool = False) -> bool:
 
         def _generate(prompt_text, *, database_url, configs_dir):
             response = generate_draft(
-                DraftRequest(inbound_message=prompt_text),
+                # Deterministic eval (b170): force greedy + a fixed seed and
+                # disable cloud fallback so the golden composite the gate keys
+                # off is reproducible night-to-night (the golden-eval
+                # determinism deferred from b166, where only autoresearch's
+                # _generate_for_eval got these). Scoped to the eval path only —
+                # production drafting leaves deterministic False and is
+                # unchanged. no_cloud_fallback mirrors b168: an empty local
+                # draft must be recorded as a fail, not bounced to the
+                # (unauthenticated under launchd) Claude CLI.
+                DraftRequest(
+                    inbound_message=prompt_text,
+                    deterministic=True,
+                    seed=EVAL_SEED,
+                    no_cloud_fallback=True,
+                ),
                 database_url=database_url,
                 configs_dir=configs_dir,
             )
@@ -664,8 +687,21 @@ def step_golden_eval(verbose: bool = False) -> bool:
                 f"Refusing to trust this eval."
             )
             return False
-        print("  [OK] Golden evaluation completed")
-        return composite >= 0.5
+        # Honest reporting (b170): print [OK] only when the composite actually
+        # clears the quality TARGET; otherwise [WARN]. Previously [OK] was
+        # printed unconditionally even when this returned False, so the log said
+        # "[OK] completed" while the JSON recorded golden_eval=WARN — misleading.
+        # NOTE: this target is the "are we there yet" signal, NOT the promotion
+        # gate. A sub-target composite warns here but the adapter can still be
+        # SERVED (kept) by the non-regression promotion gate below — the two
+        # answer different questions, so [WARN] below target alongside a kept
+        # adapter is expected and correct.
+        passed_bar = composite >= GOLDEN_PASS_BAR
+        if passed_bar:
+            print(f"  [OK] Golden evaluation passed: composite {composite:.2f} >= target {GOLDEN_PASS_BAR}")
+        else:
+            print(f"  [WARN] golden composite {composite:.2f} below target {GOLDEN_PASS_BAR} (quality target, not the promotion gate)")
+        return passed_bar
     except Exception as exc:
         print(f"  [WARN] Golden evaluation failed: {exc}")
         return False

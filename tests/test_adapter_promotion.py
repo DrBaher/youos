@@ -11,12 +11,40 @@ from app.evaluation.promotion import (
 
 
 def test_should_promote_improve_hold_regress():
-    assert should_promote(0.50, 0.45)[0] is True          # improved
-    assert should_promote(0.44, 0.45)[0] is True          # held within tolerance
-    assert should_promote(0.40, 0.45)[0] is False         # regressed past tolerance
-    # Missing values → keep (no basis to reject).
-    assert should_promote(None, 0.45)[0] is True
+    # Relative (non-regression) gate: improve / hold-within-tolerance / regress.
+    assert should_promote(0.60, 0.55)[0] is True          # improved
+    assert should_promote(0.54, 0.55)[0] is True          # held within tolerance
+    assert should_promote(0.50, 0.55)[0] is False         # regressed past tolerance
+    # Missing values → keep (no basis to reject — cold start / eval unavailable).
+    assert should_promote(None, 0.55)[0] is True
     assert should_promote(0.4, None)[0] is True
+
+
+def test_should_promote_keeps_warm_sub_target_non_regressing():
+    """b170 revision: promotion serves the BEST-AVAILABLE adapter. A WARM-path
+    candidate that holds vs baseline is KEPT even when it is below the 0.5
+    quality target (live composites sit ~0.30) — rolling it back would freeze
+    the self-improvement loop. Only a genuine REGRESSION is rolled back."""
+    ok, reason = should_promote(0.30, 0.28)  # sub-target, doesn't regress → kept
+    assert ok is True
+    assert "kept" in reason
+    assert "below target" in reason
+    # A real regression past tolerance is still rolled back.
+    assert should_promote(0.20, 0.40)[0] is False
+    # Cold start: no baseline → still promote.
+    assert should_promote(0.30, None)[0] is True
+
+
+def test_should_promote_min_floor_disabled_by_default():
+    """The default safety floor is disabled (0.0) so the warm path is a pure
+    non-regression gate; it must NOT default to the 0.5 quality target."""
+    from app.evaluation.promotion import DEFAULT_MIN_FLOOR
+
+    assert DEFAULT_MIN_FLOOR == 0.0
+    # An explicit safety floor can still reject a genuinely broken adapter.
+    ok, reason = should_promote(0.05, 0.04, min_floor=0.1)
+    assert ok is False
+    assert "safety floor" in reason
 
 
 def test_should_promote_refuses_on_degenerate_eval():
