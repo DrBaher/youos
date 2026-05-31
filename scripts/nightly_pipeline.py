@@ -671,14 +671,30 @@ def step_golden_eval(verbose: bool = False) -> bool:
         return False
 
 
+# Wall-clock budget for autoresearch (b168). Comfortably under the subprocess
+# kill below so the loop stops itself and writes its partial run log before the
+# OS would kill it (and lose all results).
+_AUTORESEARCH_MAX_SECONDS = 6000
+_AUTORESEARCH_SUBPROCESS_TIMEOUT = 7200
+# Iteration cap. There are ~24 mutable surfaces (app/autoresearch/mutator.py);
+# the baseline eval counts as iteration 1, so 30 covers every surface once with
+# headroom. The old value of 80 was meaningless — the loop runs out of surfaces
+# long before reaching it, it just made the worst case look unbounded.
+_AUTORESEARCH_MAX_ITER = 30
+
+
 def step_autoresearch(verbose: bool = False) -> bool:
     """Run autoresearch optimization loop."""
     # Rotate benchmarks if stale
     _check_benchmark_rotation()
     return _run_step(
         "Autoresearch",
-        [sys.executable, str(ROOT_DIR / "scripts" / "run_autoresearch.py"), "--max-iter", "80"],
-        timeout=7200,
+        [
+            sys.executable, str(ROOT_DIR / "scripts" / "run_autoresearch.py"),
+            "--max-iter", str(_AUTORESEARCH_MAX_ITER),
+            "--max-seconds", str(_AUTORESEARCH_MAX_SECONDS),
+        ],
+        timeout=_AUTORESEARCH_SUBPROCESS_TIMEOUT,
     )
 
 
