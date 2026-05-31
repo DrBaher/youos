@@ -1153,6 +1153,244 @@ def _log_draft_event(
         return False
 
 
+EOS_TOKEN = "<|im_end|>"
+
+
+def _chat_stop_sequences(stop: list[str] | None = None) -> list[str]:
+    """Decode-time stop sequences for the local chat model (b173).
+
+    ``<|im_end|>`` is the ChatML end-of-turn token the adapter was trained to
+    emit; stopping there is the primary fix for the run-on bracket documents.
+    The remaining guards (``\n[``, ``\nSubject:``, ``\n---``) are
+    belt-and-suspenders against a base-without-adapter slipping a
+    document-shaped continuation through.
+    """
+    seqs = [EOS_TOKEN, "\n[", "\nSubject:", "\n---"]
+    for x in stop or []:
+        if x and x not in seqs:
+            seqs.append(x)
+    return seqs
+
+
+def _split_chat_messages(messages: list[dict[str, str]]) -> tuple[str, str]:
+    """Return ``(system_text, user_text)`` from a ``[system, user]`` list."""
+    system_text = ""
+    user_text = ""
+    for m in messages or []:
+        role = m.get("role")
+        content = m.get("content") or ""
+        if role == "system":
+            system_text = content
+        elif role == "user":
+            user_text = content
+    return system_text, user_text
+
+
+def assemble_chat_messages(
+    *,
+    inbound_message: str,
+    reply_pairs: list[RetrievalMatch],
+    persona: dict[str, Any],
+    prompts: dict[str, str],
+    detected_mode: str | None = None,
+    audience_hint: str | None = None,
+    tone_hint: str | None = None,
+    sender_context: str | None = None,
+    language_hint: str | None = None,
+    intent_hint: str | None = None,
+    sender_type: str | None = None,
+    first_name: str | None = None,
+    memory_facts: list[dict[str, Any]] | None = None,
+    score_stats: dict[str, float] | None = None,
+    subject: str | None = None,
+    user_prompt: str | None = None,
+    extra_constraint: str | None = None,
+) -> list[dict[str, str]]:
+    """Build ChatML ``[{system}, {user}]`` for the local chat model (b173).
+
+    Mirrors how the fine-tuning corpus was built
+    (scripts/export_feedback_jsonl.build_record: a system turn carrying the
+    persona/style/grounding/language and a user turn carrying the inbound
+    message). Inference now uses the SAME shape the adapter was trained on, so
+    the model emits a bare reply and halts at ``<|im_end|>`` instead of
+    mimicking the old ``[SYSTEM]/[EXEMPLARS]/[EXAMPLE i]/[REPLY]`` bracket
+    document and never stopping.
+
+    The persona/style/context information is identical to ``assemble_prompt``
+    but expressed as plain system-message prose (no bracket markers). The
+    per-exemplar ``Inbound:/Your reply:/---`` scaffold is intentionally DROPPED
+    from the prompt: training had no exemplars in the messages, so omitting
+    them makes inference more like training, and the adapter already encodes
+    the user's voice. The untrusted inbound is the user turn (markers there are
+    still neutralized so they can't inject a fake instruction block).
+    """
+    system_text = _assemble_system_text(
+        persona=persona,
+        prompts=prompts,
+        detected_mode=detected_mode,
+        audience_hint=audience_hint,
+        tone_hint=tone_hint,
+        sender_context=sender_context,
+        language_hint=language_hint,
+        intent_hint=intent_hint,
+        sender_type=sender_type,
+        first_name=first_name,
+        memory_facts=memory_facts,
+        user_prompt=user_prompt,
+        extra_constraint=extra_constraint,
+        inbound_message=inbound_message,
+        include_exemplar_hint=bool(reply_pairs),
+    )
+    user_text = neutralize_prompt_markers(inbound_message)
+    if subject:
+        user_text = f"Subject: {neutralize_prompt_markers(subject)}\n\n{user_text}"
+    return [
+        {"role": "system", "content": system_text},
+        {"role": "user", "content": user_text},
+    ]
+
+
+def _assemble_system_text(
+    *,
+    persona: dict[str, Any],
+    prompts: dict[str, str],
+    detected_mode: str | None,
+    audience_hint: str | None,
+    tone_hint: str | None,
+    sender_context: str | None,
+    language_hint: str | None,
+    intent_hint: str | None,
+    sender_type: str | None,
+    first_name: str | None,
+    memory_facts: list[dict[str, Any]] | None,
+    user_prompt: str | None,
+    extra_constraint: str | None,
+    inbound_message: str,
+    include_exemplar_hint: bool,
+) -> str:
+    """Persona/style/grounding/task as plain prose (no bracket scaffold) for the
+    ChatML system turn. Same information content as ``assemble_prompt`` minus
+    the bracket markers and the per-exemplar block."""
+    style = persona.get("style", {})
+    voice = style.get("voice", "direct, clear, pragmatic")
+    avg_words = style.get("avg_reply_words")
+    constraints = style.get("constraints", [])
+    if intent_hint and intent_hint != "general":
+        intent_avg = style.get("intent_avg_words", {})
+        if isinstance(intent_avg, dict) and intent_hint in intent_avg:
+            avg_words = intent_avg[intent_hint]
+    system = prompts.get(
+        "system_prompt",
+        "You are YouOS, a local-first email copilot.",
+    )
+    _suffix = prompts.get("system_prompt_suffix", "")
+    if _suffix and _suffix.strip():
+        system = f"{system.rstrip()}\n{_suffix.strip()}"
+
+    persona_lines: list[str] = [f"Persona: {voice}."]
+    if avg_words:
+        persona_lines.append(f"Target reply length: ~{avg_words} words.")
+    for c in constraints:
+        persona_lines.append(f"- {c}")
+    bullet_pct = style.get("bullet_point_pct")
+    if bullet_pct is not None and bullet_pct > 0.4:
+        persona_lines.append("- prefer bullet points for multi-item responses")
+    directness = style.get("directness_score")
+    if directness is not None and directness > 0.8:
+        persona_lines.append("- be direct, avoid hedging")
+    avg_para = style.get("avg_paragraphs")
+    if avg_para is not None and avg_para > 2:
+        persona_lines.append("- use clear paragraph breaks")
+    if extra_constraint:
+        persona_lines.append(f"- {extra_constraint}")
+    persona_block = "\n".join(persona_lines)
+
+    style_anchor_block = ""
+    if sender_type:
+        style_anchor = get_persona_style_anchor(sender_type)
+        if style_anchor:
+            style_anchor_block = f"\nStyle anchor ({sender_type}):\n{style_anchor.strip()}\n"
+
+    context_lines: list[str] = []
+    if detected_mode:
+        context_lines.append(f"Detected mode: {detected_mode}")
+    if audience_hint:
+        context_lines.append(f"Audience: {audience_hint}")
+    if intent_hint and intent_hint != "general":
+        context_lines.append(f"Email intent: {intent_hint}")
+    if _has_thread_context(inbound_message):
+        context_lines.append(
+            "Note: This inbound message contains a multi-message thread. "
+            "Consider the full conversation context when drafting your reply."
+        )
+    context_block = ""
+    if context_lines:
+        context_block = "\n" + "\n".join(context_lines) + "\n"
+
+    tone_instruction = ""
+    if tone_hint:
+        if tone_hint in _TONE_INSTRUCTIONS:
+            tone_instruction = f"\n{_TONE_INSTRUCTIONS[tone_hint]}\n"
+        else:
+            tone_instruction = f"\nTone guidance: {tone_hint}\n"
+
+    custom_instruction = ""
+    if user_prompt and user_prompt.strip():
+        custom_instruction = f"\nAdditional user instruction: {user_prompt.strip()}\n"
+
+    sender_block = ""
+    if sender_context:
+        sender_block = f"\n{sender_context}\n"
+
+    facts_block = ""
+    if memory_facts:
+        facts_block = f"\n{_format_facts_context(memory_facts)}\n"
+
+    language_block = ""
+    if language_hint and language_hint != "en":
+        language_block = "\nReply in the same language as the inbound message.\n"
+
+    grounding_block = ""
+    if _inbound_requests_fact(inbound_message):
+        grounding_block = f"\n{_GROUNDING_RULE}\n"
+
+    style_hint = ""
+    if include_exemplar_hint:
+        style_hint = (
+            "\nWrite in your own established voice and tone "
+            "(already learned from your past replies).\n"
+        )
+
+    result = (
+        f"{system.strip()}\n"
+        f"{persona_block}\n"
+        f"{context_block}"
+        f"{style_anchor_block}"
+        f"{sender_block}"
+        f"{facts_block}"
+        f"{language_block}"
+        f"{grounding_block}"
+        f"{style_hint}"
+        f"\n"
+        f"Draft a reply to the inbound message below in your style.\n"
+        f"Output the draft reply text only. No preamble, no explanation.\n"
+        f"{tone_instruction}"
+        f"{custom_instruction}"
+    )
+    if avg_words:
+        p25 = style.get("avg_reply_words_p25")
+        p75 = style.get("avg_reply_words_p75")
+        if p25 is not None and p75 is not None:
+            result += f"\nTarget length: ~{avg_words} words (typical range: {p25}–{p75}). Be concise.\n"
+        else:
+            result += f"\nTarget length: ~{avg_words} words. Be concise.\n"
+    greeting = _resolve_greeting(persona, sender_type, first_name)
+    closing = _resolve_closing(persona, sender_type)
+    if greeting and closing:
+        result += f"\nBegin your reply with: {greeting}\nEnd your reply with: {closing}\n"
+    return result.strip()
+
+
 def assemble_prompt(
     *,
     inbound_message: str,
@@ -1710,7 +1948,7 @@ def _strip_mlx_output(raw: str) -> str:
 
 
 def _call_local_model(
-    prompt: str,
+    prompt: str | list[dict[str, str]],
     *,
     max_tokens: int = 300,
     use_adapter: bool = True,
@@ -1720,6 +1958,16 @@ def _call_local_model(
     seed: int | None = None,
 ) -> str:
     """Run mlx_lm against the base model, optionally with a LoRA adapter.
+
+    ``prompt`` is either a ChatML messages list (``[{system}, {user}]`` — the
+    format the adapter was fine-tuned on, used for drafting) or a raw completion
+    string (used only by the tiny subject-suggestion helper). For messages,
+    generation is driven through the model's chat template — the warm
+    ``/v1/chat/completions`` endpoint, or ``mlx_lm generate
+    --system-prompt/--prompt`` WITHOUT ``--ignore-chat-template`` — and stopped
+    at ``<|im_end|>`` (b173). This aligns inference with training: the model
+    emits a bare reply and halts at end-of-turn instead of mimicking the old
+    ``[SYSTEM]/[EXEMPLARS]/[REPLY]`` bracket document and running on.
 
     `adapter_path` overrides the global ADAPTER_PATH — used by Phase-3
     persona routing to point at `<models>/adapters/personas/<sender_type>/`
@@ -1732,6 +1980,9 @@ def _call_local_model(
     mlx_lm CLI flag is ``--seed`` (verified against mlx-lm 0.31.3); combined
     with ``temperature=0`` this gives deterministic greedy/argmax decoding.
     """
+    is_chat = isinstance(prompt, list)
+    stop = _chat_stop_sequences() if is_chat else None
+
     # Prefer the warm server (no per-draft model reload) for the common case: the
     # global adapter (or base). It serves a single adapter loaded at startup, so a
     # per-persona adapter_path, or an explicit base request (use_adapter=False
@@ -1741,6 +1992,13 @@ def _call_local_model(
 
         if model_server.is_enabled() and model_server.ensure_running():
             try:
+                if is_chat:
+                    # Chat endpoint applies the model's chat template (matching
+                    # training) and stops at <|im_end|> via ``stop`` (b173).
+                    return model_server.chat_complete(
+                        prompt, max_tokens=max_tokens, temperature=temperature,
+                        top_p=top_p, seed=seed, stop=stop,
+                    )
                 return model_server.complete(
                     prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p, seed=seed
                 )
@@ -1756,14 +2014,27 @@ def _call_local_model(
     chosen_adapter = adapter_path if adapter_path is not None else (ADAPTER_PATH if use_adapter else None)
     if chosen_adapter is not None:
         cmd.extend(["--adapter-path", str(chosen_adapter)])
-    cmd.extend(
-        [
-            "--prompt",
-            prompt,
-            "--max-tokens",
-            str(max_tokens),
-        ]
-    )
+    if is_chat:
+        # Drive the subprocess through the chat template so inference matches
+        # training: --system-prompt + --prompt are rendered with the model's
+        # ChatML template (we do NOT pass --ignore-chat-template), and
+        # --extra-eos-token <|im_end|> stops generation at end-of-turn instead
+        # of running on into a fabricated bracket document (b173).
+        system_text, user_text = _split_chat_messages(prompt)
+        cmd.extend(["--prompt", user_text])
+        if system_text:
+            cmd.extend(["--system-prompt", system_text])
+        cmd.extend(["--extra-eos-token", EOS_TOKEN])
+        cmd.extend(["--max-tokens", str(max_tokens)])
+    else:
+        cmd.extend(
+            [
+                "--prompt",
+                prompt,
+                "--max-tokens",
+                str(max_tokens),
+            ]
+        )
     # Only pass sampling flags when configured — omitting them preserves
     # mlx_lm's own defaults (the historical behavior).
     if temperature is not None:
@@ -2078,7 +2349,7 @@ def generate_draft(
     finally:
         shared_conn.close()
 
-    prompt = assemble_prompt(
+    messages = assemble_chat_messages(
         inbound_message=inbound_for_prompt,
         reply_pairs=reply_pairs,
         persona=persona,
@@ -2098,67 +2369,17 @@ def generate_draft(
         extra_constraint=extra_constraint,
     )
 
-    # Token budget check — greedy knapsack: calculate each exemplar cost once (P5)
-    token_estimate = _estimate_tokens(prompt)
-    if token_estimate > PROMPT_TOKEN_BUDGET and reply_pairs:
-        # Build base prompt without any exemplars to get baseline cost
-        base_prompt = assemble_prompt(
-            inbound_message=inbound_for_prompt,
-            reply_pairs=[],
-            persona=persona,
-            prompts=prompts,
-            detected_mode=detected_mode,
-            audience_hint=request.audience_hint,
-            tone_hint=request.tone_hint,
-            sender_context=sender_context,
-            language_hint=detected_lang,
-            intent_hint=detected_intent,
-            sender_type=sender_type_hint,
-            first_name=first_name,
-            memory_facts=memory_facts,
-            score_stats=score_stats,
-            subject=request.subject,
-            user_prompt=request.user_prompt,
-            extra_constraint=extra_constraint,
-        )
-        budget = PROMPT_TOKEN_BUDGET - _estimate_tokens(base_prompt)
-        used = 0
-        trimmed_pairs = []
-        # Trim by score (highest-relevance first) so the token budget keeps the
-        # best exemplars. reply_pairs may have been reordered cache-first by
-        # _apply_cached_order, which must not demote a high-score pair out of the
-        # budget — the cache is for consistency, not selection.
-        for rp in sorted(reply_pairs, key=lambda r: r.score, reverse=True):
-            inbound_ex = (rp.inbound_text or "")[:EXEMPLAR_INBOUND_CHARS]
-            reply_ex = strip_exemplar_signature(rp.reply_text or "")[:EXEMPLAR_REPLY_CHARS]
-            cost = _estimate_tokens(f"[EXAMPLE]\nInbound: {inbound_ex}\nYour reply: {reply_ex}\n---")
-            if used + cost <= budget:
-                trimmed_pairs.append(rp)
-                used += cost
-        removed = len(reply_pairs) - len(trimmed_pairs)
-        if removed:
-            logger.info("Prompt truncated: removed %d exemplars to fit token budget", removed)
-            reply_pairs = trimmed_pairs
-            prompt = assemble_prompt(
-                inbound_message=inbound_for_prompt,
-                reply_pairs=trimmed_pairs,
-                persona=persona,
-                prompts=prompts,
-                detected_mode=detected_mode,
-                audience_hint=request.audience_hint,
-                tone_hint=request.tone_hint,
-                sender_context=sender_context,
-                language_hint=detected_lang,
-                intent_hint=detected_intent,
-                sender_type=sender_type_hint,
-                first_name=first_name,
-                memory_facts=memory_facts,
-                score_stats=score_stats,
-                subject=request.subject,
-                user_prompt=request.user_prompt,
-                extra_constraint=extra_constraint,
-            )
-        token_estimate = _estimate_tokens(prompt)
+    # Token budget: estimate from the chat messages. Exemplars are no
+    # longer in the prompt (assemble_chat_messages drops them — the adapter
+    # already encodes the voice), so the old exemplar-trimming knapsack is
+    # obsolete; the system+user turns are what the model actually sees.
+    token_estimate = _estimate_tokens(
+        messages[0]["content"] + "\n" + messages[-1]["content"]
+    ) if messages else 0
+
+    # Flat-text prompt for non-chat fallback backends (ollama / claude CLI),
+    # which take a single string rather than ChatML messages.
+    prompt = (messages[0]["content"] + "\n\n" + messages[-1]["content"]) if messages else ""
 
     precedent_used = [_precedent_summary(rp) for rp in reply_pairs]
 
@@ -2227,7 +2448,7 @@ def generate_draft(
                 for t in mc["temperatures"]:
                     try:
                         d, mu = _local_draft_once(
-                            prompt, max_tokens=max_tokens, temperature=t, top_p=top_p,
+                            messages, max_tokens=max_tokens, temperature=t, top_p=top_p,
                             request=request, sender_type_hint=sender_type_hint,
                         )
                         raw.append((d, mu, t))
@@ -2249,7 +2470,7 @@ def generate_draft(
                 model_used = candidates[0]["model_used"]
             else:
                 draft, model_used = _local_draft_once(
-                    prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p,
+                    messages, max_tokens=max_tokens, temperature=temperature, top_p=top_p,
                     request=request, sender_type_hint=sender_type_hint, seed=eval_seed,
                 )
         elif fallback_model == "ollama":
@@ -2297,7 +2518,7 @@ def generate_draft(
         if any(tag in model_used for tag in ("qwen", "lora", "base")):
             try:
                 _rd, _rm = _local_draft_once(
-                    prompt, max_tokens=max_tokens, temperature=temperature, top_p=top_p,
+                    messages, max_tokens=max_tokens, temperature=temperature, top_p=top_p,
                     request=request, sender_type_hint=sender_type_hint, seed=eval_seed,
                 )
                 if not _is_empty_draft(_rd):
