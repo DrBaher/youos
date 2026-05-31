@@ -423,6 +423,71 @@ def _native_config() -> dict[str, Any]:
         return {}
 
 
+def _harden_token_dir(token_path: Path) -> None:
+    """Best-effort: ensure the token directory exists and is owner-only (0o700).
+
+    The default token dir lives under var/ (already 0o700), but a token dir
+    configured via ``ingestion.google_token_dir`` outside var/ would otherwise be
+    created world-traversable (0o755). 0o700 keeps another local user from
+    enumerating account filenames or pre-planting a symlink (b157)."""
+    try:
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(token_path.parent, 0o700)
+    except OSError:
+        pass
+
+
+# token-file -> verified identity, keyed by (path, mtime) so the getProfile call
+# validates each token version once rather than on every request.
+_VERIFIED_TOKEN_IDENTITY: dict[tuple[str, float], str] = {}
+
+
+def _gmail_profile_email(creds: Any) -> str | None:
+    """The email address the token actually authenticates as (Gmail getProfile),
+    lowercased; None if it can't be determined. Split out for injectability."""
+    from googleapiclient.discovery import build
+
+    gmail = build("gmail", "v1", credentials=creds, cache_discovery=False)
+    profile = gmail.users().getProfile(userId="me").execute()
+    email = profile.get("emailAddress")
+    return str(email).strip().lower() if email else None
+
+
+def _assert_token_account(creds: Any, account: str, token_path: Path) -> None:
+    """Verify the loaded OAuth token actually belongs to ``account`` (b157).
+
+    The native backend keys token files by account email but never checked that
+    the token INSIDE matches — a swapped or mis-consented token would silently
+    read/draft the WRONG mailbox. Verify identity via Gmail getProfile once per
+    token version (cached by path+mtime) and refuse on a definitive MISMATCH. An
+    inability to determine identity (transient profile error / libs absent) does
+    not fail an otherwise-valid token — only a real mismatch raises."""
+    want = account.strip().lower()
+    try:
+        mtime = token_path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    cache_key = (str(token_path), mtime)
+    cached = _VERIFIED_TOKEN_IDENTITY.get(cache_key)
+    if cached is not None:
+        if cached != want:
+            raise RuntimeError(
+                f"Stored Google token identity {cached!r} does not match requested account {account!r}; re-authorize."
+            )
+        return
+    try:
+        got = _gmail_profile_email(creds)
+    except Exception as exc:
+        logger.info("native token identity check skipped for %s: %s", account, exc)
+        return
+    if got and got != want:
+        raise RuntimeError(
+            f"Stored Google token identity {got!r} does not match requested account {account!r}; re-authorize."
+        )
+    if got:
+        _VERIFIED_TOKEN_IDENTITY[cache_key] = got
+
+
 class NativeSource:
     """Backend backed by the Google API directly — no external CLI.
 
@@ -490,10 +555,13 @@ class NativeSource:
         if not creds.valid:
             if creds.expired and creds.refresh_token:
                 creds.refresh(Request())
+                _harden_token_dir(token_path)
                 # 0o600: this file holds the OAuth refresh_token + client_secret.
                 write_secret(token_path, creds.to_json())
             else:
                 raise RuntimeError(f"Stored Google credentials for {account!r} are invalid; re-authorize.")
+        # Refuse a swapped / mis-consented token before reading the wrong mailbox.
+        _assert_token_account(creds, account, token_path)
         return creds
 
     def _service(self, account: str, api: str, version: str) -> Any:
@@ -523,7 +591,7 @@ class NativeSource:
         flow = InstalledAppFlow.from_client_secrets_file(secrets, scopes=list(_NATIVE_SCOPES))
         creds = flow.run_local_server(port=0)
         token_path = self._token_path(account)
-        token_path.parent.mkdir(parents=True, exist_ok=True)
+        _harden_token_dir(token_path)  # owner-only token dir (esp. if configured outside var/)
         # 0o600: this file holds the OAuth refresh_token + client_secret.
         write_secret(token_path, creds.to_json())
         return token_path
