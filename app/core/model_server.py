@@ -78,6 +78,48 @@ def get_server_config() -> dict:
     return {"enabled": bool(srv.get("enabled", True)), "port": int(srv.get("port", 8088))}
 
 
+# b174: Qwen3-4B-Instruct-2507 recommended sampling defaults + a sane max-tokens
+# cap for the warm server. These set the SERVER's per-request defaults (applied
+# only when a draft request omits the field); eval forces temp=0 + seed per
+# request and so is unaffected. Overridable via ``model.server`` config.
+_DEFAULT_TEMP = 0.7
+_DEFAULT_TOP_P = 0.8
+_DEFAULT_TOP_K = 20
+_DEFAULT_MIN_P = 0.0
+_DEFAULT_MAX_TOKENS = 1024
+
+
+def _server_launch_args() -> list[str]:
+    """Extra ``mlx_lm.server`` flags: Qwen3 default sampling + a max-tokens cap.
+
+    Read from ``model.server`` config so they're tunable without code changes,
+    falling back to the Qwen3-4B recommendations. Bounding ``--max-tokens``
+    keeps a runaway decode from growing the KV cache unbounded on a 16GB box;
+    Qwen3-4B's native context is 262K, far more than an email reply needs."""
+    from app.core.config import load_config
+
+    cfg = load_config() or {}
+    model = cfg.get("model", {}) if isinstance(cfg, dict) else {}
+    srv = model.get("server", {}) if isinstance(model, dict) else {}
+    srv = srv if isinstance(srv, dict) else {}
+
+    def _num(key, default):
+        try:
+            v = srv.get(key, default)
+            return default if v is None else v
+        except Exception:
+            return default
+
+    args = [
+        "--temp", str(_num("temp", _DEFAULT_TEMP)),
+        "--top-p", str(_num("top_p", _DEFAULT_TOP_P)),
+        "--top-k", str(int(_num("top_k", _DEFAULT_TOP_K))),
+        "--min-p", str(_num("min_p", _DEFAULT_MIN_P)),
+        "--max-tokens", str(int(_num("max_tokens", _DEFAULT_MAX_TOKENS))),
+    ]
+    return args
+
+
 def is_enabled() -> bool:
     return get_server_config()["enabled"]
 
@@ -90,17 +132,72 @@ def _base_url() -> str:
     return f"http://127.0.0.1:{_port()}"
 
 
+def _adapter_base_matches() -> bool:
+    """True if the global adapter's recorded base model matches the configured
+    base — or if no base is recorded (legacy adapter, can't prove a mismatch).
+
+    A LoRA adapter is bound to the exact base it was trained against: serving a
+    Qwen2.5-1.5B adapter on a Qwen3-4B base errors or produces garbage. The
+    train/promote path records ``base_model`` in the adapter's meta.json
+    (finetune_lora._write_meta); here we read it back and refuse the adapter when
+    it disagrees with the currently-configured base (b174). A missing/unreadable
+    meta is treated as a legacy adapter and allowed — the structural
+    safetensors check (b163) is the floor; this is the cross-base guard layered
+    on top so the changeover never serves a stale-base adapter."""
+    meta = get_adapter_path() / "meta.json"
+    try:
+        recorded = json.loads(meta.read_text(encoding="utf-8")).get("base_model")
+    except (OSError, ValueError):
+        return True  # no/garbage meta → legacy adapter, don't block on it
+    if not recorded:
+        return True
+    return str(recorded) == str(get_base_model())
+
+
 def _adapter_arg() -> str | None:
-    """The global adapter path if one is trained AND structurally valid, else None
-    (base model) — never hand mlx_lm.server a truncated adapter to choke on (b163)."""
+    """The global adapter path if one is trained, structurally valid (b163), AND
+    trained against the currently-configured base (b174), else None (base model).
+
+    Never hand mlx_lm.server a truncated adapter to choke on, and never hand it
+    an adapter trained on a different base than the model it's loading — both
+    would wedge/garble drafting. On a cross-base mismatch we fall back to
+    base-model-only drafting and log it once so the operator knows a retrain is
+    pending after a model migration."""
     adapter = get_adapter_path()
     a = adapter / "adapters.safetensors"
-    return str(adapter) if (a.exists() and _safetensors_ok(a)) else None
+    if not (a.exists() and _safetensors_ok(a)):
+        return None
+    if not _adapter_base_matches():
+        _log_base_mismatch_once()
+        return None
+    return str(adapter)
+
+
+_warned_base_mismatch = False
+
+
+def _log_base_mismatch_once() -> None:
+    """Log the cross-base adapter skip exactly once per process (avoid spamming
+    every request once a mismatch is in place)."""
+    global _warned_base_mismatch
+    if _warned_base_mismatch:
+        return
+    _warned_base_mismatch = True
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "adapter base model does not match configured base (%s); serving "
+        "base-model-only drafts until a retrain produces a matching adapter",
+        get_base_model(),
+    )
 
 
 def model_label() -> str:
-    """The model_used label a server-produced draft should report."""
-    return "qwen2.5-1.5b-lora" if _adapter_arg() else "qwen2.5-1.5b-base"
+    """The model_used label a server-produced draft should report — derived from
+    the configured base model so it tracks a model migration (b174)."""
+    from app.core.config import model_label as _label
+
+    return _label(get_base_model(), with_adapter=bool(_adapter_arg()))
 
 
 def is_healthy(*, timeout: float = 0.5) -> bool:
@@ -142,6 +239,14 @@ def ensure_running(*, startup_timeout: float = 40.0) -> bool:
         if _proc is not None:
             _reap_locked()
         cmd = [sys.executable, "-m", "mlx_lm.server", "--model", get_base_model(), "--port", str(_port())]
+        # b174: set the server's DEFAULT sampling to the Qwen3-4B recommended
+        # values (temp=0.7, top_p=0.8, top_k=20, min_p=0). mlx_lm.server applies
+        # these only when a request omits the field — deterministic eval (b166)
+        # passes temperature=0 + seed per request and so overrides them, keeping
+        # eval reproducible. Bound generation length too so a runaway decode on
+        # the 16GB box can't grow the KV cache without limit (Qwen3 default
+        # context is 262K; we never need that for an email reply).
+        cmd.extend(_server_launch_args())
         adapter = _adapter_arg()
         if adapter:
             cmd.extend(["--adapter-path", adapter])
@@ -281,6 +386,7 @@ def chat_complete(
     max_tokens: int = 300,
     temperature: float | None = None,
     top_p: float | None = None,
+    top_k: int | None = None,
     seed: int | None = None,
     stop: list[str] | None = None,
     timeout: float = 120.0,
@@ -298,6 +404,11 @@ def chat_complete(
         body["temperature"] = temperature
     if top_p is not None:
         body["top_p"] = top_p
+    # b174: Qwen3-4B recommends top_k=20 sampling. mlx_lm.server accepts an
+    # OpenAI-style ``top_k`` field; unknown fields are ignored by older server
+    # builds, so this is safe to always send when configured.
+    if top_k is not None:
+        body["top_k"] = top_k
     # b166: pin the PRNG for reproducible eval (see _payload for rationale).
     if seed is not None:
         body["seed"] = seed

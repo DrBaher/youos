@@ -14,7 +14,7 @@ ingestion:
   last_ingest_at: {}
 model:
   adapter_path: models/adapters/latest
-  base: Qwen/Qwen2.5-1.5B-Instruct
+  base: mlx-community/Qwen3-4B-Instruct-2507-4bit
   fallback: claude
   ollama:
     enabled: false
