@@ -310,3 +310,39 @@ def test_drive_get_requests_metadata_fields(monkeypatch):
 
 def test_gws_source_satisfies_protocol():
     assert isinstance(GwsSource(credentials={}), GoogleWorkspaceSource)
+
+
+# --- b161: gws identity binding (case-insensitive + refuse on configured miss) ---
+
+
+def test_resolve_gws_credentials_is_case_insensitive():
+    from app.ingestion.adapters import _resolve_gws_credentials_file
+
+    m = {"Work@X.com": "/creds/work.json"}
+    assert _resolve_gws_credentials_file("work@x.com", m) == "/creds/work.json"
+    assert _resolve_gws_credentials_file("WORK@X.COM", m) == "/creds/work.json"
+
+
+def test_resolve_gws_credentials_refuses_unmapped_on_configured_map():
+    from app.ingestion.adapters import _resolve_gws_credentials_file
+
+    with pytest.raises(ValueError, match="refusing to fall back"):
+        _resolve_gws_credentials_file("other@x.com", {"work@x.com": "/creds/work.json"})
+
+
+def test_resolve_gws_credentials_ambient_when_no_map():
+    from app.ingestion.adapters import _resolve_gws_credentials_file
+
+    assert _resolve_gws_credentials_file("a@x.com", {}) is None      # no map → ambient
+    assert _resolve_gws_credentials_file(None, {"a@x.com": "/c"}) is None  # no account → ambient
+
+
+def test_run_json_refuses_unmapped_account_on_configured_map(monkeypatch):
+    source = GwsSource(credentials={"work@x.com": "/creds/work.json"})
+
+    def _no_run(*a, **k):
+        raise AssertionError("must not invoke gws for an unmapped account")
+
+    monkeypatch.setattr(adapters.subprocess, "run", _no_run)
+    with pytest.raises(ValueError, match="refusing to fall back"):
+        source._run_json(["drive", "files", "list"], account="other@x.com", params={})
