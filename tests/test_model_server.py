@@ -34,25 +34,31 @@ def _valid_safetensors() -> bytes:
 
 
 def test_model_label_reflects_adapter(monkeypatch, tmp_path):
+    # b174: the label is DERIVED from the configured base, not hardcoded. Pin a
+    # known base so the assertion is hermetic regardless of the dev config.
+    monkeypatch.setattr(ms, "get_base_model", lambda: "Qwen/Qwen3-4B-Instruct-2507")
     adir = tmp_path / "latest"
     adir.mkdir()
     monkeypatch.setattr(ms, "get_adapter_path", lambda: adir)
-    assert ms.model_label() == "qwen2.5-1.5b-base"  # no adapter file yet
+    assert ms.model_label() == "qwen3-4b-base"  # no adapter file yet
+    # A valid adapter with no meta.json is a "legacy" adapter — the b174
+    # cross-base guard can't prove a mismatch, so it's served (-> -lora).
     (adir / "adapters.safetensors").write_bytes(_valid_safetensors())
-    assert ms.model_label() == "qwen2.5-1.5b-lora"
+    assert ms.model_label() == "qwen3-4b-lora"
 
 
 def test_corrupt_adapter_is_not_served(monkeypatch, tmp_path):
     """b163: a truncated/half-written adapters.safetensors must NOT be served —
     _adapter_arg/_adapter_sig fall back to the base model instead of handing
     mlx_lm.server a file it would choke on (wedging all drafting)."""
+    monkeypatch.setattr(ms, "get_base_model", lambda: "Qwen/Qwen3-4B-Instruct-2507")
     adir = tmp_path / "latest"
     adir.mkdir()
     monkeypatch.setattr(ms, "get_adapter_path", lambda: adir)
     (adir / "adapters.safetensors").write_bytes(b"\x05\x00\x00\x00\x00\x00\x00\x00tru")  # header says 5 bytes, only 3 present
     assert ms._adapter_arg() is None
     assert ms._adapter_sig() is None
-    assert ms.model_label() == "qwen2.5-1.5b-base"
+    assert ms.model_label() == "qwen3-4b-base"
     # a valid one IS served
     (adir / "adapters.safetensors").write_bytes(_valid_safetensors())
     assert ms._adapter_arg() == str(adir)
