@@ -190,6 +190,11 @@ def _generate_for_eval(
             top_k_chunks=rc.top_k_chunks,
             deterministic=True,
             seed=EVAL_SEED,
+            # b168: an empty local draft during eval must NOT bounce to the
+            # Claude CLI (unauthenticated under launchd → 200× RuntimeError, and
+            # wrong anyway — this eval measures the LOCAL model). Fail soft: the
+            # empty case is recorded as a fail and the suite continues.
+            no_cloud_fallback=True,
         ),
         database_url=database_url,
         configs_dir=configs_dir,
@@ -209,6 +214,20 @@ def main() -> None:
         type=int,
         default=10,
         help="Maximum number of eval iterations (default: 10)",
+    )
+    parser.add_argument(
+        "--max-seconds",
+        type=float,
+        default=None,
+        help="Wall-clock budget; the surface loop stops early once exceeded so a "
+             "long run records partial results instead of being killed (default: none)",
+    )
+    parser.add_argument(
+        "--eval-case-prefix",
+        type=str,
+        default="golden-",
+        help="Restrict each eval suite to benchmark cases whose case_key starts "
+             "with this prefix; '' = score the full table (default: golden-)",
     )
     parser.add_argument(
         "--dry-run",
@@ -257,6 +276,9 @@ def main() -> None:
         max_iterations=args.max_iter,
         dry_run=args.dry_run,
         surface_filter=args.surface,
+        # Empty string from the CLI means "no prefix scope" (run all cases).
+        eval_case_prefix=args.eval_case_prefix or None,
+        max_seconds=args.max_seconds,
     )
 
     # Git commit each kept improvement and tag the run

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -61,6 +62,11 @@ class AutoresearchReport:
     total_eval_runs: int = 0
     improvements_kept: int = 0
     reverted: int = 0
+    # True when the wall-clock deadline cut the surface loop short. Surfaced in
+    # the run log so a partial run reads as "ran what it could in the budget"
+    # rather than looking like every surface was evaluated.
+    deadline_hit: bool = False
+    cases_per_eval: int | None = None  # how many benchmark cases each eval scored
 
 
 def run_autoresearch(
@@ -72,6 +78,8 @@ def run_autoresearch(
     baseline_tag: str = "autoresearch_baseline",
     dry_run: bool = False,
     surface_filter: str | None = None,
+    eval_case_prefix: str | None = "golden-",
+    max_seconds: float | None = None,
 ) -> AutoresearchReport:
     """Run the autoresearch optimization loop.
 
@@ -83,9 +91,20 @@ def run_autoresearch(
         baseline_tag: Config tag for the baseline run.
         dry_run: If True, show plan without executing.
         surface_filter: Optional "retrieval" or "prompt_drafting" to limit scope.
+        eval_case_prefix: Restrict every eval suite to benchmark cases whose
+            case_key starts with this prefix. Defaults to ``"golden-"`` — the
+            small, stable golden subset — because the full table is rotated
+            weekly to ~30+ cases and each iteration re-generates an UNCACHED
+            draft per case, so the full set is the dominant cost. Pass ``None``
+            to score the entire table.
+        max_seconds: Optional wall-clock budget. The surface loop checks this
+            before each candidate eval and stops early once exceeded, so a long
+            run records what it managed instead of being killed at the
+            subprocess timeout with results lost. ``None`` = no deadline.
     """
     run_tag = f"autoresearch_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
     started_at = datetime.now(timezone.utc).isoformat()
+    start_monotonic = time.monotonic()
 
     surfaces = get_mutable_surfaces(configs_dir, surface_filter=surface_filter)
 
@@ -114,7 +133,7 @@ def run_autoresearch(
 
     # 1. Establish baseline
     baseline_result = run_eval_suite(
-        EvalRequest(config_tag=f"{run_tag}_baseline"),
+        EvalRequest(config_tag=f"{run_tag}_baseline", case_prefix=eval_case_prefix),
         generate_fn=generate_fn,
         database_url=database_url,
         configs_dir=configs_dir,
@@ -129,11 +148,80 @@ def run_autoresearch(
         started_at=started_at,
         baseline=baseline,
         final=baseline,
+        cases_per_eval=baseline_result.total_cases,
+    )
+    logger.info(
+        "autoresearch %s: %d case(s)/eval (prefix=%r), %d mutable surface(s), "
+        "max_iter=%d, budget=%ss",
+        run_tag, baseline_result.total_cases, eval_case_prefix, len(surfaces),
+        max_iterations, max_seconds if max_seconds is not None else "none",
     )
 
-    # 2. Iterate over surfaces
+    # 2. Iterate over surfaces. Wrapped in try/finally so the JSONL run entry is
+    # ALWAYS written — a run that hits the deadline (or even an unexpected error)
+    # is recorded as "ran what it could" instead of leaving no trace.
+    try:
+        _run_surface_loop(
+            surfaces=surfaces,
+            report=report,
+            run_tag=run_tag,
+            configs_dir=configs_dir,
+            database_url=database_url,
+            generate_fn=generate_fn,
+            eval_case_prefix=eval_case_prefix,
+            improve_threshold=improve_threshold,
+            regress_threshold=regress_threshold,
+            case_weights=case_weights,
+            max_iterations=max_iterations,
+            max_seconds=max_seconds,
+            start_monotonic=start_monotonic,
+            initial_eval_count=eval_count,
+            initial_baseline=current_baseline,
+        )
+    finally:
+        # Write structured JSON run log no matter how the loop ended.
+        _write_jsonl_entry(report, configs_dir)
+
+    return report
+
+
+def _run_surface_loop(
+    *,
+    surfaces: list[ConfigSurface],
+    report: AutoresearchReport,
+    run_tag: str,
+    configs_dir: Path,
+    database_url: str,
+    generate_fn: Any,
+    eval_case_prefix: str | None,
+    improve_threshold: float,
+    regress_threshold: float,
+    case_weights: dict[str, float] | None,
+    max_iterations: int,
+    max_seconds: float | None,
+    start_monotonic: float,
+    initial_eval_count: int,
+    initial_baseline: Scorecard,
+) -> None:
+    """Body of the surface-mutation loop, extracted so the caller can guarantee
+    the run log is written in a ``finally`` even if this raises or the deadline
+    cuts it short. Mutates ``report`` in place."""
+    eval_count = initial_eval_count
+    current_baseline = initial_baseline
+
     for surface in surfaces:
         if eval_count >= max_iterations:
+            break
+
+        # Deadline check: stop BEFORE starting another (expensive) candidate eval
+        # if we're over budget, so the OS subprocess timeout never kills us mid-run.
+        if max_seconds is not None and (time.monotonic() - start_monotonic) >= max_seconds:
+            report.deadline_hit = True
+            logger.warning(
+                "autoresearch %s: wall-clock budget (%ss) reached after %d eval(s) — "
+                "stopping early and recording partial results",
+                run_tag, max_seconds, eval_count,
+            )
             break
 
         mutation_desc = describe_mutation(surface)
@@ -147,10 +235,16 @@ def run_autoresearch(
             # No actual change (boundary)
             continue
 
+        # Keep report.total_eval_runs / final current as we go, so the JSONL
+        # entry written by the caller's finally reflects partial progress even
+        # if the deadline (or an error) ends the loop here.
+        report.total_eval_runs = eval_count
+        report.final = current_baseline
+
         try:
-            # Run eval with mutated config
+            # Run eval with mutated config (same prefix scope as the baseline).
             candidate_result = run_eval_suite(
-                EvalRequest(config_tag=f"{run_tag}_iter{eval_count}"),
+                EvalRequest(config_tag=f"{run_tag}_iter{eval_count}", case_prefix=eval_case_prefix),
                 generate_fn=generate_fn,
                 database_url=database_url,
                 configs_dir=configs_dir,
@@ -211,13 +305,10 @@ def run_autoresearch(
                 pass
             continue
 
+    # Final tallies after the loop completes normally (the per-surface updates
+    # above keep these current if the loop is cut short instead).
     report.total_eval_runs = eval_count
     report.final = current_baseline
-
-    # Write structured JSON run log
-    _write_jsonl_entry(report, configs_dir)
-
-    return report
 
 
 def _write_jsonl_entry(report: AutoresearchReport, configs_dir: Path) -> None:
@@ -233,6 +324,11 @@ def _write_jsonl_entry(report: AutoresearchReport, configs_dir: Path) -> None:
         "run_at": report.started_at,
         "iterations": report.total_eval_runs,
         "composite_score": report.final.composite,
+        # Surface whether the run finished its surfaces or was cut short by the
+        # wall-clock budget, and how many cases each eval scored — so a partial
+        # run reads as "ran what it could" rather than a silent truncation.
+        "deadline_hit": report.deadline_hit,
+        "cases_per_eval": report.cases_per_eval,
         "improvements": improvements,
         "regressions": regressions,
         "config_snapshot": {
