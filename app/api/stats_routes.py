@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
+from app.core.auth import LoginRateLimiter
 from app.core.config import load_config
 from app.core.settings import get_adapter_path, get_var_dir
 from app.core.stats import (
@@ -278,11 +279,21 @@ def model_readiness(request: Request) -> dict:
     return get_model_readiness(request.app.state.settings.database_url, finetune_running=_model_work_running())
 
 
+# Per-IP throttle on token minting. Each mint appends a PBKDF2 hash and is a
+# write; without a limit a looping client could grow api_tokens.json and amplify
+# the verify cost. 5 mints / 60s is ample for a human setting up the extension.
+_token_mint_limiter = LoginRateLimiter(max_attempts=5, lockout_seconds=60)
+
+
 @router.post("/api/token")
-def create_token() -> dict:
+def create_token(request: Request) -> dict:
     """Create an API token for the browser extension (shown once)."""
     from app.core.auth import add_api_token
 
+    client_ip = request.client.host if request.client else "unknown"
+    if _token_mint_limiter.is_locked(client_ip):
+        raise HTTPException(status_code=429, detail="Too many token requests. Wait 60 seconds.")
+    _token_mint_limiter.record_attempt(client_ip)
     return {"token": add_api_token()}
 
 
