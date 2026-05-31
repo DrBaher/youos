@@ -125,6 +125,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-persona", action="store_true", help="Use bare format without persona/system prompt")
     p.add_argument("--configs-dir", type=str, default=str(CONFIGS_DIR), help="Configs directory")
     p.add_argument("--dpo", action="store_true", help="Export DPO preference pairs (chosen/rejected)")
+    p.add_argument(
+        "--human-rated-only",
+        action="store_true",
+        help="Exclude self-labeled rows (auto-captured / organic) — keep only human review-queue ratings",
+    )
     p.add_argument("--curriculum", action=argparse.BooleanOptionalAction, default=True, help="Sort first 20%% by quality (curriculum learning)")
     p.add_argument("--no-dedup", action="store_true", help="Disable near-duplicate deduplication")
     p.add_argument(
@@ -285,9 +290,9 @@ def export_dpo(args: argparse.Namespace) -> None:
 
 
 def deduplicate_pairs(
-    qualified: list[tuple[str, str, str, float]],
+    qualified: list[tuple],
     threshold: float = 0.95,
-) -> tuple[list[tuple[str, str, str, float]], int]:
+) -> tuple[list[tuple], int]:
     """Deduplicate pairs by inbound text similarity.
 
     If two pairs have hybrid_similarity >= threshold on their inbound text,
@@ -382,13 +387,30 @@ def export(args: argparse.Namespace) -> None:
         # extract_auto_feedback.py). Detect the column so older DBs that predate
         # it still export; absent → treated as non-organic (0).
         cols = {r[1] for r in conn.execute("PRAGMA table_info(feedback_pairs)")}
-        organic_select = "COALESCE(organic, 0) as organic" if "organic" in cols else "0 as organic"
+        organic_expr = "COALESCE(organic, 0)" if "organic" in cols else "0"
+        note_expr = "COALESCE(feedback_note, '')" if "feedback_note" in cols else "''"
+        # b160: a row is "self-labeled" if it's organic or auto-captured (the
+        # model's own sent-reply capture), i.e. NOT a human review-queue rating.
+        self_labeled_expr = f"(CASE WHEN {organic_expr} = 1 OR {note_expr} LIKE 'auto-captured%' THEN 1 ELSE 0 END)"
+        # Down-weight self-labeled rows to the non-oversampled tier (quality capped
+        # at 3) so a benign attacker payload in a self-labeled reply isn't amplified
+        # 2-3x into the adapter; human-rated rows keep their full rating. b153 added
+        # this exclusion to the DPO path only — the default SFT export still pulled
+        # them in at full weight.
+        quality_expr = (
+            f"CASE WHEN {self_labeled_expr} = 1 THEN MIN(COALESCE(rating, 3), 3) "
+            "ELSE COALESCE(rating, 3) END as quality_score"
+        )
         query = (
-            "SELECT inbound_text, edited_reply, rating, edit_distance_pct, created_at, "
-            f"{organic_select}, COALESCE(rating, 3) as quality_score "
+            "SELECT rowid as _rowid, inbound_text, edited_reply, rating, edit_distance_pct, created_at, "
+            f"{organic_expr} as organic, {self_labeled_expr} as self_labeled, {quality_expr} "
             "FROM feedback_pairs WHERE 1=1"
         )
         params: list = []
+
+        # Curated export: drop self-labeled rows entirely (only human ratings).
+        if getattr(args, "human_rated_only", False):
+            query += f" AND {self_labeled_expr} = 0"
 
         # `used_in_finetune` is a global flag — it gates the incremental
         # global-adapter loop ("don't retrain on data the global already saw").
@@ -415,6 +437,21 @@ def export(args: argparse.Namespace) -> None:
             params.append(persona_filter.strip().lower())
 
         rows = conn.execute(query, params).fetchall()
+
+        # b160: map each feedback_pair to the sender of its linked reply (via the
+        # now-populated reply_pair_id) so one chatty correspondent can't dominate
+        # the voice corpus. Rows with no linked sender are each their own implicit
+        # sender (uncapped). A separate query avoids ambiguous-column joins in the
+        # main SELECT; reply_pairs.inbound_author predates this and may be absent.
+        author_by_rowid: dict[int, str] = {}
+        rp_cols = {r[1] for r in conn.execute("PRAGMA table_info(reply_pairs)")}
+        if "reply_pair_id" in cols and "inbound_author" in rp_cols:
+            for fp_rowid, author in conn.execute(
+                "SELECT fp.rowid, rp.inbound_author FROM feedback_pairs fp "
+                "JOIN reply_pairs rp ON fp.reply_pair_id = rp.id "
+                "WHERE rp.inbound_author IS NOT NULL AND rp.inbound_author != ''"
+            ):
+                author_by_rowid[fp_rowid] = str(author).strip().lower()
     finally:
         conn.close()
 
@@ -425,7 +462,7 @@ def export(args: argparse.Namespace) -> None:
     # Quality filters
     min_rating = args.min_rating
     min_edit_pct = args.min_edit_pct
-    qualified: list[tuple[str, str, str]] = []
+    qualified: list[tuple] = []
     filtered_count = 0
     null_rating_count = 0
     poisoned_count = 0
@@ -473,7 +510,8 @@ def export(args: argparse.Namespace) -> None:
             continue
 
         quality = row["quality_score"] if "quality_score" in row.keys() else (rating or 3)
-        qualified.append((row["created_at"] or "", row["inbound_text"], edited_reply, quality))
+        author = author_by_rowid.get(row["_rowid"]) if "_rowid" in row.keys() else None
+        qualified.append((row["created_at"] or "", row["inbound_text"], edited_reply, quality, author))
 
     if null_rating_count > 0:
         print(f"Warning: {null_rating_count} pairs have null rating (included)")
@@ -483,6 +521,28 @@ def export(args: argparse.Namespace) -> None:
     if not qualified:
         print(f"No qualifying pairs after filtering. Filtered out {filtered_count} low-quality pairs.")
         return
+
+    # b160: per-sender cap — one chatty correspondent / newsletter-reply can't
+    # dominate the voice corpus. Keep the highest-quality pairs per sender; rows
+    # with no linked sender (author is None) are each their own implicit sender
+    # and uncapped. Applied BEFORE the global truncation.
+    max_per_sender = max(20, MAX_EXPORT_PAIRS // 20)
+    qualified.sort(key=lambda x: (x[3], x[0]), reverse=True)  # quality DESC, created_at DESC
+    per_sender: dict[str, int] = {}
+    capped: list[tuple] = []
+    sender_dropped = 0
+    for item in qualified:
+        author = item[4]
+        if author:
+            n = per_sender.get(author, 0)
+            if n >= max_per_sender:
+                sender_dropped += 1
+                continue
+            per_sender[author] = n + 1
+        capped.append(item)
+    if sender_dropped:
+        print(f"Per-sender cap: dropped {sender_dropped} pairs (>{max_per_sender} from one sender)")
+    qualified = capped
 
     # b153: bound the exported set so a large/old mailbox can't write a multi-GB
     # train.jsonl that fills disk and wedges the nightly. Keep the highest-
@@ -496,9 +556,9 @@ def export(args: argparse.Namespace) -> None:
     from datetime import datetime, timedelta
     from datetime import timezone as _tz
     cutoff_90d = (datetime.now(_tz.utc) - timedelta(days=90)).isoformat()[:10]
-    oversampled: list[tuple[str, str, str, float]] = []
+    oversampled: list[tuple] = []
     for item in qualified:
-        created_at, inbound, reply, quality = item
+        created_at, inbound, reply, quality, _author = item
         is_recent = (created_at or "")[:10] >= cutoff_90d
         rating_approx = int(round(quality))
         if rating_approx >= 5 and is_recent:
@@ -542,7 +602,7 @@ def export(args: argparse.Namespace) -> None:
         curriculum_applied = True
         print(f"Curriculum learning: warmup on first {warmup_count} easiest examples")
 
-    records = [build_record(inbound, reply, system_message=system_message) for _, inbound, reply, _q in qualified]
+    records = [build_record(inbound, reply, system_message=system_message) for _, inbound, reply, _q, _a in qualified]
 
     # Prepend curriculum metadata line if applicable
     if curriculum_applied:

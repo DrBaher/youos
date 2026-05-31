@@ -113,13 +113,20 @@ def _capture_organic_pairs(conn: sqlite3.Connection, *, dry_run: bool = False) -
         if dry_run:
             print(f"  [organic] pair {row['id']}: {(row['inbound_text'] or '')[:60]}...")
         else:
+            # b160: persist reply_pair_id so the NOT IN guard above actually dedups
+            # (it was NULL, making the guard inert → every organic pair re-inserted
+            # forever), and mark the source processed so it isn't re-captured.
             conn.execute(
                 """
                 INSERT INTO feedback_pairs
-                    (inbound_text, generated_draft, edited_reply, feedback_note, edit_distance_pct, rating, used_in_finetune, organic)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (reply_pair_id, inbound_text, generated_draft, edited_reply, feedback_note, edit_distance_pct, rating, used_in_finetune, organic)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (row["inbound_text"], reply, reply, "organic pair — no YouOS draft", 0.0, 3, 0, 1),
+                (row["id"], row["inbound_text"], reply, reply, "organic pair — no YouOS draft", 0.0, 3, 0, 1),
+            )
+            conn.execute(
+                "UPDATE reply_pairs SET auto_feedback_processed = 1 WHERE id = ?",
+                (row["id"],),
             )
         count += 1
     return count
@@ -208,10 +215,10 @@ def extract_auto_feedback(
                 conn.execute(
                     """
                     INSERT INTO feedback_pairs
-                        (inbound_text, generated_draft, edited_reply, feedback_note, rating, used_in_finetune)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                        (reply_pair_id, inbound_text, generated_draft, edited_reply, feedback_note, rating, used_in_finetune)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (inbound, generated_draft, actual_reply, "auto-captured from sent email", 4, 0),
+                    (pair_id, inbound, generated_draft, actual_reply, "auto-captured from sent email", 4, 0),
                 )
                 conn.execute(
                     "UPDATE reply_pairs SET auto_feedback_processed = 1 WHERE id = ?",

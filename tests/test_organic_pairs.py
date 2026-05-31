@@ -139,3 +139,29 @@ def test_organic_column_migration(tmp_path):
     cols = {row[1] for row in conn.execute("PRAGMA table_info(feedback_pairs)").fetchall()}
     assert "organic" in cols
     conn.close()
+
+
+def test_organic_capture_is_idempotent(tmp_path):
+    """b160: the organic INSERT now persists reply_pair_id and marks the source
+    processed, so a SECOND extraction run does NOT re-capture the same pair (the
+    NOT IN guard was inert before — reply_pair_id was NULL — re-inserting forever)."""
+    db, conn = _create_test_db(tmp_path)
+    conn.execute(
+        "INSERT INTO reply_pairs (inbound_text, reply_text, auto_feedback_processed) VALUES (?, ?, ?)",
+        ("Hey, can we sync on the roadmap?", "Sure, let's do Thursday at 2pm.", 0),
+    )
+    conn.commit()
+
+    first = _capture_organic_pairs(conn, dry_run=False)
+    conn.commit()
+    assert first == 1
+    # reply_pair_id persisted (links the feedback_pair to its source)
+    assert conn.execute("SELECT reply_pair_id FROM feedback_pairs WHERE organic = 1").fetchone()[0] == 1
+    # source marked processed
+    assert conn.execute("SELECT auto_feedback_processed FROM reply_pairs WHERE id = 1").fetchone()[0] == 1
+
+    second = _capture_organic_pairs(conn, dry_run=False)
+    conn.commit()
+    assert second == 0  # deduped — not re-captured
+    assert conn.execute("SELECT COUNT(*) FROM feedback_pairs WHERE organic = 1").fetchone()[0] == 1
+    conn.close()
