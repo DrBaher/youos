@@ -267,6 +267,11 @@ def test_finetune_persona_does_not_mark_pairs_used(monkeypatch, tmp_path, _reset
         stderr = ""
 
     monkeypatch.setattr(ft_mod.subprocess, "run", lambda *a, **kw: _FakeResult())
+    # The stubbed subprocess writes no real adapter, so stub the atomic
+    # promotion to succeed too — this test exercises the post-train DB
+    # bookkeeping, not adapter validation (b171: a failed promotion now
+    # exits nonzero, which would otherwise mask the bookkeeping assertion).
+    monkeypatch.setattr(ft_mod, "_promote_adapter", lambda *a, **kw: True)
 
     # Run with --persona and confirm used_in_finetune stays 0.
     data_dir = tmp_path / "data"
