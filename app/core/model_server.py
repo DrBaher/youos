@@ -275,6 +275,39 @@ def complete(
     return r.json()["choices"][0]["text"]
 
 
+def chat_complete(
+    messages: list[dict],
+    *,
+    max_tokens: int = 300,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    seed: int | None = None,
+    stop: list[str] | None = None,
+    timeout: float = 120.0,
+) -> str:
+    """Chat completion via the warm server's /v1/chat/completions endpoint (b173).
+
+    Using the chat endpoint makes mlx_lm.server apply the model's chat template
+    to ``messages`` (matching how the adapter was fine-tuned). ``stop``
+    (including ``<|im_end|>``) halts generation at the end of the assistant
+    turn so the model can't run on into a fabricated bracket document. Raises on
+    transport/HTTP error.
+    """
+    body: dict = {"messages": list(messages), "max_tokens": max_tokens, "stream": False}
+    if temperature is not None:
+        body["temperature"] = temperature
+    if top_p is not None:
+        body["top_p"] = top_p
+    # b166: pin the PRNG for reproducible eval (see _payload for rationale).
+    if seed is not None:
+        body["seed"] = seed
+    if stop:
+        body["stop"] = list(stop)
+    r = httpx.post(f"{_base_url()}/v1/chat/completions", json=body, timeout=timeout)
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
+
+
 def stream(
     prompt: str,
     *,
