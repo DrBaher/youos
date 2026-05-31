@@ -1,4 +1,5 @@
 import time
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from app.api.sender_routes import router as sender_router
 from app.api.stats_routes import router as stats_router
 from app.api.stream_routes import router as stream_router
 from app.core.auth import (
+    MAX_SESSIONS,
     LoginRateLimiter,
     compute_allowed_origins,
     compute_token_allowed_origins,
@@ -106,7 +108,7 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
         # Keep the creation timestamps in memory so expiry can be enforced
         # server-side — storing only the keys let captured tokens replay
         # indefinitely until process restart, ignoring SESSION_MAX_AGE.
-        self.sessions: dict[str, float] = dict(load_sessions())
+        self.sessions: OrderedDict[str, float] = OrderedDict(load_sessions())
         self.limiter = LoginRateLimiter()
         # Defaults for any external reader; dispatch recomputes per request
         # from the live config so a post-start change is honored.
@@ -127,6 +129,22 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
             origin=request.headers.get("origin"),
             allowed_origins=token_allowed_origins,
         )
+
+    def register_session(self, token: str) -> None:
+        """Insert a freshly-minted session token, keeping the in-memory map
+        bounded and self-healing (b155).
+
+        The dict that authorizes requests is only seeded from disk at startup —
+        it never re-reads, so expired entries would otherwise accumulate for the
+        process's whole life. Sweep aged-out entries on every mint, and evict the
+        oldest (FIFO) when at the cap so a looping login client can't grow it
+        without limit."""
+        now = time.time()
+        for dead in [t for t, ts in self.sessions.items() if now - ts >= SESSION_MAX_AGE]:
+            self.sessions.pop(dead, None)
+        while len(self.sessions) >= MAX_SESSIONS:
+            self.sessions.popitem(last=False)
+        self.sessions[token] = now
 
     async def dispatch(self, request: Request, call_next):
         # Reject an oversized body up front — bounds every string/list field by
@@ -331,7 +349,7 @@ def create_app() -> FastAPI:
         if verify_pin(str(pin), stored_hash):
             auth_middleware.limiter.reset(client_ip)
             token = create_session_token()
-            auth_middleware.sessions[token] = time.time()
+            auth_middleware.register_session(token)
             persist_new_session(token)
             response = RedirectResponse(url="/feedback", status_code=303)
             response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_MAX_AGE, httponly=True, samesite="lax")

@@ -99,10 +99,20 @@ def save_sessions(sessions: dict[str, float], path: Path | None = None) -> None:
     write_secret(path, json.dumps(sessions))
 
 
+# Cap the persisted session count. load_sessions already drops expired tokens;
+# this additionally bounds sessions.json so a looping login client (or a long-
+# lived process) can't grow it without limit. A few hundred is ample for a
+# single-user product.
+MAX_SESSIONS = 500
+
+
 def persist_new_session(token: str, path: Path | None = None) -> None:
-    """Add a new session token and persist to disk."""
+    """Add a new session token and persist to disk, count-bounded (b155)."""
     sessions = load_sessions(path)
     sessions[token] = time.time()
+    if len(sessions) > MAX_SESSIONS:
+        # Keep the newest MAX_SESSIONS by timestamp; evict the oldest.
+        sessions = dict(sorted(sessions.items(), key=lambda kv: kv[1], reverse=True)[:MAX_SESSIONS])
     save_sessions(sessions, path)
 
 
@@ -119,19 +129,47 @@ def _get_api_tokens_path() -> Path:
     return get_var_dir() / "api_tokens.json"
 
 
-def load_api_token_hashes(path: Path | None = None) -> list[str]:
-    """Return stored API-token hashes; [] if none or the file is unreadable."""
+# Cap stored API tokens. The hashes were appended without bound and
+# verify_api_token PBKDF2-scanned ALL of them per request → O(n) PBKDF2 cost
+# that a looping mint client could amplify into a self-inflicted DoS. Rotate the
+# oldest out at the cap so both the file and the verify scan stay bounded (b155).
+MAX_API_TOKENS = 16
+# A short plaintext prefix stored alongside each hash lets verify_api_token run
+# at most ONE PBKDF2 (the entry whose prefix matches the presented token)
+# instead of one per stored token. 6 url-safe chars (~36 bits) is enough to
+# disambiguate <=16 tokens; the full token (256 bits) is never stored, and the
+# file is 0o600, so revealing the prefix is an acceptable trade for killing the
+# algorithmic-complexity DoS.
+_TOKEN_PREFIX_LEN = 6
+
+
+def _load_api_token_entries(path: Path | None = None) -> list[dict[str, str]]:
+    """Return stored API-token entries as ``{'prefix': str, 'hash': str}``.
+
+    Back-compat: a legacy file is a flat list of bare hash strings (no prefix);
+    those load with ``prefix=''`` and are matched by full scan (the cap bounds
+    how many such legacy entries can accumulate going forward)."""
     if path is None:
         path = _get_api_tokens_path()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return []
-    if isinstance(data, list):
-        return [str(h) for h in data]
-    if isinstance(data, dict):
-        return [str(h) for h in data.get("tokens", [])]
-    return []
+    raw = data.get("tokens", []) if isinstance(data, dict) else data
+    if not isinstance(raw, list):
+        return []
+    entries: list[dict[str, str]] = []
+    for item in raw:
+        if isinstance(item, str):
+            entries.append({"prefix": "", "hash": item})
+        elif isinstance(item, dict) and item.get("hash"):
+            entries.append({"prefix": str(item.get("prefix", "")), "hash": str(item["hash"])})
+    return entries
+
+
+def load_api_token_hashes(path: Path | None = None) -> list[str]:
+    """Return stored API-token hashes; [] if none or the file is unreadable."""
+    return [e["hash"] for e in _load_api_token_entries(path)]
 
 
 def add_api_token(path: Path | None = None) -> str:
@@ -139,9 +177,11 @@ def add_api_token(path: Path | None = None) -> str:
     if path is None:
         path = _get_api_tokens_path()
     token = secrets.token_urlsafe(32)
-    hashes = load_api_token_hashes(path)
-    hashes.append(get_pin_hash(token))
-    write_secret(path, json.dumps(hashes))  # 0o600: token hashes are crackable offline
+    entries = _load_api_token_entries(path)
+    entries.append({"prefix": token[:_TOKEN_PREFIX_LEN], "hash": get_pin_hash(token)})
+    if len(entries) > MAX_API_TOKENS:
+        entries = entries[-MAX_API_TOKENS:]  # rotate out the oldest
+    write_secret(path, json.dumps(entries))  # 0o600: token hashes are crackable offline
     return token
 
 
@@ -149,17 +189,26 @@ def revoke_api_tokens(path: Path | None = None) -> int:
     """Delete all stored API tokens. Returns how many were removed."""
     if path is None:
         path = _get_api_tokens_path()
-    count = len(load_api_token_hashes(path))
+    count = len(_load_api_token_entries(path))
     if path.exists():
         write_secret(path, json.dumps([]))
     return count
 
 
 def verify_api_token(token: str, path: Path | None = None) -> bool:
-    """True if `token` matches any stored API-token hash."""
+    """True if `token` matches any stored API-token hash.
+
+    Selects candidate entries by plaintext prefix so a presented token triggers
+    at most one PBKDF2 (legacy prefix-less entries are still scanned)."""
     if not token:
         return False
-    return any(verify_pin(token, h) for h in load_api_token_hashes(path))
+    prefix = token[:_TOKEN_PREFIX_LEN]
+    for entry in _load_api_token_entries(path):
+        if entry["prefix"] and entry["prefix"] != prefix:
+            continue  # prefix can't match → skip the expensive PBKDF2
+        if verify_pin(token, entry["hash"]):
+            return True
+    return False
 
 
 def _normalize_origin(origin: str) -> str:

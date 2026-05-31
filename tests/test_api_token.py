@@ -60,3 +60,54 @@ def test_revoke_clears_all_tokens(tmp_path):
     assert removed == 2
     assert verify_api_token(t, path) is False
     assert load_api_token_hashes(path) == []
+
+
+def test_token_count_is_capped(tmp_path):
+    """b155: stored API tokens are capped (rotate oldest) so the file and the
+    per-request verify scan stay bounded."""
+    from app.core.auth import MAX_API_TOKENS
+
+    path = tmp_path / "api_tokens.json"
+    tokens = [add_api_token(path) for _ in range(MAX_API_TOKENS + 4)]
+    assert len(load_api_token_hashes(path)) == MAX_API_TOKENS
+    assert verify_api_token(tokens[-1], path) is True   # newest still valid
+    assert verify_api_token(tokens[0], path) is False   # oldest evicted
+
+
+def test_verify_runs_at_most_one_pbkdf2(tmp_path, monkeypatch):
+    """b155: prefix indexing means a presented token triggers at most ONE PBKDF2,
+    not one per stored token (kills the O(n) algorithmic-complexity DoS)."""
+    import app.core.auth as auth
+
+    path = tmp_path / "api_tokens.json"
+    tokens = [add_api_token(path) for _ in range(5)]
+
+    real = auth.verify_pin
+    calls = {"n": 0}
+
+    def counting(tok, h):
+        calls["n"] += 1
+        return real(tok, h)
+
+    monkeypatch.setattr(auth, "verify_pin", counting)
+
+    calls["n"] = 0
+    assert verify_api_token("totally-wrong-token-value", path) is False
+    assert calls["n"] <= 1  # a non-matching prefix skips the PBKDF2 entirely
+
+    calls["n"] = 0
+    assert verify_api_token(tokens[2], path) is True
+    assert calls["n"] == 1  # exactly the one whose prefix matched
+
+
+def test_legacy_flat_hash_list_still_verifies(tmp_path):
+    """b155: a pre-b155 file (flat list of bare hash strings) must still verify."""
+    import json
+
+    from app.core.auth import get_pin_hash
+    from app.core.secure_io import write_secret
+
+    path = tmp_path / "api_tokens.json"
+    write_secret(path, json.dumps([get_pin_hash("legacy-tok")]))
+    assert verify_api_token("legacy-tok", path) is True
+    assert verify_api_token("wrong", path) is False
