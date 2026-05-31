@@ -188,6 +188,11 @@ class DraftBody(BaseModel):
     # max_length bounds the attacker-controlled sender so the email-extraction
     # regex in lookup_facts can't be driven into O(n^2) backtracking.
     sender: str | None = Field(default=None, max_length=1024)
+    # b175: explicit per-request opt-in to cloud (Claude) drafting. This is an
+    # interactive endpoint, so honoring it is safe — but it only takes effect
+    # when drafting.cloud_escalation.enabled is true (the gate in generate_draft
+    # is fail-closed). Default False = today's local-only behaviour.
+    allow_cloud_escalation: bool = False
 
 
 @router.post("/draft")
@@ -204,6 +209,9 @@ def draft(body: DraftBody, request: Request) -> dict[str, object]:
                 account_email=body.account_email,
                 tone_hint=body.tone_hint,
                 sender=body.sender,
+                # b175: interactive opt-in to cloud drafting (flag-gated and
+                # fail-closed downstream in generate_draft).
+                allow_cloud_escalation=body.allow_cloud_escalation,
             ),
             database_url=settings.database_url,
             configs_dir=settings.configs_dir,

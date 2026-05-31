@@ -162,13 +162,21 @@ def _default_generate(
     configs_dir: Path,
 ) -> dict[str, Any]:
     """Draft ``prompt`` with a specific backend pinned. Mirrors run_eval's wrapper."""
-    from app.generation.service import DraftRequest, generate_draft
+    from app.generation.service import (
+        DraftRequest,
+        _is_cloud_backend,
+        generate_draft,
+    )
 
     resp = generate_draft(
         DraftRequest(
             inbound_message=prompt,
             use_local_model=(backend == "mlx"),
             backend_override=backend,
+            # b175: the cloud (Claude) arm of this explicit, operator-invoked A/B
+            # is an opt-in interactive use; it still requires
+            # drafting.cloud_escalation.enabled. Non-cloud engines are unaffected.
+            allow_cloud_escalation=_is_cloud_backend(backend),
         ),
         database_url=database_url,
         configs_dir=configs_dir,
