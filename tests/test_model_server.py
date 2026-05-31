@@ -223,3 +223,66 @@ def test_ensure_running_skipped_under_pytest(monkeypatch):
     monkeypatch.setattr(ms, "is_healthy", lambda: False)
     # No spawn happens (PYTEST_CURRENT_TEST guard) → returns False.
     assert ms.ensure_running() is False
+
+
+def test_stop_reaps_sigterm_honoring_child(monkeypatch):
+    """b154: stop() must wait()/reap the child after SIGTERM so the long-lived
+    FastAPI parent doesn't accumulate zombies on every retrain/restart."""
+    import signal as _signal
+
+    signals: list[int] = []
+
+    class _Proc:
+        pid = 4321
+
+        def __init__(self):
+            self._alive = True
+            self.waited = False
+
+        def poll(self):
+            return None if self._alive else 0
+
+        def wait(self, timeout=None):
+            self.waited = True
+            self._alive = False  # honoring child dies on SIGTERM
+            return 0
+
+    monkeypatch.setattr(ms.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(ms.os, "killpg", lambda pgid, sig: signals.append(sig))
+    proc = _Proc()
+    ms._proc = proc
+
+    ms.stop()
+
+    assert _signal.SIGTERM in signals
+    assert _signal.SIGKILL not in signals  # honoring child needs no escalation
+    assert proc.waited is True             # reaped, not orphaned
+    assert ms._proc is None
+
+
+def test_stop_escalates_to_sigkill_when_sigterm_ignored(monkeypatch):
+    """b154: a worker that ignores SIGTERM must be SIGKILLed (no ~3GB stray)."""
+    import signal as _signal
+
+    signals: list[int] = []
+
+    class _Proc:
+        pid = 4322
+
+        def poll(self):
+            return None  # still alive when stop() begins
+
+        def wait(self, timeout=None):
+            if _signal.SIGKILL in signals:
+                return -9  # dies only after SIGKILL
+            raise ms.subprocess.TimeoutExpired(cmd="mlx_lm.server", timeout=timeout)
+
+    monkeypatch.setattr(ms.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(ms.os, "killpg", lambda pgid, sig: signals.append(sig))
+    ms._proc = _Proc()
+
+    ms.stop()
+
+    assert _signal.SIGTERM in signals
+    assert _signal.SIGKILL in signals  # escalated after the ignored SIGTERM
+    assert ms._proc is None
