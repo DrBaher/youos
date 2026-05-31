@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.2.0-beta.162 — 2026-05-31
+
+### Hardening: retention for the append-only agent tables + autoresearch log
+
+Fifth of the 7th hardening pass. Bounds the unbounded on-disk stores.
+
+- **(MED) The append-only agent tables had no retention.** `agent_audit`, `draft_events`, `agent_actions`, `agent_digest_items`, and terminal `agent_pending_drafts` rows accumulated forever on a long-lived instance — and every row is copied into every full-DB snapshot, so the bloat compounds. Added `store.prune_agent_tables(older_than_days=90)` which deletes aged telemetry/audit rows and **terminal-only** (`sent`/`dismissed`) review-queue rows — never a live `pending`/`amended` draft — then `VACUUM`s to reclaim the freed pages. Exposed as a `youos store-prune` CLI command and wired into the nightly pipeline (after the morning snapshot, so the recovery point keeps the full pre-prune DB and the *next* snapshot shrinks). Each table prunes independently so a schema-stale instance still prunes the rest.
+- **(LOW) `var/autoresearch_runs.jsonl` grew without bound.** It's append-only and `stats.py` reads only the last few lines. `_write_jsonl_entry` now trims to the last 365 lines on write (atomic temp + `os.replace`).
+
+Note: the audited "surface-tier upsert bypasses the daily draft cap" was deliberately **not** addressed by gating surfacing on that cap — the draft cap bounds LLM cost / auto-send, while surface rows are non-draft UI-visibility items, so gating them would hide borderline mail. Their unbounded growth (the real concern) is bounded by the retention pass above.
+
++4 regression tests. Full suite: 1783 passed.
+
 ## v0.2.0-beta.161 — 2026-05-31
 
 ### Hardening: gws per-account identity binding (case-insensitive + refuse-on-miss)
