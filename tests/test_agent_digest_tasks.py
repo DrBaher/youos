@@ -602,3 +602,78 @@ def test_digest_query_passed_after_end_of_flags_separator(monkeypatch):
     cmd = captured["cmd"]
     assert cmd[-2:] == ["--", "-from:noreply@x.com newer_than:1d"]
     assert cmd[cmd.index("search") + 1].startswith("--")  # query is no longer the leading positional
+
+
+# --- b156: reentrancy / recovery -------------------------------------------
+
+
+def test_error_run_is_reclaimable_next_tick(db):
+    """A transient send failure leaves status='error'; the period must stay
+    re-claimable instead of wedging until it rolls over."""
+    rid = dt._claim_period(db, "N", "a@x.com", "2026-W22")
+    assert rid is not None
+    dt._update_run(db, rid, "error", detail="send failed")
+    assert dt._period_done(db, "N", "a@x.com", "2026-W22") is False  # error != done
+    assert dt._claim_period(db, "N", "a@x.com", "2026-W22") == rid    # reclaimed (same row)
+
+
+def test_stale_sending_is_reaped_and_reclaimable(db):
+    """A crash mid-run strands a 'sending' row; the reaper flips it to
+    'abandoned' so the period can be re-claimed and retried."""
+    rid = dt._claim_period(db, "N", "a@x.com", "P1")
+    assert rid is not None
+    p = db.replace("sqlite:///", "")
+    conn = sqlite3.connect(p)
+    conn.execute("UPDATE agent_digest_runs SET updated_at = datetime('now','-30 minutes') WHERE id=?", (rid,))
+    conn.commit()
+    conn.close()
+
+    # before reap: looks done (sending), claim blocked
+    assert dt._period_done(db, "N", "a@x.com", "P1") is True
+    assert dt._claim_period(db, "N", "a@x.com", "P1") is None
+
+    assert dt.reap_stale_digest_runs(db, older_than_minutes=10) == 1
+    assert dt._period_done(db, "N", "a@x.com", "P1") is False     # abandoned != done
+    assert dt._claim_period(db, "N", "a@x.com", "P1") == rid      # reclaimed
+
+
+def test_reaper_does_not_yank_a_fresh_sending_run(db):
+    """A genuinely in-flight (recent) run must not be reaped mid-flight."""
+    rid = dt._claim_period(db, "N", "a@x.com", "P2")
+    assert rid is not None
+    assert dt.reap_stale_digest_runs(db, older_than_minutes=10) == 0  # too fresh
+    assert dt._claim_period(db, "N", "a@x.com", "P2") is None         # still owned
+
+
+def test_sent_period_is_not_reclaimable(db):
+    """A delivered run is terminal — never re-claim it (would double-send)."""
+    rid = dt._claim_period(db, "N", "a@x.com", "P3")
+    dt._update_run(db, rid, "sent", sent_message_id="x")
+    assert dt._claim_period(db, "N", "a@x.com", "P3") is None
+
+
+def test_run_is_finalized_sent_before_archiving(db, monkeypatch):
+    """b156: the run must be marked 'sent' BEFORE the best-effort archive loop,
+    so a crash mid-archive can't strand it as 'sending' with the mail gone."""
+    monkeypatch.setattr(dt, "_digest_config", lambda: _cfg())
+    _stub_fetch(monkeypatch, _ITEMS)
+    _stub_send(monkeypatch)
+    monkeypatch.setattr(dt, "build_digest_body", lambda items, **k: "BODY")
+
+    p = db.replace("sqlite:///", "")
+    observed: dict[str, str] = {}
+
+    def archive_probe(*, account, message_id, add, remove):
+        conn = sqlite3.connect(p)
+        observed[message_id] = conn.execute(
+            "SELECT status FROM agent_digest_runs ORDER BY id DESC LIMIT 1"
+        ).fetchone()[0]
+        conn.close()
+
+    monkeypatch.setattr(gmail_write, "modify_message_labels", archive_probe)
+
+    spec = _spec(then_archive=True)
+    res = dt.run_digest(db, "a@x.com", spec, now=datetime(2026, 5, 31, 7, 5, tzinfo=ZoneInfo("UTC")))
+    assert res["status"] == "sent"
+    # at the instant each archive ran, the run was ALREADY finalized 'sent'
+    assert observed and all(s == "sent" for s in observed.values())
