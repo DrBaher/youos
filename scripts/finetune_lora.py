@@ -111,7 +111,22 @@ def _promote_adapter(staging_dir: Path, adapter_dir: Path) -> bool:
     return True
 
 
-def run_training(args: argparse.Namespace) -> None:
+# Outcome sentinels returned by run_training so main() can pick an exit code.
+#   SUCCESS -> a fresh adapter was trained and promoted; exit 0.
+#   SKIP    -> nothing to do this run (no/too-little fresh data, or --dry-run);
+#             exit 0 so the nightly does not alarm on quiet nights. This mirrors
+#             nightly_pipeline.should_skip_finetune, which already filters the
+#             no-data / too-few-pairs case BEFORE this script is invoked.
+#   FAILURE -> a run that was supposed to produce an adapter genuinely broke
+#             (mlx returned nonzero, or the train produced no/corrupt adapter so
+#             promotion failed); exit 1 so the failure is observable instead of
+#             being silently reported as "[OK] finetune: true".
+RESULT_SUCCESS = "success"
+RESULT_SKIP = "skip"
+RESULT_FAILURE = "failure"
+
+
+def run_training(args: argparse.Namespace) -> str:
     data_dir = Path(args.data_dir)
     adapter_dir = Path(args.adapter_dir)
     train_path = data_dir / "train.jsonl"
@@ -165,15 +180,15 @@ def run_training(args: argparse.Namespace) -> None:
 
     if args.dry_run:
         print("\n--dry-run: exiting without training.")
-        return
+        return RESULT_SKIP
 
     if not train_path.exists():
-        print(f"\nError: {train_path} not found. Run export_feedback_jsonl.py first.")
-        return
+        print(f"\nSkip: {train_path} not found (no fresh feedback to train on).")
+        return RESULT_SKIP
 
     if train_count < 3:
-        print(f"\nError: only {train_count} training pairs. Need at least 3.")
-        return
+        print(f"\nSkip: only {train_count} training pairs (need at least 3; no-op).")
+        return RESULT_SKIP
 
     adapter_dir.mkdir(parents=True, exist_ok=True)
     # Train into a STAGING dir, then atomically promote on success — a killed /
@@ -222,7 +237,7 @@ def run_training(args: argparse.Namespace) -> None:
         print(f"Training failed (exit {result.returncode}):")
         print(result.stderr)
         shutil.rmtree(staging_dir, ignore_errors=True)
-        return
+        return RESULT_FAILURE
 
     # Validate + atomically promote the staged adapter into the live dir. If the
     # train produced no valid adapter (corrupt/empty), DON'T touch the live dir —
@@ -230,7 +245,7 @@ def run_training(args: argparse.Namespace) -> None:
     if not _promote_adapter(staging_dir, adapter_dir):
         print("Training produced no valid adapter (staging adapters.safetensors missing/corrupt); not promoting.")
         shutil.rmtree(staging_dir, ignore_errors=True)
-        return
+        return RESULT_FAILURE
     shutil.rmtree(staging_dir, ignore_errors=True)
 
     print(result.stdout)
@@ -284,6 +299,8 @@ def run_training(args: argparse.Namespace) -> None:
     print(f"  Val loss: {val_loss}")
     print(f"  Metadata: {meta_path}")
 
+    return RESULT_SUCCESS
+
 
 def main() -> None:
     args = parse_args()
@@ -301,7 +318,12 @@ def main() -> None:
         if args.adapter_dir == default_global:
             args.adapter_dir = str(get_persona_adapter_path(args.persona))
 
-    run_training(args)
+    result = run_training(args)
+    # Surface a genuine training failure with a nonzero exit so the nightly
+    # pipeline's _run_step records finetune: false / [WARN] instead of [OK].
+    # A SKIP (no/too-little fresh data, --dry-run) and a SUCCESS both exit 0.
+    if result == RESULT_FAILURE:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
