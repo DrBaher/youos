@@ -157,14 +157,40 @@ def test_ensure_running_passes_adapter_when_present(monkeypatch):
 
 
 def test_ensure_running_reloads_when_adapter_changed(monkeypatch):
+    """b159: when the adapter was retrained, ensure_running reaps the stale server
+    and respawns UNDER THE LOCK (no longer routing through restart()), and
+    re-stamps _started_adapter_sig so concurrent post-retrain threads see the new
+    sig and skip a redundant restart."""
     _config(monkeypatch)
-    monkeypatch.setattr(ms, "is_healthy", lambda **k: True)  # already running
-    monkeypatch.setattr(ms, "_adapter_sig", lambda: 999.0)   # adapter retrained since load
+    monkeypatch.setattr(ms, "is_healthy", lambda **k: True)  # healthy throughout
+    monkeypatch.setattr(ms, "_adapter_sig", lambda: 999.0)   # retrained since load
+    monkeypatch.setattr(ms, "get_base_model", lambda: "Qwen/Qwen2.5-1.5B-Instruct")
+    monkeypatch.setattr(ms, "_adapter_arg", lambda: None)
     ms._started_adapter_sig = 111.0
+
+    reaped = {"old": False}
+
+    class _OldProc:
+        def poll(self):
+            return 0  # already exited -> _reap_locked just wait()s it
+
+        def wait(self, timeout=None):
+            reaped["old"] = True
+            return 0
+
+    spawned = {"n": 0}
+    monkeypatch.setattr(ms.subprocess, "Popen", lambda cmd, **k: spawned.__setitem__("n", spawned["n"] + 1) or type("_P", (), {"poll": lambda self: None})())
+
     called = {"restart": False}
     monkeypatch.setattr(ms, "restart", lambda: called.__setitem__("restart", True) or True)
-    assert ms.ensure_running() is True
-    assert called["restart"] is True
+    ms._proc = _OldProc()
+
+    assert ms.ensure_running(startup_timeout=5) is True
+    assert reaped["old"] is True              # stale server reaped...
+    assert spawned["n"] == 1                  # ...and a fresh one spawned (not via restart)
+    assert called["restart"] is False         # the reload no longer routes through restart()
+    assert ms._started_adapter_sig == 999.0   # re-stamped so concurrent threads skip the reload
+    ms._proc = None
 
 
 def test_ensure_running_no_reload_when_adapter_unchanged(monkeypatch):
@@ -286,3 +312,40 @@ def test_stop_escalates_to_sigkill_when_sigterm_ignored(monkeypatch):
     assert _signal.SIGTERM in signals
     assert _signal.SIGKILL in signals  # escalated after the ignored SIGTERM
     assert ms._proc is None
+
+
+def test_ensure_running_reaps_wedged_child_on_timeout(monkeypatch):
+    """b159: if startup times out with the child still ALIVE (wedged / booting
+    forever), reap it inline so _proc is cleared and the NEXT call respawns
+    instead of re-skipping the spawn and blocking the full timeout forever."""
+    _config(monkeypatch)
+    monkeypatch.setattr(ms, "is_healthy", lambda **k: False)  # never becomes healthy
+    monkeypatch.setattr(ms, "get_base_model", lambda: "M")
+    monkeypatch.setattr(ms, "_adapter_arg", lambda: None)
+
+    killed = {"n": 0}
+    monkeypatch.setattr(ms.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(ms.os, "killpg", lambda pgid, sig: killed.__setitem__("n", killed["n"] + 1))
+
+    class _AliveProc:
+        pid = 7777
+
+        def poll(self):
+            return None  # stays alive on its own
+
+        def wait(self, timeout=None):
+            return 0  # dies on the kill
+
+    spawned = {"n": 0}
+    monkeypatch.setattr(ms.subprocess, "Popen", lambda cmd, **k: spawned.__setitem__("n", spawned["n"] + 1) or _AliveProc())
+
+    ms._proc = None
+    assert ms.ensure_running(startup_timeout=0.0) is False
+    assert ms._proc is None        # wedged child reaped, handle cleared (not leaked)
+    assert killed["n"] >= 1        # actually SIGTERM'd, not orphaned
+    assert spawned["n"] == 1
+
+    # the NEXT call respawns fresh — proving the handle wasn't left stuck
+    assert ms.ensure_running(startup_timeout=0.0) is False
+    assert spawned["n"] == 2
+    ms._proc = None
