@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.156 — 2026-05-31
+
+### Hardening: digest scheduler reentrancy / crash recovery
+
+Fifth of the 6th hardening pass. Makes the scheduled-digest run ledger recover from a transient failure or a crash instead of wedging a period. All of this is behind `agent.digests.enabled` (default off) and only ever causes a digest to **under**-fire — the never-send invariant is untouched; this is availability / defense-in-depth.
+
+- **(MED) A send-failed run wedged the period until it rolled over.** `_period_done` reported an `'error'` row as re-runnable, but `_claim_period` collided forever on the `UNIQUE(name, account, period_key)` row — so every subsequent tick re-fetched a Gmail subprocess and never retried the send. `_claim_period` now **reclaims** an `'error'` (or reaped `'abandoned'`) row via a conditional one-shot `UPDATE`, so the two functions agree on what "consumed" means. Per-message dedup still blocks re-including already-sent mail.
+- **(MED) No stale-`'sending'` reaper.** A crash between `_claim_period` and the terminal `_update_run` left a zombie `'sending'` row that `_period_done` counts as done, permanently disabling that digest's period. Added an `updated_at` column (+ migration/backfill) refreshed on every `_update_run`, and `reap_stale_digest_runs(older_than_minutes=10)` which flips stuck `'sending'` rows to `'abandoned'`; it runs at the top of `run_due_digests` (cheap, idempotent). The window guard means a genuinely slow summarize/send isn't yanked mid-flight. Mirrors `store.reap_stale_sending` for `agent_pending_drafts`.
+- **(LOW) `then_archive` partial failure stranded the run.** A crash mid-archive sent the email and recorded dedup but left the run stuck `'sending'` with messages un-archived. The run is now finalized `'sent'` **before** the best-effort archive loop, so a crash there can't strand it.
+
++5 regression tests. Full suite: 1759 passed.
+
 ## v0.2.0-beta.155 — 2026-05-31
 
 ### Hardening: bounded auth stores (API tokens + sessions)
