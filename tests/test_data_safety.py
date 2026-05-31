@@ -9,6 +9,7 @@ import pytest
 from app.core.data_safety import (
     create_snapshot,
     list_snapshots,
+    prune_snapshots,
     restore_snapshot,
     run_startup_safety_checks,
     validate_instance_paths,
@@ -259,3 +260,78 @@ def test_restore_rejects_snapshot_with_no_tables(tmp_path: Path):
 
     with pytest.raises(ValueError):
         restore_snapshot(db, headerless)
+
+
+# --- b158: snapshot concurrency + pruning ----------------------------------
+
+
+def test_create_snapshot_rejects_unknown_tier(tmp_path: Path):
+    """b158: only known tiers may be created — an arbitrary tier (e.g. via the
+    create route's query param) would write snapshots prune never reclaims."""
+    db = tmp_path / "var" / "youos.db"
+    _mk_db(db)
+    with pytest.raises(ValueError):
+        create_snapshot(db, tier="evil")
+
+
+def test_prune_reclaims_stray_tier(tmp_path: Path):
+    """b158: a stray tier dir (created before the allowlist) is still pruned under
+    a default cap, not grown forever."""
+    db = tmp_path / "var" / "youos.db"
+    _mk_db(db)
+    stray = db.parent / "snapshots" / "weird"
+    stray.mkdir(parents=True)
+    for i in range(8):
+        (stray / f"youos-2026010{i}-000000-000000-{i:06x}.db").write_bytes(b"x")
+    removed = prune_snapshots(db)
+    assert len(list(stray.glob("youos-*.db"))) == 5  # _DEFAULT_STRAY_KEEP
+    assert removed.get("weird", 0) == 3
+
+
+def test_snapshot_files_by_mtime_skips_vanished(tmp_path: Path):
+    """b158: a file that vanishes between glob and stat is skipped, not crashed on."""
+    from app.core.data_safety import _snapshot_files_by_mtime
+
+    real = tmp_path / "youos-real.db"
+    real.write_bytes(b"x")
+    gone = tmp_path / "youos-gone.db"  # never created
+    pairs = _snapshot_files_by_mtime([real, gone])
+    assert [p for p, _ in pairs] == [real]
+
+
+def test_concurrent_restores_do_not_corrupt(tmp_path: Path):
+    """b158: two restores racing on the live DB under the cross-process flock must
+    leave a valid DB and each produce a distinct, valid pre-restore backup."""
+    import threading
+
+    db = tmp_path / "var" / "youos.db"
+    _mk_db(db)
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO reply_pairs DEFAULT VALUES")
+    conn.commit()
+    conn.close()
+    snap = create_snapshot(db, tier="manual")
+
+    backups: list[Path] = []
+    errors: list[Exception] = []
+
+    def _do():
+        try:
+            backups.append(restore_snapshot(db, snap))
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=_do) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors
+    assert len(set(backups)) == 2  # distinct backup names, neither clobbered
+    for b in backups:
+        assert b.exists() and b.stat().st_size > 0
+    conn = sqlite3.connect(db)
+    assert conn.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+    assert conn.execute("SELECT COUNT(*) FROM reply_pairs").fetchone()[0] == 1
+    conn.close()
