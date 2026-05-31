@@ -178,6 +178,35 @@ def _load_gws_credentials() -> dict[str, str]:
     return {}
 
 
+def _resolve_gws_credentials_file(
+    account: str | None, credentials: dict[str, str] | None = None
+) -> str | None:
+    """Resolve the per-account gws credentials file (case-insensitive), or None
+    for the ambient credentials.
+
+    gws is single-account-per-credential, so picking the wrong file reads/drafts
+    the WRONG mailbox. The lookup is normalized with ``.strip().lower()`` on both
+    sides — ``user.emails`` is network-settable (via /api/config/identity) with
+    case preserved, so an exact-case match silently missed and fell back to the
+    ambient mailbox. And when a per-account map IS configured but this account
+    isn't in it, we REFUSE rather than silently use ambient creds for the wrong
+    mailbox (b161). With no map configured (single-account/ambient), fall back."""
+    creds_map = credentials if credentials is not None else _load_gws_credentials()
+    if not account:
+        return None
+    norm = {str(k).strip().lower(): v for k, v in creds_map.items()}
+    hit = norm.get(account.strip().lower())
+    if hit:
+        return str(hit)
+    if norm:
+        raise ValueError(
+            f"No gws credentials mapped for account {account!r}; refusing to fall "
+            "back to the ambient mailbox (would read/draft the wrong account). "
+            "Add it to ingestion.gws_credentials."
+        )
+    return None  # no per-account map → single-account / ambient credentials
+
+
 def _unwrap_gws_envelope(raw: Any) -> Any:
     """Drill through a possible ``{result|data|response: {...}}`` wrapper.
 
@@ -275,7 +304,7 @@ class GwsSource:
     def _run_json(self, args: list[str], *, account: str | None, params: dict[str, Any]) -> Any:
         command = ["gws", *args, "--params", json.dumps(params, separators=(",", ":"))]
         env = os.environ.copy()
-        creds = self._credentials.get(account) if account else None
+        creds = _resolve_gws_credentials_file(account, self._credentials)
         if creds:
             env["GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE"] = str(creds)
 
