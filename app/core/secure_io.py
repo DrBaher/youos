@@ -21,7 +21,12 @@ def write_secret(path: Path, text: str, *, encoding: str = "utf-8") -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     data = text.encode(encoding)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # O_NOFOLLOW: if the destination is a (pre-planted) symlink, fail with ELOOP
+    # rather than following it and writing the secret through to the link target
+    # (b157). Secret files are never legitimately symlinks. getattr() keeps this
+    # a no-op on platforms without the flag (e.g. Windows).
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o600)
     try:
         os.write(fd, data)
     finally:
