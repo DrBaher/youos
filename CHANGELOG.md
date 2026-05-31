@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.160 — 2026-05-31
+
+### Hardening: auto-feedback corpus integrity (dedup, down-weight, per-sender cap)
+
+Third of the 7th hardening pass. Stops the organic capture from bloating the DB and keeps self-labeled / single-sender data from skewing the voice adapter. Voice-quality only — drafts stay human-reviewed; the never-send invariant is untouched.
+
+- **(MED) Organic capture re-inserted every pair on every nightly run.** `_capture_organic_pairs` inserted into `feedback_pairs` with `reply_pair_id` left NULL, so the `NOT IN (reply_pair_id …)` dedup guard was permanently inert, and it never marked the source `reply_pairs.auto_feedback_processed = 1` — so the same pairs re-inserted forever (DB bloat, amplified into every snapshot). Now both the organic and the main auto-capture INSERT persist `reply_pair_id`, and organic capture marks the source processed; a second run is a no-op.
+- **(MED) Self-labeled rows flowed into the default SFT export at full weight.** b153 added the auto-captured/organic exclusion to the DPO path only, so the default SFT `export()` still pulled self-labeled rows in — and `is_poisoned_text` only screens explicit jailbreak markers, not a benign payload (a changed IBAN) in the user's own captured reply, which would then steer every future draft. Self-labeled rows are now **down-weighted** (quality capped at 3, so they're never 2-3×-oversampled) rather than excluded (excluding them would gut a cold-start corpus), and a new `--human-rated-only` flag drops them entirely for a curated export.
+- **(LOW) No per-sender cap on the corpus.** One chatty correspondent could dominate the voice corpus. `export()` now caps each linked sender's contribution at `max(20, MAX_EXPORT_PAIRS // 20)` (via the now-populated `reply_pair_id` → `reply_pairs.inbound_author`), keeping the highest-quality pairs per sender; rows with no linked sender are uncapped.
+
++5 regression tests. Full suite: 1774 passed.
+
 ## v0.2.0-beta.159 — 2026-05-31
 
 ### Hardening: warm model-server lifecycle (recover wedged/partial starts, no restart churn)
