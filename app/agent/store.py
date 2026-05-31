@@ -351,6 +351,49 @@ def reap_stale_sending(database_url: str, *, older_than_minutes: int = 10) -> in
         return cur.rowcount or 0
 
 
+# Retention for the append-only agent tables. A long-lived instance otherwise
+# grows these without bound, and every row is copied into every full-DB snapshot.
+# Conservative: only telemetry/audit rows and TERMINAL review-queue rows are
+# pruned — a live ('pending'/'amended') draft is never touched (b162).
+PRUNE_DEFAULT_DAYS = 90
+
+
+def prune_agent_tables(database_url: str, *, older_than_days: int = PRUNE_DEFAULT_DAYS) -> dict[str, int]:
+    """Delete aged rows from the append-only agent tables, then VACUUM to reclaim
+    the freed pages (so future snapshots shrink). Returns a per-table removed
+    count. Each table is pruned independently (try/except) so a schema-stale
+    instance still prunes the rest."""
+    cutoff = f"-{int(older_than_days)} days"
+    deletes = [
+        # Pure telemetry / audit history.
+        ("agent_audit", "DELETE FROM agent_audit WHERE datetime(started_at) <= datetime('now', ?)"),
+        ("draft_events", "DELETE FROM draft_events WHERE datetime(created_at) <= datetime('now', ?)"),
+        ("agent_actions", "DELETE FROM agent_actions WHERE datetime(created_at) <= datetime('now', ?)"),
+        # Digest per-message dedup ledger (retention >> any digest period).
+        ("agent_digest_items", "DELETE FROM agent_digest_items WHERE datetime(created_at) <= datetime('now', ?)"),
+        # Review queue: ONLY terminal rows — never a live pending/amended draft.
+        (
+            "agent_pending_drafts",
+            "DELETE FROM agent_pending_drafts WHERE status IN ('sent', 'dismissed') "
+            "AND datetime(created_at) <= datetime('now', ?)",
+        ),
+    ]
+    removed: dict[str, int] = {}
+    with closing(_connect(database_url)) as conn:
+        for table, sql in deletes:
+            try:
+                cur = conn.execute(sql, (cutoff,))
+                removed[table] = cur.rowcount or 0
+            except sqlite3.OperationalError:
+                removed[table] = 0  # table/column absent on this instance
+        conn.commit()
+        try:
+            conn.execute("VACUUM")  # outside the txn above; reclaim freed pages
+        except sqlite3.OperationalError:
+            pass
+    return removed
+
+
 def count_sent_today(database_url: str, *, account: str | None = None) -> int:
     """How many drafts were actually sent (``send_state='sent'``) today (UTC) —
     the daily auto-send cap counts against this, mirroring the auto-push cap."""

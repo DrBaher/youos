@@ -443,6 +443,21 @@ def step_snapshot_daily(verbose: bool = False) -> dict:
         return {"ok": False, "skipped": False, "error": str(exc)}
 
 
+def step_store_prune(verbose: bool = False) -> dict:
+    """Prune aged append-only agent tables (telemetry/audit + terminal review-
+    queue rows) and VACUUM so the live DB and future snapshots stay bounded."""
+    from app.agent.store import prune_agent_tables
+
+    print(f"\n{'=' * 60}\nSTEP: Store retention prune\n{'=' * 60}")
+    db_path = resolve_sqlite_path(get_settings().database_url)
+    if not db_path.exists():
+        print("  [SKIP] store_prune — DB not yet created")
+        return {}
+    removed = prune_agent_tables(f"sqlite:///{db_path}")
+    print(f"  [OK] pruned {sum(removed.values())} rows: {removed}")
+    return removed
+
+
 def step_triage_precision(verbose: bool = False) -> str:
     """Snapshot the draft decision's precision/recall on real mail.
 
@@ -849,6 +864,20 @@ def main() -> None:
         results["daily_snapshot"] = f"error: {exc}"
         steps["daily_snapshot"] = False
         errors.append(f"Daily snapshot error: {exc}")
+
+    # -0.5. Store retention — AFTER the snapshot (so this morning's recovery point
+    # keeps the full pre-prune DB), prune aged telemetry/terminal agent rows +
+    # VACUUM so the live DB and future snapshots stay bounded (b162).
+    _t = time.monotonic()
+    try:
+        removed = step_store_prune(verbose=verbose)
+        results["store_prune"] = f"pruned {sum(removed.values())} rows" if removed else "skipped"
+        steps["store_prune"] = True
+    except Exception as exc:
+        results["store_prune"] = f"error: {exc}"
+        steps["store_prune"] = False
+        errors.append(f"Store prune error: {exc}")
+    _record_duration("store_prune", _t)
     _record_duration("daily_snapshot", _t)
 
     # 0. Corpus deduplication (best-effort, before ingestion) — with skip gate
