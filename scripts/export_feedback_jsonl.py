@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 from pathlib import Path
 
@@ -35,6 +36,78 @@ def _chmod_600(path) -> None:
         os.chmod(path, 0o600)
     except OSError:
         pass
+
+
+# --- training-data sanitization / poison screen (b153) -----------------------
+# The inbound side of every pair is attacker-influenced (a sender writes their
+# own email body) and flows verbatim into the LoRA fine-tuning corpus. A crafted
+# email could carry prompt-injection text, jailbreak markers, raw control bytes,
+# or chat-template role tokens that — once trained in — persist in the adapter
+# across restarts and steer EVERY future draft. The model only drafts
+# human-reviewed replies, but a human may not notice e.g. an injected payment
+# line, so we keep poison out of the corpus entirely rather than rely on review.
+
+# Per-field char cap: one training example never needs more than this, and it
+# bounds how much attacker text lands in a single record.
+MAX_FIELD_CHARS = 8000
+
+# Hard upper bound on exported pairs. A large/old mailbox organically accumulates
+# tens of thousands of pairs which, 3x-oversampled, write a multi-GB train.jsonl
+# that can fill disk and wedge the nightly launchd finetune. Keep the highest-
+# quality, most-recent N.
+MAX_EXPORT_PAIRS = 5000
+
+# Control bytes are stripped except tab (09), newline (0a), carriage return (0d).
+_CTRL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+# Chat-template / role-control tokens must never appear inside a training field —
+# a sender embedding "<|im_start|>system ..." would inject a spoofed turn into
+# the tokenized example.
+_TEMPLATE_TOKENS = (
+    "<|im_start|>",
+    "<|im_end|>",
+    "<|system|>",
+    "<|user|>",
+    "<|assistant|>",
+    "<<sys>>",
+    "<</sys>>",
+    "[inst]",
+    "[/inst]",
+)
+
+_INJECTION_RE = re.compile(
+    r"ignore\s+(?:all\s+|any\s+)?(?:previous|prior|above)\s+instructions"
+    r"|disregard\s+(?:all\s+|the\s+)?(?:previous|prior|above)\s+(?:instructions|context|text)"
+    r"|you\s+are\s+now\s+(?:in\s+)?(?:an?\s+)?(?:unrestricted|developer|dan|jailbroken|god)"
+    r"|system\s+(?:prompt\s+)?override"
+    r"|forget\s+(?:all\s+|everything\s+)?(?:you|your|previous|prior)",
+    re.IGNORECASE,
+)
+
+
+def sanitize_training_text(text: str | None) -> str:
+    """Strip control bytes (keep \\t \\n \\r) and cap length.
+
+    Applied at the build_record / DPO sink so no caller can write raw attacker
+    control bytes into a training example — they survive the JSON round-trip and
+    reach the tokenizer unchanged."""
+    if not text:
+        return ""
+    cleaned = _CTRL_RE.sub("", text)
+    if len(cleaned) > MAX_FIELD_CHARS:
+        cleaned = cleaned[:MAX_FIELD_CHARS]
+    return cleaned
+
+
+def is_poisoned_text(text: str | None) -> bool:
+    """True if text carries prompt-injection / jailbreak markers or chat-template
+    role tokens. Such a pair is DROPPED from the corpus rather than trained on."""
+    if not text:
+        return False
+    low = text.lower()
+    if any(tok in low for tok in _TEMPLATE_TOKENS):
+        return True
+    return bool(_INJECTION_RE.search(text))
 
 
 def parse_args() -> argparse.Namespace:
@@ -117,12 +190,16 @@ def build_record(
     *,
     system_message: str | None = None,
 ) -> dict:
-    """Build a JSONL record with optional system message."""
+    """Build a JSONL record with optional system message.
+
+    Sanitizes the user/assistant content at this single sink so no caller can
+    write raw attacker control bytes into a training example (b153). The system
+    message is internally generated (trusted) and passed through as-is."""
     messages = []
     if system_message:
         messages.append({"role": "system", "content": system_message})
-    messages.append({"role": "user", "content": inbound})
-    messages.append({"role": "assistant", "content": edited_reply})
+    messages.append({"role": "user", "content": sanitize_training_text(inbound)})
+    messages.append({"role": "assistant", "content": sanitize_training_text(edited_reply)})
     return {"messages": messages}
 
 
@@ -136,7 +213,20 @@ def export_dpo(args: argparse.Namespace) -> None:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        chosen_rows = conn.execute("SELECT inbound_text, edited_reply, rating FROM feedback_pairs WHERE rating >= 4 AND LENGTH(edited_reply) >= 15").fetchall()
+        # b153: never let attacker-influenced, self-labeled content drive the
+        # 'chosen' preference gradient. Exclude auto-captured / organic rows from
+        # the chosen tier so only genuinely human-rated replies are preferred.
+        # Column-guarded so older DBs that predate these columns still export.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(feedback_pairs)")}
+        chosen_extra = ""
+        if "feedback_note" in cols:
+            chosen_extra += " AND COALESCE(feedback_note, '') NOT LIKE 'auto-captured%'"
+        if "organic" in cols:
+            chosen_extra += " AND COALESCE(organic, 0) = 0"
+        chosen_rows = conn.execute(
+            "SELECT inbound_text, edited_reply, rating FROM feedback_pairs "
+            "WHERE rating >= 4 AND LENGTH(edited_reply) >= 15" + chosen_extra
+        ).fetchall()
         rejected_rows = conn.execute(
             "SELECT inbound_text, edited_reply, rating FROM feedback_pairs WHERE rating <= 2 AND LENGTH(edited_reply) >= 15"
         ).fetchall()
@@ -154,24 +244,31 @@ def export_dpo(args: argparse.Namespace) -> None:
         c_len = len(chosen["inbound_text"] or "")
         if c_len == 0:
             continue
+        # b153: never train on a poisoned chosen example.
+        if is_poisoned_text(chosen["inbound_text"]) or is_poisoned_text(chosen["edited_reply"]):
+            continue
         for j, rejected in enumerate(rejected_rows):
             if j in used_rejected:
                 continue
             r_len = len(rejected["inbound_text"] or "")
             if r_len == 0:
                 continue
+            if is_poisoned_text(rejected["edited_reply"]):
+                continue
             # Match by similar inbound length (within 50%)
             ratio = min(c_len, r_len) / max(c_len, r_len)
             if ratio >= 0.5:
                 pairs.append(
                     {
-                        "prompt": chosen["inbound_text"],
-                        "chosen": chosen["edited_reply"],
-                        "rejected": rejected["edited_reply"],
+                        "prompt": sanitize_training_text(chosen["inbound_text"]),
+                        "chosen": sanitize_training_text(chosen["edited_reply"]),
+                        "rejected": sanitize_training_text(rejected["edited_reply"]),
                     }
                 )
                 used_rejected.add(j)
                 break
+        if len(pairs) >= MAX_EXPORT_PAIRS:  # bound emitted pairs (disk budget)
+            break
 
     if not pairs:
         print("No DPO pairs could be matched.")
@@ -331,12 +428,22 @@ def export(args: argparse.Namespace) -> None:
     qualified: list[tuple[str, str, str]] = []
     filtered_count = 0
     null_rating_count = 0
+    poisoned_count = 0
 
     for row in rows:
         rating = row["rating"]
         edit_pct = row["edit_distance_pct"]
         edited_reply = row["edited_reply"] or ""
         organic = row["organic"]
+
+        # b153: drop attacker-injected pairs before they become training examples.
+        # The inbound text is sender-controlled; screen it (and the reply) for
+        # prompt-injection / jailbreak markers and chat-template role tokens so a
+        # crafted email can't poison the adapter.
+        if is_poisoned_text(row["inbound_text"]) or is_poisoned_text(edited_reply):
+            poisoned_count += 1
+            filtered_count += 1
+            continue
 
         # Exclude pairs with short edited replies
         if len(edited_reply) < 15:
@@ -370,10 +477,20 @@ def export(args: argparse.Namespace) -> None:
 
     if null_rating_count > 0:
         print(f"Warning: {null_rating_count} pairs have null rating (included)")
+    if poisoned_count > 0:
+        print(f"Dropped {poisoned_count} pairs with prompt-injection / role-token markers (b153)")
 
     if not qualified:
         print(f"No qualifying pairs after filtering. Filtered out {filtered_count} low-quality pairs.")
         return
+
+    # b153: bound the exported set so a large/old mailbox can't write a multi-GB
+    # train.jsonl that fills disk and wedges the nightly. Keep the highest-
+    # quality, most-recent pairs (quality DESC, then created_at DESC).
+    if len(qualified) > MAX_EXPORT_PAIRS:
+        qualified.sort(key=lambda x: (x[3], x[0]), reverse=True)
+        print(f"Capping export at {MAX_EXPORT_PAIRS} pairs (had {len(qualified)}); keeping highest-quality/most-recent")
+        qualified = qualified[:MAX_EXPORT_PAIRS]
 
     # E15: oversample 5-star recent pairs (last 90 days) 2-3x for stronger training signal
     from datetime import datetime, timedelta
@@ -393,6 +510,12 @@ def export(args: argparse.Namespace) -> None:
     if len(oversampled) > len(qualified):
         print(f"E15 oversampling: {len(qualified)} -> {len(oversampled)} pairs (5-star/recent boosted)")
     qualified = oversampled
+
+    # b153: clamp the post-oversample count too, so 3x boosting can't blow past
+    # the disk budget on a large corpus.
+    if len(qualified) > MAX_EXPORT_PAIRS:
+        print(f"Clamping post-oversample {len(qualified)} -> {MAX_EXPORT_PAIRS} pairs (disk budget)")
+        qualified = qualified[:MAX_EXPORT_PAIRS]
 
     print(f"Exported {len(qualified)} pairs (filtered out {filtered_count} low-quality pairs)")
 
