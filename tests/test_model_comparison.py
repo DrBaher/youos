@@ -60,11 +60,35 @@ def _stub_generation(monkeypatch):
 def test_backend_override_pins_claude_over_local(monkeypatch):
     svc = _stub_generation(monkeypatch)
     # use_local_model True + MLX available, but override forces Claude.
+    # b175: a cloud override now requires the cloud-escalation flag ON + the
+    # per-request opt-in (both of which the real cross-model A/B sets via
+    # _default_generate). Set them here so this seam still exercises the cloud arm.
+    monkeypatch.setattr(svc, "cloud_escalation_enabled", lambda: True)
     resp = svc.generate_draft(
-        svc.DraftRequest(inbound_message="hi", use_local_model=True, backend_override="claude"),
+        svc.DraftRequest(
+            inbound_message="hi", use_local_model=True, backend_override="claude",
+            allow_cloud_escalation=True,
+        ),
         database_url="sqlite:///x", configs_dir=Path("/tmp"),
     )
     assert resp.model_used == "claude"
+
+
+def test_backend_override_claude_blocked_without_optin(monkeypatch):
+    """b175: a cloud override with the flag OFF / no opt-in must NOT egress —
+    it falls back to the local model instead of calling Claude."""
+    svc = _stub_generation(monkeypatch)
+    monkeypatch.setattr(svc, "cloud_escalation_enabled", lambda: False)
+    resp = svc.generate_draft(
+        # opt-in present but flag OFF -> still blocked
+        svc.DraftRequest(
+            inbound_message="hi", use_local_model=True, backend_override="claude",
+            allow_cloud_escalation=True,
+        ),
+        database_url="sqlite:///x", configs_dir=Path("/tmp"),
+    )
+    assert resp.model_used != "claude"
+    assert resp.cloud_used is False
 
 
 def test_backend_override_pins_mlx(monkeypatch):
