@@ -26,13 +26,37 @@ def test_is_enabled_reads_config(monkeypatch):
     assert ms.is_enabled() is False
 
 
+def _valid_safetensors() -> bytes:
+    """A minimal structurally-valid safetensors blob: 8-byte LE header length +
+    a JSON-parseable header (b163 integrity check)."""
+    header = b"{}"
+    return len(header).to_bytes(8, "little") + header
+
+
 def test_model_label_reflects_adapter(monkeypatch, tmp_path):
     adir = tmp_path / "latest"
     adir.mkdir()
     monkeypatch.setattr(ms, "get_adapter_path", lambda: adir)
     assert ms.model_label() == "qwen2.5-1.5b-base"  # no adapter file yet
-    (adir / "adapters.safetensors").write_text("x")
+    (adir / "adapters.safetensors").write_bytes(_valid_safetensors())
     assert ms.model_label() == "qwen2.5-1.5b-lora"
+
+
+def test_corrupt_adapter_is_not_served(monkeypatch, tmp_path):
+    """b163: a truncated/half-written adapters.safetensors must NOT be served —
+    _adapter_arg/_adapter_sig fall back to the base model instead of handing
+    mlx_lm.server a file it would choke on (wedging all drafting)."""
+    adir = tmp_path / "latest"
+    adir.mkdir()
+    monkeypatch.setattr(ms, "get_adapter_path", lambda: adir)
+    (adir / "adapters.safetensors").write_bytes(b"\x05\x00\x00\x00\x00\x00\x00\x00tru")  # header says 5 bytes, only 3 present
+    assert ms._adapter_arg() is None
+    assert ms._adapter_sig() is None
+    assert ms.model_label() == "qwen2.5-1.5b-base"
+    # a valid one IS served
+    (adir / "adapters.safetensors").write_bytes(_valid_safetensors())
+    assert ms._adapter_arg() == str(adir)
+    assert ms._adapter_sig() is not None
 
 
 def test_is_healthy_true_on_200(monkeypatch):
