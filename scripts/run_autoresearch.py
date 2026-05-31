@@ -76,7 +76,7 @@ def _git_commit_kept_change(
     """Commit config changes for a kept autoresearch improvement."""
     msg = f"autoresearch: keep {surface_name} {old_value} → {new_value} (composite {baseline_composite:.4f} → {candidate_composite:.4f})"
     try:
-        subprocess.run(
+        add = subprocess.run(
             # Stage ALL four mutable surfaces — persona.yaml + autoresearch.yaml
             # were applied live but never committed, so the audit trail (and the
             # git-log run summary) under-reported what the loop actually changed.
@@ -84,15 +84,39 @@ def _git_commit_kept_change(
              "configs/retrieval/defaults.yaml", "configs/prompts.yaml",
              "configs/persona.yaml", "configs/autoresearch.yaml"],
             capture_output=True,
+            text=True,
             timeout=10,
             cwd=ROOT_DIR,
         )
-        subprocess.run(
+        if add.returncode != 0:
+            logger.warning(
+                "git add failed for kept autoresearch change (%s) — not committed: %s",
+                surface_name, add.stderr.strip(),
+            )
+            return
+        commit = subprocess.run(
             ["git", "commit", "-m", msg],
             capture_output=True,
+            text=True,
             timeout=10,
             cwd=ROOT_DIR,
         )
+        # A non-zero returncode here was previously SWALLOWED: a concurrent run
+        # holding the git index (index.lock) aborts the commit, so a kept config
+        # improvement gets applied live but silently never recorded in git.
+        if commit.returncode != 0:
+            out = (commit.stderr or commit.stdout or "").strip()
+            if "nothing to commit" in out:
+                logger.info(
+                    "No git changes to commit for kept autoresearch change (%s)",
+                    surface_name,
+                )
+            else:
+                logger.warning(
+                    "git commit FAILED for kept autoresearch change (%s) — "
+                    "applied live but NOT committed: %s",
+                    surface_name, out,
+                )
     except Exception as exc:
         logger.warning("Failed to git commit autoresearch change: %s", exc)
 
