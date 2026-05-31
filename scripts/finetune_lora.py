@@ -90,6 +90,195 @@ def compute_auto_config(train_count: int) -> dict[str, int | float]:
     return {"iters": iters, "num_layers": num_layers, "learning_rate": learning_rate}
 
 
+# b176: emails are short; a 1024-token cap is plenty and slashes the activation
+# working set. Used as the default --max-seq-length for memory-constrained
+# (>=4B) tiers. The manual Qwen3-4B retrain that fit 16 GB used exactly this.
+MAX_SEQ_LENGTH_DEFAULT = 1024
+
+
+def _parse_model_size_b(base_model: str) -> float | None:
+    """Extract the parameter count in billions from a model id (b176).
+
+    Matches the first ``<num>B`` token (e.g. "Qwen3-4B" -> 4.0,
+    "Llama-3.1-8B" -> 8.0, "Qwen2.5-1.5B" -> 1.5). Crucially, a trailing
+    quantization tag like "-4bit" must NOT be read as 4 billion params, so the
+    ``B`` must not be immediately followed by another letter. Returns None when
+    no size token is present so callers fall back to a conservative default.
+    """
+    if not base_model:
+        return None
+    m = re.search(r"(\d+(?:\.\d+)?)\s*[bB](?![a-zA-Z])", base_model)
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
+def _system_mem_gb() -> float | None:
+    """Best-effort physical RAM in GiB via ``sysctl hw.memsize`` (b176)."""
+    try:
+        out = subprocess.run(
+            ["sysctl", "-n", "hw.memsize"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        val = out.stdout.strip()
+        if val:
+            return int(val) / (1024 ** 3)
+    except Exception:
+        pass
+    return None
+
+
+def compute_memory_config(
+    base_model: str,
+    sys_mem_gb: float | None = None,
+) -> dict:
+    """Pick memory-lean knobs from base-model size and available RAM (b176).
+
+    This is the *memory dimension* layered onto compute_auto_config()'s
+    data-size dimension. The b174 migration moved the base to a 4B-4bit model;
+    on a 16 GB M4 the prior flat 16-layer LoRA train with no seq cap and no
+    grad-checkpointing blows past the ~12.7 GB GPU working set and OOMs, so the
+    scheduled nightly retrain fails. The manual run that succeeded used
+    --grad-checkpoint + --max-seq-length 1024 + --num-layers 8 (peak 3.97 GB).
+
+    Returns:
+      - grad_checkpoint: bool   trade compute for activation memory
+      - max_seq_length:  int    cap on tokens per example (emails are short)
+      - num_layers_cap:  int|None ceiling on trainable LoRA layers
+      - batch_size_cap:  int|None ceiling on batch size
+
+    A small (<2B) base is left close to the prior behavior (no grad-checkpoint,
+    no caps) so the cheap path is not needlessly hobbled. Unknown size assumes
+    the constrained default-base (4B) tier. Callers merge this onto
+    compute_auto_config() and then apply explicit model.finetune.* overrides.
+    """
+    size_b = _parse_model_size_b(base_model)
+    # If the size is unknown, assume the constrained default-base tier (4B).
+    effective_b = size_b if size_b is not None else 4.0
+
+    if effective_b < 2.0:
+        # Small base (e.g. 1.5B): cheap to train, keep prior behavior.
+        cfg = {
+            "grad_checkpoint": False,
+            "max_seq_length": 2048,
+            "num_layers_cap": None,
+            "batch_size_cap": None,
+        }
+    elif effective_b < 6.0:
+        # ~4B: the known-good 16 GB recipe.
+        cfg = {
+            "grad_checkpoint": True,
+            "max_seq_length": MAX_SEQ_LENGTH_DEFAULT,
+            "num_layers_cap": 8,
+            "batch_size_cap": 1,
+        }
+    else:
+        # >=8B: tighter still.
+        cfg = {
+            "grad_checkpoint": True,
+            "max_seq_length": MAX_SEQ_LENGTH_DEFAULT,
+            "num_layers_cap": 4,
+            "batch_size_cap": 1,
+        }
+
+    # On a tight-RAM box (<24 GB) force grad-checkpoint + batch cap even for a
+    # mid base; the small tier stays relaxed (it fits comfortably).
+    if sys_mem_gb is not None and sys_mem_gb < 24.0 and effective_b >= 2.0:
+        cfg["grad_checkpoint"] = True
+        cfg["batch_size_cap"] = 1
+        if cfg["max_seq_length"] is None or cfg["max_seq_length"] > MAX_SEQ_LENGTH_DEFAULT:
+            cfg["max_seq_length"] = MAX_SEQ_LENGTH_DEFAULT
+
+    cfg["model_size_b"] = size_b
+    cfg["sys_mem_gb"] = sys_mem_gb
+    return cfg
+
+
+def _finetune_overrides() -> dict:
+    """Read optional model.finetune.* overrides from config (b176).
+
+    Recognised keys: grad_checkpoint (bool), max_seq_length (int),
+    num_layers (int), batch_size (int). Any present value wins over the
+    auto-derived memory/data config. Best-effort: a missing/broken config
+    just yields no overrides.
+    """
+    try:
+        from app.core.config import load_config
+
+        cfg = load_config() or {}
+        model_cfg = cfg.get("model", {}) or {}
+        return dict(model_cfg.get("finetune", {}) or {})
+    except Exception:
+        return {}
+
+
+def resolve_train_knobs(
+    base_model: str,
+    auto: dict,
+    iters_override: int | None = None,
+    num_layers_override: int | None = None,
+    learning_rate_override: float | None = None,
+    overrides: dict | None = None,
+    sys_mem_gb: float | None = None,
+) -> dict:
+    """Merge data-size config + memory config + explicit overrides (b176).
+
+    Precedence (highest first): explicit CLI flag (iters/num-layers/lr) ->
+    config model.finetune.* override -> memory cap (model-size/RAM) ->
+    compute_auto_config() data-size pick. Returns the final OOM-safe knob set:
+    iters, num_layers, learning_rate, batch_size, max_seq_length,
+    grad_checkpoint.
+    """
+    if overrides is None:
+        overrides = _finetune_overrides()
+
+    iters = iters_override if iters_override is not None else auto["iters"]
+    learning_rate = (
+        learning_rate_override
+        if learning_rate_override is not None
+        else auto["learning_rate"]
+    )
+    num_layers = auto["num_layers"]
+    batch_size = 1  # the prior fixed minibatch size
+
+    mem = compute_memory_config(base_model, sys_mem_gb)
+
+    grad_checkpoint = bool(overrides.get("grad_checkpoint", mem["grad_checkpoint"]))
+
+    max_seq_length = overrides.get("max_seq_length", mem["max_seq_length"])
+    if max_seq_length is not None:
+        max_seq_length = int(max_seq_length)
+
+    # num_layers: explicit CLI flag wins; else config override; else take the
+    # smaller of the data-size pick and the model-size memory cap.
+    if num_layers_override is not None:
+        num_layers = int(num_layers_override)
+    elif "num_layers" in overrides:
+        num_layers = int(overrides["num_layers"])
+    elif mem["num_layers_cap"] is not None:
+        num_layers = min(num_layers, mem["num_layers_cap"])
+
+    # batch_size: config override wins; else apply the memory cap.
+    if "batch_size" in overrides:
+        batch_size = int(overrides["batch_size"])
+    elif mem["batch_size_cap"] is not None:
+        batch_size = min(batch_size, mem["batch_size_cap"])
+
+    return {
+        "iters": iters,
+        "num_layers": num_layers,
+        "learning_rate": learning_rate,
+        "batch_size": batch_size,
+        "max_seq_length": max_seq_length,
+        "grad_checkpoint": grad_checkpoint,
+    }
+
+
 def _promote_adapter(staging_dir: Path, adapter_dir: Path) -> bool:
     """Atomically promote a freshly-trained adapter from ``staging_dir`` into the
     live ``adapter_dir`` (b163).
@@ -150,24 +339,41 @@ def run_training(args: argparse.Namespace) -> str:
             if strip_curriculum_line(train_path):
                 train_count -= 1  # metadata line removed; no longer present
 
-    # Determine hyperparameters
+    # Determine hyperparameters. The data-size dimension (iters/num_layers/lr)
+    # comes from compute_auto_config; b176 layers on a memory dimension
+    # (grad-checkpoint, max-seq-length, num_layers/batch caps) driven by the
+    # base-model SIZE and available RAM so a 4B/8B base fits a 16 GB M4 budget
+    # without OOMing the nightly. Explicit CLI flags and model.finetune.*
+    # config overrides win over both.
     if args.auto:
         auto = compute_auto_config(train_count)
-        iters = args.iters if args.iters is not None else auto["iters"]
-        num_layers = args.num_layers if args.num_layers is not None else auto["num_layers"]
-        learning_rate = args.learning_rate if args.learning_rate is not None else auto["learning_rate"]
     else:
-        iters = args.iters if args.iters is not None else 100
-        num_layers = args.num_layers if args.num_layers is not None else 8
-        learning_rate = args.learning_rate if args.learning_rate is not None else 1e-5
+        auto = {"iters": 100, "num_layers": 8, "learning_rate": 1e-5}
+
+    knobs = resolve_train_knobs(
+        BASE_MODEL,
+        auto,
+        iters_override=args.iters,
+        num_layers_override=args.num_layers,
+        learning_rate_override=args.learning_rate,
+        sys_mem_gb=_system_mem_gb(),
+    )
+    iters = knobs["iters"]
+    num_layers = knobs["num_layers"]
+    learning_rate = knobs["learning_rate"]
+    batch_size = knobs["batch_size"]
+    max_seq_length = knobs["max_seq_length"]
+    grad_checkpoint = knobs["grad_checkpoint"]
 
     config = {
         "base_model": BASE_MODEL,
         "data_dir": str(data_dir),
         "adapter_dir": str(adapter_dir),
         "iters": iters,
-        "batch_size": 1,
+        "batch_size": batch_size,
         "num_layers": num_layers,
+        "max_seq_length": max_seq_length,
+        "grad_checkpoint": grad_checkpoint,
         "learning_rate": learning_rate,
         "train_pairs": train_count,
         "valid_pairs": valid_count,
@@ -219,13 +425,20 @@ def run_training(args: argparse.Namespace) -> str:
         "--iters",
         str(iters),
         "--batch-size",
-        "1",
+        str(batch_size),
         "--num-layers",
         str(num_layers),
         "--learning-rate",
         str(learning_rate),
         *train_type_args,
     ]
+
+    # b176 memory levers: cap sequence length (emails are short) and turn on
+    # gradient checkpointing for larger bases so the GPU working set fits.
+    if max_seq_length is not None:
+        cmd.extend(["--max-seq-length", str(max_seq_length)])
+    if grad_checkpoint:
+        cmd.append("--grad-checkpoint")
 
     if valid_path.exists() and valid_count > 0:
         cmd.extend(["--val-batches", "1"])
@@ -285,6 +498,9 @@ def run_training(args: argparse.Namespace) -> str:
         "pairs_used": pairs_used or train_count,
         "iters": iters,
         "num_layers": num_layers,
+        "batch_size": batch_size,
+        "max_seq_length": max_seq_length,
+        "grad_checkpoint": grad_checkpoint,
         "learning_rate": learning_rate,
         "final_val_loss": val_loss,
         "persona": persona,
