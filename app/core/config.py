@@ -117,9 +117,61 @@ def get_ingestion_google_backend(config: dict[str, Any] | None = None) -> str:
     return value if value in ("gog", "gws", "native") else "gog"
 
 
+# Repo default base model. The local drafting base migrated from
+# Qwen2.5-1.5B to Qwen3-4B-Instruct-2507 (b174): a larger, ChatML/<|im_end|>,
+# NON-thinking (no <think> tags), Apache-2.0 model. The mlx 4-bit build is
+# ``mlx-community/Qwen3-4B-Instruct-2507-4bit``; per-instance config (e.g.
+# baheros) overrides ``model.base`` for the exact weights to load.
+DEFAULT_BASE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
+
+
 def get_base_model(config: dict[str, Any] | None = None) -> str:
     cfg = config or load_config()
-    return cfg.get("model", {}).get("base", "Qwen/Qwen2.5-1.5B-Instruct")
+    return cfg.get("model", {}).get("base", DEFAULT_BASE_MODEL)
+
+
+def model_label(base: str | None = None, *, with_adapter: bool) -> str:
+    """Derive the ``model_used`` telemetry label from the configured base model.
+
+    Turns a HuggingFace base id into a stable, family+size label and appends the
+    drafting mode, e.g. ``Qwen/Qwen3-4B-Instruct-2507`` ->
+    ``qwen3-4b-lora`` / ``qwen3-4b-base``. Deriving it (rather than hardcoding a
+    ``qwen2.5-1.5b-*`` string) means the label tracks the real base after a model
+    migration instead of silently lying (b174).
+
+    The label is intentionally coarse — ``_model_family`` buckets on the
+    ``-lora`` / ``-base`` suffix, so any base maps cleanly to local-lora /
+    local-base for stats.
+    """
+    base = base or get_base_model()
+    short = _short_model_name(base)
+    return f"{short}-lora" if with_adapter else f"{short}-base"
+
+
+def _short_model_name(base: str) -> str:
+    """Collapse a HF model id to a short ``<family><size>`` token, e.g.
+    ``Qwen/Qwen3-4B-Instruct-2507`` -> ``qwen3-4b``. Best-effort and lossy: it
+    only needs to be stable and human-readable for telemetry, not reversible.
+
+    Strategy: take the repo basename, lowercase it, then keep the leading
+    ``<letters><digits...>`` family token plus the first ``<num>[bm]`` size token
+    if present. Falls back to a sanitized basename when nothing matches."""
+    import re
+
+    name = (base or "").split("/")[-1].lower()
+    if not name:
+        return "model"
+    # family token: leading letters + optional version digits, e.g. qwen3, llama3
+    fam_m = re.match(r"[a-z]+[0-9.]*", name)
+    family = fam_m.group(0).rstrip(".") if fam_m else ""
+    # size token: first standalone <number>(b|m), e.g. 4b, 1.5b, 7b, 500m
+    size_m = re.search(r"(\d+(?:\.\d+)?)\s*([bm])\b", name)
+    size = f"{size_m.group(1)}{size_m.group(2)}" if size_m else ""
+    label = "-".join(p for p in (family, size) if p)
+    if label:
+        return label
+    # Fallback: sanitized basename so the label is never empty/misleading.
+    return re.sub(r"[^a-z0-9.]+", "-", name).strip("-") or "model"
 
 
 def get_model_fallback(config: dict[str, Any] | None = None) -> str:

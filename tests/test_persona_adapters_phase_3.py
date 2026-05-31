@@ -23,6 +23,14 @@ from pathlib import Path
 
 import pytest
 
+from app.core.config import DEFAULT_BASE_MODEL, model_label
+
+# b174: model_used labels are derived from the configured base model. These
+# dispatch tests monkeypatch load_config to a dict WITHOUT model.base, so the
+# service resolves the repo DEFAULT base — derive the expected label from the
+# same default (not the on-disk dev config, which may still pin an old base).
+_LORA = model_label(DEFAULT_BASE_MODEL, with_adapter=True)  # e.g. qwen3-4b-lora
+
 
 @pytest.fixture
 def _reset_settings():
@@ -264,7 +272,7 @@ def test_dispatch_routes_to_persona_adapter_when_enabled_and_trained(monkeypatch
         configs_dir=Path("/tmp"),
     )
     assert calls[0]["adapter_path"] == persona_path
-    assert resp.model_used == "qwen2.5-1.5b-lora-internal"
+    assert resp.model_used == f"{_LORA}-internal"
 
 
 def test_dispatch_falls_through_to_global_when_persona_untrained(monkeypatch, instance):
@@ -293,7 +301,7 @@ def test_dispatch_falls_through_to_global_when_persona_untrained(monkeypatch, in
     # No adapter_path override; falls back to use_adapter=True path.
     assert calls[0]["adapter_path"] is None
     assert calls[0]["use_adapter"] is True
-    assert resp.model_used == "qwen2.5-1.5b-lora"
+    assert resp.model_used == _LORA
 
 
 def test_dispatch_routing_off_uses_global_even_with_persona_trained(monkeypatch, instance):
@@ -317,7 +325,7 @@ def test_dispatch_routing_off_uses_global_even_with_persona_trained(monkeypatch,
     )
     # Used the global, not the persona adapter, despite the persona being trained.
     assert calls[0]["adapter_path"] is None
-    assert resp.model_used == "qwen2.5-1.5b-lora"
+    assert resp.model_used == _LORA
 
 
 def test_dispatch_routing_on_unknown_sender_falls_through_to_global(monkeypatch, instance):
@@ -341,7 +349,7 @@ def test_dispatch_routing_on_unknown_sender_falls_through_to_global(monkeypatch,
         configs_dir=Path("/tmp"),
     )
     assert calls[0]["adapter_path"] is None
-    assert resp.model_used == "qwen2.5-1.5b-lora"
+    assert resp.model_used == _LORA
 
 
 def test_dispatch_use_adapter_false_bypasses_persona_routing(monkeypatch, instance):
