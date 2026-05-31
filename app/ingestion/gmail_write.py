@@ -579,7 +579,7 @@ def _native_gmail_service(*, account: str) -> Any:
         ) from exc
 
     from app.core.settings import get_instance_root
-    from app.ingestion.adapters import _native_config
+    from app.ingestion.adapters import _assert_token_account, _harden_token_dir, _native_config
 
     token_dir_cfg = (_native_config().get("google_token_dir") or "").strip()
     token_dir = (
@@ -600,11 +600,14 @@ def _native_gmail_service(*, account: str) -> Any:
     if not creds.valid:
         if creds.expired and creds.refresh_token:
             creds.refresh(GoogleAuthRequest())
+            _harden_token_dir(token_path)
             # 0o600: this file holds the OAuth refresh_token + client_secret.
             write_secret(token_path, creds.to_json())
         else:
             raise RuntimeError(_NATIVE_REAUTH_HINT)
 
+    # Refuse a swapped / mis-consented token before drafting into the wrong mailbox.
+    _assert_token_account(creds, account, token_path)
     return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
 
