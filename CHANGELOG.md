@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.2.0-beta.158 — 2026-05-31
+
+### Hardening: snapshot concurrency lock + tier pruning
+
+First of the 7th hardening pass. Serializes snapshot writers and bounds disk use in `app/core/data_safety.py`.
+
+- **(MED) Two concurrent restores raced and produced a false-confidence rollback target.** The restore route is a sync `def` running on the AnyIO threadpool (true parallelism), and the nightly is a separate process, so two restores (or a restore racing the nightly's create/prune) ran with no mutual exclusion — one restore's pre-restore backup could capture the *other* restore's intermediate content, so the returned `original_db_backed_up_to` pointed at the wrong DB. Added a cross-process `fcntl.flock(LOCK_EX)` on `var/.snapshot.lock` held across the whole of `create_snapshot` / `restore_snapshot` / `prune_snapshots`, making take-backup-then-overwrite atomic vs. any other snapshot writer.
+- **(MED) Snapshots in an arbitrary tier were never pruned → unbounded disk-fill.** `prune_snapshots` only looped `{hourly, daily, manual}`, but the create-snapshot route accepts an arbitrary `tier` query param (unauthenticated by default), so a snapshot in any other tier accumulated full-DB copies forever. `create_snapshot` now rejects a tier outside the known set (400 via the route), and `prune_snapshots` iterates every tier dir, reclaiming a stray tier under a default cap.
+- **(LOW) `prune_snapshots` crashed on a stat/unlink race.** Its sort key called `p.stat()` after the glob; a concurrent prune/restore unlinking a file in between raised `FileNotFoundError`. The `(path, mtime)` pairs are now materialized in a `try/except OSError` loop before sorting, in both `prune_snapshots` and `list_snapshots`.
+
++4 regression tests. Full suite: 1769 passed.
+
 ## v0.2.0-beta.157 — 2026-05-31
 
 ### Hardening: native OAuth backend (token↔account binding + symlink/dir perms)
