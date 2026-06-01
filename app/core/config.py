@@ -124,15 +124,28 @@ def get_ingestion_google_backend(config: dict[str, Any] | None = None) -> str:
 # baheros) overrides ``model.base`` for the exact weights to load.
 DEFAULT_BASE_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
 
-# Dedicated embedding model, DECOUPLED from the drafting base (b177). The
-# drafting base migrated to Qwen3-4B (b174), but the ~11.7k stored vectors were
-# built with Qwen2.5-1.5B. Tying embeddings to ``model.base`` silently moved
-# query vectors into a different (and differently-dimensioned) space than the
-# stored index, breaking semantic retrieval. The embedding model is now a
-# separate concern: it defaults to the small, fast, already-downloaded
-# Qwen2.5-1.5B-Instruct so the existing index stays valid and retrieval keeps
-# working immediately. Swapping ``model.base`` no longer changes the embedder.
-DEFAULT_EMBEDDING_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
+# Dedicated embedding model, DECOUPLED from the drafting base (b177) and now a
+# purpose-built retrieval encoder (b180).
+#
+# History: embeddings used to mean-pool a CAUSAL LM (Qwen2.5-1.5B) — heavy
+# (1536-d) and not trained for retrieval. b180 switches the default to a
+# dedicated multilingual sentence-embedding model: ``intfloat/multilingual-e5-small``
+# (XLM-RoBERTa, 384-d, MIT license, 100 languages incl. German+English — the
+# inbox is DE/EN). It is small + fast (~0.1B params) so it runs on every
+# retrieval query and indexes the ~30k-row corpus comfortably on a 16GB M4, and
+# it loads locally on Apple Silicon via ``mlx_embeddings`` (MLX/Metal). The
+# embedder is still NOT ``model.base`` — swapping the drafting base never moves
+# the embedding space.
+#
+# Switching the default changes the embedding *id* and *dimension*; b177 per-row
+# ``embedding_model_id`` tagging marks every existing (1.5B / 1536-d) row stale,
+# so retrieval ignores cross-space comparisons and a one-time
+# ``scripts/index_embeddings.py --reindex`` re-embeds the corpus with the new
+# model. See the b180 runbook.
+#
+# Hosts without ``mlx_embeddings`` (or pinning a Qwen/*-Instruct id) keep using
+# the causal-LM mean-pooling fallback in ``app.core.embeddings`` automatically.
+DEFAULT_EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
 
 
 def get_base_model(config: dict[str, Any] | None = None) -> str:
@@ -145,7 +158,7 @@ def get_embedding_model(config: dict[str, Any] | None = None) -> str:
 
     Resolution order:
     1. ``model.embedding_model`` in config (explicit pin), then
-    2. ``DEFAULT_EMBEDDING_MODEL`` (the stable 1.5B the existing index uses).
+    2. ``DEFAULT_EMBEDDING_MODEL`` (b180: a dedicated multilingual embedder).
 
     This intentionally does NOT fall back to ``model.base`` — that coupling is
     exactly the b177 bug. The legacy ``embeddings.model_id`` override (read in

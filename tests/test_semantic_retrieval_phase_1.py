@@ -276,13 +276,15 @@ def test_nightly_pipeline_writes_embedding_coverage_into_log(monkeypatch, popula
 
 # ── G4: embedding-model identity ──────────────────────────────────────────
 
-def test_get_embedding_model_id_defaults_to_base_model(monkeypatch, _reset_settings):
-    """No override → falls back to get_base_model()."""
+def test_get_embedding_model_id_defaults_to_dedicated_embedder(monkeypatch, _reset_settings):
+    """No override → the dedicated embedder default (b177/b180), NOT the base."""
     monkeypatch.setattr("app.core.config.load_config", lambda *a, **kw: {})
-    from app.core.config import get_base_model
+    from app.core.config import DEFAULT_EMBEDDING_MODEL, get_base_model
     from app.core.embeddings import get_embedding_model_id
 
-    assert get_embedding_model_id() == get_base_model()
+    assert get_embedding_model_id() == DEFAULT_EMBEDDING_MODEL
+    # Decoupled (b177): the embedder is never the drafting base.
+    assert get_embedding_model_id() != get_base_model()
 
 
 def test_get_embedding_model_id_honors_config_override(monkeypatch, _reset_settings):
@@ -299,16 +301,16 @@ def test_get_embedding_model_id_honors_config_override(monkeypatch, _reset_setti
 
 
 def test_get_embedding_model_id_ignores_blank_override(monkeypatch, _reset_settings):
-    """A YAML with `embeddings: {model_id: ""}` is fat-fingered — fall back
-    to the base model rather than passing the empty string to mlx_lm.load."""
+    """A YAML with `embeddings: {model_id: ""}` is fat-fingered — fall back to the
+    dedicated embedder default rather than passing the empty string to load."""
     monkeypatch.setattr(
         "app.core.config.load_config",
         lambda *a, **kw: {"embeddings": {"model_id": "   "}},
     )
-    from app.core.config import get_base_model
+    from app.core.config import DEFAULT_EMBEDDING_MODEL
     from app.core.embeddings import get_embedding_model_id
 
-    assert get_embedding_model_id() == get_base_model()
+    assert get_embedding_model_id() == DEFAULT_EMBEDDING_MODEL
 
 
 def test_retrieval_skips_embeddings_with_mismatched_model_id(populated_instance):
@@ -367,7 +369,7 @@ def test_indexer_writes_model_id_alongside_embedding(populated_instance, monkeyp
         # Stub embedding + model id.
         import scripts.index_embeddings as idx
 
-        monkeypatch.setattr(idx, "get_embedding", lambda _t: (0.1, 0.2, 0.3))
+        monkeypatch.setattr(idx, "get_embedding", lambda _t, **kw: (0.1, 0.2, 0.3))
         monkeypatch.setattr(idx, "serialize_embedding", lambda emb: bytes([1, 2, 3, 4]))
         monkeypatch.setattr(idx, "get_embedding_model_id", lambda: "model-test-7")
 

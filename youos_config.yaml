@@ -15,6 +15,11 @@ ingestion:
 model:
   adapter_path: models/adapters/latest
   base: mlx-community/Qwen3-4B-Instruct-2507-4bit
+  # Dedicated multilingual (DE/EN) retrieval embedder, decoupled from `base`
+  # (b177/b180). Loaded via mlx_embeddings on Apple Silicon; 384-d, MIT license.
+  # Changing this id marks existing rows stale (b177 tagging) → run
+  # `python scripts/index_embeddings.py --reindex` to re-embed the corpus.
+  embedding_model: intfloat/multilingual-e5-small
   fallback: claude
   ollama:
     enabled: false

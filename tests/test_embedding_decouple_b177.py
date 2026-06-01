@@ -42,10 +42,13 @@ def _config_file(tmp_path, monkeypatch):
 # -- Decoupling: embedding model independent of model.base ──────────────────
 
 
-def test_default_embedding_model_is_stable_1_5b():
-    assert DEFAULT_EMBEDDING_MODEL == "Qwen/Qwen2.5-1.5B-Instruct"
-    # The whole point of b177: the default embedder is NOT the 4B drafting base.
-    assert "1.5b" in DEFAULT_EMBEDDING_MODEL.lower()
+def test_default_embedding_model_is_dedicated_multilingual_embedder():
+    # b180: the default embedder is now a dedicated multilingual retrieval model
+    # (not the causal 1.5B). The whole point of b177 still holds — it is NOT the
+    # 4B drafting base, and not any *-Instruct generative id.
+    assert DEFAULT_EMBEDDING_MODEL == "intfloat/multilingual-e5-small"
+    assert "instruct" not in DEFAULT_EMBEDDING_MODEL.lower()
+    assert "qwen3" not in DEFAULT_EMBEDDING_MODEL.lower()
 
 
 def test_embedding_model_defaults_when_unset(_config_file):
@@ -54,7 +57,7 @@ def test_embedding_model_defaults_when_unset(_config_file):
 
 
 def test_embedding_model_independent_of_base(_config_file):
-    """base=Qwen3-4B, embedding_model unset → embedder stays the 1.5B default."""
+    """base=Qwen3-4B, embedding_model unset → embedder stays the default embedder."""
     _config_file.write_text(
         "model:\n  base: mlx-community/Qwen3-4B-Instruct-2507-4bit\n",
         encoding="utf-8",
@@ -197,7 +200,7 @@ def test_index_table_reembeds_stale_with_mocked_model(tmp_path, monkeypatch):
     current = "Qwen/Qwen2.5-1.5B-Instruct"
     monkeypatch.setattr(idx, "get_embedding_model_id", lambda: current)
     # Deterministic 4-dim vector; never loads real weights.
-    monkeypatch.setattr(idx, "get_embedding", lambda text: (0.1, 0.2, 0.3, 0.4))
+    monkeypatch.setattr(idx, "get_embedding", lambda text, **kw: (0.1, 0.2, 0.3, 0.4))
     monkeypatch.setattr(idx, "serialize_embedding", lambda emb: b"NEWVEC")
 
     conn.execute(
@@ -237,7 +240,7 @@ def test_embed_failure_does_not_clobber_valid_embedding(tmp_path, monkeypatch):
 
     calls = {"n": 0}
 
-    def _emb(text: str):
+    def _emb(text: str, **kw):
         # First call is the up-front warmup probe (must succeed so the run
         # proceeds); subsequent per-row calls raise.
         calls["n"] += 1
@@ -272,7 +275,7 @@ def test_abort_when_model_cannot_load(tmp_path, monkeypatch):
     idx._ensure_embedding_columns(conn)
     monkeypatch.setattr(idx, "get_embedding_model_id", lambda: "x/y")
 
-    def _boom(text: str):
+    def _boom(text: str, **kw):
         raise RuntimeError("no weights")
 
     monkeypatch.setattr(idx, "get_embedding", _boom)
@@ -305,7 +308,7 @@ def test_reindex_processes_all_rows_with_cursor(tmp_path, monkeypatch):
     monkeypatch.setattr(idx, "BATCH_SIZE", 2)  # force multiple batches
     calls: list[str] = []
 
-    def _emb(text: str):
+    def _emb(text: str, **kw):
         calls.append(text)
         return (1.0, 0.0)
 
