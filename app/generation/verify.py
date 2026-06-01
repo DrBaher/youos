@@ -36,6 +36,27 @@ _MONEY_RE = re.compile(
 )
 _TIME_RE = re.compile(r"\b\d{1,2}:\d{2}\s?(?:am|pm)?\b|\b\d{1,2}\s?(?:am|pm)\b", re.IGNORECASE)
 
+# Un-grounded "concrete claim" phrases (b179). A fluent draft sometimes asserts
+# a completed deliverable or an attachment that was never mentioned in the
+# inbound — e.g. "Logo finalised. Pitch draft ready." invented out of nothing.
+# These are caught as WARNINGS (not blocking): the human still reviews, and the
+# phrasing is occasionally legitimate (the user really did attach something or
+# finish a task), so we surface rather than hold. To stay low-false-positive,
+# each entry is (claim_key, pattern): a match is flagged only when ``claim_key``
+# is ABSENT from the grounding corpus (inbound + thread). So a reply that says
+# "attached" in response to an inbound that itself mentions "attached" / the
+# attachment topic is not flagged, while a fabricated "Logo finalised." with no
+# prior mention is. Bounded literals only — no catastrophic backtracking.
+_CLAIM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("attach", re.compile(r"\b(?:I(?:'ve| have)\s+)?attach(?:ed|ing)\b", re.IGNORECASE)),
+    ("enclos", re.compile(r"\benclos(?:ed|ing)\b", re.IGNORECASE)),
+    ("finalis", re.compile(r"\bfinali[sz]ed\b", re.IGNORECASE)),
+    ("ready", re.compile(r"\b(?:is|are|now)\s+ready\b|\b\w+\s+ready\b", re.IGNORECASE)),
+    ("complete", re.compile(r"\b(?:is|are|now)\s+completed?\b|\bcompleted\b", re.IGNORECASE)),
+    ("signed", re.compile(r"\b(?:is|are|now)\s+signed\b|\bcountersigned\b", re.IGNORECASE)),
+    ("confirmed", re.compile(r"\b(?:is|are|now)\s+confirmed\b", re.IGNORECASE)),
+)
+
 # Hard cap on the text any of the above regexes scan. The inbound + thread
 # history are attacker-controlled and otherwise uncapped on this path (the
 # 4000-char prompt cap protects generation, not verify_draft). 20 KB is far
@@ -120,5 +141,21 @@ def verify_draft(
     for m in _TIME_RE.findall(d):
         if m.strip().lower() not in hay_l:
             warnings.append(f"time/date not in the inbound: {m.strip()}")
+
+    # 5) Un-grounded concrete claims (b179) — the draft asserts an attachment or
+    # a finished/confirmed deliverable whose claim word never appears in the
+    # inbound or thread. Warn (the human reviews; the phrasing is sometimes
+    # legitimate). Scan d_core so a boilerplate signature can't trip it; de-dup
+    # so one repeated phrase warns once.
+    seen_claims: set[str] = set()
+    for key, pat in _CLAIM_PATTERNS:
+        if key in hay_l:
+            continue  # the claim is grounded in the inbound/thread — not invented
+        m = pat.search(d_core)
+        if m:
+            phrase = m.group(0).strip().lower()
+            if phrase not in seen_claims:
+                seen_claims.add(phrase)
+                warnings.append(f"unsupported claim not in the inbound: {m.group(0).strip()}")
 
     return VerifyResult(ok=not blocking, blocking=blocking, warnings=warnings)
