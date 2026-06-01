@@ -27,7 +27,12 @@ def test_clear_cache():
 
 
 def test_cache_has_maxsize():
-    """Cache has a maxsize of 512."""
-    from app.core.embeddings import get_embedding
+    """The embedding LRU cache has a maxsize of 512.
 
-    assert get_embedding.cache_info().maxsize == 512
+    The cache moved onto the internal ``_get_embedding_cached(text, kind)`` in
+    b180 (kind is part of the key for E5 query/passage prefixes); ``get_embedding``
+    is now a thin wrapper around it.
+    """
+    from app.core.embeddings import _get_embedding_cached
+
+    assert _get_embedding_cached.cache_info().maxsize == 512

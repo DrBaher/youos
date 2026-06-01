@@ -161,7 +161,7 @@ def _index_table(
     # the per-row loop below mass-overwrite valid vectors with empty-blob
     # markers (the b177 data-loss footgun). One cheap probe embed surfaces it.
     try:
-        _ = get_embedding("warmup")
+        _ = get_embedding("warmup", kind="passage")
     except Exception as exc:
         raise RuntimeError(
             f"Embedding model {model_id!r} failed to load/run; aborting before "
@@ -213,7 +213,9 @@ def _index_table(
                 continue
 
             try:
-                emb = get_embedding(text)
+                # Corpus rows are passages: dedicated E5 embedders need the
+                # "passage: " prefix (no-op for the causal-LM fallback / non-E5).
+                emb = get_embedding(text, kind="passage")
                 blob = serialize_embedding(emb)
                 conn.execute(
                     f"UPDATE {table} SET embedding = ?, embedding_model_id = ? WHERE id = ?",
