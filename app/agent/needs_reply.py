@@ -64,18 +64,31 @@ TRANSACTIONAL_TEMPLATE_PAT = re.compile(
     r"(?:\b(?:"
     # Common confirmation/receipt subject lines (English).
     r"booking confirmation|order confirmation|appointment confirmation|"
-    r"reservation confirmation|receipt for|payment (?:received|confirmation)|"
+    r"reservation confirmation|receipt for|payment (?:received|confirmation|notice|reminder|due|failed)|"
     r"delivery scheduled|order (?:placed|received|shipped|confirmed)|"
     r"your order|order number|order #|tracking number|out for delivery|has shipped|"
+    # b178 real-inbox over-keeps (baher@work.example draft demo): a conference
+    # ticket ([11]), an invoice ([14]), and a payment notice were classified
+    # KEEP and drafted even though none expects a human reply.
+    # Invoices / receipts / payment notices — "Invoice #42", "Invoice from
+    # Acme", "Your receipt". Word-boundary so it doesn't fire on "invoiced
+    # the client last week" prose mid-sentence.
+    r"invoice|receipt|"
+    # Tickets / passes / confirmation numbers (conference, event, travel).
+    # Anchored to surrounding transactional context so it does NOT fire on a
+    # human "support ticket" prose ("I opened a support ticket, can you look").
+    r"e[-\s]?ticket|your ticket|tickets? (?:for|to|are ready|confirmed|attached|enclosed)|"
+    r"boarding pass|booking reference|confirmation number|confirmation code|"
+    r"registration (?:confirmed|complete)|you(?:'re| are) (?:registered|confirmed|all set)|"
     # German — a real-inbox false positive (b84): "Ordered: …" from
     # bestellbestaetigung@amazon.de got drafted because the detector was
     # English-only. Cover the common Amazon/retailer German transactional terms.
     r"bestellbest[äa]tigung|auftragsbest[äa]tigung|versandbest[äa]tigung|"
-    r"zahlungsbest[äa]tigung|ihre bestellung|rechnungsnummer|"
+    r"zahlungsbest[äa]tigung|ihre bestellung|rechnungsnummer|rechnung|"
     # Common body openings, e.g. "Your appointment is confirmed".
     r"your\s+(?:appointment|booking|order|reservation|payment|purchase|delivery|"
-    r"subscription|trip|flight|hotel)\s+"
-    r"(?:is\s+(?:confirmed|booked|scheduled|ready)|"
+    r"subscription|trip|flight|hotel|ticket|invoice|receipt|registration)\s+"
+    r"(?:is\s+(?:confirmed|booked|scheduled|ready|attached|available|due|enclosed)|"
     r"has\s+been\s+(?:confirmed|received|placed|scheduled|shipped|processed))"
     r")\b)"
     # "Ordered:" / "Bestellt:" subject prefixes (Amazon-style) — colon-anchored
@@ -108,7 +121,12 @@ NON_HUMAN_MAILBOX_PAT = re.compile(
     # `noreply@`-style address.
     r"(?:^|[\w-])(?:"
     r"notifications?|notify|alerts?|automated|billing|support|help|info|hello|"
-    r"admin|team|service|webmaster|postmaster|abuse"
+    r"admin|team|service|webmaster|postmaster|abuse|"
+    # b178: transactional/automation mailboxes seen over-kept on the
+    # baher@work.example demo — invoice/ticket/booking/payment blasts come from
+    # these operational addresses, never a human who wants a reply.
+    r"invoices?|billing|accounts?|receipts?|payments?|tickets?|booking|bookings|"
+    r"orders?|events?|newsletters?|news|noreply-|updates?|mailer|reservations?"
     r")(?:[\w-]*)@",
     re.IGNORECASE,
 )
