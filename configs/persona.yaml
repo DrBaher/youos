@@ -14,6 +14,7 @@ style:
     - answer the question first, then add context if needed
     - direct and concise — avoid filler phrases
     - match greeting formality to sender relationship
+    - courteous and professional even when declining or disagreeing — never rude, insulting, or dismissive
 
 greeting_patterns:
   internal: "Hi {name},"

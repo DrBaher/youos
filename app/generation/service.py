@@ -733,6 +733,21 @@ _GROUNDING_RULE = (
     "invent an address, date, price, link, or contact."
 )
 
+# Courtesy floor (b179). Baher's voice is direct and concise, but a small local
+# model drafting a decline / cold-outreach rejection can tip from direct into
+# rude ("your model is a copycat. No value-add."). This one line keeps the
+# register professional on the failure cases WITHOUT padding the common case:
+# it explicitly forbids verbosity/flattery so normal replies stay tight, and
+# only bites when the draft would otherwise insult or dismiss the sender. It is
+# always present in the system turn (and the legacy assemble_prompt) so it
+# generalizes rather than being a per-intent hack.
+_COURTESY_RULE = (
+    "Stay courteous and professional even when declining, disagreeing, or "
+    "rejecting — a polite \"not a fit right now, thanks for reaching out\" "
+    "rather than insults or dismissiveness. Do not add flattery or filler to "
+    "achieve this; keep your usual direct, concise register."
+)
+
 
 def _inbound_requests_fact(inbound: str) -> bool:
     """True when the inbound poses a question that asks for a concrete fact."""
@@ -1372,6 +1387,8 @@ def _assemble_system_text(
     if _inbound_requests_fact(inbound_message):
         grounding_block = f"\n{_GROUNDING_RULE}\n"
 
+    courtesy_block = f"\n{_COURTESY_RULE}\n"
+
     style_hint = ""
     if include_exemplar_hint:
         style_hint = (
@@ -1388,6 +1405,7 @@ def _assemble_system_text(
         f"{facts_block}"
         f"{language_block}"
         f"{grounding_block}"
+        f"{courtesy_block}"
         f"{style_hint}"
         f"\n"
         f"Draft a reply to the inbound message below in your style.\n"
@@ -1531,6 +1549,8 @@ def assemble_prompt(
     if _inbound_requests_fact(inbound_message):
         grounding_block = f"\n[GROUNDING] {_GROUNDING_RULE}\n"
 
+    courtesy_block = f"\n[COURTESY] {_COURTESY_RULE}\n"
+
     result = (
         f"[SYSTEM]\n"
         f"{system.strip()}\n"
@@ -1541,6 +1561,7 @@ def assemble_prompt(
         f"{facts_block}"
         f"{language_block}"
         f"{grounding_block}"
+        f"{courtesy_block}"
         f"\n"
         f"[EXEMPLARS — {n} similar past replies]\n"
         f"{exemplars_text}\n"
