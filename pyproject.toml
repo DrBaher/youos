@@ -66,6 +66,21 @@ google = [
 mlx = [
   "mlx-lm>=0.18,<1.0"
 ]
+# Dedicated semantic-embedding runtime (b180). The default embedder
+# (`intfloat/multilingual-e5-small`, a multilingual XLM-RoBERTa retrieval model)
+# is loaded + encoded via `mlx_embeddings` on Apple Silicon (MLX/Metal).
+# Installing this extra is the precondition for the dedicated-embedder path in
+# `app/core/embeddings.py`; without it that path raises a clear "pip install
+# mlx-embeddings" error and the system either uses a causal-LM embedder (if one
+# is configured) or falls back to FTS5-only retrieval.
+#
+# NOTE: `mlx-embeddings` is GPL-3 licensed and is used as an optional, separately
+# installed *runtime* dependency only (never bundled/redistributed with YouOS),
+# mirroring the `reranker`/`google` extras. It also pulls a heavy transitive tree
+# (datasets, mlx-vlm, opencv), so it is intentionally NOT a base dependency.
+embeddings = [
+  "mlx-embeddings>=0.1,<1.0"
+]
 
 [project.urls]
 Homepage = "https://github.com/DrBaher/youos"

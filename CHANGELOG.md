@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — dedicated multilingual embedder (b180)
+
+### Quality: a proper retrieval embedder instead of mean-pooling a causal LM
+
+Builds on b177 (which decoupled the embedding model from the drafting base and added per-row `embedding_model_id` tagging + a self-heal `--reindex` indexer). The embedding path still mean-pooled a **causal** LM (Qwen2.5-1.5B) — heavy (1536-d) and not trained for retrieval.
+
+- **Default embedder is now `intfloat/multilingual-e5-small`** — a dedicated multilingual (DE/EN + 100 langs) sentence-embedding model (XLM-RoBERTa, 384-d, **MIT** license), small + fast enough to run on every retrieval query and index the ~30k-row corpus on a 16GB M4. The inbox is German+English, so the embedder is multilingual by requirement. (`DEFAULT_EMBEDDING_MODEL`, `youos_config.yaml: model.embedding_model`.)
+- **Dedicated-embedder backend in `app/core/embeddings.py`.** Routing by model id (`_is_dedicated_embedder`): dedicated retrieval encoders (e5/bge/gte/arctic/mxbai/nomic-embed/MiniLM/…) load + encode via `mlx_embeddings` (MLX/Metal on Apple Silicon) — the model does its own correct mean-pooling + L2-normalization (`text_embeds`). E5 ids get the required `query:`/`passage:` prefixes (`get_embedding(text, kind=…)`; indexer embeds corpus rows as `passage`). Any Qwen/*-Instruct/unknown generative id still falls through to the **causal-LM mean-pooling fallback**, so hosts without `mlx_embeddings` (or pinning a causal id) keep working.
+- **Safe swap via b177 tagging.** Changing the embedder id (and dim: 1536→384) marks every existing row stale, so retrieval never compares cross-space vectors and a one-time `python scripts/index_embeddings.py --reindex` re-embeds the corpus with the new model. Storage is dim-agnostic (BLOB).
+- New optional dependency extra `embeddings = ["mlx-embeddings>=0.1,<1.0"]` (Apple-Silicon runtime; GPL-3, installed separately like the `reranker`/`google` extras — never bundled). Drafting base (Qwen3-4B) untouched; never-send/act invariants untouched.
+
++13 regression tests (hermetic — model load/encode mocked, no weights downloaded).
+
 ## v0.2.0-beta.163 — 2026-05-31
 
 ### Hardening: never serve/train on a half-written artifact (adapter + corpus)
