@@ -246,14 +246,64 @@ def cloud_escalation_enabled(config: dict[str, Any] | None = None) -> bool:
         return False
 
 
+# Single shared default for the server bind port. The prod launcher
+# (scripts/run_youos.sh) and the launchd plist (app/core/service.py) bind here;
+# the Origin allowlist (app/core/auth.py) is computed from the SAME value via
+# resolve_server_port(), so the allowlist can never drift from the served port
+# and silently 403 every authenticated same-origin POST once a PIN is set
+# (b165). Keep this in sync with scripts/run_youos.sh's YOUOS_PORT default.
+DEFAULT_SERVER_PORT = 8765
+DEFAULT_SERVER_HOST = "127.0.0.1"
+
+
+def resolve_server_port(config: dict[str, Any] | None = None) -> int:
+    """The port the server is ACTUALLY served on — the single source of truth.
+
+    Precedence: ``YOUOS_PORT`` env var (what the launcher passes to uvicorn)
+    > config ``server.port`` > ``DEFAULT_SERVER_PORT``. Because the bind path
+    (run_youos.sh / cli serve / launchd plist) and the Origin allowlist both
+    resolve the port through here, the allowlist always matches the bind port.
+    A malformed ``YOUOS_PORT`` falls through to the config/default rather than
+    crashing the allowlist computation."""
+    env_port = os.environ.get("YOUOS_PORT")
+    if env_port:
+        try:
+            return int(env_port)
+        except (TypeError, ValueError):
+            pass
+    if isinstance(config, dict):
+        raw = config.get("server", {}).get("port")
+        if raw is not None:
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                pass
+        return DEFAULT_SERVER_PORT
+    cfg = load_config()
+    try:
+        return int(cfg.get("server", {}).get("port", DEFAULT_SERVER_PORT))
+    except (TypeError, ValueError):
+        return DEFAULT_SERVER_PORT
+
+
+def resolve_server_host(config: dict[str, Any] | None = None) -> str:
+    """The host the server is ACTUALLY bound to — single source of truth.
+
+    Precedence: ``YOUOS_HOST`` env var (what the launcher passes to uvicorn)
+    > config ``server.host`` > ``DEFAULT_SERVER_HOST``."""
+    env_host = (os.environ.get("YOUOS_HOST") or "").strip()
+    if env_host:
+        return env_host
+    cfg = config if isinstance(config, dict) else load_config()
+    return cfg.get("server", {}).get("host", DEFAULT_SERVER_HOST) or DEFAULT_SERVER_HOST
+
+
 def get_server_port(config: dict[str, Any] | None = None) -> int:
-    cfg = config or load_config()
-    return int(cfg.get("server", {}).get("port", 8901))
+    return resolve_server_port(config)
 
 
 def get_server_host(config: dict[str, Any] | None = None) -> str:
-    cfg = config or load_config()
-    return cfg.get("server", {}).get("host", "127.0.0.1")
+    return resolve_server_host(config)
 
 
 def get_tailscale_hostname(config: dict[str, Any] | None = None) -> str:

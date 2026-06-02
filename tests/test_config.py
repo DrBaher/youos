@@ -93,8 +93,26 @@ def test_get_base_model_default():
     assert get_base_model({}) == "Qwen/Qwen2.5-1.5B-Instruct"
 
 
-def test_get_server_port_default():
-    assert get_server_port({}) == 8901
+def test_get_server_port_default(monkeypatch):
+    # b165: the bind port and the Origin allowlist share one default
+    # (DEFAULT_SERVER_PORT, matching scripts/run_youos.sh's YOUOS_PORT default)
+    # so they can't diverge. No YOUOS_PORT env + no config value -> the default.
+    from app.core.config import DEFAULT_SERVER_PORT
+
+    monkeypatch.delenv("YOUOS_PORT", raising=False)
+    assert get_server_port({}) == DEFAULT_SERVER_PORT
+    assert DEFAULT_SERVER_PORT == 8765
+
+
+def test_get_server_port_honors_env(monkeypatch):
+    # b165: YOUOS_PORT (what the launcher passes to uvicorn) overrides config.
+    monkeypatch.setenv("YOUOS_PORT", "9999")
+    assert get_server_port({"server": {"port": 8901}}) == 9999
+
+
+def test_get_server_port_config_when_no_env(monkeypatch):
+    monkeypatch.delenv("YOUOS_PORT", raising=False)
+    assert get_server_port({"server": {"port": 8901}}) == 8901
 
 
 def test_save_and_reload(tmp_path):

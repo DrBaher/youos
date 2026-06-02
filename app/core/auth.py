@@ -232,8 +232,17 @@ def compute_allowed_origins(config: dict[str, Any]) -> set[str]:
     API-token requests bypass this entirely — they're not CSRF-prone.
     """
     server_cfg = config.get("server", {}) if isinstance(config, dict) else {}
-    port = int(server_cfg.get("port", 8901))
-    host = server_cfg.get("host", "127.0.0.1") or "127.0.0.1"
+    # Resolve the port through the SAME source of truth the server binds on
+    # (YOUOS_PORT env > config server.port > shared default). Reading
+    # server.port directly here let the allowlist drift from the launcher's
+    # bind port (run_youos.sh defaults YOUOS_PORT=8765 while config defaulted
+    # to 8901), so the moment a PIN was set every same-origin POST was 403'd
+    # "origin not allowed" (b165).
+    from app.core.config import resolve_server_host, resolve_server_port
+
+    cfg_for_resolve = config if isinstance(config, dict) else {}
+    port = resolve_server_port(cfg_for_resolve)
+    host = resolve_server_host(cfg_for_resolve) or "127.0.0.1"
 
     origins: set[str] = {
         f"http://127.0.0.1:{port}",
@@ -255,6 +264,84 @@ def compute_allowed_origins(config: dict[str, Any]) -> set[str]:
                 origins.add(_normalize_origin(entry))
 
     return origins
+
+
+def bind_origin(config: dict[str, Any], port: int | None = None) -> str:
+    """The server's own same-origin URL (``scheme://host:port``).
+
+    This is the Origin a browser on the YouOS web UI attaches to its POSTs.
+    Computed from the resolved host and, by default, the resolved port — but an
+    explicit ``port`` (e.g. the real uvicorn ``--port``) overrides it so the
+    self-check can detect a bind/allowlist divergence the resolver can't see.
+    A loopback / bind-all host is normalized to ``127.0.0.1`` because that's the
+    address the browser actually connects to (and what the allowlist lists)."""
+    from app.core.config import resolve_server_host, resolve_server_port
+
+    cfg = config if isinstance(config, dict) else {}
+    if port is None:
+        port = resolve_server_port(cfg)
+    host = (resolve_server_host(cfg) or "127.0.0.1").strip()
+    if host in {"0.0.0.0", "::", "::1", "localhost", ""}:
+        host = "127.0.0.1"
+    return f"http://{host}:{port}"
+
+
+def detect_served_port_from_argv(argv: list[str] | None = None) -> int | None:
+    """Best-effort read of the port uvicorn was ACTUALLY launched with.
+
+    The launcher passes ``--port <n>`` (run_youos.sh / cli serve / the launchd
+    plist). That argument is the ground truth for the bind port — independent of
+    config and of ``YOUOS_PORT`` (which the launcher may or may not have used).
+    The startup self-check compares it against the Origin allowlist so a divergence
+    is caught even when something binds a port the resolver can't see. Returns
+    ``None`` when no parseable ``--port`` is present. b165."""
+    import sys
+
+    args = argv if argv is not None else sys.argv
+    for i, tok in enumerate(args):
+        if tok == "--port" and i + 1 < len(args):
+            try:
+                return int(args[i + 1])
+            except (TypeError, ValueError):
+                return None
+        if tok.startswith("--port="):
+            try:
+                return int(tok.split("=", 1)[1])
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def origin_self_check_warning(
+    config: dict[str, Any], served_port: int | None = None
+) -> str | None:
+    """Return a loud warning string if a PIN is set but the server's own bind
+    origin is NOT in the computed Origin allowlist — i.e. every same-origin
+    state-changing POST from the web UI would be 403'd "origin not allowed".
+
+    ``served_port`` is the port the process is actually bound on (e.g. parsed
+    from uvicorn's ``--port`` via ``detect_served_port_from_argv``). When given
+    and it differs from the port the allowlist was computed from, the bind
+    origin won't be in the allowlist and we warn. When omitted, the resolver's
+    own port is used (so config/launcher divergence on ``server.port`` vs
+    ``YOUOS_PORT`` is still caught).
+
+    Returns ``None`` when auth is disabled (the allowlist is not enforced) or
+    when the bind origin is covered by the allowlist (the healthy case). b165."""
+    if not is_auth_enabled(config):
+        return None
+    allowed = compute_allowed_origins(config)
+    own = _normalize_origin(bind_origin(config, port=served_port))
+    if own in allowed:
+        return None
+    return (
+        "[YOUOS SECURITY]: A PIN is set but the server's own origin "
+        f"({own}) is NOT in the Origin allowlist {sorted(allowed)} — every "
+        "authenticated state-changing POST from the web UI will be rejected "
+        "with 403 'origin not allowed'. This usually means the served port "
+        "(uvicorn --port / YOUOS_PORT / launcher) differs from config "
+        "server.port. Align them, or add the origin under server.allowed_origins."
+    )
 
 
 def compute_token_allowed_origins(config: dict[str, Any]) -> set[str] | None:
