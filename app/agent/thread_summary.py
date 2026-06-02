@@ -63,4 +63,27 @@ def summarize_thread(
         logger.info("thread summary skipped (model unavailable): %s", exc)
         return None
     out = (out or "").strip()
-    return out or None
+    if not out:
+        return None
+
+    # b191: grounding check. A catch-up summary is read at a glance and trusted;
+    # a hallucinated date/amount/name in it is worse than no summary at all. So
+    # we verify the summary's specifics against the thread transcript (the
+    # source) and SUPPRESS (return None — the same as the unavailable path) on
+    # poor grounding rather than surface a misleading catch-up. Strict here
+    # (max_ungrounded=0): unlike the digest, there is no faithful fallback to
+    # degrade to, so any clear fabrication suppresses. Local-only, no egress;
+    # failure-isolated so a grounding error keeps current behavior (the summary).
+    try:
+        from app.agent.summary_grounding import check_summary_grounding
+
+        gr = check_summary_grounding(out, transcript, max_ungrounded=0)
+        if not gr.grounded:
+            logger.info(
+                "thread summary suppressed: failed grounding (score=%.2f, ungrounded=%s)",
+                gr.score, gr.ungrounded[:5],
+            )
+            return None
+    except Exception as exc:
+        logger.info("thread summary grounding check errored, keeping summary: %s", exc)
+    return out
