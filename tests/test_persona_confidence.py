@@ -90,8 +90,9 @@ def test_assemble_prompt_with_percentiles():
         persona=persona,
         prompts={},
     )
-    assert "typical range: 20" in prompt
-    assert "60" in prompt
+    # b187: firmer two-sided guidance derived from the p25–p75 band (20–60).
+    assert "stay within 20–60 words" in prompt
+    assert "Target length: about 40 words" in prompt
 
 
 def test_assemble_prompt_without_percentiles():

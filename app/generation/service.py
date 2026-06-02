@@ -1085,16 +1085,95 @@ def _draft_has_closing(text: str, closing: str) -> bool:
     return any(tok in tail for tok in _CLOSING_TOKENS)
 
 
-def _length_flag(text: str, target_words: int | None) -> str | None:
-    """Non-mutating length annotation relative to the persona's target words."""
+# b187: length CONTROL. The ok-band is the [low, high] word window a draft must
+# land in to count "ok". We derive it from the persona's reply-length
+# distribution when it carries percentiles (avg_reply_words_p25 / _p75 — the
+# tighter, data-grounded band), otherwise from a multiplicative spread around
+# the average (avg_reply_words). The SAME band is the single source of truth for
+# the length flag, the candidate length-fit term, and the band-derived token
+# budget — so "ok"/control/ranking never disagree.
+_BAND_LOW_FACTOR = 0.6
+_BAND_HIGH_FACTOR = 1.4
+
+
+def _length_band(
+    target_words: int | None,
+    *,
+    p25: int | None = None,
+    p75: int | None = None,
+) -> tuple[int, int] | None:
+    """Derive the persona ok-band ``(low, high)`` in words.
+
+    Prefers the persona percentiles (p25–p75) when both are present and sane —
+    a tighter, data-grounded window than a flat multiple of the average.
+    Otherwise falls back to ``[0.6*avg, 1.4*avg]`` around ``target_words``.
+    Returns None when there's no usable target.
+    """
+    if p25 is not None and p75 is not None:
+        try:
+            lo, hi = int(p25), int(p75)
+        except (TypeError, ValueError):
+            lo = hi = 0
+        if 0 < lo <= hi:
+            return max(1, lo), hi
     if not target_words or target_words <= 0:
+        return None
+    lo = max(1, int(round(target_words * _BAND_LOW_FACTOR)))
+    hi = max(lo, int(round(target_words * _BAND_HIGH_FACTOR)))
+    return lo, hi
+
+
+def _length_guidance_line(
+    avg_words: int,
+    *,
+    p25: int | None = None,
+    p75: int | None = None,
+) -> str:
+    """Firmer prompt length guidance (b187): an explicit target plus a soft
+    UPPER bound at the ok-band's high edge.
+
+    Replaces the vague "~N words. Be concise." with "Aim for ~N words; keep it
+    under M." where M is the band's high edge — an explicit ceiling the model
+    can honor, which is what actually moves drafts off the "long" tail. The
+    high edge is the SAME one the token budget caps at, so prompt and budget
+    agree. Deterministic given the persona, so eval reproducibility holds."""
+    band = _length_band(avg_words, p25=p25, p75=p75)
+    if band is None:
+        return f"\nTarget length: ~{avg_words} words. Be concise.\n"
+    low, high = band
+    # Two-sided target: an explicit center plus BOTH edges. Naming the lower
+    # edge stops the model from over-shrinking on the "be concise" cue (which,
+    # on a terse model, drove drafts below the band → "short"); naming the
+    # upper edge is the soft ceiling that trims the "long" tail. Phrased as a
+    # range so neither edge dominates.
+    return (
+        f"\nTarget length: about {avg_words} words "
+        f"(stay within {low}–{high} words — not shorter, not longer).\n"
+    )
+
+
+def _length_flag(
+    text: str,
+    target_words: int | None,
+    *,
+    p25: int | None = None,
+    p75: int | None = None,
+) -> str | None:
+    """Non-mutating length annotation relative to the persona ok-band.
+
+    Uses the SAME band as control/ranking (``_length_band``): below the low
+    edge is "short", above the high edge is "long", inside is "ok". A draft is
+    off-target iff the flag is "long" or "short"."""
+    band = _length_band(target_words, p25=p25, p75=p75)
+    if band is None:
         return None
     n = len(text.split())
     if n == 0:
         return None
-    if n > target_words * 2:
+    low, high = band
+    if n > high:
         return "long"
-    if n < max(1, target_words // 2):
+    if n < low:
         return "short"
     return "ok"
 
@@ -1106,6 +1185,8 @@ def _repair_draft(
     closing: str,
     target_words: int | None,
     config: dict[str, bool],
+    p25: int | None = None,
+    p75: int | None = None,
 ) -> tuple[str, list[str], str | None]:
     """Optionally repair a draft; always return its length flag.
 
@@ -1151,7 +1232,7 @@ def _repair_draft(
             text = f"{text.rstrip()}\n\n{closing}"
             repairs.append("added_closing")
 
-    return text, repairs, _length_flag(text, target_words)
+    return text, repairs, _length_flag(text, target_words, p25=p25, p75=p75)
 
 
 def _draft_logging_enabled() -> bool:
@@ -1458,12 +1539,11 @@ def _assemble_system_text(
         f"{custom_instruction}"
     )
     if avg_words:
-        p25 = style.get("avg_reply_words_p25")
-        p75 = style.get("avg_reply_words_p75")
-        if p25 is not None and p75 is not None:
-            result += f"\nTarget length: ~{avg_words} words (typical range: {p25}–{p75}). Be concise.\n"
-        else:
-            result += f"\nTarget length: ~{avg_words} words. Be concise.\n"
+        result += _length_guidance_line(
+            avg_words,
+            p25=style.get("avg_reply_words_p25"),
+            p75=style.get("avg_reply_words_p75"),
+        )
     greeting = _resolve_greeting(persona, sender_type, first_name)
     closing = _resolve_closing(persona, sender_type)
     if greeting and closing:
@@ -1622,12 +1702,11 @@ def assemble_prompt(
 
     # Append length guidance if avg_reply_words is set
     if avg_words:
-        p25 = style.get("avg_reply_words_p25")
-        p75 = style.get("avg_reply_words_p75")
-        if p25 is not None and p75 is not None:
-            result += f"\nTarget length: ~{avg_words} words (typical range: {p25}\u2013{p75}). Be concise.\n"
-        else:
-            result += f"\nTarget length: ~{avg_words} words. Be concise.\n"
+        result += _length_guidance_line(
+            avg_words,
+            p25=style.get("avg_reply_words_p25"),
+            p75=style.get("avg_reply_words_p75"),
+        )
 
     # Greeting/closing injection
     greeting = _resolve_greeting(persona, sender_type, first_name)
@@ -1787,12 +1866,26 @@ def _is_usable_draft(text: str) -> bool:
     return not (len(stripped) < 15 and non_ws > 0)
 
 
-def _score_candidate(text: str, *, target_words: int | None, greeting: str, closing: str) -> float:
+def _score_candidate(
+    text: str,
+    *,
+    target_words: int | None,
+    greeting: str,
+    closing: str,
+    p25: int | None = None,
+    p75: int | None = None,
+) -> float:
     """Deterministic candidate score (higher is better).
 
     Unusable (empty/placeholder/signature-only) drafts are disqualified.
     Otherwise: length-fit (peaks at the persona target) plus credit for
     honoring the persona greeting/closing when those are configured.
+
+    b187: length-fit is band-aware — an in-band draft (``_length_flag`` "ok",
+    against the SAME band used for control/ranking) earns the +0.5 bonus, and a
+    draft that falls outside the band ("long"/"short") is additionally
+    penalized so a well-sized candidate is preferred over an off-target one of
+    equal voice/structure.
     """
     if not _is_usable_draft(text):
         return float("-inf")
@@ -1800,8 +1893,11 @@ def _score_candidate(text: str, *, target_words: int | None, greeting: str, clos
     if target_words and target_words > 0:
         ratio = len(text.split()) / target_words
         score += max(0.0, 1.0 - abs(ratio - 1.0))  # 1.0 at exact match, →0 as it drifts
-        if _length_flag(text, target_words) == "ok":
+        flag = _length_flag(text, target_words, p25=p25, p75=p75)
+        if flag == "ok":
             score += 0.5
+        elif flag in ("long", "short"):
+            score -= 0.5  # out-of-band penalty: prefer a same-quality in-band draft
     if greeting:
         score += 0.5 if _draft_has_greeting(text, greeting) else 0.0
     if closing:
@@ -1859,6 +1955,8 @@ def draft_quality_score(
     closing: str = "",
     model_used: str | None = None,
     empty_output_retried: bool = False,
+    p25: int | None = None,
+    p75: int | None = None,
 ) -> float:
     """A 0–1 estimate of whether THIS draft is good enough to act on.
 
@@ -1870,7 +1968,10 @@ def draft_quality_score(
     auto-push / auto-send should gate on — not the needs-reply score."""
     if not _is_usable_draft(draft):
         return 0.0
-    struct = _score_candidate(draft, target_words=target_words, greeting=greeting, closing=closing)
+    struct = _score_candidate(
+        draft, target_words=target_words, greeting=greeting, closing=closing,
+        p25=p25, p75=p75,
+    )
     if struct == float("-inf"):
         return 0.0
     struct_norm = max(0.0, min(1.0, struct / 2.0))  # _score_candidate maxes ~2.0–2.5
@@ -1910,6 +2011,8 @@ def _rank_candidates(
     closing: str,
     exemplar_replies: list[str] | None = None,
     embed_fn: Any = None,
+    p25: int | None = None,
+    p75: int | None = None,
 ) -> list[dict[str, Any]]:
     """Score and sort candidates best-first.
 
@@ -1926,7 +2029,10 @@ def _rank_candidates(
     refs = [r for r in (exemplar_replies or []) if r and r.strip()][:3]
     scored: list[dict[str, Any]] = []
     for draft, model_used, temperature in raw:
-        base = _score_candidate(draft, target_words=target_words, greeting=greeting, closing=closing)
+        base = _score_candidate(
+            draft, target_words=target_words, greeting=greeting, closing=closing,
+            p25=p25, p75=p75,
+        )
         voice: float | None = None
         score = base
         if base != float("-inf") and refs:
@@ -1959,6 +2065,8 @@ def _rank_candidates_by_quality(
     target_words: int | None,
     greeting: str,
     closing: str,
+    p25: int | None = None,
+    p75: int | None = None,
 ) -> list[dict[str, Any]]:
     """Rank multi-candidate drafts by the per-draft quality score (b186).
 
@@ -1981,6 +2089,7 @@ def _rank_candidates_by_quality(
             q = draft_quality_score(
                 draft, reply_pairs=reply_pairs, target_words=target_words,
                 greeting=greeting, closing=closing, model_used=model_used,
+                p25=p25, p75=p75,
             )
         except Exception:
             logger.warning("multi-candidate: scoring one candidate failed", exc_info=True)
@@ -2075,10 +2184,37 @@ def _max_inbound_chars() -> int:
         return 4000
 
 
-def _compute_max_tokens(avg_reply_words: int | None, *, persona: dict[str, Any] | None = None, intent: str | None = None) -> int:
-    """Compute max_tokens as a rough upper bound from avg_reply_words.
+# b187: a draft word is ~1.5 tokens for this tokenizer family (English prose,
+# ChatML). The token budget caps the UPPER band edge plus headroom so a
+# genuinely runaway "long" draft is bounded, while an in-band draft has ample
+# room to finish naturally on the <|im_end|> stop (no mid-sentence truncation).
+_TOKENS_PER_WORD = 1.5
+# Multiplicative headroom over the upper-band token estimate. 2.0× the
+# high-edge budget leaves a comfortable margin for greeting/closing lines and
+# natural sentence completion, so an IN-band draft never truncates mid-sentence
+# — the cap only bites a genuine runaway (roughly 2× the band high edge), which
+# was the goal: bound the "long" tail without clipping good drafts.
+_MAX_TOKENS_HEADROOM = 2.0
 
-    Priority: mode-specific > intent-specific > global > default 300.
+
+def _compute_max_tokens(
+    avg_reply_words: int | None,
+    *,
+    persona: dict[str, Any] | None = None,
+    intent: str | None = None,
+    p25: int | None = None,
+    p75: int | None = None,
+) -> int:
+    """Compute max_tokens from the persona length BAND (b187), not avg×5.
+
+    Resolves the effective average (mode > intent > global) exactly as before,
+    then derives the ok-band's UPPER edge (``_length_band``) and budgets
+    ``high_edge_words * tokens/word * headroom``. Bounds a runaway "long" draft
+    while leaving enough headroom that an in-band draft finishes naturally on the
+    stop token — verified against the golden suite for clean endings.
+
+    Priority for the effective average: mode-specific > intent-specific > global
+    > default 300 tokens.
     """
     effective_words = avg_reply_words
     if persona:
@@ -2096,7 +2232,12 @@ def _compute_max_tokens(avg_reply_words: int | None, *, persona: dict[str, Any] 
             effective_words = persona.get("style", {}).get("avg_reply_words")
     if effective_words is None:
         return 300
-    return max(100, min(500, effective_words * 5))
+    band = _length_band(effective_words, p25=p25, p75=p75)
+    if band is None:
+        return 300
+    _low, high = band
+    budget = int(round(high * _TOKENS_PER_WORD * _MAX_TOKENS_HEADROOM))
+    return max(100, min(500, budget))
 
 
 def _strip_mlx_output(raw: str) -> str:
@@ -2626,7 +2767,15 @@ def generate_draft(
     intent_avg = persona.get("style", {}).get("intent_avg_words", {})
     if isinstance(intent_avg, dict) and detected_intent in intent_avg:
         avg_reply_words = intent_avg[detected_intent]
-    max_tokens = _compute_max_tokens(avg_reply_words, persona=persona, intent=detected_intent)
+    # b187: persona reply-length percentiles (tighter ok-band when present —
+    # see _length_band). Read once and threaded through the token budget,
+    # length flag, candidate ranking, and concise-retry so all four agree.
+    _band_p25 = persona.get("style", {}).get("avg_reply_words_p25")
+    _band_p75 = persona.get("style", {}).get("avg_reply_words_p75")
+    max_tokens = _compute_max_tokens(
+        avg_reply_words, persona=persona, intent=detected_intent,
+        p25=_band_p25, p75=_band_p75,
+    )
     # Decoding params (default None -> each backend keeps its current default).
     temperature, top_p = _resolve_decoding(detected_intent, confidence)
     # Eval-only determinism (b166): force greedy (temp=0) + a fixed seed,
@@ -2742,6 +2891,7 @@ def generate_draft(
                 candidates = _rank_candidates_by_quality(
                     raw, reply_pairs=reply_pairs, target_words=avg_reply_words,
                     greeting=repair_greeting, closing=repair_closing,
+                    p25=_band_p25, p75=_band_p75,
                 )
                 _winner = candidates[0]
                 draft = _winner["draft"]
@@ -2842,7 +2992,65 @@ def generate_draft(
         closing=repair_closing,
         target_words=avg_reply_words,
         config=_get_repair_config(),
+        p25=_band_p25,
+        p75=_band_p75,
     )
+
+    # b187 concise-retry (LIVE path only). If the chosen draft ran "long" (above
+    # the persona band), regenerate ONCE with a stronger concise nudge + a
+    # tighter token budget and keep whichever fits the band better. Bounded to a
+    # single retry. HARD-GATED OFF on the deterministic/eval/background path
+    # (request.deterministic — the same family of guards b186 multi-candidate and
+    # b175 cloud-escalation key off) so golden/autoresearch reproducibility holds
+    # and there is never a retry in eval. Only "long" is retried — forcing a
+    # "short" draft longer means padding, which hurts quality. Only retried on a
+    # real local draft (skip error/claude/none and the empty-output fallback).
+    if (
+        length_flag == "long"
+        and not getattr(request, "deterministic", False)
+        and use_local
+        and _local_model_available()
+        and any(tag in (model_used or "") for tag in ("qwen", "lora", "base"))
+        and not _is_empty_draft(draft)
+    ):
+        try:
+            band = _length_band(avg_reply_words, p25=_band_p25, p75=_band_p75)
+            high = band[1] if band else None
+            nudge = (
+                f"\nThe previous draft was too long. Rewrite it more concisely, "
+                f"under {high} words, keeping all essential content."
+                if high
+                else "\nBe significantly more concise; keep all essential content."
+            )
+            retry_messages = [dict(m) for m in messages]
+            if retry_messages:
+                retry_messages[0]["content"] = retry_messages[0]["content"] + nudge
+            # Tighter budget: the band-derived budget without the long-tail
+            # headroom (high-edge tokens), floored so it can still complete.
+            tight_tokens = (
+                max(80, int(round(high * _TOKENS_PER_WORD))) if high else max_tokens
+            )
+            _rd, _rm = _local_draft_once(
+                retry_messages, max_tokens=tight_tokens,
+                temperature=temperature, top_p=top_p,
+                request=request, sender_type_hint=sender_type_hint, seed=eval_seed,
+            )
+            if not _is_empty_draft(_rd):
+                _rd, _rrepairs, _rflag = _repair_draft(
+                    _rd, greeting=repair_greeting, closing=repair_closing,
+                    target_words=avg_reply_words, config=_get_repair_config(),
+                    p25=_band_p25, p75=_band_p75,
+                )
+                # Keep the retry only if it fits the band better: in-band beats
+                # long, and a shorter still-long draft beats a longer one.
+                _keep = _rflag == "ok" or (
+                    _rflag == "long" and len(_rd.split()) < len(draft.split())
+                )
+                if _keep:
+                    draft, repairs, length_flag = _rd, _rrepairs, _rflag
+                    logger.info("concise-retry: kept tighter draft (flag=%s)", _rflag)
+        except Exception:
+            logger.warning("concise-retry failed; keeping original draft", exc_info=True)
 
     # Generate subject line — thread the per-request fallback decision so
     # strict_local (fallback_model == "none") is honored here too.
@@ -2881,6 +3089,7 @@ def generate_draft(
             draft, reply_pairs=reply_pairs, target_words=avg_reply_words,
             greeting=repair_greeting, closing=repair_closing,
             model_used=model_used, empty_output_retried=empty_output_retried,
+            p25=_band_p25, p75=_band_p75,
         )
     except Exception:
         _quality = None

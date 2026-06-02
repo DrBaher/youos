@@ -2,7 +2,22 @@
 
 import sqlite3
 
-from app.generation.service import _compute_max_tokens, assemble_prompt
+from app.generation.service import (
+    _MAX_TOKENS_HEADROOM,
+    _TOKENS_PER_WORD,
+    _compute_max_tokens,
+    _length_band,
+    assemble_prompt,
+)
+
+
+def _budget(effective_words):
+    """b187 band-derived budget for the resolved effective words."""
+    band = _length_band(effective_words)
+    if band is None:
+        return 300
+    _lo, hi = band
+    return max(100, min(500, int(round(hi * _TOKENS_PER_WORD * _MAX_TOKENS_HEADROOM))))
 
 
 def test_compute_max_tokens_default():
@@ -10,19 +25,21 @@ def test_compute_max_tokens_default():
 
 
 def test_compute_max_tokens_with_words():
-    assert _compute_max_tokens(40) == 200
+    # b187: band-derived, not avg×5.
+    assert _compute_max_tokens(40) == _budget(40)
+    assert _compute_max_tokens(40) != 200
 
 
 def test_compute_max_tokens_intent_override():
     persona = {"style": {"intent_avg_words": {"thank_you": 12}}}
     result = _compute_max_tokens(40, persona=persona, intent="thank_you")
-    assert result == 100  # max(100, min(500, 12*5)) = 100
+    assert result == _budget(12)
 
 
 def test_compute_max_tokens_intent_fallback():
     persona = {"style": {"intent_avg_words": {"thank_you": 12}}}
     result = _compute_max_tokens(40, persona=persona, intent="meeting_request")
-    assert result == 200  # Falls back to 40*5
+    assert result == _budget(40)  # intent not in map -> global avg
 
 
 def test_assemble_prompt_uses_intent_avg_words():
