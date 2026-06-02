@@ -299,6 +299,12 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
             cold_outreach INTEGER NOT NULL DEFAULT 0,
             tier TEXT NOT NULL,                          -- 'draft' | 'surface'
 
+            -- b189: time-criticality (app/core/urgency.py). ORDERING + VISIBILITY
+            -- only; never a send/auto-send/auto-push gate. (Also self-healed via
+            -- ALTER below for instances that predate this column.)
+            urgency_score REAL NOT NULL DEFAULT 0.0,
+            urgency_reasons_json TEXT NOT NULL DEFAULT '[]',
+
             -- the draft (NULL for tier='surface')
             draft TEXT,
             draft_model TEXT,
@@ -385,6 +391,23 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
     # can't later be picked up by the auto-send sweep.
     if "hold" not in _cols:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN hold INTEGER NOT NULL DEFAULT 0")
+    # b189 (urgency ranking): a time-criticality score in [0, 1] computed at
+    # triage capture (app/core/urgency.py) — combines the 'urgent' intent label,
+    # multilingual deadline markers, high-stakes, and an end-of-body question.
+    # ORDERING + VISIBILITY only: list_pending sorts on it (urgency DESC, then
+    # needs_reply DESC) and the digest highlights it. It is NEVER a
+    # send/auto-send/auto-push gate. DEFAULT 0.0 so pre-b189 rows are simply "not
+    # known urgent" and sort below freshly-scored urgent mail without any
+    # backfill. urgency_reasons_json mirrors reasons_json: a JSON array of short
+    # human-readable strings explaining the score (transparency).
+    if "urgency_score" not in _cols:
+        connection.execute(
+            "ALTER TABLE agent_pending_drafts ADD COLUMN urgency_score REAL NOT NULL DEFAULT 0.0"
+        )
+    if "urgency_reasons_json" not in _cols:
+        connection.execute(
+            "ALTER TABLE agent_pending_drafts ADD COLUMN urgency_reasons_json TEXT NOT NULL DEFAULT '[]'"
+        )
 
 
 def _migrate_agent_actions(connection: sqlite3.Connection) -> None:
