@@ -264,7 +264,7 @@ def test_dispatch_routes_to_persona_adapter_when_enabled_and_trained(monkeypatch
     calls: list = []
     _stub_generation_helpers(monkeypatch, sender="colleague@x.com", calls=calls)
     # Force sender_type classification to "internal" for the test.
-    monkeypatch.setattr(svc, "classify_sender", lambda _a: "internal")
+    monkeypatch.setattr(svc, "classify_sender", lambda _a, *_args, **_kw: "internal")
 
     resp = svc.generate_draft(
         svc.DraftRequest(inbound_message="hi", sender="colleague@x.com"),
@@ -287,7 +287,7 @@ def test_dispatch_falls_through_to_global_when_persona_untrained(monkeypatch, in
 
     calls: list = []
     _stub_generation_helpers(monkeypatch, sender="colleague@x.com", calls=calls)
-    monkeypatch.setattr(svc, "classify_sender", lambda _a: "internal")
+    monkeypatch.setattr(svc, "classify_sender", lambda _a, *_args, **_kw: "internal")
     # Force global adapter to "available" without depending on the
     # module-level ADAPTER_PATH (which captured at import time and points
     # at whatever dir the previous tests set up).
@@ -315,7 +315,7 @@ def test_dispatch_routing_off_uses_global_even_with_persona_trained(monkeypatch,
 
     calls: list = []
     _stub_generation_helpers(monkeypatch, sender="colleague@x.com", calls=calls)
-    monkeypatch.setattr(svc, "classify_sender", lambda _a: "internal")
+    monkeypatch.setattr(svc, "classify_sender", lambda _a, *_args, **_kw: "internal")
     monkeypatch.setattr(svc, "_adapter_available", lambda: True)
 
     resp = svc.generate_draft(
@@ -365,7 +365,7 @@ def test_dispatch_use_adapter_false_bypasses_persona_routing(monkeypatch, instan
 
     calls: list = []
     _stub_generation_helpers(monkeypatch, sender="colleague@x.com", calls=calls)
-    monkeypatch.setattr(svc, "classify_sender", lambda _a: "internal")
+    monkeypatch.setattr(svc, "classify_sender", lambda _a, *_args, **_kw: "internal")
 
     svc.generate_draft(
         svc.DraftRequest(inbound_message="hi", sender="colleague@x.com", use_adapter=False),

@@ -2695,7 +2695,11 @@ def generate_draft(
         sender_domain_hint = None
         sender_email_hint = None
         if request.sender:
-            sender_type_hint = classify_sender(request.sender)
+            # b190: pass database_url so an enriched sender_profiles row (built
+            # from real reply history) takes precedence over the coarse
+            # heuristic — gives persona-adapter routing a consistent, richer
+            # sender_type across sessions.
+            sender_type_hint = classify_sender(request.sender, database_url)
             sender_domain_hint = extract_domain(request.sender)
             # Exact-email hint lets retrieval boost pairs from prior direct
             # exchanges with this sender — much sharper than same-domain.
