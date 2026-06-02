@@ -138,56 +138,44 @@ def detect_language(text: str) -> str:
     if arabic_chars > len(text) * 0.1:
         return "ar"
 
-    # Check for common German words
+    # Check for common German words. (b183) The original short list missed
+    # everyday business openers like "Hallo … ich wollte einmal … nachhorchen,
+    # ob es schon Neuigkeiten gibt" — only ``ich`` matched, so a German inbound
+    # scored 1 < 2 and fell through to "en", which then DROPPED the
+    # reply-in-the-sender's-language instruction (the live German→English draft
+    # regression). The list is broadened with high-frequency function words and
+    # greetings/closers so a normal short German email clears the threshold,
+    # while keeping discriminative tokens (umlauts, ß, "geehrte") that don't
+    # collide with English.
     lower = text.lower()
     german_words = [
-        "der",
-        "die",
-        "das",
-        "und",
-        "ist",
-        "nicht",
-        "sie",
-        "ich",
-        "ein",
-        "eine",
-        "wir",
-        "sehr",
-        "geehrter",
-        "geehrte",
-        "mit",
-        "freundlichen",
-        "grüßen",
-        "bitte",
-        "können",
+        "der", "die", "das", "und", "ist", "nicht", "sie", "ich", "ein",
+        "eine", "wir", "sehr", "geehrter", "geehrte", "mit", "freundlichen",
+        "grüßen", "bitte", "können", "hallo", "wollte", "einmal", "ob", "es",
+        "schon", "gibt", "haben", "wäre", "wären", "würde", "möchte", "möchten",
+        "danke", "vielen", "dank", "gerne", "nächste", "woche", "nachhorchen",
+        "neuigkeiten", "auch", "noch", "über", "für", "war", "wird", "werden",
+        "guten", "tag", "liebe", "lieber", "viele", "herzliche", "ihnen",
     ]
     german_hits = sum(1 for w in german_words if re.search(r"\b" + re.escape(w) + r"\b", lower))
 
     # Check for common French words
     french_words = [
-        "vous",
-        "nous",
-        "est",
-        "les",
-        "une",
-        "pour",
-        "dans",
-        "avec",
-        "sur",
-        "que",
-        "qui",
-        "sont",
-        "cette",
-        "mais",
-        "bonjour",
-        "merci",
-        "monsieur",
-        "madame",
+        "vous", "nous", "est", "les", "une", "pour", "dans", "avec", "sur",
+        "que", "qui", "sont", "cette", "mais", "bonjour", "merci", "monsieur",
+        "madame", "je", "votre", "vos", "nos", "très", "bien", "était",
+        "serait", "voulais", "savoir", "nouvelles", "prochaine", "semaine",
+        "cordialement", "salutations",
     ]
     french_hits = sum(1 for w in french_words if re.search(r"\b" + re.escape(w) + r"\b", lower))
 
     # Check for common Spanish words
-    spanish_words = ["usted", "nosotros", "para", "como", "pero", "hola", "gracias", "señor", "señora", "estimado", "estimada", "por", "favor", "también"]
+    spanish_words = [
+        "usted", "nosotros", "para", "como", "pero", "hola", "gracias",
+        "señor", "señora", "estimado", "estimada", "por", "favor", "también",
+        "quería", "saber", "próxima", "semana", "saludos", "muchas", "buenos",
+        "días", "atentamente",
+    ]
     spanish_hits = sum(1 for w in spanish_words if re.search(r"\b" + re.escape(w) + r"\b", lower))
 
     scores = {"de": german_hits, "fr": french_hits, "es": spanish_hits}
@@ -196,3 +184,22 @@ def detect_language(text: str) -> str:
         return best
 
     return "en"
+
+
+# ISO 639-1 → human-readable language name for prompt instructions (b183).
+# Used to render an explicit "Reply in German." directive when detection is
+# confident. Unknown codes fall back to the generic mirror instruction.
+_LANGUAGE_NAMES: dict[str, str] = {
+    "en": "English",
+    "de": "German",
+    "fr": "French",
+    "es": "Spanish",
+    "ar": "Arabic",
+}
+
+
+def language_name(code: str | None) -> str | None:
+    """Return the English language name for an ISO 639-1 code, or None."""
+    if not code:
+        return None
+    return _LANGUAGE_NAMES.get(code.strip().lower())
