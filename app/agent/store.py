@@ -70,6 +70,8 @@ def upsert_pending(
     quality_score: float | None = None,
     calibrated_score: float | None = None,
     hold: bool = False,
+    urgency_score: float = 0.0,
+    urgency_reasons: list[str] | None = None,
 ) -> int | None:
     """Insert a triage result if the ``message_id`` isn't already stored.
 
@@ -77,6 +79,11 @@ def upsert_pending(
     idempotency case — same unread thread surfacing across multiple triage
     runs shouldn't produce duplicates). ``hold`` (a matched agent.rules hold
     rule) is persisted so the row is never auto-sent even if manually pushed.
+
+    ``urgency_score`` (b189, [0, 1]) + ``urgency_reasons`` are stored for
+    ORDERING + VISIBILITY only — ``list_pending`` sorts on the score and the
+    digest highlights it. They are NEVER consulted by any send/auto-send/
+    auto-push gate.
     """
     with closing(_connect(database_url)) as conn:
         cur = conn.execute(
@@ -86,8 +93,9 @@ def upsert_pending(
                 sender, sender_email, subject, body, received_at,
                 needs_reply_score, reasons_json, cold_outreach, tier,
                 draft, draft_model, draft_repairs_json, standing_instructions_snapshot,
-                thread_summary, quality_score, calibrated_score, hold
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                thread_summary, quality_score, calibrated_score, hold,
+                urgency_score, urgency_reasons_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 message_id, thread_id, account,
@@ -103,6 +111,8 @@ def upsert_pending(
                 quality_score,
                 calibrated_score,
                 1 if hold else 0,
+                max(0.0, min(1.0, float(urgency_score))),
+                json.dumps(urgency_reasons or [], ensure_ascii=False),
             ),
         )
         conn.commit()
@@ -117,9 +127,17 @@ def list_pending(
     tier: Tier | None = None,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    """List pending rows, newest first. ``tier=None`` returns both 'draft' and
-    'surface' tiers so the UI can render them together (with the surface
-    section collapsed by default)."""
+    """List pending rows, most TIME-CRITICAL first. ``tier=None`` returns both
+    'draft' and 'surface' tiers so the UI can render them together (with the
+    surface section collapsed by default).
+
+    b189: ordering is ``(urgency_score DESC, needs_reply_score DESC,
+    created_at DESC)`` — a deadline/urgent message rises above a routine one even
+    if its needs-reply score is lower, with needs_reply_score as the tiebreaker
+    and recency as the final tiebreaker. urgency_score defaults to 0.0 for
+    pre-b189 rows, so this is backward-compatible: with no urgency signal the
+    order collapses to the old needs_reply_score ordering. Ordering only — the
+    score never changes whether a row is eligible for any outbound action."""
     sql = "SELECT * FROM agent_pending_drafts WHERE status = ?"
     params: list[Any] = [status]
     if account:
@@ -128,7 +146,9 @@ def list_pending(
     if tier:
         sql += " AND tier = ?"
         params.append(tier)
-    sql += " ORDER BY needs_reply_score DESC, created_at DESC LIMIT ?"
+    sql += (
+        " ORDER BY urgency_score DESC, needs_reply_score DESC, created_at DESC LIMIT ?"
+    )
     params.append(int(limit))
 
     with closing(_connect(database_url)) as conn:
@@ -910,7 +930,7 @@ def _audit_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     d = dict(row)
     # JSON columns are stored as strings; rehydrate for the API.
-    for k in ("reasons_json", "draft_repairs_json"):
+    for k in ("reasons_json", "draft_repairs_json", "urgency_reasons_json"):
         v = d.get(k)
         if isinstance(v, str):
             try:
