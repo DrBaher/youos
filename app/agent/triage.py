@@ -193,6 +193,10 @@ class TriageDraft:
     # A matched ``hold`` rule (agent.rules): draft it, but never auto-act —
     # excluded from auto-push/auto-send so a human always finishes-and-sends.
     hold: bool = False
+    # b189: time-criticality in [0, 1] + the reasons explaining it. ORDERING +
+    # VISIBILITY only (queue sort + digest highlight); never an outbound gate.
+    urgency_score: float = 0.0
+    urgency_reasons: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -1057,6 +1061,11 @@ def _run_sweep(
     drafts: list[TriageDraft] = []
     skipped: list[tuple[InboxMessage, NeedsReplyVerdict]] = []
     surfaced: list[tuple[InboxMessage, NeedsReplyVerdict]] = []
+    # b189: urgency (score, reasons) keyed by message_id, so the persist step
+    # can attach it to surface-tier rows (which carry only (msg, verdict)) without
+    # changing the public ``TriageResult.surfaced`` tuple shape. Drafts carry
+    # urgency on the TriageDraft directly.
+    _urgency_by_mid: dict[str, tuple[float, list[str]]] = {}
     cap_hit_count = 0
     for msg, verdict in classified:
         if not verdict.needs_reply:
@@ -1090,6 +1099,21 @@ def _run_sweep(
                 _intents = classify_intents_multi(msg.body)
             except Exception:
                 _intents = None
+
+        # b189: time-criticality for ORDERING + VISIBILITY. Computed here so it's
+        # available on both the drafted row and the withheld→surface row below.
+        # Failure-isolated (never aborts the sweep) and never gates any outbound
+        # action — list_pending sorts on it and the digest highlights it.
+        try:
+            from app.core.urgency import compute_urgency_score
+
+            _urgency_score, _urgency_reasons = compute_urgency_score(
+                subject=msg.subject, body=msg.body, intents=_intents,
+            )
+        except Exception as exc:
+            logger.warning("urgency scoring failed for %s: %s", msg.message_id, exc)
+            _urgency_score, _urgency_reasons = 0.0, []
+        _urgency_by_mid[msg.message_id] = (_urgency_score, _urgency_reasons)
 
         _hold = False
         if rules:
@@ -1238,6 +1262,8 @@ def _run_sweep(
                     thread_summary=_summary,
                     quality_score=getattr(resp, "quality_score", None),
                     hold=_hold,
+                    urgency_score=_urgency_score,
+                    urgency_reasons=_urgency_reasons,
                 )
             )
             cap_remaining -= 1  # ζ: one less slot for this UTC day
@@ -1253,6 +1279,8 @@ def _run_sweep(
                     message=msg, verdict=verdict, error=f"{type(exc).__name__}: {exc}",
                     standing_instructions_snapshot=effective_instructions,
                     thread_summary=_summary,
+                    urgency_score=_urgency_score,
+                    urgency_reasons=_urgency_reasons,
                 )
             )
 
@@ -1285,6 +1313,8 @@ def _run_sweep(
                 quality_score=d.quality_score,
                 calibrated_score=getattr(d.verdict, "calibrated_score", None),
                 hold=getattr(d, "hold", False),
+                urgency_score=getattr(d, "urgency_score", 0.0),
+                urgency_reasons=getattr(d, "urgency_reasons", None),
             )
             if row_id is not None:
                 persisted += 1
@@ -1295,6 +1325,18 @@ def _run_sweep(
         # Tier 2: borderline cases (no draft generated; the UI shows them
         # collapsed so the user can act manually).
         for msg, verdict in surfaced:
+            # b189: drafted/withheld rows were scored in the loop above (the
+            # side-map); the early surface-for-review path (needs_reply=False)
+            # wasn't, so score it now. A time-critical message the agent didn't
+            # draft for STILL deserves to sort to the top of the review tier.
+            _u = _urgency_by_mid.get(msg.message_id)
+            if _u is None:
+                try:
+                    from app.core.urgency import compute_urgency_score
+
+                    _u = compute_urgency_score(subject=msg.subject, body=msg.body)
+                except Exception:
+                    _u = (0.0, [])
             row_id = upsert_pending(
                 database_url=database_url,
                 message_id=msg.message_id,
@@ -1313,6 +1355,8 @@ def _run_sweep(
                 draft_model=None,
                 draft_repairs=[],
                 standing_instructions_snapshot=standing_instructions,
+                urgency_score=_u[0],
+                urgency_reasons=_u[1],
             )
             if row_id is not None:
                 persisted += 1

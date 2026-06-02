@@ -638,9 +638,16 @@ def triage(
     for d in result.drafts:
         m, v = d.message, d.verdict
         flag = "⚠ cold" if v.cold_outreach else "  "
-        typer.echo(f"━━ [{v.score:.2f}] {flag} {m.subject!r}")
+        # b189: lead the line with the urgency score when one fired, so the most
+        # time-critical mail is visually obvious. ⏰ marks anything scored ≥ 0.5.
+        _urg = getattr(d, "urgency_score", 0.0) or 0.0
+        _urg_flag = " ⏰" if _urg >= 0.5 else ""
+        typer.echo(f"━━ [{v.score:.2f}] urg={_urg:.2f}{_urg_flag} {flag} {m.subject!r}")
         typer.echo(f"      from: {m.sender}")
         typer.echo(f"      reasons: {', '.join(v.reasons) or '(no positive signals)'}")
+        _ur = getattr(d, "urgency_reasons", None)
+        if _ur:
+            typer.echo(f"      urgency: {', '.join(_ur)}")
         if d.error:
             typer.echo(f"      ERROR: {d.error}")
         else:
