@@ -96,7 +96,11 @@ def test_assemble_prompt_length_hint():
             persona={"style": {"voice": "direct", "avg_reply_words": 40}},
             prompts={"system_prompt": "Test."},
         )
-    assert "Target length: ~40 words. Be concise." in prompt
+    # b187: firmer guidance — explicit target + a two-sided band (soft upper
+    # bound trims the long tail; lower edge stops over-shrinking). avg=40 -> band
+    # [24,56] via the multiplicative fallback (no percentiles present).
+    assert "Target length: about 40 words" in prompt
+    assert "stay within 24–56 words" in prompt
 
 
 def test_assemble_prompt_no_length_hint_without_avg_words():
@@ -115,10 +119,21 @@ def test_assemble_prompt_no_length_hint_without_avg_words():
 
 
 def test_compute_max_tokens():
-    """max_tokens scales with avg_reply_words, bounded 100-500."""
-    from app.generation.service import _compute_max_tokens
+    """b187: max_tokens is tied to the persona BAND (upper-edge tokens +
+    headroom), not avg×5, bounded 100-500."""
+    from app.generation.service import (
+        _MAX_TOKENS_HEADROOM,
+        _TOKENS_PER_WORD,
+        _compute_max_tokens,
+        _length_band,
+    )
+
+    def _budget(avg):
+        _lo, hi = _length_band(avg)
+        return max(100, min(500, int(round(hi * _TOKENS_PER_WORD * _MAX_TOKENS_HEADROOM))))
 
     assert _compute_max_tokens(None) == 300
-    assert _compute_max_tokens(10) == 100  # 10*5=50, min 100
-    assert _compute_max_tokens(40) == 200  # 40*5=200
-    assert _compute_max_tokens(200) == 500  # 200*5=1000, max 500
+    assert _compute_max_tokens(10) == _budget(10)
+    assert _compute_max_tokens(40) == _budget(40)  # band high 56, not avg*5=200
+    assert _compute_max_tokens(40) != 200
+    assert _compute_max_tokens(200) == 500  # clamped to ceiling
