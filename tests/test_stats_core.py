@@ -84,7 +84,12 @@ def test_get_pipeline_status_corrupt(tmp_path):
 
 
 def test_get_corpus_stats_outcome_metrics(tmp_path):
-    """Computes outcome metrics from feedback_pairs."""
+    """Computes outcome metrics from REAL draft-vs-sent feedback_pairs (b185).
+
+    The four edit-distance rows here are genuine comparisons (organic=0, draft
+    differs from the sent reply), so they all feed the metrics exactly as
+    before. The b185 honesty filter only changes which rows qualify — see
+    test_get_corpus_stats_excludes_organic for the exclusion behavior."""
     db_path = tmp_path / "stats.db"
     conn = sqlite3.connect(db_path)
     try:
@@ -95,8 +100,11 @@ def test_get_corpus_stats_outcome_metrics(tmp_path):
             CREATE TABLE feedback_pairs (
                 id INTEGER PRIMARY KEY,
                 created_at TEXT,
+                generated_draft TEXT,
+                edited_reply TEXT,
                 edit_distance_pct REAL,
-                rating INTEGER
+                rating INTEGER,
+                organic BOOLEAN DEFAULT 0
             )
             """
         )
@@ -104,14 +112,16 @@ def test_get_corpus_stats_outcome_metrics(tmp_path):
         conn.executemany("INSERT INTO documents(id) VALUES(?)", [(1,), (2,)])
         conn.executemany("INSERT INTO reply_pairs(id, embedding) VALUES(?, ?)", [(1, b"x"), (2, None), (3, b"y")])
 
+        # (id, created_at, generated_draft, edited_reply, edit_distance_pct, rating, organic)
         rows = [
-            (1, "2026-03-17", 0.00, 5),
-            (2, "2026-03-17", 0.05, 4),
-            (3, "2026-03-16", 0.20, 3),
-            (4, "2026-03-15", 0.40, 2),
+            (1, "2026-03-17", "draft1", "sent1", 0.00, 5, 0),
+            (2, "2026-03-17", "draft2", "sent2", 0.05, 4, 0),
+            (3, "2026-03-16", "draft3", "sent3", 0.20, 3, 0),
+            (4, "2026-03-15", "draft4", "sent4", 0.40, 2, 0),
         ]
         conn.executemany(
-            "INSERT INTO feedback_pairs(id, created_at, edit_distance_pct, rating) VALUES(?, ?, ?, ?)",
+            "INSERT INTO feedback_pairs(id, created_at, generated_draft, edited_reply, edit_distance_pct, rating, organic) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         conn.commit()
@@ -124,9 +134,58 @@ def test_get_corpus_stats_outcome_metrics(tmp_path):
     assert result["total_reply_pairs"] == 3
     assert result["total_feedback_pairs"] == 4
     assert result["embedding_pct"] == 66.7
+    assert result["real_draft_feedback_pairs"] == 4
+    assert result["organic_feedback_pairs"] == 0
 
     outcome = result["outcome_metrics"]
     assert outcome["accept_unchanged_pct"] == 25.0
     assert outcome["low_edit_pct"] == 50.0
     assert outcome["high_rating_pct"] == 50.0
     assert outcome["median_edit_distance"] == 0.125
+
+
+def test_get_corpus_stats_excludes_organic(tmp_path):
+    """b185: organic backfill rows (sent reply copied into both columns, ed=0.0)
+    must NOT drive the corpus quality metrics. With many organic 0.0 rows and a
+    single real heavily-edited comparison, the metrics reflect ONLY the real row
+    (not a fake ~100% accept-unchanged / 0.0 median from the backfill)."""
+    db_path = tmp_path / "stats.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE reply_pairs (id INTEGER PRIMARY KEY, embedding BLOB)")
+        conn.execute(
+            """
+            CREATE TABLE feedback_pairs (
+                id INTEGER PRIMARY KEY,
+                created_at TEXT,
+                generated_draft TEXT,
+                edited_reply TEXT,
+                edit_distance_pct REAL,
+                rating INTEGER,
+                organic BOOLEAN DEFAULT 0
+            )
+            """
+        )
+        # 10 organic 0.0 rows (sent copied into both cols) + 1 real edited row.
+        organic = [(i, "2026-03-17", "sent", "sent", 0.0, 3, 1) for i in range(1, 11)]
+        real = [(11, "2026-03-17", "agent draft", "what user actually sent", 0.50, 2, 0)]
+        conn.executemany(
+            "INSERT INTO feedback_pairs(id, created_at, generated_draft, edited_reply, edit_distance_pct, rating, organic) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?)",
+            organic + real,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = get_corpus_stats(f"sqlite:///{db_path}")
+
+    assert result["total_feedback_pairs"] == 11
+    assert result["real_draft_feedback_pairs"] == 1
+    assert result["organic_feedback_pairs"] == 10
+    # Only the one real comparison informs quality — NOT the 10 organic 0.0s.
+    assert result["avg_edit_distance"] == 0.5
+    outcome = result["outcome_metrics"]
+    assert outcome["accept_unchanged_pct"] == 0.0  # the single real row was edited
+    assert outcome["median_edit_distance"] == 0.5

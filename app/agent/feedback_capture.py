@@ -68,6 +68,11 @@ def _classify_row(row: dict[str, Any]) -> dict[str, Any] | None:
     # leaves send_state NULL. A pushed-but-unconfirmed Gmail draft
     # (send_state='draft_created') is deliberately NOT counted here: we can't
     # confirm it actually went out, and it's handled as in-flight by the caller.
+    # b185: ed=0.0 here is REAL, not fabricated — the agent's draft *was* the
+    # sent text, so generated == edited and the distance is genuinely zero.
+    # Because generated == edited, the b185 honesty filter in stats.py
+    # (generated_draft <> edited_reply) correctly leaves it out of the
+    # edit-distance learning join while keeping it as a positive rating signal.
     sent_confirmed = send_state == "sent" or (status == "sent" and send_state is None)
     if sent_confirmed and not (amended and amended.strip()):
         return {

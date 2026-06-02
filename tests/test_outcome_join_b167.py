@@ -90,10 +90,15 @@ def _add_draft_event(conn, inbound, draft, *, sender_type, confidence, length_fl
     )
 
 
-def _add_feedback(conn, inbound, *, edit_distance_pct, draft="real reply", edited="e", organic=1):
+def _add_feedback(conn, inbound, *, edit_distance_pct, draft="real reply", edited="edited reply", organic=0):
     # Draft text intentionally DIFFERS from the draft_events draft: on the live
     # DB feedback_pairs.generated_draft is the organic/full reply, not the logged
     # draft, which is exactly why an inbound+draft join matches ~nothing.
+    #
+    # b185: default organic=0 and draft<>edited so these are REAL draft-vs-sent
+    # comparisons that survive the honesty filter. Organic backfill rows (sent
+    # reply copied into both columns with a hardcoded 0.0) are now excluded from
+    # the learning join — see test_organic_rows_excluded_from_join below.
     conn.execute(
         """INSERT INTO feedback_pairs
                (inbound_text, generated_draft, edited_reply, edit_distance_pct, organic)
@@ -252,3 +257,74 @@ def test_downstream_scorer_produces_real_weights(db_url):
     assert draft_quality_case_weights(
         {"outcome": {"matched": 0, "avg_edit_distance_by_sender_type": {}, "avg_edit_distance_by_confidence": {}}}
     ) == {}
+
+
+# --- b185: honesty filter (organic / no-draft rows excluded) ----------------
+
+
+def test_organic_rows_excluded_from_join(db_url):
+    """b185: organic backfill rows (sent reply copied into BOTH columns with a
+    hardcoded 0.0) must NOT count as a draft-vs-sent comparison. With ONLY
+    organic rows present, matched is 0 and the cohort dicts are empty — the loop
+    is no longer told 'drafts are perfect' (avg_edit_distance 0.0)."""
+    url, db_path = db_url
+    conn = _make_db(db_path)
+    try:
+        _add_draft_event(conn, "inbORG", "stub", sender_type="personal", confidence="low")
+        # organic=1 AND generated==edited AND ed=0.0 — exactly the 82k live shape.
+        _add_feedback(conn, "inbORG", edit_distance_pct=0.0, draft="same sent reply", edited="same sent reply", organic=1)
+        conn.commit()
+    finally:
+        conn.close()
+
+    summary = summarize_draft_events(url)
+    outcome = summary["outcome"]
+    assert summary["total"] == 1  # the draft is still logged
+    assert outcome["matched"] == 0, "organic no-draft rows must not count as comparisons"
+    assert outcome["avg_edit_distance_by_sender_type"] == {}
+    assert outcome["avg_edit_distance_by_confidence"] == {}
+
+
+def test_real_pair_counted_amid_organic_noise(db_url):
+    """b185: a single genuine draft-vs-sent row (organic=0, draft<>sent, real
+    distance) joins and reports its TRUE distance even when buried under organic
+    0.0 backfill rows for the same inbound — the organic rows no longer drown the
+    real signal out to 0.0."""
+    url, db_path = db_url
+    conn = _make_db(db_path)
+    try:
+        _add_draft_event(conn, "inbMix", "stub", sender_type="external_client", confidence="high")
+        # Many organic 0.0 rows for the SAME inbound (the live failure mode)...
+        for _ in range(20):
+            _add_feedback(conn, "inbMix", edit_distance_pct=0.0, draft="sent", edited="sent", organic=1)
+        # ...and one real comparison the user actually edited heavily.
+        _add_feedback(conn, "inbMix", edit_distance_pct=0.62, draft="agent draft", edited="user sent reply", organic=0)
+        conn.commit()
+    finally:
+        conn.close()
+
+    outcome = summarize_draft_events(url)["outcome"]
+    assert outcome["matched"] == 1
+    ext = outcome["avg_edit_distance_by_sender_type"]["external_client"]
+    # The organic 0.0 rows are excluded, so the average is the REAL 0.62, not
+    # a number dragged toward 0.0 by the backfill.
+    assert ext["avg_edit_distance"] == pytest.approx(0.62, abs=1e-3)
+    assert ext["n"] == 1
+
+
+def test_draft_equals_sent_real_row_excluded(db_url):
+    """b185: a non-organic row whose draft == sent (zero-edit) carries no
+    edit-distance signal and is excluded by the generated_draft<>edited_reply
+    clause — only genuinely differing comparisons inform the weighting."""
+    url, db_path = db_url
+    conn = _make_db(db_path)
+    try:
+        _add_draft_event(conn, "inbEq", "stub", sender_type="internal", confidence="high")
+        _add_feedback(conn, "inbEq", edit_distance_pct=0.0, draft="identical text", edited="identical text", organic=0)
+        conn.commit()
+    finally:
+        conn.close()
+
+    outcome = summarize_draft_events(url)["outcome"]
+    assert outcome["matched"] == 0
+    assert outcome["avg_edit_distance_by_sender_type"] == {}
