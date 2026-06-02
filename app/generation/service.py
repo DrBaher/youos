@@ -733,19 +733,30 @@ _GROUNDING_RULE = (
     "invent an address, date, price, link, or contact."
 )
 
-# Courtesy floor (b179). Baher's voice is direct and concise, but a small local
-# model drafting a decline / cold-outreach rejection can tip from direct into
-# rude ("your model is a copycat. No value-add."). This one line keeps the
-# register professional on the failure cases WITHOUT padding the common case:
-# it explicitly forbids verbosity/flattery so normal replies stay tight, and
-# only bites when the draft would otherwise insult or dismiss the sender. It is
-# always present in the system turn (and the legacy assemble_prompt) so it
-# generalizes rather than being a per-intent hack.
+# Courtesy floor (b179, tightened b186). Baher's voice is direct and concise,
+# but a small local model drafting a decline / cold-outreach rejection can tip
+# from direct into rude ("your model is a copycat. No value-add.", "Pas un
+# fit.", "No response.") — curt fragments that read as dismissive. This rule
+# keeps the register warm + professional + courteous on the failure cases
+# WITHOUT padding the common case: it (a) requires a complete, courteous reply
+# even when the answer is no — acknowledge the sender, decline clearly, close
+# politely — and (b) bans the curt/blunt/insulting forms by example, while
+# (c) explicitly forbidding verbosity, flattery, and over-apology so normal
+# replies stay tight. b186 strengthens (a) and adds the (b) examples after a
+# live demo surfaced terse French/English declines. It is always present in the
+# system turn (and the legacy assemble_prompt) so it generalizes rather than
+# being a per-intent hack, and it does not name a language (so it never fights
+# the b183 language-mirroring directive) or assert any fact (so it never fights
+# the b179 grounding rule).
 _COURTESY_RULE = (
-    "Stay courteous and professional even when declining, disagreeing, or "
-    "rejecting — a polite \"not a fit right now, thanks for reaching out\" "
-    "rather than insults or dismissiveness. Do not add flattery or filler to "
-    "achieve this; keep your usual direct, concise register."
+    "Stay warm, professional, and courteous in every reply — including when you "
+    "decline, disagree, or reject. A decline should still be a complete, polite "
+    "message: briefly acknowledge the sender, state the no clearly, and close "
+    "courteously (e.g. \"Thanks for reaching out — this isn't a fit for us right "
+    "now, but I appreciate the note.\"). Never send curt, blunt, or dismissive "
+    "fragments (e.g. \"Not a fit.\", \"No.\", \"No response.\") or anything that "
+    "insults or belittles the sender. Achieve this without flattery, filler, or "
+    "over-apologizing — keep your usual direct, concise register."
 )
 
 # Language mirroring (b183). A draft must answer in the SAME language as the
@@ -1695,12 +1706,42 @@ def _resolve_decoding(intent: str | None, confidence: str | None) -> tuple[float
 
 
 # --- Multi-candidate generation + ranking -----------------------------------
-# Optionally generate several drafts (a temperature spread) and return the
-# best by a deterministic scorer. Off by default — it multiplies model calls.
+# Optionally generate several drafts with DIVERSE sampling and return the best
+# by the per-draft quality score (draft_quality_score — voice fidelity +
+# structure, with verify folded in). Off by default — it multiplies model calls
+# (n× tokens; the warm server amortizes load but not generation). Hard-inert on
+# the deterministic/eval/background path (see generate_draft): exactly ONE
+# greedy candidate there, byte-identical to single-candidate drafting.
+
+# Default temperature spread for n candidates when no explicit list is given.
+# A spread (not a single repeated temperature + varied seed) is what makes the
+# candidates actually differ; greedy temp=0 would make them identical. The
+# spread is clamped to [0.3, 1.0] and is stable for a given n so the candidate
+# set is reproducible at the config level.
+def _diverse_temperatures(n: int) -> list[float]:
+    if n <= 1:
+        return [0.7]
+    lo, hi = 0.3, 1.0
+    step = (hi - lo) / (n - 1)
+    return [round(lo + i * step, 3) for i in range(n)]
 
 
 def _multi_candidate_config() -> dict[str, Any]:
-    """Read ``generation.multi_candidate`` (default disabled)."""
+    """Read ``generation.multi_candidate`` (default OFF / single candidate).
+
+    Canonical knob is ``generation.multi_candidate.n`` (b186): the number of
+    candidates to generate and rank. ``n <= 1`` (the default) is single-candidate
+    drafting — exactly today's behavior and latency. ``n > 1`` fans out a diverse
+    temperature spread and keeps the highest-scoring draft.
+
+    Back-compat: the legacy ``enabled: true`` / ``temperatures: [...]`` shape
+    (b172/PR-D) is still honored. When ``enabled`` is set without ``n``, ``n``
+    is the length of the temperature list (default spread = 3). An explicit
+    ``temperatures`` list always wins over the ``n``-derived spread.
+
+    Returns ``{"enabled", "n", "temperatures"}``; ``enabled`` is True iff
+    ``n > 1`` (so >1 candidate will actually be generated).
+    """
     try:
         from app.core.config import load_config
 
@@ -1708,13 +1749,30 @@ def _multi_candidate_config() -> dict[str, Any]:
         gen = cfg.get("generation", {}) if isinstance(cfg, dict) else {}
         mc = gen.get("multi_candidate", {}) if isinstance(gen, dict) else {}
         mc = mc if isinstance(mc, dict) else {}
-        temps = mc.get("temperatures")
-        if not isinstance(temps, list) or not temps:
-            temps = [0.3, 0.7, 1.0]
-        return {"enabled": bool(mc.get("enabled", False)), "temperatures": [float(t) for t in temps]}
+
+        explicit_temps = mc.get("temperatures")
+        has_temps = isinstance(explicit_temps, list) and bool(explicit_temps)
+
+        # Resolve n: explicit n wins; else legacy enabled+temperatures implies
+        # len(temperatures); else legacy enabled alone implies the default 3;
+        # else single-candidate (n=1).
+        n_raw = mc.get("n")
+        if n_raw is not None:
+            n = max(1, int(n_raw))
+        elif bool(mc.get("enabled", False)):
+            n = len(explicit_temps) if has_temps else 3
+        else:
+            n = 1
+
+        if has_temps:
+            temps = [float(t) for t in explicit_temps]
+        else:
+            temps = _diverse_temperatures(n)
+
+        return {"enabled": n > 1, "n": n, "temperatures": temps}
     except Exception:
         logger.debug("Could not read generation.multi_candidate", exc_info=True)
-        return {"enabled": False, "temperatures": [0.3, 0.7, 1.0]}
+        return {"enabled": False, "n": 1, "temperatures": [0.7]}
 
 
 def _is_usable_draft(text: str) -> bool:
@@ -1891,6 +1949,52 @@ def _rank_candidates(
             "voice_match": round(voice, 3) if voice is not None else None,
         })
     scored.sort(key=lambda c: c["score"], reverse=True)
+    return scored
+
+
+def _rank_candidates_by_quality(
+    raw: list[tuple[str, str, float | None]],
+    *,
+    reply_pairs: list[Any] | None,
+    target_words: int | None,
+    greeting: str,
+    closing: str,
+) -> list[dict[str, Any]]:
+    """Rank multi-candidate drafts by the per-draft quality score (b186).
+
+    ``raw`` is ``[(draft, model_used, temperature), ...]`` in generation order.
+    Each candidate is scored with ``draft_quality_score`` — the SAME 0–1 signal
+    auto-push/auto-send gates on (voice fidelity vs. the user's retrieved
+    replies + structural fit, with generic-ack / cloud-fallback collapse) — so
+    the candidate kept is the one most worth acting on, not merely the
+    best-length-fitting. The highest score wins; ties resolve to the
+    LOWEST original index (stability) because we sort by ``-quality`` and the
+    enumerate index ascending, both as the sort key.
+
+    Returns dicts (best-first) with ``draft``, ``model_used``, ``temperature``,
+    ``quality_score``, and ``candidate_index`` (the original generation index of
+    the kept candidate, recorded for telemetry).
+    """
+    scored: list[dict[str, Any]] = []
+    for idx, (draft, model_used, temperature) in enumerate(raw):
+        try:
+            q = draft_quality_score(
+                draft, reply_pairs=reply_pairs, target_words=target_words,
+                greeting=greeting, closing=closing, model_used=model_used,
+            )
+        except Exception:
+            logger.warning("multi-candidate: scoring one candidate failed", exc_info=True)
+            q = 0.0
+        scored.append({
+            "draft": draft,
+            "model_used": model_used,
+            "temperature": temperature,
+            "quality_score": q,
+            "candidate_index": idx,
+        })
+    # Best quality first; tie → lowest original index (stable). Sorting on a
+    # (-quality, index) tuple makes the tie-break explicit and order-independent.
+    scored.sort(key=lambda c: (-(c["quality_score"] or 0.0), c["candidate_index"]))
     return scored
 
 
@@ -2605,10 +2709,24 @@ def generate_draft(
             #   3. base model otherwise
             # `model_used` is honest about which adapter actually ran.
             mc = _multi_candidate_config()
-            # Deterministic eval bypasses the temperature spread: a spread is
-            # inherently non-greedy and would reintroduce night-to-night variance.
+            # Multi-candidate is HARD-INERT on the deterministic/eval/golden path
+            # (request.deterministic, set by run_golden_eval / run_eval /
+            # run_autoresearch / nightly_pipeline — the same family of background
+            # guards b175 cloud escalation keys off). A temperature spread is
+            # inherently non-greedy and would reintroduce night-to-night variance,
+            # so there we generate EXACTLY ONE greedy + seeded candidate below,
+            # byte-identical to single-candidate drafting. The b166 determinism
+            # tests pin this.
             if mc["enabled"] and not getattr(request, "deterministic", False):
-                # Generate a temperature spread, then keep the best-scoring draft.
+                # Generate n candidates with a DIVERSE temperature spread (so they
+                # actually differ), then keep the one with the highest per-draft
+                # quality score. We rank with draft_quality_score — the SAME 0–1
+                # signal auto-push/auto-send gates on (voice fidelity vs. the
+                # user's retrieved replies + structural fit, with verify-before-
+                # accept folded in and generic-ack / cloud-fallback drafts
+                # collapsed) — so the kept candidate is the one most worth acting
+                # on, not merely the best-fitting length. Uses the warm chat path
+                # via _local_draft_once.
                 raw: list[tuple[str, str, float | None]] = []
                 for t in mc["temperatures"]:
                     try:
@@ -2621,18 +2739,19 @@ def generate_draft(
                         logger.warning("multi-candidate: one candidate failed", exc_info=True)
                 if not raw:
                     raise RuntimeError("all draft candidates failed")
-                # Rank by voice fidelity against the user's retrieved replies,
-                # not just length — the whole point of the local LoRA.
-                exemplar_replies = [
-                    rp.reply_text for rp in reply_pairs[:3]
-                    if getattr(rp, "reply_text", None)
-                ]
-                candidates = _rank_candidates(
-                    raw, target_words=avg_reply_words, greeting=repair_greeting, closing=repair_closing,
-                    exemplar_replies=exemplar_replies,
+                candidates = _rank_candidates_by_quality(
+                    raw, reply_pairs=reply_pairs, target_words=avg_reply_words,
+                    greeting=repair_greeting, closing=repair_closing,
                 )
-                draft = candidates[0]["draft"]
-                model_used = candidates[0]["model_used"]
+                _winner = candidates[0]
+                draft = _winner["draft"]
+                model_used = _winner["model_used"]
+                logger.info(
+                    "multi-candidate: generated=%d kept idx=%d quality=%.3f temp=%s",
+                    len(candidates), _winner["candidate_index"],
+                    _winner["quality_score"] if _winner["quality_score"] is not None else -1.0,
+                    _winner["temperature"],
+                )
             else:
                 draft, model_used = _local_draft_once(
                     messages, max_tokens=max_tokens, temperature=temperature, top_p=top_p,
