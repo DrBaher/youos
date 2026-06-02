@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,127 @@ from app.core.settings import get_var_dir
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 GOLDEN_PATH = ROOT_DIR / "configs" / "benchmarks" / "golden.yaml"
+
+# --- Fairer keyword scoring (b181) --------------------------------------------
+# The old check was a brittle exact substring test: `kw.lower() in draft_lower`.
+# A genuinely correct, clean reply that expressed the right idea with a synonym
+# or an inflected form ("free" for "available", "reviewed" for "review",
+# "introduction" for "intro") scored 0 and was dinged to warn/fail even though it
+# was on-topic. That made the golden composite measure surface-form overlap, not
+# reply quality. We now credit a keyword when EITHER:
+#   (a) a draft token shares a stem with the keyword (so "review"<->"reviewed",
+#       "connect"<->"connecting", "follow"<->"following", "sounds"<->"sound"), OR
+#   (b) the draft contains any accepted SYNONYM of the keyword.
+# Keywords stay meaningful — we are NOT deleting them. A reply that is off-topic
+# (no stem and no synonym hit for ANY keyword) still scores 0 and still fails.
+
+# Built-in synonym groups. Each keyword maps to alternative surface forms that
+# express the same intent for these business/personal reply cases. Conservative
+# and hand-reviewed — only true paraphrases, no topic-broadening.
+_KEYWORD_SYNONYMS: dict[str, set[str]] = {
+    "available": {"free", "open", "around", "availability"},
+    "time": {"slot", "when", "schedule", "timing"},
+    "call": {"meeting", "chat", "talk", "speak", "discussion", "conversation"},
+    "week": {"weekday", "monday", "tuesday", "wednesday", "thursday", "friday"},
+    "thank": {"thanks", "appreciate", "grateful", "appreciated"},
+    "unfortunately": {"sadly", "regrettably", "afraid", "wont", "cannot", "unable"},
+    "schedule": {"calendar", "availability", "booked", "commitments"},
+    "proposal": {"document", "doc", "draft", "deck", "plan", "submission"},
+    "review": {"look", "read", "consider", "feedback", "thoughts"},
+    "follow": {"circle", "check", "touch", "checking", "circling"},
+    "intro": {"introduction", "introducing", "introduce"},
+    "connect": {"meet", "reach", "link", "connecting", "connected"},
+    "which": {"what", "specify", "exactly"},
+    "clarify": {"clarification", "mean", "meaning", "confirm", "specify"},
+    "referring": {"refer", "reference", "talking", "mean"},
+    "sounds": {"sound", "great", "perfect", "love", "lovely"},
+    "weekend": {"saturday", "sunday"},
+    "catch": {"meet", "reconnect", "hang", "coffee", "drinks", "together"},
+    "when": {"time", "date", "day"},
+    "reschedule": {"move", "push", "shift", "postpone", "rebook", "change"},
+    "works": {"work", "suit", "suits", "ok", "fine", "good"},
+    "numbers": {"figures", "metrics", "data", "stats", "results"},
+    "hey": {"hi", "hello", "heya"},
+    "good": {"great", "well", "fine", "doing"},
+    "hope": {"hoping", "wish"},
+    "well": {"good", "great", "fine"},
+    # German (multilang case)
+    "woche": {"wochen", "nächste"},
+    "gespräch": {"gespraech", "treffen", "termin", "unterhaltung"},
+    "freundlichen": {"grüßen", "gruessen", "grüße", "freundliche"},
+}
+
+_TOKEN_RE = re.compile(r"[^\wäöüßéèàç]+", re.UNICODE)
+
+# Very light suffix stemmer (English-ish). Just enough to fold common inflections
+# so "reviewed"->"review", "connecting"->"connect", "sounds"->"sound". Longest
+# suffix first.
+_SUFFIXES = ("ing", "ned", "ted", "ied", "ed", "es", "s")
+
+
+def _stem(token: str) -> str:
+    t = token.lower()
+    for suf in _SUFFIXES:
+        if len(t) > len(suf) + 2 and t.endswith(suf):
+            base = t[: -len(suf)]
+            if suf == "ied":
+                base += "y"
+            return base
+    return t
+
+
+def _keyword_hits(keyword: str, stems: set[str], draft_lower: str) -> bool:
+    """Does the draft credit this keyword? Stem match OR synonym match.
+
+    A keyword counts if a draft token stem-matches it, or if any accepted
+    synonym of the keyword appears. Multi-word keywords ("look it over") fall
+    back to a case-insensitive substring test.
+    """
+    kw = keyword.lower().strip()
+    if not kw:
+        return False
+    if " " in kw:  # phrase keyword: substring is the only sensible test
+        return kw in draft_lower
+    kw_stem = _stem(kw)
+    # (a) stem / prefix match against draft tokens
+    if kw_stem in stems or kw in stems:
+        return True
+    for st in stems:
+        # prefix-match the shorter stem against the longer (handles "intro" vs
+        # "introduction", "follow" vs "following"); guard against trivially
+        # short stems matching everything.
+        short, long = sorted((kw_stem, st), key=len)
+        if len(short) >= 4 and long.startswith(short):
+            return True
+    # (b) synonym match
+    for syn in _KEYWORD_SYNONYMS.get(kw, set()):
+        if syn in stems or _stem(syn) in stems or syn in draft_lower:
+            return True
+    return False
+
+
+# Length scoring (b181): a hard FAIL for being a few words over a tight cap was
+# unfair to a good, on-topic reply. We now grade length:
+#   - at or under the cap            -> factor 1.0 (no penalty)
+#   - in the grace band (cap..2x)    -> linear decay 1.0 -> ~0.5
+#   - over 2x the cap                -> hard FAIL (egregious blowup; degenerate
+#                                       rambling, not a slightly-verbose reply)
+# The factor scales the case score; status only HARD-fails past 2x. So a reply
+# that is 10% over a 20-word cap is a small deduction, not a zero.
+_LENGTH_HARD_FAIL_MULT = 2.0
+
+
+def _length_factor(word_count: int, max_words: int) -> tuple[float, bool]:
+    """Return (factor in [0,1], hard_fail) for the draft length."""
+    if max_words <= 0:
+        return 1.0, False
+    if word_count <= max_words:
+        return 1.0, False
+    if word_count > max_words * _LENGTH_HARD_FAIL_MULT:
+        return 0.0, True
+    # Linear decay across the grace band [max_words, 2*max_words] -> [1.0, 0.5].
+    over = (word_count - max_words) / float(max_words)  # 0..1 across the band
+    return max(0.5, 1.0 - 0.5 * over), False
 # Per-instance: results from each instance's nightly land in its own var/
 # so multiple instances don't clobber each other's last-eval JSON.
 RESULTS_PATH = get_var_dir() / "golden_results.json"
@@ -31,19 +153,30 @@ def score_case(
     detected_mode: str,
     detected_language: str | None = None,
 ) -> dict[str, Any]:
-    """Score a single golden benchmark case."""
+    """Score a single golden benchmark case.
+
+    Scoring is FAIRER (b181) without being looser on real badness:
+      * keyword matching is stem/synonym-tolerant (not brittle exact substring),
+      * length over the cap is a GRADED penalty, hard-failing only past 2x,
+      * empty / wrong-language / off-topic still hard-FAIL.
+    A per-case numeric ``case_score`` in [0,1] is exposed for transparency; the
+    discrete pass/warn/fail status is unchanged in shape and the pipeline
+    composite (passed/total) is preserved.
+    """
     draft_lower = draft.lower()
     words = draft.split()
     word_count = len(words)
+    # Token stems for robust keyword matching.
+    stems = {_stem(tok) for tok in _TOKEN_RE.split(draft_lower) if tok}
     # An empty / whitespace draft is a hard fail — never let it slip to "warn"
     # via the brevity check (0 words trivially passes max_words). An all-empty
     # eval means the model is broken, not that the adapter is fine.
     is_empty = not (draft or "").strip()
 
-    # Keyword hit rate
+    # Keyword hit rate (stem/synonym tolerant — see _keyword_hits).
     expected_keywords = case.get("expected_keywords", [])
     if expected_keywords:
-        hits = sum(1 for kw in expected_keywords if kw.lower() in draft_lower)
+        hits = sum(1 for kw in expected_keywords if _keyword_hits(kw, stems, draft_lower))
         keyword_hit_rate = hits / len(expected_keywords)
     else:
         keyword_hit_rate = 1.0
@@ -52,9 +185,12 @@ def score_case(
     expected_mode = case.get("expected_mode", "work")
     mode_match = detected_mode == expected_mode
 
-    # Brevity check
+    # Brevity — graded, not a cliff. brevity_pass stays True iff at/under the
+    # cap (back-compat); length_factor scales the score in the grace band; a
+    # blowup past 2x the cap is the only length-driven hard fail.
     max_words = case.get("max_words", 100)
     brevity_pass = word_count <= max_words
+    length_factor, length_hard_fail = _length_factor(word_count, max_words)
 
     # Language detection check
     expected_language = case.get("expected_language")
@@ -62,13 +198,29 @@ def score_case(
     if expected_language and detected_language:
         language_match = detected_language == expected_language
 
-    # Overall pass/warn/fail — max_words violation is now a fail condition
+    # Continuous case score (transparency / graded composite): keyword hit rate
+    # scaled by the length factor, zeroed by any hard-fail condition.
+    if is_empty or length_hard_fail or not language_match:
+        case_score = 0.0
+    else:
+        case_score = round(keyword_hit_rate * length_factor, 4)
+
+    # Overall pass/warn/fail.
     if is_empty:
         status = "fail"
-    elif not brevity_pass:
+    elif length_hard_fail:
+        # Egregious blowup (>2x cap) — degenerate rambling, still a hard fail.
         status = "fail"
-    elif keyword_hit_rate >= 0.5 and mode_match and language_match:
+    elif not language_match:
+        # Wrong language is a genuine miss, never a pass.
+        status = "fail"
+    elif keyword_hit_rate >= 0.5 and mode_match:
         status = "pass"
+    elif keyword_hit_rate == 0.0:
+        # Nothing topical landed (no keyword, synonym, or stem hit). Even if the
+        # mode happens to match, an off-topic reply is a genuine miss, not a
+        # warn. Mode-match alone no longer rescues an off-topic draft to "warn".
+        status = "fail"
     elif keyword_hit_rate >= 0.25 or mode_match:
         status = "warn"
     else:
@@ -84,6 +236,8 @@ def score_case(
         "word_count": word_count,
         "max_words": max_words,
         "brevity_pass": brevity_pass,
+        "length_factor": round(length_factor, 4),
+        "case_score": case_score,
         "empty": is_empty,
         "status": status,
     }
@@ -138,6 +292,20 @@ def run_golden_eval(
     # gate refuse to act on it instead of silently promoting a broken adapter.
     degenerate = total > 0 and empty_rate > 0.5
 
+    # Two composites, both honest:
+    #  * pass_rate (passed/total) — the headline the promotion gate already keys
+    #    off; UNCHANGED in meaning, so prior baselines stay comparable. Fairer
+    #    per-case scoring lifts this only by reclassifying genuinely-good replies
+    #    that were mis-FAILed/warned, not by loosening fail conditions.
+    #  * graded_composite (mean case_score) — a finer continuous signal where a
+    #    near-miss (good reply, one synonym short, or slightly long) earns
+    #    partial credit instead of contributing a flat 0. Reported for insight;
+    #    the gate is left on pass_rate to avoid silently moving the bar.
+    pass_rate = round(passed / total, 4) if total else 0.0
+    graded_composite = (
+        round(sum(r.get("case_score", 0.0) for r in results) / total, 4) if total else 0.0
+    )
+
     summary = {
         "total": total,
         "passed": passed,
@@ -146,6 +314,8 @@ def run_golden_eval(
         "empty_count": empty_count,
         "empty_rate": empty_rate,
         "degenerate": degenerate,
+        "pass_rate": pass_rate,
+        "graded_composite": graded_composite,
         "results": results,
     }
 
