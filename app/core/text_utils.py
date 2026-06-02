@@ -159,26 +159,81 @@ def detect_language(text: str) -> str:
     ]
     german_hits = sum(1 for w in german_words if re.search(r"\b" + re.escape(w) + r"\b", lower))
 
-    # Check for common French words
+    # Check for common French words. (b184) Broadened with high-frequency
+    # function words / pronouns / closers so a SHORT informal French reply
+    # ("Oui, j'ai vu la proposition…") clears the threshold instead of falling
+    # through to "en". Tokens shared with es/it (la, le, un, une, que) stay in
+    # the list but are non-discriminative by themselves — the diacritic signal
+    # below breaks ties toward the right Romance language.
     french_words = [
         "vous", "nous", "est", "les", "une", "pour", "dans", "avec", "sur",
         "que", "qui", "sont", "cette", "mais", "bonjour", "merci", "monsieur",
         "madame", "je", "votre", "vos", "nos", "très", "bien", "était",
         "serait", "voulais", "savoir", "nouvelles", "prochaine", "semaine",
-        "cordialement", "salutations",
+        "cordialement", "salutations", "oui", "non", "ai", "vu", "la", "le",
+        "pas", "un", "instant", "moi", "toi", "fait", "suis", "alors", "donc",
+        "voici", "voilà", "bonsoir", "ceci", "cela", "tout", "rien", "proposition",
     ]
     french_hits = sum(1 for w in french_words if re.search(r"\b" + re.escape(w) + r"\b", lower))
 
-    # Check for common Spanish words
+    # Check for common Spanish words. (b184) The original list was too thin and
+    # carried no character signal: the short live-demo Spanish draft
+    # "Sí, puedo conectarme esta semana. Envíame el horario que te funciona."
+    # matched only ``semana`` (1 < 2) and fell through to "en", which then
+    # surfaced a CORRECT Spanish draft as a false language mismatch in verify.
+    # Broadened with everyday function words / pronouns / openers/closers.
     spanish_words = [
         "usted", "nosotros", "para", "como", "pero", "hola", "gracias",
         "señor", "señora", "estimado", "estimada", "por", "favor", "también",
         "quería", "saber", "próxima", "semana", "saludos", "muchas", "buenos",
-        "días", "atentamente",
+        "días", "atentamente", "sí", "esta", "este", "esto", "el", "la",
+        "los", "las", "te", "envíame", "puedo", "saludo", "cordial",
+        "una", "con", "funciona", "horario", "conectarme", "soy", "estoy",
+        "tengo", "quiero", "claro", "vale", "ahora", "mañana",
     ]
     spanish_hits = sum(1 for w in spanish_words if re.search(r"\b" + re.escape(w) + r"\b", lower))
 
-    scores = {"de": german_hits, "fr": french_hits, "es": spanish_hits}
+    # Check for common Italian words. (b184)
+    italian_words = [
+        "sono", "anche", "perché", "grazie", "ciao", "buongiorno", "prego",
+        "settimana", "prossima", "cordiali", "saluti", "gentile", "egregio",
+        "vorrei", "sapere", "novità", "questo", "questa",
+        "molto", "posso", "devo",
+    ]
+    italian_hits = sum(1 for w in italian_words if re.search(r"\b" + re.escape(w) + r"\b", lower))
+
+    # Check for common Portuguese words. (b184)
+    portuguese_words = [
+        "você", "obrigado", "obrigada", "olá", "bom", "dia", "próxima",
+        "atenciosamente", "cumprimentos", "gostaria", "novidades",
+        "não", "uma", "muito", "está", "estou", "sim", "então",
+    ]
+    portuguese_hits = sum(
+        1 for w in portuguese_words if re.search(r"\b" + re.escape(w) + r"\b", lower)
+    )
+
+    scores = {
+        "de": german_hits,
+        "fr": french_hits,
+        "es": spanish_hits,
+        "it": italian_hits,
+        "pt": portuguese_hits,
+    }
+
+    # (b184) High-precision character signals. Certain glyphs/diacritics are
+    # near-unambiguous for a single language and are very rare in English even
+    # in loanwords ("café", "naïve", "résumé" carry an accented vowel but never
+    # ñ/¿/¡/ß). When present, nudge that language's score so a SHORT string with
+    # a strong marker classifies correctly even below the word-count threshold,
+    # while incidental accented English loanwords get no boost and stay "en".
+    if "ñ" in lower or "¿" in text or "¡" in text:
+        scores["es"] += 2
+    if "ß" in lower:
+        scores["de"] += 2
+    # German-only umlauts on top of at least one function-word hit.
+    if german_hits and any(ch in lower for ch in ("ä", "ö", "ü")):
+        scores["de"] += 1
+
     best = max(scores, key=scores.get)
     if scores[best] >= 2:
         return best
@@ -194,6 +249,8 @@ _LANGUAGE_NAMES: dict[str, str] = {
     "de": "German",
     "fr": "French",
     "es": "Spanish",
+    "it": "Italian",  # (b184) detector can now classify Italian
+    "pt": "Portuguese",  # (b184) detector can now classify Portuguese
     "ar": "Arabic",
 }
 
