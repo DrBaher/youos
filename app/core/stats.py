@@ -111,7 +111,17 @@ def summarize_draft_events(database_url: str) -> dict:
         summary = {
             "total": total,
             "by_intent": _group_counts(conn, "intent", default="unknown"),
-            "by_sender_type": _group_counts(conn, "sender_type", default="unknown"),
+            # b192 metric honesty: NULL sender_type means the row NEVER LOGGED a
+            # sender (the pre-2026-05-28 drafting path didn't pass the author) —
+            # it is NOT a classifier "unknown" verdict. classify_sender only
+            # returns "unknown" for a sender string with no parseable email
+            # (see classify_sender_detail). Folding NULL into "unknown" (the old
+            # default) made the dashboard report ~78% scary "unknown" senders
+            # when the real cause is sender-less historical rows. Bucket NULL
+            # under the clearly-named "unlogged" key and reserve "unknown" for a
+            # genuine classifier result. Same family as the b185 hollow-metric
+            # fix: don't conflate "we never recorded it" with "we classified it".
+            "by_sender_type": _group_counts(conn, "sender_type", default="unlogged"),
             "by_confidence": _group_counts(conn, "confidence", default="unknown"),
             "by_length_flag": _group_counts(conn, "length_flag", default="none"),
             # Which model actually produced each draft — the source of truth for
@@ -164,11 +174,17 @@ def summarize_draft_events(database_url: str) -> dict:
             "  GROUP BY inbound_text"
             ")"
         )
-        for key, col in (("avg_edit_distance_by_sender_type", "sender_type"), ("avg_edit_distance_by_confidence", "confidence")):
+        # b192: per-column NULL bucket. sender_type NULL = "unlogged" (sender
+        # never recorded), distinct from a classifier "unknown"; confidence
+        # keeps its historical "unknown" fold (unaffected by this fix).
+        for key, col, null_bucket in (
+            ("avg_edit_distance_by_sender_type", "sender_type", "unlogged"),
+            ("avg_edit_distance_by_confidence", "confidence", "unknown"),
+        ):
             try:
                 rows = conn.execute(
                     f"""{_OUTCOME_CTE}
-                        SELECT COALESCE(de.{col}, 'unknown') AS k,
+                        SELECT COALESCE(de.{col}, '{null_bucket}') AS k,
                                ROUND(AVG(o.ed), 3) AS avg_ed,
                                COUNT(*) AS n
                         FROM draft_events de
