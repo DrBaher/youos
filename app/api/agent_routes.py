@@ -648,6 +648,7 @@ def resolve(
             "sender": r.get("sender"),
             "sender_email": r.get("sender_email"),
             "needs_reply_score": r.get("needs_reply_score"),
+            "urgency_score": r.get("urgency_score"),  # b189: time-criticality (visibility only)
             "match_field": where,
             "match_score": score,
         })
