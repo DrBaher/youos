@@ -249,6 +249,20 @@ async def _lifespan(app: FastAPI):
                 + ") but no PIN is set — the web UI and API are UNAUTHENTICATED. "
                 "Set a PIN: run `youos config set-pin <PIN>` before exposing YouOS."
             )
+    else:
+        # PIN is set: verify the server's own bind origin is in the Origin
+        # allowlist. If the served port (YOUOS_PORT / launcher) diverges from
+        # the port the allowlist was computed from, every authenticated POST is
+        # 403'd "origin not allowed" — make that misconfig LOUD at startup
+        # instead of letting it silently break the UI (b165).
+        from app.core.auth import (
+            detect_served_port_from_argv,
+            origin_self_check_warning,
+        )
+
+        warning = origin_self_check_warning(config, served_port=detect_served_port_from_argv())
+        if warning:
+            print(warning)
 
     # Pre-warm the local model server (load the model once, off the request path)
     # so the first draft isn't slow. Background thread → never blocks startup; a
