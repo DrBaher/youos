@@ -41,10 +41,12 @@ def _make_db(tmp_path, events, feedback=None) -> str:
             )"""
         )
         for f in feedback:
+            # b185: real draft-vs-sent rows (organic=0, draft<>edited) so they
+            # survive the honesty filter; the join still keys on inbound_text.
             conn.execute(
                 "INSERT INTO feedback_pairs (inbound_text, generated_draft, edited_reply, edit_distance_pct, organic) "
-                "VALUES (?, ?, ?, ?, 1)",
-                (f["inbound"], f.get("draft", "organic-reply"), f.get("edited", "e"), f["edit"]),
+                "VALUES (?, ?, ?, ?, 0)",
+                (f["inbound"], f.get("draft", "agent-draft"), f.get("edited", "user-sent-reply"), f["edit"]),
             )
     conn.commit()
     conn.close()
