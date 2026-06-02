@@ -11,7 +11,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from app.core.diff import is_meaningfully_different
+from app.core.diff import is_meaningfully_different, similarity_ratio
 from app.core.settings import get_settings
 from app.db.bootstrap import resolve_sqlite_path
 from app.generation.service import DraftRequest, generate_draft
@@ -73,11 +73,51 @@ def auto_calibrate_threshold(conn: sqlite3.Connection) -> tuple[float, int]:
     return 0.80, count
 
 
-def _capture_organic_pairs(conn: sqlite3.Connection, *, dry_run: bool = False) -> int:
-    """Capture organic pairs: sent replies with no corresponding YouOS draft.
+def _prior_draft_for_inbound(conn: sqlite3.Connection, inbound_text: str) -> str | None:
+    """The most recent agent-generated draft for this inbound, if one exists.
 
-    These are emails you sent that have inbound context (replies, not fresh sends)
-    but no YouOS-generated draft.
+    b185: the agent logs every draft it produces to ``draft_events`` (see
+    ``generation.service._log_draft_event``), keyed by the SAME ``inbound_text``
+    that ``reply_pairs`` carries — the only stable key shared by the two tables.
+    When organic sent-mail ingestion later finds the user's actual reply for an
+    inbound the agent had drafted, that (draft, sent_reply) IS a genuine
+    draft-vs-sent comparison and must be captured with a REAL edit distance
+    rather than discarded as "no YouOS draft". Returns None when the table is
+    absent (older instance) or no prior draft was logged for this inbound.
+    """
+    if not inbound_text:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT generated_draft FROM draft_events "
+            "WHERE inbound_text = ? AND generated_draft IS NOT NULL AND generated_draft <> '' "
+            "ORDER BY id DESC LIMIT 1",
+            (inbound_text,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if not row:
+        return None
+    draft = row["generated_draft"] if isinstance(row, sqlite3.Row) else row[0]
+    return draft or None
+
+
+def _capture_organic_pairs(conn: sqlite3.Connection, *, dry_run: bool = False) -> int:
+    """Capture sent replies with inbound context.
+
+    For each sent reply with no row yet, we look up whether the agent had
+    *already* drafted a reply for that inbound (``draft_events``, keyed on
+    ``inbound_text``):
+
+    * **prior draft exists** → a GENUINE draft-vs-sent feedback pair
+      ``(prior_draft, sent_reply)`` with a REAL ``edit_distance_pct`` from
+      ``similarity_ratio`` and ``organic=0`` — this is the learnable signal the
+      loop was missing (b185).
+    * **no prior draft** → an organic backfill pair (sent reply copied into
+      both columns, ``organic=1``). It is recorded for corpus/training purposes
+      but is EXCLUDED from the draft-quality learning join (it has no model
+      draft to compare), so it never fabricates a false 0.0 "perfect draft"
+      signal.
     """
     # Ensure row_factory is set for dict-style access
     conn.row_factory = sqlite3.Row
@@ -107,12 +147,38 @@ def _capture_organic_pairs(conn: sqlite3.Connection, *, dry_run: bool = False) -
     count = 0
     for row in rows:
         reply = (row["reply_text"] or "").strip()
+        inbound = row["inbound_text"]
         # E11: skip pure acknowledgments
         if _ACK_PATTERN.match(reply):
             continue
+
+        # b185: prefer a genuine comparison when the agent had drafted this one.
+        prior_draft = _prior_draft_for_inbound(conn, inbound)
+        is_real = bool(prior_draft) and prior_draft.strip() != reply
+
         if dry_run:
-            print(f"  [organic] pair {row['id']}: {(row['inbound_text'] or '')[:60]}...")
+            tag = "real" if is_real else "organic"
+            print(f"  [{tag}] pair {row['id']}: {(inbound or '')[:60]}...")
+        elif is_real:
+            # Genuine draft-vs-sent pair: real distance, non-organic, counted.
+            real_ed = round(1.0 - similarity_ratio(prior_draft, reply), 4)
+            conn.execute(
+                """
+                INSERT INTO feedback_pairs
+                    (reply_pair_id, inbound_text, generated_draft, edited_reply, feedback_note, edit_distance_pct, rating, used_in_finetune, organic)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                """,
+                (row["id"], inbound, prior_draft, reply, "real draft-vs-sent (prior agent draft)", real_ed, 4, 0),
+            )
+            conn.execute(
+                "UPDATE reply_pairs SET auto_feedback_processed = 1 WHERE id = ?",
+                (row["id"],),
+            )
         else:
+            # No prior draft (or the agent's draft was sent verbatim) → organic
+            # backfill: recorded but EXCLUDED from the learning/metrics join. We
+            # do NOT fabricate a real ed=0 comparison here — there was nothing to
+            # compare against.
             # b160: persist reply_pair_id so the NOT IN guard above actually dedups
             # (it was NULL, making the guard inert → every organic pair re-inserted
             # forever), and mark the source processed so it isn't re-captured.
@@ -122,7 +188,7 @@ def _capture_organic_pairs(conn: sqlite3.Connection, *, dry_run: bool = False) -
                     (reply_pair_id, inbound_text, generated_draft, edited_reply, feedback_note, edit_distance_pct, rating, used_in_finetune, organic)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (row["id"], row["inbound_text"], reply, reply, "organic pair — no YouOS draft", 0.0, 3, 0, 1),
+                (row["id"], inbound, reply, reply, "organic pair — no YouOS draft", 0.0, 3, 0, 1),
             )
             conn.execute(
                 "UPDATE reply_pairs SET auto_feedback_processed = 1 WHERE id = ?",
@@ -206,8 +272,16 @@ def extract_auto_feedback(
                     )
                 continue
 
+            # b185: this is a GENUINE draft-vs-sent comparison — YouOS produced
+            # `generated_draft`, the user actually sent `actual_reply`, and they
+            # differ. Compute and persist the REAL edit distance via
+            # similarity_ratio so this row counts toward the learning signal
+            # (organic=0, edit_distance_pct populated, draft <> reply). Without
+            # this the row was inserted with a NULL distance and the b185
+            # honesty filter excluded it — the real signal was being thrown away.
+            real_ed = round(1.0 - similarity_ratio(generated_draft, actual_reply), 4)
             if dry_run:
-                print(f"  [capture] pair {pair_id}:")
+                print(f"  [capture] pair {pair_id}: edit_distance={real_ed}")
                 print(f"    inbound: {inbound[:100]}...")
                 print(f"    draft:   {generated_draft[:100]}...")
                 print(f"    actual:  {actual_reply[:100]}...")
@@ -215,10 +289,10 @@ def extract_auto_feedback(
                 conn.execute(
                     """
                     INSERT INTO feedback_pairs
-                        (reply_pair_id, inbound_text, generated_draft, edited_reply, feedback_note, rating, used_in_finetune)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                        (reply_pair_id, inbound_text, generated_draft, edited_reply, feedback_note, edit_distance_pct, rating, used_in_finetune, organic)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
                     """,
-                    (pair_id, inbound, generated_draft, actual_reply, "auto-captured from sent email", 4, 0),
+                    (pair_id, inbound, generated_draft, actual_reply, "auto-captured from sent email", real_ed, 4, 0),
                 )
                 conn.execute(
                     "UPDATE reply_pairs SET auto_feedback_processed = 1 WHERE id = ?",

@@ -71,6 +71,16 @@ def summarize_draft_events(database_url: str) -> dict:
     is an honest coverage counter (distinct ``draft_events`` rows that found any
     outcome) so a low/zero join rate stays visible, not silently swallowed.
 
+    Honesty filter (b185): the collapsed ``feedback_pairs`` includes ONLY rows
+    that represent a real draft-vs-sent comparison — ``edit_distance_pct IS NOT
+    NULL AND COALESCE(organic,0)=0 AND generated_draft <> edited_reply``. The
+    ~82k "organic" backfill rows copy the sent reply into both columns with a
+    hardcoded ``edit_distance_pct=0.0`` (no model draft existed), so counting
+    them reads as a false "drafts are perfect" 0.0 everywhere. Excluding them
+    drops ``matched`` toward zero on current data — which is the correct
+    reading: there is little genuine draft-vs-sent signal yet, and the loop
+    should not be told otherwise.
+
     The model's own drafts are never training targets; this is
     analysis/observability for the loop.
     """
@@ -125,18 +135,32 @@ def summarize_draft_events(database_url: str) -> dict:
         except sqlite3.OperationalError:
             pass
 
-        # Outcome correlation (b167): join draft_events -> feedback_pairs on the
-        # only stable shared key (inbound_text). feedback_pairs is first collapsed
-        # to one mean edit-distance per inbound (CTE `outcome_by_inbound`) so the
+        # Outcome correlation (b167 join key, b185 honesty filter): join
+        # draft_events -> feedback_pairs on the only stable shared key
+        # (inbound_text). feedback_pairs is first collapsed to one mean
+        # edit-distance per inbound (CTE `outcome_by_inbound`) so the
         # many-rows-per-inbound fan-out can't inflate a cohort's `n` or skew its
         # average. The draft *text* is deliberately NOT part of the join: it
         # differs between the tables (see docstring), so an inbound+draft join
         # matches ~nothing — which was the original always-zero bug.
+        #
+        # b185: count ONLY rows that represent a REAL draft-vs-sent comparison.
+        # ~82k of the live feedback_pairs are "organic" backfill where the SENT
+        # reply was copied into BOTH generated_draft AND edited_reply with a
+        # hardcoded edit_distance_pct=0.0 (there was no model draft to diff).
+        # Including them made avg_edit_distance read 0.0 everywhere — a false
+        # "drafts are perfect" signal that actually means "nothing to compare".
+        # We exclude organic / no-draft rows so `matched` and the per-cohort
+        # averages reflect GENUINE comparisons only (near-zero on current data —
+        # the correct, intended reading, not a regression; the whole point is to
+        # stop the false 0.0 from collapsing the learning signal to uniform).
         _OUTCOME_CTE = (
             "WITH outcome_by_inbound AS ("
             "  SELECT inbound_text, AVG(edit_distance_pct) AS ed"
             "  FROM feedback_pairs"
             "  WHERE edit_distance_pct IS NOT NULL"
+            "    AND COALESCE(organic, 0) = 0"
+            "    AND generated_draft <> edited_reply"
             "  GROUP BY inbound_text"
             ")"
         )
@@ -219,6 +243,8 @@ def get_corpus_stats(database_url: str) -> dict:
             "total_documents": 0,
             "total_reply_pairs": 0,
             "total_feedback_pairs": 0,
+            "real_draft_feedback_pairs": 0,
+            "organic_feedback_pairs": 0,
             "reviewed_today": 0,
             "reviewed_this_week": 0,
             "avg_edit_distance": None,
@@ -238,16 +264,34 @@ def get_corpus_stats(database_url: str) -> dict:
         total_pairs = _safe_count(conn, "reply_pairs")
         total_feedback = _safe_count(conn, "feedback_pairs")
 
+        # b185: a feedback_pair only carries a real draft-vs-sent edit signal
+        # when it isn't an organic/no-draft backfill row (sent reply copied into
+        # both columns with a hardcoded 0.0). The same predicate is applied to
+        # every edit-distance metric below so none of them keep reporting the
+        # false 0.0 / 100%-accepted picture that the 82k organic rows produce.
+        _REAL_DRAFT_FEEDBACK = "edit_distance_pct IS NOT NULL AND COALESCE(organic, 0) = 0 AND generated_draft <> edited_reply"
+
         reviewed_today = 0
         reviewed_week = 0
         avg_edit_dist = None
+        real_draft_feedback_count = 0
+        organic_feedback_count = 0
         try:
             reviewed_today = conn.execute("SELECT COUNT(*) FROM feedback_pairs WHERE DATE(created_at) = DATE('now')").fetchone()[0]
             reviewed_week = conn.execute("SELECT COUNT(*) FROM feedback_pairs WHERE created_at >= DATE('now', '-7 days')").fetchone()[0]
+            # Separate the corpus into "real draft-feedback" (genuine model
+            # draft vs user-sent comparison) and "organic" (no-draft backfill)
+            # so a caller never mistakes the 82k organic rows for quality signal.
+            real_draft_feedback_count = conn.execute(
+                f"SELECT COUNT(*) FROM feedback_pairs WHERE {_REAL_DRAFT_FEEDBACK}"  # noqa: S608
+            ).fetchone()[0]
+            organic_feedback_count = conn.execute(
+                "SELECT COUNT(*) FROM feedback_pairs WHERE COALESCE(organic, 0) = 1"
+            ).fetchone()[0]
             row = conn.execute(
                 "SELECT AVG(edit_distance_pct) FROM "
                 "(SELECT edit_distance_pct FROM feedback_pairs "
-                "WHERE edit_distance_pct IS NOT NULL ORDER BY id DESC LIMIT 50)"
+                f"WHERE {_REAL_DRAFT_FEEDBACK} ORDER BY id DESC LIMIT 50)"  # noqa: S608
             ).fetchone()
             if row and row[0] is not None:
                 avg_edit_dist = round(row[0], 4)
@@ -270,30 +314,36 @@ def get_corpus_stats(database_url: str) -> dict:
             "median_edit_distance": None,
         }
         try:
+            # b185: same honesty filter — these were dominated by the 82k
+            # organic 0.0 rows, which made accept_unchanged_pct read ~100% and
+            # median_edit_distance read 0.0 (a fake "every draft accepted
+            # unchanged" signal). Restricting to real draft-vs-sent rows makes
+            # them reflect actual draft quality; on an instance with no real
+            # comparisons yet they correctly come back NULL rather than 100%.
             row = conn.execute(
-                """
+                f"""
                 SELECT
                     ROUND(100.0 * AVG(CASE WHEN edit_distance_pct <= 0.01 THEN 1.0 ELSE 0.0 END), 1) AS accept_unchanged_pct,
                     ROUND(100.0 * AVG(CASE WHEN edit_distance_pct <= 0.15 THEN 1.0 ELSE 0.0 END), 1) AS low_edit_pct,
                     ROUND(100.0 * AVG(CASE WHEN rating >= 4 THEN 1.0 ELSE 0.0 END), 1) AS high_rating_pct
                 FROM feedback_pairs
-                WHERE edit_distance_pct IS NOT NULL
-                """
+                WHERE {_REAL_DRAFT_FEEDBACK}
+                """  # noqa: S608
             ).fetchone()
             if row:
                 outcome_metrics["accept_unchanged_pct"] = row[0]
                 outcome_metrics["low_edit_pct"] = row[1]
                 outcome_metrics["high_rating_pct"] = row[2]
 
-            # Median edit distance from last 100 feedback rows
+            # Median edit distance from last 100 REAL draft-feedback rows.
             med_row = conn.execute(
-                """
+                f"""
                 SELECT edit_distance_pct
                 FROM feedback_pairs
-                WHERE edit_distance_pct IS NOT NULL
+                WHERE {_REAL_DRAFT_FEEDBACK}
                 ORDER BY id DESC
                 LIMIT 100
-                """
+                """  # noqa: S608
             ).fetchall()
             if med_row:
                 vals = sorted(float(r[0]) for r in med_row)
@@ -310,8 +360,14 @@ def get_corpus_stats(database_url: str) -> dict:
             "total_documents": total_docs,
             "total_reply_pairs": total_pairs,
             "total_feedback_pairs": total_feedback,
+            # b185: split the feedback corpus so the no-draft organic backfill
+            # is never mistaken for draft-quality signal.
+            "real_draft_feedback_pairs": real_draft_feedback_count,
+            "organic_feedback_pairs": organic_feedback_count,
             "reviewed_today": reviewed_today,
             "reviewed_this_week": reviewed_week,
+            # avg_edit_distance / outcome_metrics are now over real draft-vs-sent
+            # rows only — NULL on an instance with no genuine comparisons yet.
             "avg_edit_distance": avg_edit_dist,
             "embedding_pct": embedding_pct,
             "outcome_metrics": outcome_metrics,
