@@ -64,9 +64,17 @@ def test_huge_inbound_is_truncated_before_the_model(monkeypatch):
         svc.DraftRequest(inbound_message=huge, use_local_model=True, use_adapter=True),
         database_url="sqlite:///x", configs_dir=Path("/tmp"),
     )
-    assert "message truncated" in seen["prompt"]
+    # b173: the local path now hands _local_draft_once a ChatML messages list
+    # ([{role, content}, ...]) rather than a single string. The truncation marker
+    # lives inside a message's `content`, so flatten to text before asserting.
+    captured = seen["prompt"]
+    if isinstance(captured, list):
+        prompt_text = "\n".join(str(m.get("content", "")) for m in captured)
+    else:
+        prompt_text = captured
+    assert "message truncated" in prompt_text
     # The inbound section is bounded, not the full 10k.
-    assert seen["prompt"].count("Meeting notes line.") < 60
+    assert prompt_text.count("Meeting notes line.") < 60
 
 
 # --- local-retry-before-cloud (the privacy fix) ----------------------------

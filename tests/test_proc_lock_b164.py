@@ -2,7 +2,38 @@
 
 import multiprocessing as mp
 
+import pytest
 import yaml
+
+
+@pytest.fixture(autouse=True)
+def _clear_held_pipeline_lock():
+    """Make the cross-process lock test order-independent.
+
+    ``acquire_singleton`` keeps a process-global registry (``_HELD_FDS``) and
+    short-circuits to ``True`` when the name is already present. If an earlier
+    test in the same pytest process acquired ``NIGHTLY_PIPELINE_LOCK`` and left
+    its fd cached, this module's parent ``acquire_singleton(...)`` would return
+    ``True`` (cached) instead of ``False`` — passing in isolation but failing in
+    the full suite (the CI symptom, b164). Drop and close any cached fd for the
+    pipeline lock before and after each test here, without changing prod
+    behaviour.
+    """
+    import os
+
+    from app.core.proc_lock import _HELD_FDS, NIGHTLY_PIPELINE_LOCK
+
+    def _drop():
+        fd = _HELD_FDS.pop(NIGHTLY_PIPELINE_LOCK, None)
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    _drop()
+    yield
+    _drop()
 
 
 def _hold_lock(lockdir, started, release):

@@ -90,7 +90,14 @@ def test_get_ingestion_accounts_explicit():
 
 
 def test_get_base_model_default():
-    assert get_base_model({}) == "Qwen/Qwen2.5-1.5B-Instruct"
+    # b174: the default base model migrated off qwen2.5-1.5b. Assert against the
+    # module constant so this tracks future default changes instead of pinning a
+    # stale literal. Pass a non-empty config WITHOUT a model.base key: a falsy
+    # ``{}`` would trip ``config or load_config()`` and read the on-disk config
+    # (host-specific), so use a sentinel dict to exercise the in-code default.
+    from app.core.config import DEFAULT_BASE_MODEL
+
+    assert get_base_model({"model": {}}) == DEFAULT_BASE_MODEL
 
 
 def test_get_server_port_default(monkeypatch):
