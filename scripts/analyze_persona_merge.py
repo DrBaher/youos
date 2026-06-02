@@ -83,6 +83,30 @@ def merge_persona_analysis(
             if not dry_run:
                 persona.setdefault("style", {})["avg_reply_words"] = round(new_avg)
 
+    # b187: propagate the observed reply-length percentiles (p25/p75) into the
+    # persona style. The length CONTROL band (generation.service._length_band)
+    # prefers these — a data-grounded p25–p75 window is tighter and truer than a
+    # flat multiple of the average, which is what actually keeps drafts on-target.
+    # Previously the analyzer wrote these to persona_analysis.json but the merge
+    # never carried them into persona.yaml, so the band always fell back to the
+    # avg multiplier (and a stale avg drifted the band off the real distribution).
+    rl = findings.get("reply_length", {})
+    for _key, _pkey in (("avg_reply_words_p25", "p25"), ("avg_reply_words_p75", "p75")):
+        _val = rl.get(_pkey)
+        if _val is None:
+            continue
+        try:
+            _val = int(round(_val))
+        except (TypeError, ValueError):
+            continue
+        if _val <= 0:
+            continue
+        _current = persona.get("style", {}).get(_key)
+        if _current != _val:
+            changes.append(f"{_key}: {_current} -> {_val}")
+            if not dry_run:
+                persona.setdefault("style", {})[_key] = _val
+
     # Update greeting_patterns if a new dominant pattern emerges (>60%).
     # Translate the analyzer's category label to a renderable phrase first —
     # otherwise we'd copy "Hi X" or "Direct start" into persona.yaml verbatim
