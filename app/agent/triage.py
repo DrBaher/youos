@@ -19,6 +19,7 @@ from typing import Any
 from app.agent.escalation import assess_stakes
 from app.agent.inbox_fetch import InboxMessage, fetch_unread
 from app.agent.needs_reply import NeedsReplyVerdict, SenderHistory, classify_many
+from app.generation.service import DEFAULT_QUALITY_FLOOR
 
 logger = logging.getLogger(__name__)
 
@@ -249,8 +250,10 @@ def _auto_push_config() -> dict[str, Any]:
         "confidence_floor": _f("confidence_floor", 0.85),
         # Per-draft quality floor — auto-push requires the DRAFT to be good,
         # not just the email to deserve a reply. Drafts with no quality score
-        # (scoring failed) are treated as below the floor (safe default).
-        "quality_floor": _f("quality_floor", 0.5),
+        # (scoring failed) are treated as below the floor (safe default). The
+        # default reuses DEFAULT_QUALITY_FLOOR so the auto-push gate and the
+        # b188 abstain threshold share one policy number.
+        "quality_floor": _f("quality_floor", DEFAULT_QUALITY_FLOOR),
         "min_pairs": _i("known_sender_min_pairs", 3),
         "daily_push_cap": _i("daily_push_cap", 5),
         "whitelist": _parse_autopush_whitelist(ap.get("whitelist")),
@@ -1182,10 +1185,48 @@ def _run_sweep(
                     # is still served by the model server, but a hard local
                     # failure won't silently go to Claude.
                     strict_local=strict_local,
+                    # b188: this is the AUTONOMOUS path — no human is watching
+                    # this specific draft. interactive=False arms the abstain
+                    # gate so a draft whose quality_score falls below the floor
+                    # is WITHHELD and the email is surfaced for review instead of
+                    # presenting a weak throwaway reply as ready. (The /draft API,
+                    # /feedback, CLI, etc. leave interactive=True and always draft.)
+                    interactive=False,
                 ),
                 database_url=database_url,
                 configs_dir=configs_dir,
             )
+            # b188: ABSTAIN. The drafter withheld this draft because its quality
+            # fell below the floor — do NOT present it as a ready reply. Route the
+            # email to the existing surface-for-review tier ("needs your
+            # attention") instead. The generated text/score are kept in telemetry
+            # (logged inside generate_draft) but never surfaced as usable here.
+            # This produces FEWER outbound-eligible drafts, never more, so the
+            # never-send invariant is trivially preserved.
+            if getattr(resp, "withheld", False):
+                _q = getattr(resp, "quality_score", None)
+                surfaced.append(
+                    (
+                        msg,
+                        NeedsReplyVerdict(
+                            needs_reply=False,
+                            score=verdict.score,
+                            reasons=verdict.reasons
+                            + [getattr(resp, "withhold_reason", None) or "draft withheld (low quality)"],
+                            cold_outreach=verdict.cold_outreach,
+                            surface_for_review=True,
+                            vip=getattr(verdict, "vip", False),
+                            calibrated_score=getattr(verdict, "calibrated_score", None),
+                        ),
+                    )
+                )
+                logger.info(
+                    "abstain: surfacing %s for review instead of drafting (quality=%s)",
+                    msg.message_id, _q,
+                )
+                cap_remaining -= 1  # ζ: a withheld draft still consumed a slot
+                _maybe_extract_facts(msg, database_url)
+                continue
             drafts.append(
                 TriageDraft(
                     message=msg,
