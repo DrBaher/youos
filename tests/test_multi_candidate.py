@@ -22,25 +22,55 @@ from app.generation.service import (
 
 
 def test_multi_candidate_disabled_by_default(monkeypatch):
+    # b186: canonical knob is ``n`` (default 1 = single-candidate / off).
     monkeypatch.setattr("app.core.config.load_config", lambda *a, **k: {})
     cfg = _multi_candidate_config()
     assert cfg["enabled"] is False
-    assert cfg["temperatures"] == [0.3, 0.7, 1.0]
+    assert cfg["n"] == 1
 
 
-def test_multi_candidate_reads_config(monkeypatch):
+def test_multi_candidate_reads_explicit_temperatures(monkeypatch):
+    # Legacy ``enabled: true`` + explicit ``temperatures`` is still honored; n
+    # is inferred from the list length.
     monkeypatch.setattr(
         "app.core.config.load_config",
         lambda *a, **k: {"generation": {"multi_candidate": {"enabled": True, "temperatures": [0.5, 0.9]}}},
     )
     cfg = _multi_candidate_config()
     assert cfg["enabled"] is True
+    assert cfg["n"] == 2
     assert cfg["temperatures"] == [0.5, 0.9]
+
+
+def test_multi_candidate_n_knob_derives_diverse_spread(monkeypatch):
+    # b186: ``n`` alone enables multi-candidate and derives a diverse spread.
+    monkeypatch.setattr(
+        "app.core.config.load_config",
+        lambda *a, **k: {"generation": {"multi_candidate": {"n": 3}}},
+    )
+    cfg = _multi_candidate_config()
+    assert cfg["enabled"] is True
+    assert cfg["n"] == 3
+    assert len(cfg["temperatures"]) == 3
+    # Diverse: candidates must differ (a single repeated temp would not).
+    assert len(set(cfg["temperatures"])) == 3
+
+
+def test_multi_candidate_n1_is_off(monkeypatch):
+    monkeypatch.setattr(
+        "app.core.config.load_config",
+        lambda *a, **k: {"generation": {"multi_candidate": {"n": 1}}},
+    )
+    cfg = _multi_candidate_config()
+    assert cfg["enabled"] is False
+    assert cfg["n"] == 1
 
 
 def test_multi_candidate_bad_config_falls_back(monkeypatch):
     monkeypatch.setattr("app.core.config.load_config", lambda *a, **k: {"generation": {"multi_candidate": "nope"}})
-    assert _multi_candidate_config() == {"enabled": False, "temperatures": [0.3, 0.7, 1.0]}
+    cfg = _multi_candidate_config()
+    assert cfg["enabled"] is False
+    assert cfg["n"] == 1
 
 
 # --- usability + scorer ----------------------------------------------------
