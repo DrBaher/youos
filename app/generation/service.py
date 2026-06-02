@@ -748,6 +748,38 @@ _COURTESY_RULE = (
     "achieve this; keep your usual direct, concise register."
 )
 
+# Language mirroring (b183). A draft must answer in the SAME language as the
+# inbound — a German email gets a German reply, not an English one. In a live
+# demo this silently regressed: the b173 chat refactor kept a language block but
+# left it gated on a positive non-English detection (``language_hint != "en"``),
+# so whenever the cheap heuristic under-detected (short/informal German) the
+# instruction vanished entirely and the small local model defaulted to English.
+# The fix makes the instruction ALWAYS present (so a misdetect can't drop it)
+# and names the language explicitly when detection is confident, because a bare
+# "match the sender's language" line proved too weak for the local model — even
+# a correctly-detected formal German inbound still drafted in English without an
+# explicit "Reply in German." directive. Generic fallback for unknown/English.
+_LANGUAGE_MIRROR_RULE = (
+    "Always write your reply in the SAME language as the sender's message. "
+    "Mirror the inbound language exactly; do not translate it to English."
+)
+
+
+def _language_instruction(language_hint: str | None) -> str:
+    """Build the language-mirroring directive for the system turn (b183).
+
+    Always returns a non-empty instruction so the directive can never be
+    dropped. When ``language_hint`` resolves to a known non-English language the
+    instruction names it explicitly ("Reply in German.") — the strong form the
+    local model actually honors; otherwise the generic mirror rule is used.
+    """
+    from app.core.text_utils import language_name
+
+    name = language_name(language_hint)
+    if name and language_hint and language_hint.strip().lower() != "en":
+        return f"Reply in {name}. {_LANGUAGE_MIRROR_RULE}"
+    return _LANGUAGE_MIRROR_RULE
+
 
 def _inbound_requests_fact(inbound: str) -> bool:
     """True when the inbound poses a question that asks for a concrete fact."""
@@ -1379,9 +1411,10 @@ def _assemble_system_text(
     if memory_facts:
         facts_block = f"\n{_format_facts_context(memory_facts)}\n"
 
-    language_block = ""
-    if language_hint and language_hint != "en":
-        language_block = "\nReply in the same language as the inbound message.\n"
+    # Language mirroring (b183): ALWAYS present so a heuristic mis-detect can't
+    # drop the directive (the live German→English regression). Names the
+    # language when detection is confident.
+    language_block = f"\n{_language_instruction(language_hint)}\n"
 
     grounding_block = ""
     if _inbound_requests_fact(inbound_message):
@@ -1538,9 +1571,10 @@ def assemble_prompt(
     if memory_facts:
         facts_block = f"\n{_format_facts_context(memory_facts)}\n"
 
-    language_block = ""
-    if language_hint and language_hint != "en":
-        language_block = f"\n[LANGUAGE: {language_hint}] Reply in the same language as the inbound message.\n"
+    # Language mirroring (b183): always emit, naming the language when known.
+    # Mirrors the chat-path logic so the flat-text fallback (ollama/claude) gets
+    # the same directive instead of silently dropping it under "en".
+    language_block = f"\n[LANGUAGE] {_language_instruction(language_hint)}\n"
 
     # Fact-grounding guard — only when the inbound actually asks for a concrete
     # detail, so the common case keeps the unchanged prompt (minimises any
