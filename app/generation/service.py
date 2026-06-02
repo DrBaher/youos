@@ -231,6 +231,15 @@ class DraftRequest:
     # ``strict_local`` / ``no_cloud_fallback`` / ``deterministic`` is set, so it
     # is impossible on any background or eval path. See ``_cloud_escalation_allowed``.
     allow_cloud_escalation: bool = False
+    # b188: True when a human explicitly asked to SEE this draft (the /draft API,
+    # /feedback, CLI, review-queue regenerate, cross-model compare). Such callers
+    # must ALWAYS get a draft string back — the user opted in to inspect it — so
+    # the low-quality ABSTAIN path is suppressed for them. Defaults True so every
+    # pre-existing caller keeps that always-draft behavior unchanged; ONLY the
+    # autonomous triage sweep (app/agent/triage.py) passes interactive=False,
+    # which is the sole path that may withhold a weak draft and instead surface
+    # the email for review. See ``_should_abstain`` / ``_abstain_config``.
+    interactive: bool = True
 
 
 @dataclass(slots=True)
@@ -271,6 +280,18 @@ class DraftResponse:
     # The UI / telemetry surface these so cloud drafting is never hidden.
     cloud_used: bool = False
     egress_notice: str | None = None
+    # b188: ABSTAIN. True iff this is an AUTONOMOUS draft whose quality_score fell
+    # below the abstain threshold, so it must NOT be presented or recorded as a
+    # ready/usable reply — the caller (autonomous triage) routes the email to the
+    # existing surface-for-review tier ("needs your attention") instead. The
+    # ``draft`` text and ``quality_score`` are still populated (work is never
+    # discarded silently — they're kept for telemetry / a later human look), but
+    # downstream must treat the draft as withheld. ``withhold_reason`` carries a
+    # human-readable explanation (e.g. "withheld: quality 0.32 < 0.50"). This is
+    # impossible to set on an interactive or deterministic/eval request (see
+    # ``_should_abstain``), so it never perturbs the golden eval or the /draft API.
+    withheld: bool = False
+    withhold_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -1733,6 +1754,14 @@ SUBPROCESS_TIMEOUT: int = 120
 # to be stable so re-scoring the same config produces the same composite.
 EVAL_SEED = 1234
 
+# b188: shared per-draft quality floor. This is the SAME 0–1 number the
+# autonomous auto-push path gates on (``agent.auto_push.quality_floor`` default —
+# see app/agent/triage.py:_auto_push_config, which reuses this constant). The
+# abstain gate (below) defaults its threshold to this value so "good enough to
+# auto-draft" and "good enough to present as a ready reply" are one policy, not
+# two drifting numbers.
+DEFAULT_QUALITY_FLOOR = 0.5
+
 
 def _estimate_tokens(text: str) -> int:
     """Estimate token count using a simple word-count * 1.4 approximation."""
@@ -2533,6 +2562,75 @@ def _cloud_escalation_allowed(request: DraftRequest) -> bool:
         return False
 
 
+def _abstain_config() -> dict[str, Any]:
+    """Read ``generation.abstain.*`` config (b188).
+
+    The abstain feature withholds a weak AUTONOMOUS draft and routes the email to
+    the surface-for-review tier instead of presenting a low-confidence reply as
+    ready. Defaults:
+
+    * ``enabled`` — True. This is the requested default-ON behavior, but it can
+      only ever fire on the tightly-gated autonomous path (see
+      ``_should_abstain``); it is INERT for interactive and deterministic/eval
+      requests regardless of this flag, so default-ON is safe for the golden eval.
+    * ``min_quality`` — the shared per-draft quality floor
+      (``DEFAULT_QUALITY_FLOOR`` = the auto-push floor), so the abstain threshold
+      and the auto-push gate are one policy number, not two.
+    """
+    from app.core.config import load_config
+
+    cfg = load_config() or {}
+    gen = cfg.get("generation", {}) if isinstance(cfg, dict) else {}
+    ab = gen.get("abstain", {}) if isinstance(gen, dict) else {}
+    ab = ab if isinstance(ab, dict) else {}
+    try:
+        min_quality = float(ab.get("min_quality", DEFAULT_QUALITY_FLOOR))
+    except (TypeError, ValueError):
+        min_quality = DEFAULT_QUALITY_FLOOR
+    return {
+        "enabled": bool(ab.get("enabled", True)),
+        "min_quality": min_quality,
+    }
+
+
+def _should_abstain(request: DraftRequest, quality_score: float | None) -> tuple[bool, str | None]:
+    """Decide whether to WITHHOLD this draft (b188). Fail-closed: never withhold
+    on error.
+
+    Abstain fires ONLY when EVERY condition holds:
+
+      1. NOT ``deterministic`` — the eval/golden/autoresearch/nightly family must
+         still score a draft for every case, so abstain is impossible there and
+         the golden eval is byte-identical to before this feature.
+      2. NOT ``interactive`` — a human who explicitly asked to see a draft always
+         gets one; only the autonomous triage sweep sets ``interactive=False``.
+      3. The config flag ``generation.abstain.enabled`` is truthy (default True).
+      4. A quality_score exists AND is below ``generation.abstain.min_quality``.
+         A missing score is NOT abstained on here (the autonomous auto-push gate
+         already treats a missing score as below-floor and holds it from acting),
+         so we don't withhold a draft merely because scoring threw.
+
+    Returns ``(withheld, reason)``.
+    """
+    try:
+        if getattr(request, "deterministic", False):
+            return (False, None)
+        if getattr(request, "interactive", True):
+            return (False, None)
+        cfg = _abstain_config()
+        if not cfg["enabled"]:
+            return (False, None)
+        if quality_score is None:
+            return (False, None)
+        floor = cfg["min_quality"]
+        if quality_score < floor:
+            return (True, f"withheld: quality {quality_score:.2f} < {floor:.2f}")
+        return (False, None)
+    except Exception:  # pragma: no cover - defensive, fail-open (never withhold)
+        logger.warning("abstain check failed; not withholding", exc_info=True)
+        return (False, None)
+
+
 def generate_draft(
     request: DraftRequest,
     *,
@@ -3114,6 +3212,19 @@ def generate_draft(
     except Exception:
         pass
 
+    # b188: ABSTAIN on a weak AUTONOMOUS draft. Computed AFTER verify so the
+    # threshold sees the final (possibly verify-collapsed) quality. Tightly
+    # gated in _should_abstain — impossible on an interactive or
+    # deterministic/eval request, so this is INERT for the /draft API and the
+    # golden eval. We keep the generated text + score (never discard work
+    # silently); the caller treats ``withheld`` drafts as surface-for-review.
+    _withheld, _withhold_reason = _should_abstain(request, _quality)
+    if _withheld:
+        logger.info(
+            "abstain: withholding autonomous draft — %s (model=%s)",
+            _withhold_reason, model_used,
+        )
+
     return DraftResponse(
         draft=draft,
         detected_mode=detected_mode,
@@ -3139,4 +3250,9 @@ def generate_draft(
         # interactive request — never on a background/eval path.
         cloud_used=_is_cloud_backend(model_used),
         egress_notice=(_CLOUD_EGRESS_NOTICE if _is_cloud_backend(model_used) else None),
+        # b188: abstain telemetry. ``withheld``/``withhold_reason`` are non-None
+        # only on the gated autonomous path above; the draft text/quality_score
+        # are still populated so nothing is discarded silently.
+        withheld=_withheld,
+        withhold_reason=_withhold_reason,
     )
