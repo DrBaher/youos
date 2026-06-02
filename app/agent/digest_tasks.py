@@ -433,9 +433,31 @@ def build_digest_body(items: list[dict[str, str]], *, model: str = "local",
         try:
             out = (fn(full_prompt) or "").strip()
             if out:
-                # Append the deterministic worth-attention line so the highlight
-                # is present even if the model omitted or mis-stated it.
-                return f"{header}{out}\n\n{worth_attention}\n\n— items —\n{listing}"
+                # b191: grounding check on the model summary BEFORE we trust it.
+                # The listing (the sender/subject/date metadata) is the entire
+                # source the digest has — verify the summary's specifics against
+                # it. If the model fabricated specifics beyond a conservative
+                # threshold, DROP the model prose and fall through to the
+                # deterministic plain list below (which is always faithful — it
+                # IS the source). Local-only, no extra egress; failure-isolated
+                # so a grounding error never breaks the digest.
+                try:
+                    from app.agent.summary_grounding import check_summary_grounding
+
+                    gr = check_summary_grounding(out, listing)
+                except Exception as exc:
+                    logger.info("digest grounding check errored, keeping summary: %s", exc)
+                    gr = None
+                if gr is not None and not gr.grounded:
+                    logger.info(
+                        "digest summary failed grounding (score=%.2f, ungrounded=%s), "
+                        "falling back to plain list", gr.score, gr.ungrounded[:5],
+                    )
+                else:
+                    # Append the deterministic worth-attention line so the
+                    # highlight is present even if the model omitted or
+                    # mis-stated it.
+                    return f"{header}{out}\n\n{worth_attention}\n\n— items —\n{listing}"
         except Exception as exc:
             logger.info("digest summarization (%s) failed, using plain list: %s", model, exc)
     return f"{header}{worth_attention}\n\n{listing}"
