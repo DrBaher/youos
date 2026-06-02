@@ -23,9 +23,14 @@ def test_get_model_status_no_adapter_with_mlx():
     local engine available, a missing adapter means base-model drafting, not a
     cloud fallback.
     """
+    from app.core.config import model_label
+
     with patch("app.core.stats.ADAPTER_PATH", Path("/nonexistent/adapters")), patch("shutil.which", return_value="/usr/bin/mlx_lm"):
         result = get_model_status(Path("/tmp/configs"))
-    assert result["generation_model"] == "qwen2.5-1.5b-base"
+    # b174: the label derives from the configured base model (qwen3-4b-base today)
+    # rather than a hardcoded qwen2.5 string. Derive the expected value from the
+    # same helper the code uses so this tracks the configured base.
+    assert result["generation_model"] == model_label(with_adapter=False)
     assert result["lora_adapter_exists"] is False
     assert result["local_available"] is True
 
@@ -43,9 +48,12 @@ def test_get_model_status_with_adapter(tmp_path):
     adapter_dir = tmp_path / "adapters"
     adapter_dir.mkdir()
     (adapter_dir / "adapters.safetensors").write_text("fake")
+    from app.core.config import model_label
+
     with patch("app.core.stats.ADAPTER_PATH", adapter_dir), patch("shutil.which", return_value="/usr/bin/mlx_lm"):
         result = get_model_status(Path("/tmp/configs"))
-    assert result["generation_model"] == "qwen2.5-1.5b-lora"
+    # b174: label derives from the configured base model (qwen3-4b-lora today).
+    assert result["generation_model"] == model_label(with_adapter=True)
     assert result["lora_adapter_exists"] is True
     assert result["lora_trained_at"] is not None
 
