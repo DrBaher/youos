@@ -239,13 +239,15 @@ def run_doctor_checks_full() -> tuple[bool, list[str], list[str]]:
         # is its own signal that something went wrong upstream.
         pass
 
-    # Warning: port 8901 free
+    # Warning: served port free
     try:
         from app.core.config import get_server_port
 
         port = get_server_port()
     except Exception:
-        port = 8901
+        from app.core.config import DEFAULT_SERVER_PORT
+
+        port = DEFAULT_SERVER_PORT
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.bind(("127.0.0.1", port))
