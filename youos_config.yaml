@@ -25,6 +25,19 @@ model:
     enabled: false
     model: mistral
     base_url: http://localhost:11434
+generation:
+  # Best-of-N drafting (b186/b194). When n > 1, callers that opt in
+  # (multi_candidate_ok=True) generate n drafts on a temperature spread and keep
+  # the highest draft_quality_score one. Measured lift on an 80-case voice-match
+  # benchmark (4B+LoRA): n=5 gives voice +0.013, lenfit +0.078, style +0.018 vs
+  # n=1, scaling ~linearly with n. The cost is n× generation, so it is gated to
+  # paths where latency is HIDDEN — the autonomous triage sweep (drafts wait in
+  # the review queue) and the compare-models harness. Interactive drafting
+  # (/draft, /feedback, CLI, review-queue regenerate) ignores this and stays
+  # single-candidate / fast. Deterministic eval (golden/autoresearch) is also
+  # exempt (always one greedy candidate). Set n: 1 to disable everywhere.
+  multi_candidate:
+    n: 5
 persona:
   avg_reply_words: 40
   closing_formal: 'Best,
