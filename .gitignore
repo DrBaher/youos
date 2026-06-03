@@ -36,3 +36,4 @@ _site/
 
 # Personal inbox-derived persona stats — scratch/reference, never commit (b197)
 configs/persona_analysis.json
+instances/baher/configs/persona_analysis.json
