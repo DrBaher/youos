@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — UI polish from a visual sweep (b200)
+
+### Quality: honest stats label, personalized About hero, a loading affordance
+
+Three small fixes found by actually driving the web UI in a browser (peekaboo screenshots) rather than reading code — the kind of thing static review can't surface. All three were re-screenshotted to confirm they render.
+
+- **Stats: relabel "Reviewed today / this week" → "Pairs captured today / this week"** (`templates/stats.html`). Those counts are `feedback_pairs` created in the window, which is dominated by **organic backfill** (auto-captured sent mail), not human reviews — so "Reviewed: 58,690" against 11,758 reply pairs badly overstated review activity. Consistent now with the b185/b192 metric-honesty work.
+- **About: the hero title is personalized like the nav** (`templates/about.html`). The nav wordmark already became "BaherOS" via `display_name`, but the hero `<h1>` was hardcoded "YouOS", so the page showed both names. The hero now syncs to `display_name` too (the descriptive "What is YouOS?" body stays generic on purpose).
+- **Stats: a spinner while loading** (`templates/stats.html`). `/stats/data` takes ~4s (it fans out across full-table COUNT/GROUP-BY over the 82k feedback-pair corpus), during which the page showed only bare "Loading stats…". A small CSS spinner now signals progress.
+
+Note: the `/stats/data` latency itself is a separate backend item (would need indexes/caching, with its own tests) — out of scope here; the spinner makes the wait legible. Templates only; no Python, no behavior change. Full suite: 2149 passed.
+
 ## Unreleased — review-queue diversity bonus was a no-op (b199)
 
 ### Quality: make the sender-type diversity bonus actually steer the batch
