@@ -33,3 +33,6 @@ extension/firefox-build/
 # Local docs-site build output (produced by scripts/build_docs.py for the
 # Pages workflow; never commit).
 _site/
+
+# Personal inbox-derived persona stats — scratch/reference, never commit (b197)
+configs/persona_analysis.json
