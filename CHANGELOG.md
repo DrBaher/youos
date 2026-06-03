@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — classification/summary polish: observability + cleanup (b196)
+
+### Quality: surface the summary grounding score, stop swallowing profile errors
+
+A focused pass over the classification and summarization paths, fixing real
+observability gaps rather than adding speculative checks. (An audit also flagged
+URL/date "holes" in the b191 grounding check and substring over-matching in
+rules; both were verified *not* to be bugs — the grounding check already
+requires full-URL/whole-number matches, and `*_contains` substring matching is
+the documented predicate semantics — so neither was changed.)
+
+- **Summary grounding score is now recorded on the kept path, not just on rejection.** `summary_grounding.check_summary_grounding` always computed a 0–1 faithfulness `score`, but both `thread_summary` and `digest_tasks` discarded it on success and only logged failures — so the score's *distribution* (how much headroom the check has on the summaries we actually surface) was invisible. Both paths now log `grounding score=… checked=…` on the accepted summary too. Pure observability; no return-type or caller change.
+- **Sender profile-lookup failures are logged instead of silently swallowed** (`core/sender.py`). The lookup still fails safe to heuristics, but a persistent failure (locked DB, perms, schema drift) no longer hides while every sender quietly de-enriches.
+- **Removed a duplicate `credentials` alternation** in the work/personal mode-detection regex (`retrieval/service.py`) — a no-op cleanup.
+
+No behavior change to drafting or never-send/act invariants. Full suite: 2142 passed.
+
 ## Unreleased — best-of-N drafting on the background path (b194)
 
 ### Quality: spend best-of-N only where the latency is free

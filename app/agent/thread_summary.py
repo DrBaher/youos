@@ -84,6 +84,10 @@ def summarize_thread(
                 gr.score, gr.ungrounded[:5],
             )
             return None
+        # Record the score on the kept path too — otherwise the quality signal is
+        # only ever observed on rejection, hiding how well-grounded the summaries
+        # we *do* surface actually are (i.e. whether the check has any headroom).
+        logger.info("thread summary kept (grounding score=%.2f, checked=%d)", gr.score, gr.checked)
     except Exception as exc:
         logger.info("thread summary grounding check errored, keeping summary: %s", exc)
     return out
