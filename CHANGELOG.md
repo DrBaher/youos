@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — review-queue diversity bonus was a no-op (b199)
+
+### Quality: make the sender-type diversity bonus actually steer the batch
+
+The review-queue batch builder intended to vary which sender types it surfaces (so a review session isn't ten emails from the same client), but the bonus never did anything: `_fetch_candidates` scored the entire pool in one pass against an **empty** `Counter`, so every pair received the same `+0.4` diversity bonus and it cancelled out of the ranking. The `Counter` was only incremented *after* scoring+sorting, so it never fed back. A batch could be entirely one sender type.
+
+- **Selection is now greedy and diversity-aware** (`app/api/review_queue_routes.py`). Each pair's diversity-independent base score (recency + length) and sender type are precomputed once (`classify_sender` does a profile lookup, and the pool is bounded to `batch_size*5`), then pairs are picked one at a time, applying the bonus against the running tally of already-selected types — so once a type hits saturation its boost drops and other types win the remaining slots.
+- The `0.4` bonus and `< 2` saturation are now shared constants (`_DIVERSITY_BONUS`, `_DIVERSITY_SATURATION`) so the scorer and selector can't drift. `score_pair_for_review` (unit-tested, correct in isolation) is otherwise unchanged.
+
++1 regression test (a lower-base personal pair is now selected over a 3rd same-type pair once that type saturates — would fail under the old constant-bonus path). Full suite: 2149 passed. No drafting / never-send changes.
+
 ## Unreleased — operator + quality-loop polish (b198)
 
 ### Quality: validate CLI inputs, stop silent stream/loop signal loss
