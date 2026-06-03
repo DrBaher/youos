@@ -454,6 +454,14 @@ def build_digest_body(items: list[dict[str, str]], *, model: str = "local",
                         "falling back to plain list", gr.score, gr.ungrounded[:5],
                     )
                 else:
+                    if gr is not None:
+                        # Record the kept summary's grounding score too, so the
+                        # quality signal is observable for accepted digests and
+                        # not just the rejected ones (see thread_summary).
+                        logger.info(
+                            "digest summary kept (grounding score=%.2f, checked=%d)",
+                            gr.score, gr.checked,
+                        )
                     # Append the deterministic worth-attention line so the
                     # highlight is present even if the model omitted or
                     # mis-stated it.
