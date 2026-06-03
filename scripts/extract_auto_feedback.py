@@ -175,10 +175,22 @@ def _capture_organic_pairs(conn: sqlite3.Connection, *, dry_run: bool = False) -
                 (row["id"],),
             )
         else:
-            # No prior draft (or the agent's draft was sent verbatim) → organic
-            # backfill: recorded but EXCLUDED from the learning/metrics join. We
-            # do NOT fabricate a real ed=0 comparison here — there was nothing to
-            # compare against.
+            # Two sub-cases that the earlier `is_real` test collapses together —
+            # both stay organic=1 (EXCLUDED from the edit-distance join, so the
+            # mean stays honest), but they are NOT the same thing and were
+            # previously indistinguishable:
+            #   * verbatim win: the agent DID draft this and the user sent it
+            #     unedited — a genuine drafter win (edit distance really is 0),
+            #     which silently vanished into "no draft" backfill before.
+            #   * no draft: there was nothing to compare against.
+            # Record the win distinguishably (note + rating) so the drafter's
+            # zero-edit successes are observable (see stats.verbatim_accepted_pairs)
+            # without polluting any learning/metric (organic=1 keeps it out).
+            verbatim_win = bool(prior_draft) and prior_draft.strip() == reply
+            if verbatim_win:
+                note, rating, gen = "verbatim-accepted (agent draft sent unedited)", 5, prior_draft
+            else:
+                note, rating, gen = "organic pair — no YouOS draft", 3, reply
             # b160: persist reply_pair_id so the NOT IN guard above actually dedups
             # (it was NULL, making the guard inert → every organic pair re-inserted
             # forever), and mark the source processed so it isn't re-captured.
@@ -188,7 +200,7 @@ def _capture_organic_pairs(conn: sqlite3.Connection, *, dry_run: bool = False) -
                     (reply_pair_id, inbound_text, generated_draft, edited_reply, feedback_note, edit_distance_pct, rating, used_in_finetune, organic)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (row["id"], inbound, reply, reply, "organic pair — no YouOS draft", 0.0, 3, 0, 1),
+                (row["id"], inbound, gen, reply, note, 0.0, rating, 0, 1),
             )
             conn.execute(
                 "UPDATE reply_pairs SET auto_feedback_processed = 1 WHERE id = ?",
