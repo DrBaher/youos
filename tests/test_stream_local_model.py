@@ -253,4 +253,14 @@ def test_stream_watchdog_kills_a_stalled_subprocess():
         pass
     wd.cancel()
     assert time.perf_counter() - t0 < 5.0   # unblocked, not waiting out the 3600s sleep
-    assert proc.poll() is not None          # process group was killed
+    # b195: the watchdog SIGKILLs the process group, but the kill + OS reap can lag
+    # the stdout-EOF that unblocks the read loop above — polling proc.poll() at that
+    # instant raced on slow CI runners (intermittent `assert None is not None`).
+    # Wait (bounded) for actual termination instead; a TimeoutExpired here means the
+    # watchdog genuinely failed to kill the process, which is the real regression.
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:  # pragma: no cover - failure path
+        proc.kill()
+        raise AssertionError("watchdog did not kill the stalled subprocess within 5s") from None
+    assert proc.returncode is not None      # process group was killed
