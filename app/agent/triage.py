@@ -1216,6 +1216,11 @@ def _run_sweep(
                     # presenting a weak throwaway reply as ready. (The /draft API,
                     # /feedback, CLI, etc. leave interactive=True and always draft.)
                     interactive=False,
+                    # b194: the autonomous sweep drafts ahead of the review
+                    # queue — no human waits on this generation — so it can
+                    # afford best-of-N (config generation.multi_candidate.n).
+                    # Modest quality lift (length-fit/style) at hidden latency.
+                    multi_candidate_ok=True,
                 ),
                 database_url=database_url,
                 configs_dir=configs_dir,
