@@ -292,6 +292,7 @@ def get_corpus_stats(database_url: str) -> dict:
         avg_edit_dist = None
         real_draft_feedback_count = 0
         organic_feedback_count = 0
+        verbatim_accepted_count = 0
         try:
             reviewed_today = conn.execute("SELECT COUNT(*) FROM feedback_pairs WHERE DATE(created_at) = DATE('now')").fetchone()[0]
             reviewed_week = conn.execute("SELECT COUNT(*) FROM feedback_pairs WHERE created_at >= DATE('now', '-7 days')").fetchone()[0]
@@ -304,6 +305,19 @@ def get_corpus_stats(database_url: str) -> dict:
             organic_feedback_count = conn.execute(
                 "SELECT COUNT(*) FROM feedback_pairs WHERE COALESCE(organic, 0) = 1"
             ).fetchone()[0]
+            # Subset of organic: pairs where the agent's own draft was sent
+            # unedited — a genuine drafter win (edit distance really 0). Kept
+            # organic so it never inflates the edit-distance metrics, but counted
+            # here so these zero-edit successes aren't invisible (b198). Isolated
+            # try: it depends on feedback_note, which an older/minimal schema may
+            # lack — a miss here must not abort the metrics that follow.
+            try:
+                verbatim_accepted_count = conn.execute(
+                    "SELECT COUNT(*) FROM feedback_pairs "
+                    "WHERE COALESCE(organic, 0) = 1 AND feedback_note LIKE 'verbatim-accepted%'"
+                ).fetchone()[0]
+            except sqlite3.OperationalError:
+                verbatim_accepted_count = 0
             row = conn.execute(
                 "SELECT AVG(edit_distance_pct) FROM "
                 "(SELECT edit_distance_pct FROM feedback_pairs "
@@ -380,6 +394,8 @@ def get_corpus_stats(database_url: str) -> dict:
             # is never mistaken for draft-quality signal.
             "real_draft_feedback_pairs": real_draft_feedback_count,
             "organic_feedback_pairs": organic_feedback_count,
+            # Subset of organic_feedback_pairs: agent drafts the user sent unedited.
+            "verbatim_accepted_pairs": verbatim_accepted_count,
             "reviewed_today": reviewed_today,
             "reviewed_this_week": reviewed_week,
             # avg_edit_distance / outcome_metrics are now over real draft-vs-sent

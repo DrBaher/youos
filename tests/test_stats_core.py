@@ -16,6 +16,38 @@ def test_get_corpus_stats_no_db(tmp_path):
     assert result["total_feedback_pairs"] == 0
 
 
+def test_verbatim_accepted_pairs_counted_as_subset_of_organic(tmp_path):
+    """Agent drafts the user sent unedited are a distinct, observable subset of
+    organic backfill — counted, but kept out of the edit-distance metrics (b198)."""
+    db_path = tmp_path / "s.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """CREATE TABLE feedback_pairs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            inbound_text TEXT, generated_draft TEXT, edited_reply TEXT,
+            feedback_note TEXT, rating INTEGER, used_in_finetune INTEGER DEFAULT 0,
+            edit_distance_pct REAL, reply_pair_id INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP, organic INTEGER DEFAULT 0
+        )"""
+    )
+    conn.executemany(
+        "INSERT INTO feedback_pairs (inbound_text, generated_draft, edited_reply, feedback_note, edit_distance_pct, organic) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            ("in1", "draft1", "draft1", "verbatim-accepted (agent draft sent unedited)", 0.0, 1),
+            ("in2", "sent2", "sent2", "organic pair — no YouOS draft", 0.0, 1),
+            ("in3", "draft3", "edited3", "real draft-vs-sent (prior agent draft)", 0.2, 0),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    result = get_corpus_stats(f"sqlite:///{db_path}")
+    assert result["organic_feedback_pairs"] == 2          # both organic rows
+    assert result["verbatim_accepted_pairs"] == 1         # only the verbatim win
+    assert result["real_draft_feedback_pairs"] == 1       # the genuine edit, unchanged
+
+
 def test_get_model_status_no_adapter_with_mlx():
     """No adapter but mlx_lm present → drafts run on the BASE model (not Claude).
 
