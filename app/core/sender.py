@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from dataclasses import dataclass
 from typing import Literal
 
 from app.core.config import get_internal_domains
+
+logger = logging.getLogger(__name__)
 
 SenderType = Literal["internal", "external_client", "personal", "automated", "unknown"]
 
@@ -339,7 +342,11 @@ def _lookup_profile_type(email: str, domain: str | None, database_url: str) -> S
             )
         finally:
             con.close()
-    except Exception:  # pragma: no cover - defensive; classification must not break on DB errors
+    except Exception as exc:  # defensive: classification must not break on DB errors
+        # Still fail safe (heuristics take over), but don't swallow silently —
+        # a persistent profile-lookup failure (locked DB, schema drift, perms)
+        # would otherwise be invisible while every sender quietly de-enriches.
+        logger.warning("sender profile lookup failed, falling back to heuristics: %s", exc)
         return None
 
 
