@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import subprocess
 import sys
 import webbrowser
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 
 import typer
@@ -30,6 +32,30 @@ app = typer.Typer(
     help="YouOS — your personal AI email copilot. Learns your writing style and drafts replies.",
     no_args_is_help=True,
 )
+
+
+class DraftMode(str, Enum):
+    """Closed set of drafting modes (mirrors retrieval.ModeHint minus 'unknown',
+    which is auto-detected, never operator-chosen). As a Typer enum this both
+    validates `--mode` and surfaces the choices in `--help`."""
+
+    work = "work"
+    personal = "personal"
+
+
+# Gmail `newer_than:` token — digits + a unit (s/m/h/d/w/y). Interpolated raw
+# into the search query, so an unvalidated typo (`--window 3days`) silently
+# produced a malformed query and zero results with no error.
+_WINDOW_RE = re.compile(r"^\d+[smhdwy]$")
+
+
+def _validate_window(value: str) -> str:
+    if not _WINDOW_RE.match(value or ""):
+        raise typer.BadParameter(
+            f"{value!r} is not a valid window. Use a number followed by a unit "
+            "(s/m/h/d/w/y), e.g. '24h', '3d', '7d', '2w'."
+        )
+    return value
 
 
 def _run(cmd: list[str]) -> None:
@@ -349,7 +375,7 @@ def ui():
 def draft(
     message: str = typer.Argument(..., help="The inbound email text to draft a reply to"),
     sender: str = typer.Option(None, help="Sender email address"),
-    mode: str = typer.Option(None, help="Override mode: work or personal"),
+    mode: DraftMode = typer.Option(None, help="Override the auto-detected mode"),  # noqa: B008 (typer requires the inline Option call)
 ):
     """Draft a reply to an email."""
     from app.core.settings import get_settings
@@ -358,7 +384,7 @@ def draft(
     settings = get_settings()
     request = DraftRequest(
         inbound_message=message,
-        mode=mode,
+        mode=mode.value if mode else None,
         sender=sender,
     )
     response = generate_draft(
@@ -586,7 +612,8 @@ def compare_models(
 @app.command()
 def triage(
     account: str = typer.Option(None, "--account", help="Account email (defaults to the first configured)"),
-    window: str = typer.Option("3d", "--window", help="Gmail search window: '3d', '7d', '24h'"),
+    window: str = typer.Option("3d", "--window", help="Gmail search window: '3d', '7d', '24h'",
+                               callback=_validate_window),
     limit: int = typer.Option(8, "--limit", help="Max unread threads to fetch"),
     threshold: float = typer.Option(0.6, "--threshold", help="Needs-reply score cutoff [0..1]"),
     backend: str = typer.Option(None, "--backend", help="Override ingestion backend: gog | gws | native"),

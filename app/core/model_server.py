@@ -16,6 +16,7 @@ Scope notes:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -440,6 +441,7 @@ def stream(
         timeout=timeout,
     ) as r:
         r.raise_for_status()
+        dropped = 0
         for line in r.iter_lines():
             if not line or not line.startswith("data:"):
                 continue
@@ -449,6 +451,14 @@ def stream(
             try:
                 delta = json.loads(data)["choices"][0].get("text", "")
             except (json.JSONDecodeError, KeyError, IndexError):
+                # A malformed chunk is a dropped token in the streamed draft.
+                # Don't crash the stream, but don't vanish silently either —
+                # count and report once so an incomplete stream is diagnosable.
+                dropped += 1
                 continue
             if delta:
                 yield delta
+        if dropped:
+            logging.getLogger(__name__).debug(
+                "stream: dropped %d unparseable SSE chunk(s) from warm server", dropped
+            )

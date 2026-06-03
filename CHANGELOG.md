@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — operator + quality-loop polish (b198)
+
+### Quality: validate CLI inputs, stop silent stream/loop signal loss
+
+A second polish pass, again acting only on findings that survived code-level verification (a broader audit's claims about a retrieval query-prefix bug, embedding dimension cargo-cult, and "magic" confidence thresholds did not hold up and were dropped; the May golden-eval / outcome-join / autoresearch-fallback breakages were re-checked and confirmed already fixed).
+
+- **CLI flags that documented a fixed value set but accepted anything are now validated** (`app/cli.py`). `draft --mode` is a Typer enum (`work`/`personal`) — a typo is rejected with the choices instead of silently passing garbage to the generator; the values now also show in `--help`. `triage --window` is format-checked (`\d+[smhdwy]`) — `--window 3days` previously became a malformed `newer_than:` query that returned **zero emails with no error** (looked like a hang); it now fails fast with a helpful message. (The REST API already used `Literal[...]`; the CLI just hadn't caught up.)
+- **Streaming no longer drops malformed SSE chunks silently** (`app/core/model_server.py`). `stream()` counts unparseable chunks and logs once at debug, so an incomplete streamed draft is diagnosable instead of vanishing token-by-token.
+- **Golden eval surfaces `graded_composite` as a secondary insight** (`scripts/nightly_pipeline.py`). The promotion gate stays on the binary `pass_rate` (deliberately, to avoid silently moving the bar), but the partial-credit composite — already computed and discarded — is now recorded, so a run where drafts improved without flipping a pass/fail still shows movement.
+- **Verbatim-accepted drafts are now an observable signal** (`scripts/extract_auto_feedback.py`, `app/core/stats.py`). When the agent's own draft is sent unedited (a genuine zero-edit win), it was previously indistinguishable from "no draft existed" organic backfill. It's now recorded distinguishably and exposed as `verbatim_accepted_pairs` (a subset of organic) — kept `organic=1` so it never inflates the edit-distance metrics.
+
++6 regression tests (CLI mode/window validation, stream malformed-chunk drop+count, verbatim-win stats count). Full suite: 2148 passed. No behavior change to drafting or never-send/act invariants.
+
 ## Unreleased — classification/summary polish: observability + cleanup (b196)
 
 ### Quality: surface the summary grounding score, stop swallowing profile errors

@@ -136,6 +136,35 @@ def test_stream_yields_deltas(monkeypatch):
     assert list(ms.stream("PROMPT")) == ["Hi ", "Sam"]
 
 
+def test_stream_skips_malformed_chunks_and_reports(monkeypatch, caplog):
+    """A malformed SSE chunk is dropped (not crashed on) but counted + logged so
+    an incomplete stream is diagnosable rather than silently truncated (b198)."""
+    _config(monkeypatch)
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def iter_lines(self):
+            yield 'data: {"choices":[{"text":"Hi "}]}'
+            yield "data: {not json}"          # malformed → dropped, counted
+            yield 'data: {"choices":[]}'       # IndexError → dropped, counted
+            yield 'data: {"choices":[{"text":"Sam"}]}'
+
+    class _Ctx:
+        def __enter__(self):
+            return _Resp()
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(ms.httpx, "stream", lambda *a, **k: _Ctx())
+    import logging
+    with caplog.at_level(logging.DEBUG, logger="app.core.model_server"):
+        assert list(ms.stream("PROMPT")) == ["Hi ", "Sam"]
+    assert "dropped 2" in caplog.text
+
+
 def test_ensure_running_noop_when_already_healthy(monkeypatch):
     _config(monkeypatch)
     monkeypatch.setattr(ms, "is_healthy", lambda **k: True)
