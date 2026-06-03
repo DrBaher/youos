@@ -144,10 +144,20 @@ def _get_settings(request: Request):
     return request.app.state.settings
 
 
+# Diversity steering: boost a sender type's score until this many of it are
+# already in the batch, then stop. Shared by the scorer and the greedy selector
+# so the two stay in sync (the selector must apply the SAME bonus live).
+_DIVERSITY_BONUS = 0.4
+_DIVERSITY_SATURATION = 2
+
+
 def score_pair_for_review(pair: dict[str, Any], reviewed_sender_types: Counter) -> float:
     """Score a candidate pair for review priority.
 
-    Higher score = more likely to be selected.
+    Higher score = more likely to be selected. ``reviewed_sender_types`` must
+    reflect what's ALREADY been selected for the batch — the diversity bonus is
+    relative to that running tally, so the caller has to update it between picks
+    (see the greedy selection in the batch builder) for the bonus to do anything.
     """
     score = 0.0
 
@@ -178,8 +188,8 @@ def score_pair_for_review(pair: dict[str, Any], reviewed_sender_types: Counter) 
 
     # Sender type diversity bonus
     sender_type = classify_sender(pair.get("inbound_author"))
-    if reviewed_sender_types[sender_type] < 2:
-        score += 0.4
+    if reviewed_sender_types[sender_type] < _DIVERSITY_SATURATION:
+        score += _DIVERSITY_BONUS
 
     # Length filter — prefer medium length (100-500 chars inbound)
     inbound_len = len(pair.get("inbound_text") or "")
@@ -334,18 +344,35 @@ def _fetch_candidates(
                 }
             )
 
-        # Second pass: score and select with diversity
+        # Second pass: greedy, diversity-aware selection. Precompute each pair's
+        # diversity-INDEPENDENT base score + sender type once (classify_sender
+        # does a profile lookup, so call it exactly once per pair — the pool is
+        # bounded to batch_size*5). Then pick greedily, applying the diversity
+        # bonus against the running tally of ALREADY-selected types so it
+        # actually varies the batch. (The previous code scored the whole pool
+        # once against an empty Counter, so every pair got the same constant
+        # bonus and it never affected the ranking — the diversity feature was a
+        # no-op.)
         reviewed_sender_types: Counter = Counter()
-        scored = [(score_pair_for_review(p, reviewed_sender_types), i, p) for i, p in enumerate(pool)]
-        scored.sort(key=lambda x: x[0], reverse=True)
+        prepared: list[list[Any]] = []
+        for p in pool:
+            st = classify_sender(p.get("inbound_author"))
+            # Saturate this type so score_pair_for_review adds no diversity bonus
+            # → base = recency + length only.
+            base = score_pair_for_review(p, Counter({st: _DIVERSITY_SATURATION}))
+            prepared.append([base, st, p])
 
         candidates: list[dict[str, Any]] = []
-        for _score, _idx, pair in scored:
-            if len(candidates) >= batch_size:
-                break
-            sender_type = classify_sender(pair.get("inbound_author"))
+        while prepared and len(candidates) < batch_size:
+            best_i, best_eff = 0, None
+            for i, (base, st, _p) in enumerate(prepared):
+                bonus = _DIVERSITY_BONUS if reviewed_sender_types[st] < _DIVERSITY_SATURATION else 0.0
+                eff = base + bonus
+                if best_eff is None or eff > best_eff:
+                    best_i, best_eff = i, eff
+            _base, st, pair = prepared.pop(best_i)
             candidates.append(pair)
-            reviewed_sender_types[sender_type] += 1
+            reviewed_sender_types[st] += 1
 
         return candidates, total_unreviewed
     finally:
