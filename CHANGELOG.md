@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — browser UI smoke test (b201)
+
+### Quality: the plain-HTML/JS UI finally has regression coverage
+
+The web UI (≈6,500 lines of hand-written HTML + inline vanilla JS across 11 pages) had **zero automated coverage** — bugs there only surfaced by opening a browser. This adds a Playwright smoke test that boots a real server on a temp data dir, seeds synthetic data (never touches a real instance), drives every page headlessly, and asserts **no uncaught JS exceptions / console errors / 5xx** — the bug class static review and screenshots miss — plus a few model-free interactions (triage cards render, Review Queue inbound preview streams, a settings toggle persists across reload).
+
+- `tests/test_ui_smoke.py` — self-contained disposable-instance fixture (scaffold dirs, `bootstrap_database`, seed, launch uvicorn on a free port, tear down) + 12 checks.
+- **Opt-in by design.** Skipped unless `YOUOS_UI_TESTS=1` and Playwright + its Chromium are installed, so the default fast CI (which has neither) stays green and browser-free. New `uitests` extra in `pyproject.toml` declares the dep. Run with: `pip install -e '.[uitests]' && playwright install chromium && YOUOS_UI_TESTS=1 pytest tests/test_ui_smoke.py`.
+- Model-dependent draft *generation* is intentionally not asserted (slow/nondeterministic); the test validates UI structure + health only.
+
+Found during the manual sweep that produced this test: all 9 pages are JS-error-clean, and the b199 review-queue diversity selection runs correctly on seeded data. No app code changed. Full default suite: 2149 passed, 2 skipped.
+
 ## Unreleased — UI polish from a visual sweep (b200)
 
 ### Quality: honest stats label, personalized About hero, a loading affordance
