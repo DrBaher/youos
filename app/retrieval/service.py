@@ -27,7 +27,7 @@ _WORK_SIGNALS = re.compile(
     r"\b(proposal|integration|api|contract|client|invoice|pricing|budget|deadline|"
     r"deliverable|stakeholder|timeline|vendor|compliance|saas|enterprise|onboard|"
     r"quote|demo|meeting|schedule|call|partner|partnership|agreement|nda|sla|"
-    r"implementation|deployment|credentials|credentials|technical|support|ticket|"
+    r"implementation|deployment|credentials|technical|support|ticket|"
     r"report|status|update|project|team|colleague|manager|hr|legal|document|sign|"
     r"audit|review|payment|billing|subscription|license|renewal|account|lab|hospital|"
     r"clinic|healthcare|software|platform|solution|service|product|feature|bug|issue|"
