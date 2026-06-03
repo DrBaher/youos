@@ -43,6 +43,13 @@ dev = [
   "ruff>=0.6,<1.0",
   "mypy>=1.11,<2.0"
 ]
+# Browser UI smoke tests (tests/test_ui_smoke.py). Opt-in: those tests skip
+# unless YOUOS_UI_TESTS=1 AND this extra is installed (plus `playwright install
+# chromium` to fetch the browser). Kept out of `dev` so the default fast test
+# run / CI never needs a browser. See tests/test_ui_smoke.py.
+uitests = [
+  "playwright>=1.40,<2.0"
+]
 # Cross-encoder reranker (off by default via `reranker_enabled: false` in
 # retrieval/defaults.yaml). Installing this extra is the precondition for
 # flipping that flag on — without it the reranker module logs a warning and
