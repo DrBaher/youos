@@ -1141,6 +1141,14 @@ def main() -> None:
             passed_g = golden_data.get("passed", 0)
             golden_composite = round(passed_g / total_g, 4) if total_g > 0 else 0.0
             golden_degenerate = bool(golden_data.get("degenerate", False))
+            # Secondary insight only — the gate stays on the binary pass_rate
+            # (golden_composite) to avoid silently moving the bar. graded_composite
+            # gives partial credit to near-misses, so a run where drafts improved
+            # without flipping a pass/fail still shows movement here.
+            graded_g = golden_data.get("graded_composite")
+            results["golden_eval"] = (
+                f"{results['golden_eval']} (pass_rate={golden_composite}, graded={graded_g})"
+            )
         if golden_degenerate:
             errors.append("golden eval degenerate (mostly empty drafts) — pipeline/model likely broken")
     except Exception as exc:
