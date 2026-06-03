@@ -240,6 +240,19 @@ class DraftRequest:
     # which is the sole path that may withhold a weak draft and instead surface
     # the email for review. See ``_should_abstain`` / ``_abstain_config``.
     interactive: bool = True
+    # b194: opt-in to best-of-N multi-candidate generation for THIS request.
+    # Multi-candidate fans out n drafts on a temperature spread and keeps the
+    # highest draft_quality_score one — a real but modest quality lift (mostly
+    # length-fit + style) that costs n× generation. We only want that cost where
+    # the latency is HIDDEN: the autonomous triage sweep (drafts sit in the
+    # review queue; no human waits) and the compare-models tuning harness set
+    # this True. Interactive callers (/draft, /feedback, CLI, review-queue
+    # regenerate, streaming) leave it False so they stay single-candidate and
+    # fast — the +0.013 voice lift isn't worth doubling perceived latency. The
+    # config knob ``generation.multi_candidate.n`` still controls n; this flag
+    # only decides WHETHER a given request is allowed to fan out. Hard-blocked on
+    # the deterministic/eval path regardless (see generate_draft).
+    multi_candidate_ok: bool = False
 
 
 @dataclass(slots=True)
@@ -2968,7 +2981,16 @@ def generate_draft(
             # so there we generate EXACTLY ONE greedy + seeded candidate below,
             # byte-identical to single-candidate drafting. The b166 determinism
             # tests pin this.
-            if mc["enabled"] and not getattr(request, "deterministic", False):
+            #
+            # b194: it is also gated on request.multi_candidate_ok — the n× cost
+            # is only paid where latency is hidden (the autonomous triage sweep
+            # and the compare-models tuning harness). Interactive callers leave
+            # the flag False (default) and stay single-candidate / fast.
+            if (
+                mc["enabled"]
+                and not getattr(request, "deterministic", False)
+                and getattr(request, "multi_candidate_ok", False)
+            ):
                 # Generate n candidates with a DIVERSE temperature spread (so they
                 # actually differ), then keep the one with the highest per-draft
                 # quality score. We rank with draft_quality_score — the SAME 0–1

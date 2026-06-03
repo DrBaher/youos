@@ -129,7 +129,7 @@ def test_multi_candidate_picks_highest_quality(monkeypatch):
     monkeypatch.setattr(svc, "_local_draft_once", fake_once)
     monkeypatch.setattr(svc, "draft_quality_score", fake_quality)
 
-    resp = _generate(svc.DraftRequest(inbound_message="Please send the report."))
+    resp = _generate(svc.DraftRequest(inbound_message="Please send the report.", multi_candidate_ok=True))
 
     assert len(resp.candidates) == 3
     assert resp.draft.startswith("GOOD CANDIDATE"), "highest-quality candidate must win"
@@ -156,7 +156,7 @@ def test_multi_candidate_tie_picks_lowest_index(monkeypatch):
     monkeypatch.setattr(svc, "_local_draft_once", fake_once)
     monkeypatch.setattr(svc, "draft_quality_score", lambda draft, **kw: 0.5)  # all tie
 
-    resp = _generate(svc.DraftRequest(inbound_message="hello there"))
+    resp = _generate(svc.DraftRequest(inbound_message="hello there", multi_candidate_ok=True))
 
     assert resp.candidates[0]["candidate_index"] == 0, "tie must resolve to lowest index"
     assert resp.draft == bodies[0.3]

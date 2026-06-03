@@ -177,6 +177,11 @@ def _default_generate(
             # is an opt-in interactive use; it still requires
             # drafting.cloud_escalation.enabled. Non-cloud engines are unaffected.
             allow_cloud_escalation=_is_cloud_backend(backend),
+            # b194: this harness measures the AUTONOMOUS drafting quality (the
+            # background triage path), so it opts into best-of-N just like that
+            # path — keeping compare-models the tool for tuning
+            # generation.multi_candidate.n. At n=1 (default) this is a no-op.
+            multi_candidate_ok=True,
         ),
         database_url=database_url,
         configs_dir=configs_dir,

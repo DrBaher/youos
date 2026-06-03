@@ -179,12 +179,54 @@ def test_multi_candidate_generates_per_temperature_and_picks_best(monkeypatch):
         persona={"style": {"avg_reply_words": 30}, "modes": {}},
         once_seen=seen,
     )
-    resp = svc.generate_draft(svc.DraftRequest(inbound_message="hi"), database_url="sqlite:///x", configs_dir=Path("/tmp"))
+    # b194: opt-in required — this mirrors the autonomous/eval path.
+    resp = svc.generate_draft(
+        svc.DraftRequest(inbound_message="hi", multi_candidate_ok=True),
+        database_url="sqlite:///x", configs_dir=Path("/tmp"),
+    )
 
     assert sorted(seen) == [0.3, 0.7, 1.0]            # one call per temperature
     assert len(resp.candidates) == 3                  # alternatives surfaced
     assert resp.candidates[0]["temperature"] == 0.7   # on-target ranked first
     assert resp.draft == " ".join(["w"] * 30)         # best chosen
+
+
+def test_multi_candidate_gated_off_for_interactive_requests(monkeypatch):
+    """b194: config n>1 must NOT fan out unless the request opts in
+    (multi_candidate_ok=True). Interactive callers leave it False (the default),
+    so they stay single-candidate / fast even when best-of-N is configured on."""
+    seen: list = []
+    _stub(
+        monkeypatch,
+        load_config={"generation": {"multi_candidate": {"n": 3}}},  # enabled
+        persona={"style": {"avg_reply_words": 30}, "modes": {}},
+        once_seen=seen,
+    )
+    # Default request: multi_candidate_ok=False, as every interactive endpoint.
+    resp = svc.generate_draft(
+        svc.DraftRequest(inbound_message="hi"),
+        database_url="sqlite:///x", configs_dir=Path("/tmp"),
+    )
+    assert len(seen) == 1            # single model call despite config n=3
+    assert resp.candidates == []     # no fan-out for interactive callers
+
+
+def test_multi_candidate_fires_when_opted_in(monkeypatch):
+    """b194: the autonomous triage sweep + compare-models set
+    multi_candidate_ok=True and DO fan out under the same config."""
+    seen: list = []
+    _stub(
+        monkeypatch,
+        load_config={"generation": {"multi_candidate": {"n": 3}}},
+        persona={"style": {"avg_reply_words": 30}, "modes": {}},
+        once_seen=seen,
+    )
+    resp = svc.generate_draft(
+        svc.DraftRequest(inbound_message="hi", multi_candidate_ok=True),
+        database_url="sqlite:///x", configs_dir=Path("/tmp"),
+    )
+    assert len(seen) == 3            # one call per temperature in the spread
+    assert len(resp.candidates) == 3
 
 
 def test_exemplar_cache_bypassed_when_flag_false(monkeypatch):

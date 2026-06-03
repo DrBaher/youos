@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — best-of-N drafting on the background path (b194)
+
+### Quality: spend best-of-N only where the latency is free
+
+Measured the existing `generation.multi_candidate` knob on an 80-case voice-match benchmark (4B+LoRA, paired A/B on the same cases). Best-of-5 lifts composite voice-match **0.674 → 0.687** (+0.013), concentrated in length-fit (0.783 → **0.861**, +0.078) and style (+0.018); semantic/lexical are flat — selection among same-model drafts can't add fidelity, it just shops for the best-sized/best-structured one. The gain scales ~linearly with n (n=3 ≈ half), and the cost is n× generation (latency 4.5s → 6.8s → 10.0s for n=1/3/5).
+
+- **Best-of-N is now gated to latency-hidden paths via `DraftRequest.multi_candidate_ok` (default False).** The autonomous triage sweep (drafts wait in the review queue — no human blocks on generation) and the `compare-models` tuning harness opt in; every interactive caller (`/draft`, `/feedback`, CLI, review-queue regenerate, streaming) stays single-candidate and fast, since the +0.013 voice lift isn't worth doubling perceived latency. Deterministic golden/autoresearch eval is unchanged — still exactly one greedy candidate (b166).
+- **Default `generation.multi_candidate.n: 5`** in `youos_config.yaml`, active only on the opted-in background path. Set `n: 1` to disable everywhere.
+- Pure quality / latency-budget change; never-send/act invariants untouched.
+
++3 regression tests (gate off for interactive, fan-out when opted in, plus the existing selection tests updated to opt in). Full suite: 2143 passed.
+
 ## Unreleased — dedicated multilingual embedder (b180)
 
 ### Quality: a proper retrieval embedder instead of mean-pooling a causal LM
