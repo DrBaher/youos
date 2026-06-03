@@ -171,7 +171,7 @@ body {
   <!-- Hero -->
   <div class="hero">
     <div class="hero-emoji">&#x2709;&#xFE0F;</div>
-    <h1 class="hero-title">YouOS</h1>
+    <h1 class="hero-title" id="heroName">YouOS</h1>
     <p class="hero-sub">Your personal AI email copilot.</p>
     <p class="hero-tagline">Local. Private. Self-improving.</p>
     <a href="https://github.com/DrBaher/youos" target="_blank" class="hero-link">View on GitHub &#x2192;</a>
@@ -538,7 +538,10 @@ body {
 
 <script>
 fetch('/api/config').then(r => r.json()).then(d => {
-  if (d.display_name) document.getElementById('appName').textContent = d.display_name;
+  if (d.display_name) {
+    document.getElementById('appName').textContent = d.display_name;
+    document.getElementById('heroName').textContent = d.display_name;  // keep hero in sync with the nav brand
+  }
 }).catch(() => {});
 </script>
 </body>
