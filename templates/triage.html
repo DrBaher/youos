@@ -636,7 +636,12 @@
   }
 
   async function runTriage() {
-    runBtn.disabled = true; status.textContent = 'Triaging…';
+    const runLabel = runBtn.textContent;
+    runBtn.disabled = true;
+    runBtn.innerHTML = '<span class="yos-spinner"></span> Triaging…';
+    // A sweep is a 30-60s fetch+filter+draft cycle — show a live spinner so it's
+    // clearly working, not stuck. (statusLine sits at the top, always visible.)
+    status.innerHTML = '<span class="yos-spinner"></span> Triaging your inbox — this can take up to a minute…';
     try {
       // Empty account → let the server use the default mailbox (user.emails[0]).
       const body = { window: win.value, limit: 25, threshold: 0.6 };
@@ -646,12 +651,17 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       }).then(r => r.json());
-      status.textContent = `fetched ${r.fetched}, kept ${r.kept}, surfaced ${r.surfaced}, persisted ${r.persisted}`;
-      await fetchPending();
+      if (r && r.detail) {                       // e.g. 429 rate-limit returns {detail: ...}
+        status.textContent = r.detail;
+      } else {
+        status.textContent = `Done — fetched ${r.fetched}, kept ${r.kept}, surfaced ${r.surfaced}, persisted ${r.persisted}.`;
+        await fetchPending();
+      }
     } catch (e) {
       status.textContent = 'Triage failed: ' + e;
     } finally {
       runBtn.disabled = false;
+      runBtn.textContent = runLabel;
     }
   }
 

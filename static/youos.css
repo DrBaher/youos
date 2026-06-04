@@ -117,6 +117,15 @@
 .yos-note { font-size: 0.8rem; color: var(--muted-2); }
 .yos-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
+/* Inline loading spinner — for long actions (triage sweep, etc.) so the UI
+ * shows it's working rather than just a text label. Sized to the current font. */
+.yos-spinner {
+  display: inline-block; width: 0.85em; height: 0.85em; vertical-align: -0.12em;
+  border: 2px solid var(--border); border-top-color: var(--teal);
+  border-radius: 50%; animation: yos-spin 0.7s linear infinite;
+}
+@keyframes yos-spin { to { transform: rotate(360deg); } }
+
 /* --- Shared mobile / responsive safety net ------------------------------
  * Loaded by every page, so these fixes apply uniformly. Each template ships
  * its own inline styles; these patch the cross-page mobile gaps (a nav that

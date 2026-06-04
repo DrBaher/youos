@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — triage: loading spinner while a sweep runs (b216)
+
+### Visible progress for the 30-60s triage sweep
+
+"Run triage now" only showed a static "Triaging…" text. Now both the Run button and the top status line show an animated spinner ("Triaging your inbox — this can take up to a minute…") for the duration, so it's clearly working rather than stuck. Shared `.yos-spinner` added to youos.css (reusable). Also surfaces a 429 rate-limit message cleanly instead of a confusing "fetched undefined".
+
 ## Unreleased — needs-reply: standards-based automated-mail detection (b215)
 
 ### Detect automated/notification mail by how it self-identifies, not by sender
