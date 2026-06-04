@@ -47,7 +47,7 @@
   .rule-text { font-size: 0.9rem; }
   .rule-text .when { color: var(--muted-2); }
   .rule-text .then { color: var(--teal); font-weight: 600; }
-  .rule-btns { display: flex; gap: 6px; white-space: nowrap; }
+  .rule-btns { display: flex; gap: 6px; white-space: nowrap; flex: none; }
   .lnk { background: none; border: none; color: var(--muted-2); cursor: pointer; font-size: 0.82rem; padding: 4px 6px; }
   .lnk:hover { color: var(--teal); }
   .lnk.del:hover { color: var(--error); }
@@ -58,8 +58,12 @@
   .badge.error { background: rgba(220,80,80,0.16); color: var(--error); }
   .led-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--surface); font-size: 0.84rem; }
   .led-item:last-child { border-bottom: none; }
-  .led-main { display: flex; align-items: center; gap: 9px; min-width: 0; }
-  .led-sub { color: var(--muted-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .led-main { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1 1 auto; }
+  .led-main > .badge { flex: none; }
+  /* The action+subject truncates as one line so a long subject ellipses
+     instead of overflowing under the Undo button (b217). */
+  .led-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .led-sub { color: var(--muted-2); }
   .note { color: var(--faint); font-size: 0.8rem; margin-top: 16px; }
   .note code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
   .oc-footer { border-top: 1px solid var(--border); margin-top: 32px; padding: 20px 0; display: flex; gap: 0.6rem; justify-content: center; color: var(--faint); font-size: 0.82rem; }
@@ -484,7 +488,7 @@
         const item = document.createElement("div"); item.className = "led-item";
         const main = document.createElement("div"); main.className = "led-main";
         const badge = document.createElement("span"); badge.className = "badge " + (a.status || ""); badge.textContent = a.status || "?";
-        const what = document.createElement("span");
+        const what = document.createElement("span"); what.className = "led-what";
         const av = a.action_value ? " " + a.action_value : "";
         what.innerHTML = "<strong>" + escapeHtml((a.action_type || "") + av) + "</strong> <span class=\"led-sub\">" + escapeHtml(a.subject || a.sender_email || a.message_id || "") + "</span>";
         main.append(badge, what);
