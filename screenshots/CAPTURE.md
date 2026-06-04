@@ -1,60 +1,64 @@
 # Capturing the YouOS screenshots
 
-These three assets power the landing page (`site/index.html`, served at
-youos.drbaher.com — `pages.yml` bundles this `screenshots/` folder into the
-deploy). Re-capture them whenever the UI changes so the site reflects reality.
+The landing page (`site/index.html`, served at youos.drbaher.com — `pages.yml`
+bundles this `screenshots/` folder into the deploy) shows a **2×2 grid** of four
+screenshots, each with a light and a dark variant:
 
-Capture on a Mac with a trained adapter (so drafts show the real, in-voice
-output and the **✍️ your fine-tuned model** badge):
-
-```bash
-# 1. Run the server against your real instance
-YOUOS_DATA_DIR=~/YouOS-Instances/<you> youos serve     # or: youos service install
-```
-
-Set the browser window to **~1280px wide**, system in **dark mode** (the UI is
-dark-themed). Capture a clean region with `Cmd-Shift-4` (or `screencapture -i`),
-and save each file at the exact name below, then commit — Pages redeploys.
-
-| File | Page | What to show |
+| File | Page | Caption / what it shows |
 |------|------|--------------|
-| `demo.gif` | `/feedback` (Draft Reply tab) | A short screen recording: paste a thread → click Generate → the draft **streams in in your voice**. The hero asset — keep it ~5–8s. (Use a recorder like Kap/Gifski.) |
-| `01-draft-reply.png` | `/feedback` | A finished draft with the **✍️ your fine-tuned model** badge and the **"How was this generated?"** link visible. |
-| `02-stats.png` | `/stats` | The dashboard showing the **System Health → "Drafting with"** row (green = your LoRA) and the **LoRA adapter** status. |
+| `01-draft.png` | `/feedback` | A finished reply written by the local model, with the **✍️ your fine-tuned model** badge, precedent + confidence. |
+| `02-triage.png` | `/triage` | The agent triage queue — drafts the agent generated against unread mail, with scores and per-item actions. |
+| `03-stats.png` | `/stats` | Corpus health + model status (which model wrote each draft, LoRA adapter state). |
+| `04-facts.png` | `/feedback` → Facts tab | Learned facts about contacts, projects, and writing style. |
 
-Tips:
-- Make sure your voice model is trained + benchmarked first (the readiness banner
-  on `/feedback` should be gone) so the screenshots show the real local-model path.
-- Keep framing consistent across the three so the landing page looks cohesive.
+Each has a `-light.png` sibling (e.g. `01-draft-light.png`). The page swaps them
+by theme via CSS keyed on `prefers-color-scheme` *and* `:root[data-theme]` (the
+toggle). The dark `01-draft.png` is also the `og:image`.
 
-## Light + dark variants (theme-aware site)
+> `demo.gif` is a separate asset used by the **README** (not the landing grid).
 
-The landing page swaps screenshots by theme: `01-draft-reply.png` / `02-stats.png`
-are the **dark** variants (also used for `og:image`); `01-draft-reply-light.png` /
-`02-stats-light.png` are the **light** variants. The page shows the right one via
-CSS keyed on `prefers-color-scheme` *and* `:root[data-theme]` (the toggle).
+## Reproducible capture (brand-safe, synthetic data)
 
-### Re-capturing headlessly (reproducible, brand-safe)
-
-The pages honor `?theme=light|dark` (deep-link override) and `/feedback?notour`
-(suppress the first-run tour). They also read the brand from `user.display_name`,
-which on a personal instance is `<First>OS` (e.g. BaherOS) — so for **public**
-screenshots, temporarily show the generic brand, capture, then restore:
+These shots are captured from a **throwaway demo instance** seeded with synthetic
+reply pairs / queue rows / facts — never the real inbox. The brand is set to a
+generic "Alex Rivera / AlexOS" in the seed config. Scripts live in this folder:
 
 ```bash
-# 1) point at your instance + serve, then:
-B=http://127.0.0.1:8765
-curl -s -X POST $B/api/config/identity -d '{"display_name":"YouOS"}'   # generic brand
-CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-shot(){ "$CHROME" --headless --force-device-scale-factor=2 --virtual-time-budget=4500 \
-  --window-size=1300,844 --screenshot="$2" "$1"; }
-shot "$B/feedback?theme=dark&notour"  01-draft-reply.png
-shot "$B/feedback?theme=light&notour" 01-draft-reply-light.png
-shot "$B/stats?theme=dark"            02-stats.png
-shot "$B/stats?theme=light"           02-stats-light.png
-curl -s -X POST $B/api/config/identity -d '{"display_name":"<First>OS"}' # RESTORE your brand
+REPO=~/YouOS
+cd "$REPO"
+
+# 1) Create + seed a demo instance at /tmp/youos_demo (synthetic data only).
+YOUOS_DATA_DIR=/tmp/youos_demo .venv/bin/python screenshots/seed_demo_instance.py
+
+# 2) (Optional but recommended) copy a trained LoRA adapter in so the Draft shot
+#    shows the "✍️ your fine-tuned model" badge. Output is generated on the
+#    SYNTHETIC prompts, so no personal content leaks — it's just style weights.
+cp ~/YouOS-Instances/<you>/models/adapters/latest/* /tmp/youos_demo/models/adapters/latest/
+
+# 3) Serve the demo instance. The seed config sets model.server.enabled=true on
+#    port 8099, so the first draft spawns a warm LoRA server (loads ~once).
+YOUOS_DATA_DIR=/tmp/youos_demo YOUOS_PORT=9999 \
+  .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 9999 &
+
+# 4) Capture all four tabs, light + dark, into /tmp/shot-*.png
+.venv/bin/python screenshots/capture_screenshots.py
+
+# 5) The Draft tab's live streaming animation can be flaky on a fresh instance,
+#    so capture_draft_shot.py renders the REAL non-stream /draft output (clean
+#    LoRA draft + correct model badge) into the live UI and shoots that.
+.venv/bin/python screenshots/capture_draft_shot.py
+
+# 6) Promote the captures to the committed asset names, then commit (Pages redeploys).
+cd screenshots
+for s in draft triage stats facts; do :; done   # see mapping below
+cp /tmp/shot-draft.png  01-draft.png   ; cp /tmp/shot-draft-light.png  01-draft-light.png
+cp /tmp/shot-triage.png 02-triage.png  ; cp /tmp/shot-triage-light.png 02-triage-light.png
+cp /tmp/shot-stats.png  03-stats.png   ; cp /tmp/shot-stats-light.png  03-stats-light.png
+cp /tmp/shot-facts.png  04-facts.png   ; cp /tmp/shot-facts-light.png  04-facts-light.png
 ```
 
-`--virtual-time-budget` lets the async `/api/config` + `/api/stats` calls finish
-before the shot. `demo.gif` is a screen recording (Kap/Gifski) and is theme-neutral
-enough to serve both modes.
+Notes:
+- The pages honor `?theme=light|dark` (deep-link override) and `/feedback?notour`
+  (suppress the first-run tour) — the capture scripts use both.
+- Re-run after any meaningful UI change so the site reflects reality.
+- Keep framing at 1340×900 @2× (set in the scripts) so the grid stays cohesive.
