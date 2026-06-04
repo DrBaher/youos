@@ -49,6 +49,32 @@ SERVICE_SUBJECT_PAT = re.compile(
     re.IGNORECASE,
 )
 
+# Calendar invitations + invite responses. b207: real-inbox finding — the agent
+# drafted email replies to meeting invites and to accept/decline responses for
+# invites the user *sent*. Calendar mail is handled in the calendar UI (accept /
+# decline / propose-new-time), never by drafting a freeform email reply.
+#
+# Subject prefixes are the cross-provider tell (Google + Outlook both prefix the
+# iTIP method): Invitation:/Updated invitation: (REQUEST), Accepted:/Declined:/
+# Tentative: (REPLY), Canceled[ event]: (CANCEL). Anchored at the start, after an
+# optional Re:/Fwd: chain, with the colon, so it doesn't fire on prose like
+# "Declined: here's why" mid-thread. German equivalents included (real inbox is
+# DE/EN). Body/header signals (text/calendar part, iTIP method) are matched
+# separately in classify().
+CALENDAR_SUBJECT_PAT = re.compile(
+    r"^\s*(?:(?:re|fwd|fw|aw|wg)\s*:\s*)*"
+    r"(?:"
+    r"(?:updated |new |canceled |cancelled )?invitation|"
+    r"invitation update|"
+    r"accepted|declined|tentative(?:ly accepted)?|"
+    r"canceled(?: event)?|cancelled(?: event)?|"
+    # German (Google/Outlook localized prefixes)
+    r"einladung|aktualisierte einladung|zusage|absage|"
+    r"vorl[äa]ufig(?:e zusage)?|abgesagt|abgelehnt|angenommen"
+    r")\s*:",
+    re.IGNORECASE,
+)
+
 # Transactional template indicator. Matched in *either* subject or body —
 # fires when a message reads as a confirmation/receipt template (booking
 # confirmations, order receipts, appointment confirmations, etc.). Soft
@@ -338,6 +364,9 @@ def classify(
         Travis, ``notifications.*``, ``mailchimp/mailgun/sendgrid/amazonses``)
       - service subject pattern (``[Org/Repo]`` prefixes, ``Build|Run|CI
         failed/succeeded``)
+      - calendar invite / response (``Invitation:``/``Accepted:``/``Declined:``/
+        ``Tentative:``/``Canceled:`` subject, or a ``text/calendar`` part) —
+        handled in the calendar UI, not by drafting an email reply
       - empty body
 
     Surviving messages get scored from base 0.5:
@@ -378,6 +407,15 @@ def classify(
         return NeedsReplyVerdict(False, 0.0, [f"automation domain ({msg.sender!r})"])
     if msg.subject and SERVICE_SUBJECT_PAT.search(msg.subject):
         return NeedsReplyVerdict(False, 0.0, [f"service subject pattern ({msg.subject!r})"])
+    # Calendar invites / invite responses — handled in the calendar UI, never by
+    # drafting an email reply. Subject prefix (iTIP method) or a calendar
+    # content-type / iTIP method param in the headers.
+    if msg.subject and CALENDAR_SUBJECT_PAT.search(msg.subject):
+        return NeedsReplyVerdict(False, 0.0, [f"calendar invite/response ({msg.subject!r})"])
+    _ctype = (msg.headers.get("content-type") or "").lower()
+    _cclass = (msg.headers.get("content-class") or "").lower()
+    if "text/calendar" in _ctype or "calendarmessage" in _cclass:
+        return NeedsReplyVerdict(False, 0.0, ["calendar message (text/calendar / iTIP)"])
     if not msg.body.strip():
         return NeedsReplyVerdict(False, 0.0, ["empty body"])
 
