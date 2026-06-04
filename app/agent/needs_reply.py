@@ -29,14 +29,18 @@ MAILER_DAEMON_PAT = re.compile(
 
 # Automation domains that *are* systems (not human-tended). Hard-skip.
 # Each addition came from a real-inbox false-positive: GitHub/CI in b29,
-# meeting-bot services (Fireflies/Otter/Loom/Calendly/Doodle) in b30.
+# meeting-bot services (Fireflies/Otter/Loom/Calendly/Doodle) in b30, and a
+# baher@medicus.ai queue review in b214 (DocuSign completion notices, Booking.com
+# stay notifications). ``[\w.-]*foo`` forms match any subdomain (e.g.
+# ``eumail.docusign.net``, ``property.booking.com``).
 AUTOMATION_DOMAIN_PAT = re.compile(
     r"@(?:"
     r"notifications?\.|.*\.bounces\.|amazonses\.com|mailgun\.org|sendgrid\.net|"
     r"mailchimp\.com|github\.com|gitlab\.com|bitbucket\.org|"
     r"[\w-]+\.atlassian\.net|[\w-]+\.circleci\.com|[\w-]+\.travis-ci\.(?:com|org)|"
     r"fireflies\.ai|otter\.ai|loom\.com|calendly\.com|doodle\.com|fathom\.video|"
-    r"krisp\.ai|grain\.com"
+    r"krisp\.ai|grain\.com|"
+    r"[\w.-]*docusign\.(?:net|com)|[\w.-]*booking\.com"
     r")",
     re.IGNORECASE,
 )
@@ -388,6 +392,14 @@ def classify(
     # specific sender can be silenced without waiting for a heuristic.
     if skip_senders and _matches_skip_list(msg.sender_email, skip_senders):
         return NeedsReplyVerdict(False, 0.0, [f"skip-list match ({msg.sender_email!r})"])
+    # From your own address — you sent this, or it's a note-to-self. Never draft
+    # a reply to yourself. b214: a real-inbox queue review found the agent
+    # drafting replies to the user's own sent mail and self-addressed notes
+    # ("Pay Drei", "GDPR sentry", signature-only). Needs ``account_emails``.
+    if account_emails and msg.sender_email:
+        _mine = {e.lower() for e in account_emails if e}
+        if msg.sender_email.lower() in _mine:
+            return NeedsReplyVerdict(False, 0.0, [f"from your own address ({msg.sender_email})"])
     if msg.headers.get("list-unsubscribe"):
         return NeedsReplyVerdict(False, 0.0, ["list-unsubscribe (newsletter)"])
     # List-Id marks mailing-list / bulk distribution mail (marketing tools,

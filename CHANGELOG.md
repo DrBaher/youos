@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased — triage: don't draft to yourself + more automation domains (b214)
+
+### From a review of a real 54-draft queue
+
+Reviewing a live queue surfaced false-positive classes the filter still let through:
+
+- **Self-sent mail.** The agent was drafting replies to the user's *own* sent messages and self-addressed notes ("Pay Drei", "GDPR sentry", signature-only). `classify()` now hard-skips when `sender_email` is one of the user's own addresses (`account_emails`) — "from your own address".
+- **More automation domains.** Added **DocuSign** (`*.docusign.net/.com` — completion notices) and **Booking.com** (`*.booking.com` — stay notifications), subdomain-aware so `eumail.docusign.net` / `property.booking.com` match.
+
+Both are hard-skips (score 0), so "Re-screen queue" also clears these from an existing backlog (the row's swept account is enough to detect self-sent — no `user.emails` needed). Tests cover self-sent (and the no-account-emails no-op), DocuSign + Booking subdomains.
+
+Note surfaced by the same review: the live config had **`user.emails` empty**, which blunts the CC-only / addressed-to-me check on new sweeps — set it (the user's address(es)) so the agent reliably knows when mail is directed at someone else.
+
 ## Unreleased — triage: persist To/Cc so re-screen can catch CC-only (b213)
 
 ### Record recipients on each queued draft
