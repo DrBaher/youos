@@ -56,14 +56,26 @@
   .badge.dry_run { background: var(--surface-2); color: var(--muted-2); }
   .badge.undone { background: var(--surface-2); color: var(--faint); }
   .badge.error { background: rgba(220,80,80,0.16); color: var(--error); }
-  .led-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--surface); font-size: 0.84rem; }
-  .led-item:last-child { border-bottom: none; }
+  .led-wrap { border-bottom: 1px solid var(--surface); }
+  .led-wrap:last-child { border-bottom: none; }
+  .led-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; font-size: 0.84rem; cursor: pointer; }
   .led-main { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1 1 auto; }
   .led-main > .badge { flex: none; }
+  .led-chev { flex: none; color: var(--muted-2); font-size: 0.75rem; transition: transform 0.1s; }
+  .led-wrap.open .led-chev { transform: rotate(90deg); }
   /* The action+subject truncates as one line so a long subject ellipses
-     instead of overflowing under the Undo button (b217). */
+     instead of overflowing under the Undo button (b217); tap the row to expand
+     the full details (b218). */
   .led-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .led-sub { color: var(--muted-2); }
+  /* Expanded detail panel — full subject/sender/ids without truncation.
+     Collapsed by default; shown only when the row's wrapper is .open (an author
+     display:grid would otherwise override the [hidden] attribute). */
+  .led-details { display: none; grid-template-columns: max-content 1fr; gap: 3px 12px;
+    padding: 2px 0 12px 22px; font-size: 0.82rem; }
+  .led-wrap.open .led-details { display: grid; }
+  .led-details .k { color: var(--muted-2); }
+  .led-details .v { color: var(--text); min-width: 0; overflow-wrap: anywhere; }
   .note { color: var(--faint); font-size: 0.8rem; margin-top: 16px; }
   .note code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
   .oc-footer { border-top: 1px solid var(--border); margin-top: 32px; padding: 20px 0; display: flex; gap: 0.6rem; justify-content: center; color: var(--faint); font-size: 0.82rem; }
@@ -485,17 +497,20 @@
       ledger.innerHTML = "";
       if (!acts.length) { ledger.innerHTML = '<p class="sub" style="padding:8px 0;">No routing actions recorded yet (enable agent actions in Settings to start routing).</p>'; return; }
       acts.forEach((a) => {
+        const wrap = document.createElement("div"); wrap.className = "led-wrap";
         const item = document.createElement("div"); item.className = "led-item";
         const main = document.createElement("div"); main.className = "led-main";
+        const chev = document.createElement("span"); chev.className = "led-chev"; chev.textContent = "▸";
         const badge = document.createElement("span"); badge.className = "badge " + (a.status || ""); badge.textContent = a.status || "?";
         const what = document.createElement("span"); what.className = "led-what";
         const av = a.action_value ? " " + a.action_value : "";
         what.innerHTML = "<strong>" + escapeHtml((a.action_type || "") + av) + "</strong> <span class=\"led-sub\">" + escapeHtml(a.subject || a.sender_email || a.message_id || "") + "</span>";
-        main.append(badge, what);
+        main.append(chev, badge, what);
         const right = document.createElement("div"); right.className = "rule-btns";
         if (a.status === "applied") {
           const undo = document.createElement("button"); undo.className = "lnk"; undo.textContent = "Undo";
-          undo.addEventListener("click", () => {
+          undo.addEventListener("click", (ev) => {
+            ev.stopPropagation();
             undo.disabled = true; undo.textContent = "…";
             fetch("/api/agent/actions/" + a.id + "/undo", { method: "POST" })
               .then((r) => (r.ok ? r.json() : r.json().then((e) => Promise.reject(e.detail || "undo failed"))))
@@ -505,7 +520,32 @@
           right.appendChild(undo);
         }
         item.append(main, right);
-        ledger.appendChild(item);
+
+        // Tap a row to expand the full details (the row truncates the subject).
+        const details = document.createElement("div"); details.className = "led-details"; details.hidden = true;
+        const rowsHtml = [
+          ["Action", (a.action_type || "") + av],
+          ["Status", a.status || ""],
+          ["Subject", a.subject || "(none)"],
+          ["From", a.sender_email || "(unknown)"],
+          ["When", a.created_at || ""],
+          a.undone_at ? ["Undone", a.undone_at] : null,
+          a.detail ? ["Detail", a.detail] : null,
+          ["Message id", a.message_id || ""],
+        ].filter(Boolean).map(function (kv) {
+          return '<span class="k">' + escapeHtml(kv[0]) + '</span><span class="v">' + escapeHtml(String(kv[1])) + '</span>';
+        }).join("");
+        details.innerHTML = rowsHtml;
+
+        item.addEventListener("click", (ev) => {
+          if (ev.target.closest(".rule-btns")) return;   // don't toggle when using Undo
+          const open = details.hidden;
+          details.hidden = !open;
+          wrap.classList.toggle("open", open);
+        });
+
+        wrap.append(item, details);
+        ledger.appendChild(wrap);
       });
     }).catch(() => { ledger.textContent = "Could not load routing actions."; });
   }
