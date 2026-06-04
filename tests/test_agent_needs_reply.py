@@ -597,3 +597,32 @@ def test_booking_subdomain_hard_skips():
                       sender_email="x@property.booking.com",
                       subject="Direct check-in", body="Your stay details."))
     assert v.needs_reply is False and v.score == 0.0
+
+
+# --- b215: standards-based automated-mail headers (sender-agnostic) ----------
+
+def test_auto_submitted_header_hard_skips():
+    for val in ("auto-generated", "auto-replied"):
+        v = classify(_msg(headers={"auto-submitted": val},
+                          subject="Your receipt", body="Thanks for your order."))
+        assert v.needs_reply is False and v.score == 0.0, val
+        assert "auto-submitted" in v.reasons[0]
+
+
+def test_auto_submitted_no_is_not_skipped():
+    # RFC 3834: "no" means NOT automated → must not be skipped.
+    v = classify(_msg(headers={"auto-submitted": "no"},
+                      body="Could you confirm the timeline for next week?"))
+    assert not any("auto-submitted" in r for r in v.reasons)
+    assert v.needs_reply is True
+
+
+def test_x_auto_response_suppress_hard_skips():
+    v = classify(_msg(headers={"x-auto-response-suppress": "All"},
+                      subject="System notification", body="Automated message."))
+    assert v.needs_reply is False and v.score == 0.0
+
+
+def test_precedence_auto_reply_hard_skips():
+    v = classify(_msg(headers={"precedence": "auto_reply"}, body="I am out of office."))
+    assert v.needs_reply is False and v.score == 0.0
