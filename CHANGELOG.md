@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — triage: controls in a collapsible at the top (b208)
+
+### From mobile use: controls reachable up top, queue still the focus
+
+b206 moved the triage controls below the queue (queue-first). That made the drafts visible immediately but pushed "Run triage now" / account / filters to the bottom. This puts them back **at the top — inside a `<details>` collapsed by default** (`⚙ Triage controls`), so they're one tap away without displacing the queue. Both action toolbars (account/window/run/refresh + filter/bulk) live inside it; the status line stays visible above it, and the drafts render right below. Standing instructions + agent health remain their own collapsibles below the queue. Template-only; all element ids preserved, so handlers/shortcuts are unchanged. Verified on mobile (collapsed + expanded) and via the opt-in UI smoke test (no JS errors).
+
 ## Unreleased — triage: skip calendar invites + invite responses (b207)
 
 ### Agent: stop drafting email replies to meeting invites
