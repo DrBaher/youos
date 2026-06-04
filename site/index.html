@@ -15,7 +15,7 @@
 <meta property="og:title" content="YouOS — Your email. Your model. Your style.">
 <meta property="og:description" content="A local-first AI email copilot that learns how YOU write and drafts replies in your voice. Runs on Apple Silicon. No cloud.">
 <meta property="og:url" content="https://youos.you.com/">
-<meta property="og:image" content="https://youos.you.com/screenshots/01-draft-reply.png">
+<meta property="og:image" content="https://youos.you.com/screenshots/01-draft.png">
 <meta name="twitter:card" content="summary_large_image">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -162,6 +162,15 @@
   .flow-loop-arrow { display: flex; align-items: center; color: var(--teal); }
   .flow-loop-note { text-align: center; color: var(--muted); font-size: 0.85rem; margin-top: 16px; }
   .flow-loop-note strong { color: var(--teal); }
+  /* Autopilot pipeline: one clean row on desktop, vertical stack on mobile */
+  .pipeline { display: flex; align-items: stretch; justify-content: center; gap: 8px; flex-wrap: nowrap; }
+  .pipeline .flow-box { flex: 1 1 0; width: auto; min-width: 0; padding: 14px 14px; }
+  .pipeline .pipe-arrow { flex: none; display: flex; align-items: center; color: var(--teal); font-size: 1.1rem; }
+  @media (max-width: 760px) {
+    .pipeline { flex-direction: column; align-items: stretch; }
+    .pipeline .flow-box { flex: none; }
+    .pipeline .pipe-arrow { justify-content: center; transform: rotate(90deg); padding: 4px 0; }
+  }
 
   /* Tech stack */
   .tech { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
@@ -239,19 +248,25 @@
       </div>
     </div>
     <div class="shots">
-      <div class="shot wide">
-        <img src="screenshots/demo.gif" alt="YouOS drafting an email reply in your style" loading="lazy">
+      <div class="shot">
+        <img class="shot-dark" src="screenshots/01-draft.png" alt="YouOS draft reply screen with a reply written by your fine-tuned model" loading="lazy">
+        <img class="shot-light" src="screenshots/01-draft-light.png" alt="YouOS draft reply screen with a reply written by your fine-tuned model" loading="lazy">
         <div class="cap">Paste a thread → YouOS drafts a reply grounded in your real past replies.</div>
       </div>
       <div class="shot">
-        <img class="shot-dark" src="screenshots/01-draft-reply.png" alt="YouOS draft reply screen" loading="lazy">
-        <img class="shot-light" src="screenshots/01-draft-reply-light.png" alt="YouOS draft reply screen" loading="lazy">
-        <div class="cap">Draft reply — confidence-annotated, with “How was this generated?”</div>
+        <img class="shot-dark" src="screenshots/02-triage.png" alt="YouOS agent triage queue" loading="lazy">
+        <img class="shot-light" src="screenshots/02-triage-light.png" alt="YouOS agent triage queue" loading="lazy">
+        <div class="cap">Agent triage — it drafts replies to the mail that needs one. Never sent without your OK.</div>
       </div>
       <div class="shot">
-        <img class="shot-dark" src="screenshots/02-stats.png" alt="YouOS stats dashboard" loading="lazy">
-        <img class="shot-light" src="screenshots/02-stats-light.png" alt="YouOS stats dashboard" loading="lazy">
-        <div class="cap">Stats — corpus health, persona drift, feedback streaks.</div>
+        <img class="shot-dark" src="screenshots/03-stats.png" alt="YouOS stats dashboard" loading="lazy">
+        <img class="shot-light" src="screenshots/03-stats-light.png" alt="YouOS stats dashboard" loading="lazy">
+        <div class="cap">Stats — corpus health and model status, so you see exactly which model wrote each draft.</div>
+      </div>
+      <div class="shot">
+        <img class="shot-dark" src="screenshots/04-facts.png" alt="YouOS learned facts about contacts, projects and style" loading="lazy">
+        <img class="shot-light" src="screenshots/04-facts-light.png" alt="YouOS learned facts about contacts, projects and style" loading="lazy">
+        <div class="cap">Facts it learns about your contacts, projects and style — drafts use them automatically.</div>
       </div>
     </div>
   </div>
@@ -265,15 +280,15 @@
       <p>Connect your chat assistant &mdash; Telegram, Slack or WhatsApp via <a href="https://github.com/DrBaher/openclaw">OpenClaw</a> &mdash; or use the built-in review queue. YouOS watches your inbox on a schedule, drafts the replies in your voice, and waits for your word. Nothing goes out without you.</p>
     </div>
 
-    <div class="flow-loop-row">
+    <div class="pipeline">
       <div class="flow-box accent">&#9201;&#65039; Every 15 min<small>checks for new mail</small></div>
-      <div class="flow-loop-arrow">&rarr;</div>
+      <div class="pipe-arrow">&rarr;</div>
       <div class="flow-box">&#9997;&#65039; Drafts a reply<small>in your voice &mdash; only if it needs one</small></div>
-      <div class="flow-loop-arrow">&rarr;</div>
+      <div class="pipe-arrow">&rarr;</div>
       <div class="flow-box">&#128276; Notifies you<small>the email <em>and</em> the draft reply</small></div>
-      <div class="flow-loop-arrow">&rarr;</div>
+      <div class="pipe-arrow">&rarr;</div>
       <div class="flow-box">&#128064; You review &amp; edit<small>tweak it, or regenerate</small></div>
-      <div class="flow-loop-arrow">&rarr;</div>
+      <div class="pipe-arrow">&rarr;</div>
       <div class="flow-box final">&#9989; You confirm &rarr; Sent<small>one tap, in your voice</small></div>
     </div>
 

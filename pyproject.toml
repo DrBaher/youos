@@ -106,6 +106,10 @@ include = ["app*"]
 [tool.ruff]
 line-length = 160
 target-version = "py311"
+# Dev-only landing-page capture tooling (seed a throwaway demo instance + drive
+# Playwright). Intentionally imports app modules after setting YOUOS_DATA_DIR, so
+# the standard import-order rules don't apply; not shipped in the package.
+extend-exclude = ["screenshots/*.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B"]
