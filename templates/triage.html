@@ -63,6 +63,21 @@
   .inbound-body { overflow-y: auto; max-height: 360px; }
   .row-actions { display: flex; gap: 0.5rem; margin-top: 10px; flex-wrap: wrap; }
 
+  /* Compact-by-default draft card: header summary + quick actions; the inbound /
+     editable draft / full actions live in .card-body, revealed on expand. */
+  .card.compact { padding: 12px 14px; }
+  .card-head { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+  .card-head .chevron { color: var(--muted-2); font-size: 0.85rem; margin-top: 3px; flex: none; transition: transform 0.1s; }
+  .card-head .head-main { min-width: 0; flex: 1; }
+  .head-subject { font-weight: 600; color: var(--text); font-size: 0.98rem; line-height: 1.3; }
+  .head-meta { color: var(--muted); font-size: 0.8rem; margin-top: 3px; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+  .head-meta .head-from { color: var(--muted-2); }
+  .draft-preview { color: var(--muted); font-size: 0.85rem; margin-top: 6px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card.expanded .draft-preview { display: none; }
+  .quick-actions { display: flex; gap: 0.5rem; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+  .card-body { margin-top: 12px; }
+
   .empty { color: var(--muted); padding: 28px; text-align: center; background: var(--surface); border: 1px dashed var(--border); border-radius: 10px; }
 
   details.surface-section { margin-top: 24px; border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; }
@@ -347,7 +362,8 @@
         <tr><td><kbd>j</kbd> / <kbd>k</kbd></td><td>Next / previous draft</td></tr>
         <tr><td><kbd>p</kbd></td><td>Push focused draft to Gmail Drafts</td></tr>
         <tr><td><kbd>d</kbd></td><td>Dismiss focused row (no reason)</td></tr>
-        <tr><td><kbd>e</kbd></td><td>Edit (focus the draft textarea)</td></tr>
+        <tr><td><kbd>x</kbd> / <kbd>o</kbd></td><td>Expand / collapse focused draft</td></tr>
+        <tr><td><kbd>e</kbd></td><td>Expand &amp; edit (focus the draft textarea)</td></tr>
         <tr><td><kbd>m</kbd></td><td>Mark sent manually</td></tr>
         <tr><td><kbd>r</kbd></td><td>Refresh list</td></tr>
         <tr><td><kbd>?</kbd></td><td>Show this help</td></tr>
@@ -409,36 +425,52 @@
     try { localStorage.setItem('youos-triage-account', acct.value); } catch (e) {}
   });
 
+  // Compact-by-default draft card: a one-glance summary (subject · sender ·
+  // score/model · draft preview) with quick verdict actions (approve→Push,
+  // Dismiss) always visible. "Edit" (or clicking the header, or the `e` key)
+  // expands it to reveal the inbound, the editable draft, and the full action
+  // set — so a long queue is scannable on mobile without a wall of textareas.
   function renderDraft(row) {
     const reasons = (row.reasons || []).join(', ') || '(no reasons recorded)';
-    const cold = row.cold_outreach ? '<span class="yos-badge yos-badge--warn cold">⚠ cold outreach</span>' : '';
-    const model = row.draft_model ? `<span class="yos-badge yos-badge--ok">model: ${esc(row.draft_model)}</span>` : '';
+    const cold = row.cold_outreach ? '<span class="yos-badge yos-badge--warn cold">⚠ cold</span>' : '';
+    const model = row.draft_model ? `<span class="yos-badge yos-badge--ok">${esc(row.draft_model)}</span>` : '';
     const score = `<span class="yos-badge">score ${Number(row.needs_reply_score).toFixed(2)}</span>`;
+    const draftText = row.amended_draft || row.draft || '';
+    const preview = draftText.replace(/\s+/g, ' ').trim().slice(0, 180);
+    const ellipsis = draftText.length > 180 ? '…' : '';
     return `
-      <div class="card" data-row-id="${row.id}">
-        <div class="meta-line">
-          ${score} ${cold} ${model}
-          <span>from <strong>${esc(row.sender || '(unknown)')}</strong></span>
-        </div>
-        <h3>${esc(row.subject || '(no subject)')}</h3>
-        <div class="reason-list">${esc(reasons)}</div>
-        <div class="two-col">
-          <div class="col">
-            <div class="col-label">Inbound</div>
-            <div class="inbound-body">${esc(row.body || '')}</div>
-          </div>
-          <div class="col">
-            <div class="col-label">Draft</div>
-            <textarea class="draft-edit" id="draft-${row.id}">${esc(row.amended_draft || row.draft || '')}</textarea>
+      <div class="card compact" data-row-id="${row.id}">
+        <div class="card-head" data-id="${row.id}" role="button" tabindex="0" aria-expanded="false" title="Click to expand / collapse">
+          <span class="chevron" aria-hidden="true">▸</span>
+          <div class="head-main">
+            <div class="head-subject">${esc(row.subject || '(no subject)')}</div>
+            <div class="head-meta">${score} ${cold} ${model} <span class="head-from">from ${esc(row.sender || '(unknown)')}</span></div>
+            <div class="draft-preview">${esc(preview)}${ellipsis}</div>
           </div>
         </div>
-        <div class="row-actions">
-          <button class="btn"        data-action="save"     data-id="${row.id}">Save edits</button>
-          <button class="btn"        data-action="push"     data-id="${row.id}" title="Create a real Gmail Draft on the original thread; then send it yourself from Gmail.">Push to Gmail Drafts</button>
-          <button class="btn secondary" data-action="copy"  data-id="${row.id}">Copy draft</button>
-          <button class="btn secondary" data-action="train" data-id="${row.id}" title="Edit the draft above to what you'd have said, then click — captures it as a training pair for the next nightly LoRA retrain.">Save as training pair</button>
-          <button class="btn ok"      data-action="sent"    data-id="${row.id}" title="I sent it manually outside YouOS — just close this row.">Mark sent manually</button>
+        <div class="quick-actions">
+          <button class="btn"        data-action="push"   data-id="${row.id}" title="Approve as-is: create a Gmail Draft on the original thread; send it yourself from Gmail.">Push to Gmail</button>
+          <button class="btn secondary" data-action="toggle" data-id="${row.id}">Edit ▾</button>
           ${dismissControls(row.id)}
+        </div>
+        <div class="card-body" hidden>
+          <div class="reason-list">${esc(reasons)}</div>
+          <div class="two-col">
+            <div class="col">
+              <div class="col-label">Inbound</div>
+              <div class="inbound-body">${esc(row.body || '')}</div>
+            </div>
+            <div class="col">
+              <div class="col-label">Draft</div>
+              <textarea class="draft-edit" id="draft-${row.id}">${esc(draftText)}</textarea>
+            </div>
+          </div>
+          <div class="row-actions">
+            <button class="btn"        data-action="save"  data-id="${row.id}">Save edits</button>
+            <button class="btn secondary" data-action="copy"  data-id="${row.id}">Copy draft</button>
+            <button class="btn secondary" data-action="train" data-id="${row.id}" title="Edit the draft above to what you'd have said, then click — captures it as a training pair for the next nightly LoRA retrain.">Save as training pair</button>
+            <button class="btn ok"      data-action="sent"  data-id="${row.id}" title="I sent it manually outside YouOS — just close this row.">Mark sent manually</button>
+          </div>
         </div>
       </div>`;
   }
@@ -637,13 +669,34 @@
     }
   }
 
+  // Expand / collapse a compact draft card. The inbound + editable draft +
+  // full action set live in .card-body (hidden until expanded); the textarea
+  // stays in the DOM either way, so save/copy/train still read it.
+  function toggleCard(id, force) {
+    const card = document.querySelector(`.card[data-row-id="${id}"]`);
+    if (!card) return;
+    const open = (typeof force === 'boolean') ? force : !card.classList.contains('expanded');
+    card.classList.toggle('expanded', open);
+    const body = card.querySelector('.card-body');
+    if (body) body.hidden = !open;
+    const chev = card.querySelector('.chevron');
+    if (chev) chev.textContent = open ? '▾' : '▸';
+    const head = card.querySelector('.card-head');
+    if (head) head.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
   document.addEventListener('click', (ev) => {
     const t = ev.target;
+    // Clicking a card header toggles expand/collapse (the quick-action buttons
+    // are a separate sibling, so their clicks don't reach here).
+    const head = t.closest && t.closest('.card-head');
+    if (head && head.getAttribute('data-id')) { toggleCard(head.getAttribute('data-id')); return; }
     if (t.tagName !== 'BUTTON') return;
     if (t.id === 'runBtn')     { runTriage(); return; }
     if (t.id === 'refreshBtn') { fetchPending(); return; }
     const action = t.getAttribute('data-action');
     const id = t.getAttribute('data-id');
+    if (action === 'toggle' && id) { toggleCard(id); return; }
     if (action && id) { rowAction(id, action); }
   });
 
@@ -887,9 +940,11 @@
     if (key === 'p') { rowAction(id, 'push'); ev.preventDefault(); }
     else if (key === 'd') { rowAction(id, 'dismiss'); ev.preventDefault(); }
     else if (key === 'e') {
+      toggleCard(id, true);  // ensure expanded before focusing the textarea
       const ta = card.querySelector(`#draft-${id}`);
       if (ta) { ta.focus(); ev.preventDefault(); }
     } else if (key === 'm') { rowAction(id, 'sent'); ev.preventDefault(); }
+    else if (key === 'x' || key === 'o') { toggleCard(id); ev.preventDefault(); }
   });
 
   // --- Agent health card -----------------------------------------------
