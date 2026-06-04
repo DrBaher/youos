@@ -1027,9 +1027,19 @@ def _run_sweep(
     except Exception:
         _summarize_enabled, _summary_min = False, 4
 
+    # The user's own addresses (the swept mailbox + any configured aliases) so
+    # the classifier can demote mail addressed to someone else (CC-only / via
+    # alias). Deduped, lowercased.
+    from app.core.config import get_user_emails
+
+    _account_emails = list(dict.fromkeys(
+        [account.lower()] + [e.lower() for e in get_user_emails() if e]
+    ))
+
     classified = classify_many(
         messages, history=history, threshold=threshold,
         skip_senders=skip_senders, vip_senders=vip_senders,
+        account_emails=_account_emails,
     )
     # Borderline LLM veto: ask the warm model to demote would-be drafts that
     # are actually broadcasts (no-op unless agent.adjudication.enabled + model
