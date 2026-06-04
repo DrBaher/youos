@@ -37,11 +37,12 @@ def list_agent_sweeps(
     request: Request,
     account: str | None = Query(None),
     limit: int = Query(20, ge=1, le=200),
+    offset: int = Query(0, ge=0),
 ) -> dict:
     """Recent triage sweeps from the audit log — what the agent did, when,
     by which trigger, with what result + any per-message errors."""
-    sweeps = store.list_recent_sweeps(_db_url(request), account=account, limit=limit)
-    return {"count": len(sweeps), "sweeps": sweeps}
+    sweeps = store.list_recent_sweeps(_db_url(request), account=account, limit=limit, offset=offset)
+    return {"count": len(sweeps), "limit": limit, "offset": offset, "has_more": len(sweeps) == limit, "sweeps": sweeps}
 
 
 @router.get("/api/agent/pending")
@@ -51,6 +52,7 @@ def list_agent_pending(
     tier: str | None = Query(None, pattern="^(draft|surface)$"),
     status: str = Query("pending", pattern="^(pending|amended|sent|dismissed)$"),
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
 ) -> dict:
     rows = store.list_pending(
         _db_url(request),
@@ -58,8 +60,11 @@ def list_agent_pending(
         status=status,
         tier=tier if tier in ("draft", "surface") else None,
         limit=limit,
+        offset=offset,
     )
-    return {"count": len(rows), "rows": rows}
+    # has_more: a full page came back, so another page may exist. Cheap signal
+    # for orchestrators to decide whether to fetch offset+limit next.
+    return {"count": len(rows), "limit": limit, "offset": offset, "has_more": len(rows) == limit, "rows": rows}
 
 
 @router.get("/api/agent/pending/{row_id}")
@@ -1063,6 +1068,39 @@ def trigger_triage(body: TriageRunBody, request: Request) -> dict:
         account = emails[0]
 
     settings = request.app.state.settings
+
+    # Rate-limit: a sweep is an expensive fetch+filter+draft cycle, so reject an
+    # on-demand triage requested too soon after the account's last sweep (manual,
+    # api, OR scheduled) with 429 + Retry-After. Enforces server-side the cadence
+    # AGENT_OPERATIONS.md already asks orchestrators to honor. Configurable /
+    # disable-able via agent.triage_min_interval_seconds.
+    from datetime import datetime, timezone
+
+    from app.agent.scheduler import get_agent_config
+
+    min_interval = int(get_agent_config().get("triage_min_interval_seconds", 60))
+    if min_interval > 0:
+        recent = store.list_recent_sweeps(settings.database_url, account=account, limit=1)
+        last_ts = (recent[0].get("started_at") if recent else None) or None
+        if last_ts:
+            try:
+                last = datetime.fromisoformat(last_ts)
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=timezone.utc)
+                elapsed = (datetime.now(timezone.utc) - last).total_seconds()
+            except (ValueError, TypeError):
+                elapsed = float(min_interval)  # unparseable timestamp → don't block
+            if elapsed < min_interval:
+                retry_after = max(1, int(min_interval - elapsed + 0.999))
+                raise HTTPException(
+                    429,
+                    detail=(
+                        f"triage for {account} ran {int(elapsed)}s ago; minimum "
+                        f"interval is {min_interval}s. Retry in {retry_after}s."
+                    ),
+                    headers={"Retry-After": str(retry_after)},
+                )
+
     result = run_triage(
         account=account,
         window=body.window,

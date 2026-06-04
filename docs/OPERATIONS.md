@@ -73,7 +73,7 @@ python3 scripts/bootstrap_db.py
 All settings in `youos_config.yaml`. Key sections:
 
 - `user`: name, emails, display name (drives the personalized `<First>OS` name)
-- `server`: host, port (default `127.0.0.1:8901`)
+- `server`: host, port (default `127.0.0.1:8765`)
 - `ingestion`: `google_backend` — `gog` (default), `gws`, or `native`
 - `model`: `base` model, adapter path, `fallback` (`claude` / `none`), and `server` (warm `mlx_lm.server`, default enabled)
 - `review`: `draft_model` — `auto` (default), `local`, or `claude`

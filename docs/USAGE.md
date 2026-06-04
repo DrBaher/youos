@@ -6,7 +6,7 @@
 ./scripts/install.sh      # creates .venv, installs YouOS (+ MLX on Apple Silicon), runs the doctor
 source .venv/bin/activate
 youos doctor              # verify Python, Google backend, MLX, disk space
-youos setup               # or open http://127.0.0.1:8901/welcome in the browser
+youos setup               # or open http://127.0.0.1:8765/welcome in the browser
 ```
 
 The setup wizard configures your identity (and personalizes the app's name from your
@@ -28,7 +28,7 @@ youos draft --sender john@company.com --mode work "email text"
 
 ### Via Web UI
 1. Run `youos serve` to start the server
-2. Open http://127.0.0.1:8901/feedback
+2. Open http://127.0.0.1:8765/feedback
 3. Paste the inbound email, click Generate Draft (a per-draft badge shows which model ran)
 4. Edit the draft as needed, then Submit Feedback
 

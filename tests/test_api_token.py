@@ -111,3 +111,47 @@ def test_legacy_flat_hash_list_still_verifies(tmp_path):
     write_secret(path, json.dumps([get_pin_hash("legacy-tok")]))
     assert verify_api_token("legacy-tok", path) is True
     assert verify_api_token("wrong", path) is False
+
+
+# --- b203: per-token revocation + listing metadata ---------------------------
+
+def test_revoke_single_token_by_prefix_leaves_others(tmp_path):
+    from app.core.auth import (
+        add_api_token,
+        load_api_token_hashes,
+        revoke_api_token,
+        verify_api_token,
+    )
+
+    path = tmp_path / "api_tokens.json"
+    t1 = add_api_token(path)
+    t2 = add_api_token(path)
+    removed = revoke_api_token(t1[:6], path)
+    assert removed == 1
+    assert verify_api_token(t1, path) is False  # revoked
+    assert verify_api_token(t2, path) is True   # untouched
+    assert len(load_api_token_hashes(path)) == 1
+
+
+def test_revoke_unknown_prefix_removes_nothing(tmp_path):
+    from app.core.auth import add_api_token, load_api_token_hashes, revoke_api_token
+
+    path = tmp_path / "api_tokens.json"
+    add_api_token(path)
+    assert revoke_api_token("zzzzzz", path) == 0
+    assert revoke_api_token("", path) == 0
+    assert len(load_api_token_hashes(path)) == 1
+
+
+def test_list_api_tokens_returns_prefix_and_created_no_secret(tmp_path):
+    from app.core.auth import add_api_token, list_api_tokens
+
+    path = tmp_path / "api_tokens.json"
+    token = add_api_token(path)
+    meta = list_api_tokens(path)
+    assert len(meta) == 1
+    assert meta[0]["prefix"] == token[:6]
+    assert meta[0]["created"]  # ISO timestamp recorded
+    # never leak the secret or even the hash
+    assert "hash" not in meta[0]
+    assert token not in str(meta)

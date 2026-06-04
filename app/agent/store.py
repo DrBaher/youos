@@ -126,10 +126,16 @@ def list_pending(
     status: Status = "pending",
     tier: Tier | None = None,
     limit: int = 100,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
     """List pending rows, most TIME-CRITICAL first. ``tier=None`` returns both
     'draft' and 'surface' tiers so the UI can render them together (with the
     surface section collapsed by default).
+
+    ``offset`` (≥0) skips that many rows for stable keyset-free pagination —
+    fetch in ``limit``-sized pages with ``offset = page * limit``. The ORDER BY
+    is fully deterministic (urgency, needs-reply, created_at, then id as the
+    final tiebreaker) so paging never drops or repeats a row.
 
     b189: ordering is ``(urgency_score DESC, needs_reply_score DESC,
     created_at DESC)`` — a deadline/urgent message rises above a routine one even
@@ -147,9 +153,11 @@ def list_pending(
         sql += " AND tier = ?"
         params.append(tier)
     sql += (
-        " ORDER BY urgency_score DESC, needs_reply_score DESC, created_at DESC LIMIT ?"
+        " ORDER BY urgency_score DESC, needs_reply_score DESC, created_at DESC, id DESC"
+        " LIMIT ? OFFSET ?"
     )
     params.append(int(limit))
+    params.append(max(0, int(offset)))
 
     with closing(_connect(database_url)) as conn:
         rows = conn.execute(sql, params).fetchall()
@@ -732,16 +740,20 @@ def list_recent_sweeps(
     *,
     account: str | None = None,
     limit: int = 20,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
     """Return the most-recent sweeps, newest first, with the JSON error list
-    rehydrated. Used by the /triage 'Recent activity' panel."""
+    rehydrated. Used by the /triage 'Recent activity' panel. ``offset`` (≥0)
+    skips that many rows for page-through access via the agent API; ``id`` is the
+    final tiebreaker so paging is stable when several sweeps share a timestamp."""
     sql = "SELECT * FROM agent_audit"
     params: list[Any] = []
     if account:
         sql += " WHERE account = ?"
         params.append(account)
-    sql += " ORDER BY started_at DESC LIMIT ?"
+    sql += " ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?"
     params.append(int(limit))
+    params.append(max(0, int(offset)))
     with closing(_connect(database_url)) as conn:
         rows = conn.execute(sql, params).fetchall()
     return [_audit_row_to_dict(r) for r in rows]
