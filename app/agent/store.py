@@ -532,18 +532,23 @@ def mark_dismissed(
     row_id: int,
     *,
     reason: str | None = None,
+    note: str | None = None,
 ) -> bool:
     """Mark a pending row as dismissed. ``reason`` is one of ``DISMISSAL_REASONS``
     (or ``None`` if the user didn't supply one — legacy callers / older UI).
     Unknown reasons are coerced to ``'other'`` so the column stays bounded —
     the API layer validates and rejects upstream, this is just defence in depth.
-    """
+    ``note`` is the free-text elaboration the UI captures for ``reason='other'``;
+    stored verbatim (bounded to 500 chars defensively)."""
     if reason is not None and reason not in DISMISSAL_REASONS:
         reason = "other"
+    if note is not None:
+        note = note.strip()[:500] or None
     return _update_status(
         database_url, row_id,
         status="dismissed", dismissed_at_now=True,
         dismissal_reason=reason,
+        dismissal_note=note,
     )
 
 
@@ -558,6 +563,7 @@ def _update_status(
     dismissed_at_now: bool = False,
     gmail_draft_id: str | None = None,
     dismissal_reason: str | None = None,
+    dismissal_note: str | None = None,
     require_status: tuple[str, ...] | None = None,
 ) -> bool:
     sets = ["status = ?", "updated_at = CURRENT_TIMESTAMP"]
@@ -578,6 +584,9 @@ def _update_status(
     if dismissal_reason is not None:
         sets.append("dismissal_reason = ?")
         params.append(dismissal_reason)
+    if dismissal_note is not None:
+        sets.append("dismissal_note = ?")
+        params.append(dismissal_note)
     params.append(row_id)
     where = "id = ?"
     # An optional status precondition makes the transition atomic: e.g. an amend

@@ -1045,3 +1045,36 @@ def test_pending_offset_paginates_without_overlap(authed_client):
 
 def test_pending_offset_rejects_negative(authed_client):
     assert authed_client.get("/api/agent/pending?offset=-1").status_code == 422
+
+
+# --- b206: dismiss 'other' free-text note ------------------------------------
+
+def test_dismiss_other_persists_free_text_note(authed_client):
+    rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
+    row_id = rows[0]["id"]
+    r = authed_client.post(
+        f"/api/agent/pending/{row_id}/dismiss",
+        json={"reason": "other", "note": "colleague already handled this offline"},
+    )
+    assert r.status_code == 200
+    after = r.json()["row"]
+    assert after["dismissal_reason"] == "other"
+    assert after["dismissal_note"] == "colleague already handled this offline"
+
+
+def test_dismiss_note_is_length_bounded(authed_client):
+    rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
+    row_id = rows[0]["id"]
+    r = authed_client.post(
+        f"/api/agent/pending/{row_id}/dismiss",
+        json={"reason": "other", "note": "x" * 501},
+    )
+    assert r.status_code == 422  # max_length=500
+
+
+def test_dismiss_without_note_still_works(authed_client):
+    rows = authed_client.get("/api/agent/pending").json()["rows"]
+    row_id = next(r["id"] for r in rows if r["tier"] == "surface")
+    r = authed_client.post(f"/api/agent/pending/{row_id}/dismiss", json={"reason": "noise"})
+    assert r.status_code == 200
+    assert r.json()["row"]["dismissal_note"] is None
