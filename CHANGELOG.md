@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — mobile optimization pass across all pages (b210)
+
+### Every page audited at phone width; horizontal scroll eliminated
+
+Drove all ten web pages (Draft, Triage, Rules, Digests, Stats, Settings, Gmail, About, Welcome, Login) at 390px and measured `scrollWidth` vs viewport. Found and fixed the horizontal-scroll offenders:
+
+- **Nav/header didn't wrap on About + Gmail (bookmarklet)** — those two templates omitted `flex-wrap` on `.oc-header`/`.oc-nav`, so the brand got crammed and the page scrolled sideways. Fixed **globally** in the shared `static/youos.css` (loaded by every page) so it's consistent and regression-proof, not per-template whack-a-mole. Added a small phone media query (tighter nav gap, slightly larger tap target).
+- **Wide data tables** (About's privacy + tech-stack tables, Triage's recent-activity table) now sit in a `.table-scroll` wrapper — they scroll inside their own box instead of widening the page.
+- **Mobile safety net** in `youos.css`: `img/video/canvas { max-width:100% }`, `pre { overflow-x:auto }`, `code { overflow-wrap:anywhere }` so long URLs/paths/tokens can't force horizontal scroll anywhere.
+
+After the fixes every page reports `scrollWidth == 390` (no page-level horizontal scroll). Verified the result visually on About, Gmail, Stats, Settings, and Rules; the opt-in UI smoke test passes (no JS console errors). CSS/template only.
+
 ## Unreleased — triage: compact, expandable draft cards (b209)
 
 ### A scannable queue — quick approve/dismiss, expand to edit

@@ -116,3 +116,35 @@
 /* --- Small helpers ------------------------------------------------------- */
 .yos-note { font-size: 0.8rem; color: var(--muted-2); }
 .yos-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* --- Shared mobile / responsive safety net ------------------------------
+ * Loaded by every page, so these fixes apply uniformly. Each template ships
+ * its own inline styles; these patch the cross-page mobile gaps (a nav that
+ * didn't wrap on about/bookmarklet, wide media / code / tables causing
+ * horizontal scroll) in one place instead of per template. */
+
+/* The header (brand + nav) and the nav itself must ALWAYS wrap rather than
+ * push the page wider than the viewport — about.html / bookmarklet.html omitted
+ * flex-wrap, which crammed the brand and caused horizontal scroll on phones. */
+.oc-header { flex-wrap: wrap; gap: 0.5rem; }
+.oc-nav { flex-wrap: wrap; }
+
+/* Media never forces horizontal scroll. (svg left out — icons set explicit
+ * dimensions and height:auto would distort them.) */
+img, video, canvas { max-width: 100%; height: auto; }
+
+/* Long unbreakable strings (URLs, file paths, tokens) wrap instead of
+ * overflowing; block code scrolls within its own box. */
+pre { overflow-x: auto; max-width: 100%; }
+code { overflow-wrap: anywhere; }
+
+/* Wrap any wide data table in <div class="table-scroll"> so it scrolls inside
+ * its own box instead of widening the page. */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+
+@media (max-width: 600px) {
+  /* Tighter, still-legible nav on phones; slightly larger tap target. */
+  .oc-nav { gap: 0.55rem 0.9rem; }
+  .oc-nav-link { font-size: 0.9rem; padding: 3px 0; }
+  .oc-wordmark { font-size: 1.15rem; }
+}
