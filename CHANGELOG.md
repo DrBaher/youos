@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased — triage: re-screen the queue against current rules (b212)
+
+### Clean a backlog drafted under older rules
+
+The precision fixes (b205/b207) only change what *new* sweeps draft — re-running triage is idempotent per message, so it never re-evaluates or removes drafts an earlier sweep already created. A real inbox had 300+ pending drafts from before the fixes (meeting recaps, calendar invites, marketing) that lingered.
+
+New **`POST /api/agent/rescreen`** + a **"Re-screen queue"** button in the triage controls: re-checks every queued `draft` row against the *current* needs-reply rules and dismisses the ones the agent would no longer draft. Conservative — only dismisses hard-skips (score 0, e.g. a calendar-invite subject) or rows carrying a content-derivable noise reason (meeting recap / calendar / marketing / transactional); a draft that merely scores lower is left alone. The button does a `dry_run` first and asks for confirmation with the count + category breakdown.
+
+Caveat: CC-only / not-a-direct-recipient can't be re-screened on existing rows (the original To/Cc wasn't persisted on the row) — new sweeps handle those at draft time; old CC-only drafts are dismissed manually. Tests cover dismissing a stale recap while preserving a legit draft, and dry-run being side-effect-free.
+
 ## Unreleased — triage: account picker is a dropdown, not a text field (b211)
 
 ### Pick your mailbox instead of typing it on a phone keyboard

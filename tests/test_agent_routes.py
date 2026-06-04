@@ -1102,3 +1102,40 @@ def test_accounts_endpoint_empty_when_none_configured(authed_client, monkeypatch
     monkeypatch.setattr("app.agent.scheduler.get_agent_config", lambda: {"accounts": []})
     monkeypatch.setattr("app.core.config.get_user_emails", lambda: ())
     assert authed_client.get("/api/agent/accounts").json()["accounts"] == []
+
+
+# --- b212: re-screen queue against current rules -----------------------------
+
+def _seed_meeting_summary_draft(tmp_path):
+    from app.agent import store
+    db_url = f"sqlite:///{tmp_path}/var/youos.db"
+    store.upsert_pending(
+        db_url, message_id="m-recap", thread_id="t-r", account="you@example.com",
+        sender="Notetaker <bot@x.com>", sender_email="bot@x.com",
+        subject="Meeting summary — Q3 sync",
+        body="Here are the notes from our meeting. Action items: review the deck.",
+        received_at="2026-05-28T10:00:00Z", needs_reply_score=0.7, reasons=[],
+        cold_outreach=False, tier="draft", draft="Thanks for the recap.",
+        draft_model="qwen", draft_repairs=[], standing_instructions_snapshot=None,
+    )
+
+
+def test_rescreen_dismisses_stale_meeting_summary_keeps_legit(authed_client, tmp_path):
+    _seed_meeting_summary_draft(tmp_path)
+    dry = authed_client.post("/api/agent/rescreen", json={"dry_run": True}).json()
+    assert dry["dismissed"] >= 1
+    assert dry["scanned"] >= 2
+
+    res = authed_client.post("/api/agent/rescreen", json={}).json()
+    assert res["dismissed"] >= 1
+    subjects = [r["subject"] for r in authed_client.get("/api/agent/pending?tier=draft").json()["rows"]]
+    assert "Meeting summary — Q3 sync" not in subjects   # stale recap cleaned
+    assert "Q3 pricing?" in subjects                      # legit draft preserved
+
+
+def test_rescreen_dry_run_changes_nothing(authed_client, tmp_path):
+    _seed_meeting_summary_draft(tmp_path)
+    before = len(authed_client.get("/api/agent/pending?tier=draft").json()["rows"])
+    authed_client.post("/api/agent/rescreen", json={"dry_run": True})
+    after = len(authed_client.get("/api/agent/pending?tier=draft").json()["rows"])
+    assert before == after
