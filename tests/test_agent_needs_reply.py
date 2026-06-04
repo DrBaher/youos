@@ -566,3 +566,34 @@ def test_normal_reply_not_mistaken_for_calendar():
     ))
     assert not any("calendar" in r for r in v.reasons)
     assert v.needs_reply is True
+
+
+# --- b214: self-sent + more automation domains -------------------------------
+
+def test_from_own_address_hard_skips():
+    v = classify(_msg(sender="You <you@example.com>", sender_email="you@example.com",
+                      subject="Pay Drei", body="note to self"),
+                 account_emails=["you@example.com"])
+    assert v.needs_reply is False
+    assert v.score == 0.0
+    assert "your own address" in v.reasons[0]
+
+
+def test_from_own_address_noop_without_account_emails():
+    # Without knowing the user's addresses, can't detect self-sent (no crash).
+    v = classify(_msg(sender_email="you@example.com"))
+    assert not any("your own address" in r for r in v.reasons)
+
+
+def test_docusign_subdomain_hard_skips():
+    v = classify(_msg(sender="DocuSign <dse@eumail.docusign.net>",
+                      sender_email="dse@eumail.docusign.net",
+                      subject="Completed: license agreement", body="All parties have completed."))
+    assert v.needs_reply is False and v.score == 0.0
+
+
+def test_booking_subdomain_hard_skips():
+    v = classify(_msg(sender="Booking.com <x@property.booking.com>",
+                      sender_email="x@property.booking.com",
+                      subject="Direct check-in", body="Your stay details."))
+    assert v.needs_reply is False and v.score == 0.0
