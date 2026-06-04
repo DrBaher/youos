@@ -256,7 +256,10 @@
   <details class="controls-panel" id="controlsPanel">
     <summary>⚙ Triage controls <span class="muted-hint">— run a sweep · account · filter</span></summary>
     <div class="toolbar" style="margin-top:10px">
-      <input id="acctInput" type="email" placeholder="account email (e.g. baher@medicus.ai)" />
+      <!-- Populated from /api/agent/accounts on load (configured mailboxes), so
+           on mobile you pick rather than type. Falls back to a single
+           "default account" option when none are configured. -->
+      <select id="acctInput" aria-label="Account"><option value="">Default account</option></select>
       <select id="windowSelect">
         <option value="24h">last 24h</option>
         <option value="3d">last 3d</option>
@@ -418,11 +421,31 @@
   // Cached server response — applyClientFilter() re-renders without refetching.
   let lastRows = { drafts: [], surface: [] };
 
-  // Persist account choice locally so the user doesn't retype it every visit.
-  try {
-    const remembered = localStorage.getItem('youos-triage-account');
-    if (remembered) acct.value = remembered;
-  } catch (e) {}
+  // Populate the account dropdown from the configured mailboxes, restoring the
+  // last-used choice. Native <select> = a tap-to-pick on mobile (no keyboard),
+  // and no chance of a typo'd address.
+  async function loadAccounts() {
+    let accounts = [];
+    try {
+      const r = await fetch('/api/agent/accounts').then(r => r.json());
+      accounts = r.accounts || [];
+    } catch (e) {}
+    let remembered = '';
+    try { remembered = localStorage.getItem('youos-triage-account') || ''; } catch (e) {}
+    acct.innerHTML = '';
+    if (accounts.length === 0) {
+      const o = document.createElement('option');
+      o.value = ''; o.textContent = 'Default account';
+      acct.appendChild(o);
+      return;
+    }
+    accounts.forEach(a => {
+      const o = document.createElement('option');
+      o.value = a; o.textContent = a;
+      acct.appendChild(o);
+    });
+    acct.value = (remembered && accounts.includes(remembered)) ? remembered : accounts[0];
+  }
   acct.addEventListener('change', () => {
     try { localStorage.setItem('youos-triage-account', acct.value); } catch (e) {}
   });
@@ -577,10 +600,11 @@
   filterMinScore.addEventListener('change', applyClientFilter);
 
   async function runTriage() {
-    if (!acct.value.trim()) { alert('Enter an account email first.'); return; }
     runBtn.disabled = true; status.textContent = 'Triaging…';
     try {
-      const body = { account: acct.value.trim(), window: win.value, limit: 25, threshold: 0.6 };
+      // Empty account → let the server use the default mailbox (user.emails[0]).
+      const body = { window: win.value, limit: 25, threshold: 0.6 };
+      if (acct.value.trim()) body.account = acct.value.trim();
       const r = await fetch('/api/agent/triage', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1106,7 +1130,9 @@ They'll be hard-skipped on every future sweep.`)) return;
   acct.addEventListener('change', loadHealth);
 
   loadStanding();
-  fetchPending();    // fetchPending also kicks off loadActivity + loadHealth at the end
+  // Populate the account picker first, then load its queue (so the initial
+  // fetch is scoped to the restored/selected account).
+  loadAccounts().then(fetchPending);  // fetchPending also kicks off loadActivity + loadHealth at the end
 })();
 </script>
 </body>

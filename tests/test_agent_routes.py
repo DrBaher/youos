@@ -1078,3 +1078,27 @@ def test_dismiss_without_note_still_works(authed_client):
     r = authed_client.post(f"/api/agent/pending/{row_id}/dismiss", json={"reason": "noise"})
     assert r.status_code == 200
     assert r.json()["row"]["dismissal_note"] is None
+
+
+# --- b211: account picker endpoint -------------------------------------------
+
+def test_accounts_endpoint_lists_user_emails(authed_client, monkeypatch):
+    monkeypatch.setattr("app.agent.scheduler.get_agent_config", lambda: {"accounts": []})
+    monkeypatch.setattr("app.core.config.get_user_emails", lambda: ("a@x.com", "b@x.com"))
+    r = authed_client.get("/api/agent/accounts")
+    assert r.status_code == 200
+    assert r.json()["accounts"] == ["a@x.com", "b@x.com"]
+
+
+def test_accounts_endpoint_prefers_agent_accounts_and_dedupes(authed_client, monkeypatch):
+    monkeypatch.setattr("app.agent.scheduler.get_agent_config",
+                        lambda: {"accounts": ["x@y.com", " x@y.com ", "z@y.com"]})
+    monkeypatch.setattr("app.core.config.get_user_emails", lambda: ("ignored@x.com",))
+    r = authed_client.get("/api/agent/accounts")
+    assert r.json()["accounts"] == ["x@y.com", "z@y.com"]
+
+
+def test_accounts_endpoint_empty_when_none_configured(authed_client, monkeypatch):
+    monkeypatch.setattr("app.agent.scheduler.get_agent_config", lambda: {"accounts": []})
+    monkeypatch.setattr("app.core.config.get_user_emails", lambda: ())
+    assert authed_client.get("/api/agent/accounts").json()["accounts"] == []

@@ -45,6 +45,25 @@ def list_agent_sweeps(
     return {"count": len(sweeps), "limit": limit, "offset": offset, "has_more": len(sweeps) == limit, "sweeps": sweeps}
 
 
+@router.get("/api/agent/accounts")
+def list_accounts() -> dict:
+    """Configured mailboxes for the triage account picker — ``agent.accounts``
+    if set, otherwise ``user.emails``. Lets the UI offer a dropdown instead of a
+    free-text field (no typing a full address on a phone). An empty list means
+    'no account configured'; the caller can omit ``account`` and the server
+    falls back to ``user.emails[0]``."""
+    from app.agent.scheduler import get_agent_config
+    from app.core.config import get_user_emails
+
+    raw = get_agent_config().get("accounts") or list(get_user_emails())
+    seen: list[str] = []
+    for a in raw:
+        a = (a or "").strip()
+        if a and a not in seen:
+            seen.append(a)
+    return {"accounts": seen}
+
+
 @router.get("/api/agent/pending")
 def list_agent_pending(
     request: Request,
