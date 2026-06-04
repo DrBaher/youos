@@ -522,3 +522,47 @@ def test_marketing_body_footer_penalty():
         body="Check out our new product! You're receiving this email because you signed up. Unsubscribe here.",
     ))
     assert any("marketing/bulk body footer" in r for r in v.reasons)
+
+
+# --- b207: calendar invites + invite responses -------------------------------
+
+def test_calendar_invitation_subject_hard_skips():
+    v = classify(_msg(subject="Invitation: Q3 planning sync @ Thu Jun 5, 2pm",
+                       body="When: Thursday. Where: Zoom. Guests: ..."))
+    assert v.needs_reply is False
+    assert v.score == 0.0
+    assert "calendar" in v.reasons[0]
+
+
+def test_calendar_invite_responses_hard_skip():
+    for subj in (
+        "Accepted: Q3 planning sync @ Thu",
+        "Declined: Q3 planning sync @ Thu",
+        "Tentative: Q3 planning sync @ Thu",
+        "Canceled event: Q3 planning sync",
+        "Updated invitation: Q3 planning sync @ Fri",
+        "Re: Invitation: Q3 planning sync @ Thu",
+    ):
+        v = classify(_msg(subject=subj, body="calendar details"))
+        assert v.needs_reply is False, subj
+        assert v.score == 0.0, subj
+
+
+def test_text_calendar_content_type_hard_skips():
+    v = classify(_msg(
+        subject="Meeting",
+        headers={"content-type": 'text/calendar; method=REQUEST; charset="UTF-8"'},
+        body="BEGIN:VCALENDAR ...",
+    ))
+    assert v.needs_reply is False
+    assert v.score == 0.0
+
+
+def test_normal_reply_not_mistaken_for_calendar():
+    # A normal threaded reply must NOT be calendar-skipped.
+    v = classify(_msg(
+        subject="Re: Q3 planning — could you confirm the budget?",
+        body="Could you confirm the Q3 budget by Friday?",
+    ))
+    assert not any("calendar" in r for r in v.reasons)
+    assert v.needs_reply is True
