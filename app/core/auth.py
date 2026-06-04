@@ -144,11 +144,12 @@ _TOKEN_PREFIX_LEN = 6
 
 
 def _load_api_token_entries(path: Path | None = None) -> list[dict[str, str]]:
-    """Return stored API-token entries as ``{'prefix': str, 'hash': str}``.
+    """Return stored API-token entries as ``{'prefix', 'hash', 'created'}``.
 
-    Back-compat: a legacy file is a flat list of bare hash strings (no prefix);
-    those load with ``prefix=''`` and are matched by full scan (the cap bounds
-    how many such legacy entries can accumulate going forward)."""
+    ``created`` is an ISO-8601 string (or ``''`` for entries minted before it
+    was recorded). Back-compat: a legacy file is a flat list of bare hash
+    strings (no prefix); those load with ``prefix=''`` and are matched by full
+    scan (the cap bounds how many such legacy entries can accumulate)."""
     if path is None:
         path = _get_api_tokens_path()
     try:
@@ -161,9 +162,13 @@ def _load_api_token_entries(path: Path | None = None) -> list[dict[str, str]]:
     entries: list[dict[str, str]] = []
     for item in raw:
         if isinstance(item, str):
-            entries.append({"prefix": "", "hash": item})
+            entries.append({"prefix": "", "hash": item, "created": ""})
         elif isinstance(item, dict) and item.get("hash"):
-            entries.append({"prefix": str(item.get("prefix", "")), "hash": str(item["hash"])})
+            entries.append({
+                "prefix": str(item.get("prefix", "")),
+                "hash": str(item["hash"]),
+                "created": str(item.get("created", "")),
+            })
     return entries
 
 
@@ -172,13 +177,26 @@ def load_api_token_hashes(path: Path | None = None) -> list[str]:
     return [e["hash"] for e in _load_api_token_entries(path)]
 
 
+def list_api_tokens(path: Path | None = None) -> list[dict[str, str]]:
+    """Return non-secret metadata for each stored token — ``{'prefix', 'created'}``
+    — newest last. The plaintext (and even the hash) is never returned; the
+    prefix is the stable handle used to revoke a single token."""
+    return [{"prefix": e["prefix"], "created": e["created"]} for e in _load_api_token_entries(path)]
+
+
 def add_api_token(path: Path | None = None) -> str:
     """Generate a new API token, persist its hash, and return the plaintext once."""
     if path is None:
         path = _get_api_tokens_path()
+    from datetime import datetime, timezone
+
     token = secrets.token_urlsafe(32)
     entries = _load_api_token_entries(path)
-    entries.append({"prefix": token[:_TOKEN_PREFIX_LEN], "hash": get_pin_hash(token)})
+    entries.append({
+        "prefix": token[:_TOKEN_PREFIX_LEN],
+        "hash": get_pin_hash(token),
+        "created": datetime.now(timezone.utc).isoformat(),
+    })
     if len(entries) > MAX_API_TOKENS:
         entries = entries[-MAX_API_TOKENS:]  # rotate out the oldest
     write_secret(path, json.dumps(entries))  # 0o600: token hashes are crackable offline
@@ -193,6 +211,27 @@ def revoke_api_tokens(path: Path | None = None) -> int:
     if path.exists():
         write_secret(path, json.dumps([]))
     return count
+
+
+def revoke_api_token(prefix: str, path: Path | None = None) -> int:
+    """Revoke the single token whose plaintext prefix matches ``prefix``.
+
+    Returns how many entries were removed (0 if none matched, or >1 in the rare
+    case two tokens share a 6-char prefix — both are dropped, which is the safe
+    choice: a revoke request never leaves a same-prefix token live). Legacy
+    prefix-less entries (``prefix=''``) can't be addressed individually; use
+    ``revoke_api_tokens`` (all) for those."""
+    if path is None:
+        path = _get_api_tokens_path()
+    prefix = (prefix or "").strip()
+    if not prefix:
+        return 0
+    entries = _load_api_token_entries(path)
+    kept = [e for e in entries if e["prefix"] != prefix]
+    removed = len(entries) - len(kept)
+    if removed:
+        write_secret(path, json.dumps(kept))
+    return removed
 
 
 def verify_api_token(token: str, path: Path | None = None) -> bool:

@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased — harden the agent/orchestrator integration surface (b203)
+
+### Agents: close the gaps an OpenClaw/Hermes integrator hits, and stop the docs lying about sending
+
+An audit of the agent-facing REST surface (what OpenClaw/Hermes/a chat bot use) found the documented endpoints all exist and match — but three real gaps plus doc/code drift. This closes them.
+
+- **Triage rate-limiting (enforced, not just advised).** `POST /api/agent/triage` now returns **429 + `Retry-After`** when a sweep is requested within `agent.triage_min_interval_seconds` (default 60) of the account's last sweep (any trigger). A sweep is a 30–60s fetch+filter+draft cycle; an orchestrator that looped "triage again" used to hammer Gmail + the model server. `AGENT_OPERATIONS.md` already told agents to self-limit — now the server enforces it. Set the knob to 0 to disable. The background scheduler is unaffected.
+- **Offset pagination.** `GET /api/agent/pending` and `GET /api/agent/sweeps` take `offset`; responses carry `limit`/`offset`/`has_more`. ORDER BY now ends in `id` so paging is stable when rows share a timestamp/score.
+- **Per-token revocation.** Was all-or-none. `youos token-list` now shows each token's prefix + creation date; `youos token-revoke <prefix>` revokes one, `--all` revokes all. `auth.add_api_token` records a `created` timestamp; new `auth.list_api_tokens` / `auth.revoke_api_token(prefix)`. Legacy prefix-less tokens still cleared via `--all`.
+- **Docs reconciled with the code.** `AGENT_OPERATIONS.md` said *"No `/api/agent/send` endpoint exists by design"* — but `POST .../send` and `.../confirm_send` have existed (hard-gated behind `agent.send.enabled` + kill-switch) since the send-frontier work. The trust-boundary, decision-tree, idempotency, and error tables now describe the gated reality (403 when off), and document `regenerate`, the 429, offset, the single-row GET, and that raw-inbox read is intentionally absent. `INTEGRATIONS.md` endpoint table gains `regenerate`/`send`/`confirm_send`/single-GET/`followups` + the offset/429/per-token-revoke notes. Stale example port `8901` → the real default `8765` across docs + the reference bot.
+
+Tests: triage 429 + `Retry-After` (and disabled-when-0, allowed-when-no-recent-sweep, stubbed `run_triage`); pending offset pages without overlap + rejects negative; per-token revoke leaves siblings valid + `list_api_tokens` leaks no secret.
+
+Also fixed a pre-existing **time-bomb** in `tests/test_agent_digest.py`: it seeded a sweep at a hardcoded `2026-05-28` and queried a `days=7` window, so the suite went red once the clock passed that date (the window-filtered `auto_promoted` aggregate emptied). The seed now anchors the sweep relative to `now()`.
+
 ## Unreleased — browser UI smoke test (b201)
 
 ### Quality: the plain-HTML/JS UI finally has regression coverage

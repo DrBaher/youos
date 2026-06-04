@@ -33,7 +33,9 @@ Before the first user-facing call, do this once per session:
 | User intent | Endpoint | Follow-up |
 |---|---|---|
 | "Anything important?" / "What's in my inbox" | `GET /api/agent/digest` | Paraphrase `summary`; if `pending_count > 0`, list top 3 from `pending_preview` |
-| "Push the X" / "Send the draft for X" | `GET /api/agent/resolve?q=X` → `POST /api/agent/pending/<id>/push_to_gmail` | If `count == 1`, push. If `count > 1`, disambiguate (§5). If `count == 0`, suggest `/inbox` |
+| "Push the X to Gmail" | `GET /api/agent/resolve?q=X` → `POST /api/agent/pending/<id>/push_to_gmail` | If `count == 1`, push. If `count > 1`, disambiguate (§5). If `count == 0`, suggest `/inbox`. Creates a Gmail **Draft** — does NOT send |
+| "Redraft X / make it shorter / change the tone" | `GET /api/agent/resolve?q=X` → `POST /api/agent/pending/<id>/regenerate {instruction, tone_hint?, mode?, persist?}` | Re-runs generation with steering. `persist:false` = preview only (don't overwrite the stored draft); response carries `draft` + `model_used` |
+| "Send the X" / "send it for real" | `GET /api/agent/resolve?q=X` → `POST /api/agent/pending/<id>/confirm_send {amended_draft?}` | **Hard-gated** — returns 403 unless the user has enabled `agent.send.enabled` and the kill-switch is off. If 403, fall back to `push_to_gmail` and tell the user to finish-and-send from Gmail. See §7 |
 | "Dismiss the X" / "Skip the X" | `GET /api/agent/resolve?q=X` → `POST /api/agent/pending/<id>/dismiss {reason}` | Same disambiguation. Default `reason: "noise"` unless user qualifies |
 | "Save my version as a training pair" | `POST /api/agent/pending/<id>/save_as_feedback_pair {edited_reply}` | The user's correction goes in `edited_reply` |
 | "What did the agent do today/this week" | `GET /api/agent/sweeps?limit=10` | Render sweep timestamps + counts |
@@ -58,9 +60,11 @@ Don't substitute one for another. `/resolve` is read-only; `/dismiss` and `/push
 | `POST /api/agent/pending/{id}/dismiss` | Yes | `mark_dismissed` is upsert-style; second call just re-writes the same status |
 | `POST /api/agent/pending/{id}/mark_sent` | Yes | Same — sets timestamp again, harmless |
 | `POST /api/agent/pending/{id}/amend` | Yes | Overwrites `amended_draft` |
-| `POST /api/agent/pending/{id}/push_to_gmail` | **NO** | Creates a **new Gmail draft each call**. Retrying after a timeout can produce duplicate drafts in the user's Gmail Drafts folder |
+| `POST /api/agent/pending/{id}/regenerate` | **NO** | Generates a fresh draft each call (different text). With `persist:false` it has no side effect (preview only) and is safe to repeat |
+| `POST /api/agent/pending/{id}/push_to_gmail` | **NO** (guarded) | Creates a **new Gmail draft each call**. An atomic claim makes a re-push of an already-pushed row return the existing `gmail_draft_id` with `pushed_already:true` rather than duplicating — but a retry *after a timeout* can still duplicate; use the retry check below |
+| `POST /api/agent/pending/{id}/send` / `confirm_send` | **NO** | Sends mail. Never auto-retry a send whose outcome you don't know — check the row's send state first |
 | `POST /api/agent/pending/{id}/save_as_feedback_pair` | **NO** | Inserts a new `feedback_pairs` row each call |
-| `POST /api/agent/triage` | **NO** | Each call runs a fresh sweep against Gmail (fetch + filter + draft + persist) |
+| `POST /api/agent/triage` | **NO** | Each call runs a fresh sweep against Gmail. Rate-limited: a sweep within `agent.triage_min_interval_seconds` (default 60) of the last one returns **429 + Retry-After** (see §4) |
 | `POST /api/agent/skip_senders/promote` | **Effectively yes** | Already-present senders are silently de-duped |
 
 **On `push_to_gmail` retry**: if the first call timed out, check `GET /api/agent/pending/{id}` — if `gmail_draft_id` is set, the push succeeded despite the timeout. Don't retry. If it's still NULL, retry once.
@@ -74,8 +78,11 @@ Don't substitute one for another. `/resolve` is read-only; `/dismiss` and `/push
 | 200 | Success | (parse the body) |
 | 400 | Bad request — usually missing/invalid param | Surface the response body's `detail` field verbatim |
 | 401 | Token missing or invalid | "Your YouOS API token has expired or was rotated. Mint a new one with `youos token-create` and update the bot config." |
+| 403 | Forbidden — sending disabled, kill-switch on, or origin not allowed | "Sending is turned off (YouOS is draft-only by default). I pushed a Gmail draft instead — open Gmail to send." Don't retry; this is a deliberate gate |
 | 404 | Row doesn't exist | "I couldn't find row #N — try /inbox to see what's currently pending" |
-| 422 | Pydantic validation | Surface the response body. Common: empty `edited_reply`, missing `q` |
+| 409 | Conflict — e.g. amending a row already pushed | Surface the `detail`; re-read the row with `GET /api/agent/pending/{id}` before retrying |
+| 422 | Pydantic validation | Surface the response body. Common: empty `edited_reply`, missing `q`, negative `offset` |
+| 429 | Too many sweeps — triage requested within the cooldown | Read the `Retry-After` header (seconds). "Last sweep was just now; I'll re-check in N s." Do NOT loop — honor Retry-After |
 | 501 | Backend not implemented | "Native Gmail backend needs the `gmail.compose` OAuth scope. Run `youos setup` to re-authorize, or switch to gog/gws." |
 | 502 | Backend error during Gmail write | "Gmail write failed: <response detail>. Try again, or check `gog auth list`." |
 | 504 / timeout | Long-running call (usually `/triage`) | "Triage is still running; try `/inbox` in 30s." |
@@ -131,8 +138,8 @@ The `summary` field looks like:
 
 What YouOS will never let you do:
 
-- **Send mail.** No `/api/agent/send` endpoint exists by design. The agent can write Gmail Drafts; the user finishes-and-sends from Gmail. Don't claim "I sent it" — say "I pushed the draft to Gmail; open Gmail to send."
-- **Read raw mail content outside the queue.** You can read what's already in `agent_pending_drafts` (subject + body of inbounds the agent processed). You cannot fetch arbitrary Gmail threads via this API.
+- **Send mail by default.** `POST .../send` and `POST .../confirm_send` exist, but they are **hard-gated OFF**: every send requires `agent.send.enabled: true` AND `agent.outbound_kill_switch: false`, both of which default to draft-only. With the defaults, those endpoints return **403** and the only outbound action available to you is `push_to_gmail` (writes a Gmail Draft; the user finishes-and-sends). Never claim "I sent it" off the back of a `push_to_gmail` — say "I pushed the draft to Gmail; open Gmail to send." Only treat a send as done after a `2xx` from `send`/`confirm_send`. (The flags being on is the user's explicit, standing authorization; see `AGENT_SAFETY_MODEL.md`.)
+- **Read raw mail content outside the queue.** You can read what's already in `agent_pending_drafts` (subject + body of inbounds the agent processed). You cannot fetch arbitrary Gmail threads via this API — by design, YouOS exposes its *triaged judgment*, not raw mailbox access. To pull in new mail, trigger a sweep (`POST /api/agent/triage`, rate-limited) and read the resulting queue.
 - **Modify identity / accounts.** Adding accounts is a human-driven `gog auth login` + `user.emails` config edit.
 - **Disable safety guards.** `agent.strict_local` / `agent.daily_draft_cap` / `agent.skip_senders` are user-set; the agent can read them via `/api/config/flags` but should not change them on the user's behalf without explicit confirmation.
 
@@ -141,7 +148,7 @@ What the agent SHOULD NOT do without explicit confirmation:
 - **Call `mark_sent`** unless the user said "I sent that" (not "push it"). `mark_sent` is the "I sent outside YouOS" signal — calling it after a `push_to_gmail` would be wrong (the row is already in status='sent' from the push).
 - **Call `push_to_gmail` on a `surface` tier row.** Surface rows have no draft. The endpoint returns 400 but the right behavior is to say "that row was just surfaced for review — there's no draft to push."
 - **Auto-promote senders to skip_senders** unless explicitly asked, even if you see they have 3+ noise dismissals. The user has `agent.auto_promote_skip_senders` for that.
-- **Re-trigger triage** in a tight loop. One call ~ one fetch+draft cycle (30-60s, uses gog auth + model). Cap at 1/minute per account; reject "triage again" requests within that window with "the last sweep was N seconds ago — try again at HH:MM."
+- **Re-trigger triage** in a tight loop. One call ~ one fetch+draft cycle (30-60s, uses gog auth + model). The server now **enforces** this: a sweep within `agent.triage_min_interval_seconds` (default 60) of the last one returns 429 + `Retry-After`. Honor the header rather than retrying blindly, and tell the user "the last sweep was N seconds ago — try again at HH:MM."
 
 ---
 
@@ -226,7 +233,7 @@ GET /api/agent/digest?days=1
       ...
     ],
     "account": "drbaher@gmail.com",
-    "triage_url": "http://bbots-mac-mini:8901"
+    "triage_url": "http://bbots-mac-mini:8765"
   }
 
 Agent → User: "Four drafts ready. Top ones:

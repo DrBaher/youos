@@ -74,6 +74,14 @@ def get_agent_config() -> dict[str, Any]:
         "limit": _safe_int(a.get("limit", 25), 25),
         "threshold": _safe_float(a.get("threshold", 0.6), 0.6),
         "notify_macos": bool(a.get("notify_macos", True)),
+        # Minimum spacing between on-demand /api/agent/triage sweeps for one
+        # account. A sweep is a full fetch+filter+draft cycle (~30-60s, costs
+        # gog auth + model time), so an orchestrator that loops "triage again"
+        # would hammer Gmail and the model server. The API rejects a sweep
+        # requested within this window with 429 + Retry-After. The background
+        # scheduler is unaffected (it paces itself via interval_minutes). 0
+        # disables the guard.
+        "triage_min_interval_seconds": max(0, _safe_int(a.get("triage_min_interval_seconds", 60), 60)),
         # δ: free-form text prepended to every triage draft's prompt — e.g.
         # "today I'm out of office; politely decline meetings." Stored as
         # ``agent.standing_instructions`` so it's editable from /settings,

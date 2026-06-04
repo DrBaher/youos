@@ -35,7 +35,7 @@ You ask "what's in my inbox?" in Telegram. Your orchestrator (Hermes / OpenClaw)
 | Swagger UI | `GET /docs` — interactive |
 | API-token auth | `X-YouOS-Token: <token>` or `Authorization: Bearer <token>` header |
 | Token issuance | `youos token-create` (one-time print; stored hashed) |
-| Token revocation | `youos token-revoke` |
+| Token revocation | `youos token-revoke <prefix>` (one) · `youos token-revoke --all` |
 | Per-account isolation | every endpoint accepts `account=` query param |
 | Structured digest | `GET /api/agent/digest` returns summary + counts + pending preview + actions |
 
@@ -53,7 +53,7 @@ youos token-create
 #
 #   abc123def456-LONG-RANDOM-STRING
 #
-# Stored hashed on disk. Revoke all tokens with `youos token-revoke`.
+# Stored hashed on disk. Revoke one with `youos token-revoke <prefix>`, all with `--all`.
 ```
 
 Copy the token. Store it in your orchestrator's config (Hermes config file, OpenClaw secrets, Telegram-bot env var) — never commit it.
@@ -64,7 +64,7 @@ Every call needs the token header:
 
 ```bash
 curl -s -H "X-YouOS-Token: abc123..." \
-     "http://bbots-mac-mini:8901/api/agent/digest?days=1" \
+     "http://bbots-mac-mini:8765/api/agent/digest?days=1" \
      | jq .summary
 # → "YouOS (today): 1 pending · 0 pushed · 0 dismissed (8 sweeps)"
 ```
@@ -96,18 +96,27 @@ A typical conversation:
 | Verb | Path | Purpose |
 |---|---|---|
 | GET | `/api/agent/digest?account=&days=1` | Headline + structured counts + pending preview |
-| GET | `/api/agent/pending?account=&tier=&status=&limit=` | Full pending queue |
-| GET | `/api/agent/sweeps?account=&limit=` | Audit log of recent sweeps |
+| GET | `/api/agent/pending?account=&tier=&status=&limit=&offset=` | Full pending queue. Page with `offset`; response carries `limit`/`offset`/`has_more` |
+| GET | `/api/agent/pending/{id}` | Fetch one row (retry-safety after a timed-out push) |
+| GET | `/api/agent/sweeps?account=&limit=&offset=` | Audit log of recent sweeps (paginated) |
+| GET | `/api/agent/followups?account=` | Open loops the agent is tracking |
 | GET | `/api/agent/observability?account=&days=30` | Sweep stats + dismissal aggregate + score histogram + hints |
 | GET | `/api/agent/dismissal_stats?account=&days=30` | Dismissal-rate aggregate |
 | GET | `/api/agent/skip_sender_candidates?account=&min_count=2&days=30` | Senders the user has dismissed as noise; ready to promote |
 | POST | `/api/agent/skip_senders/promote` `{senders: [list]}` | Bulk-add to `agent.skip_senders` |
 | POST | `/api/agent/pending/{id}/amend` `{amended_draft}` | Save edited draft text |
+| POST | `/api/agent/pending/{id}/regenerate` `{instruction?, tone_hint?, mode?, persist?}` | Re-draft with steering (`persist:false` = preview only) |
 | POST | `/api/agent/pending/{id}/dismiss` `{reason?}` | Dismiss (optional categorical reason) |
 | POST | `/api/agent/pending/{id}/mark_sent` | Mark sent (for "I sent manually outside YouOS") |
-| POST | `/api/agent/pending/{id}/push_to_gmail` | Create real Gmail Draft on original thread |
+| POST | `/api/agent/pending/{id}/push_to_gmail` | Create real Gmail **Draft** on original thread (does not send) |
+| POST | `/api/agent/pending/{id}/send` | **Hard-gated send** — 403 unless `agent.send.enabled` + kill-switch off |
+| POST | `/api/agent/pending/{id}/confirm_send` `{amended_draft?}` | **Hard-gated** one-call (optional edit →) push → send; same gates as `/send` |
 | POST | `/api/agent/pending/{id}/save_as_feedback_pair` `{edited_reply, rating?, feedback_note?}` | Feed correction into LoRA training |
-| POST | `/api/agent/triage` `{account, window, limit, threshold, backend?}` | Trigger a fresh sweep on demand |
+| POST | `/api/agent/triage` `{account, window, limit, threshold, backend?}` | Trigger a fresh sweep on demand. Rate-limited: **429 + Retry-After** within `agent.triage_min_interval_seconds` (default 60) of the last sweep |
+
+> **Sending is off by default.** `push_to_gmail` writes a Gmail Draft and is the only outbound action available out of the box. `send`/`confirm_send` exist but return **403** until the user sets `agent.send.enabled: true` (and leaves `agent.outbound_kill_switch: false`) — the never-send-without-authorization invariant. See `AGENT_SAFETY_MODEL.md`.
+>
+> **No raw-inbox read, by design.** There is no endpoint to fetch arbitrary Gmail threads — agents act on YouOS's *triaged* queue. To ingest new mail, run a sweep (`POST /api/agent/triage`) and read the resulting `pending` rows.
 
 ## Token-auth contract
 
@@ -115,9 +124,9 @@ Every API call returning anything other than the rendered HTML pages needs **eit
 - `X-YouOS-Token: <token>` header, OR
 - `Authorization: Bearer <token>` header
 
-Tokens are stored hashed (PBKDF2 — same as PINs); plaintext is shown once at creation. `youos token-list` shows count + creation dates but never the plaintext.
+Tokens are stored hashed (PBKDF2 — same as PINs); plaintext is shown once at creation. `youos token-list` shows each token's prefix + creation date (never the plaintext).
 
-Revoke a single compromised token by revoking all (`youos token-revoke`) and re-minting the ones you still need — current schema is "all tokens or none." A finer-grained revocation API is a future feature.
+Revoke a single compromised token by its prefix: `youos token-revoke <prefix>` (the prefix comes from `youos token-list`). Revoke everything with `youos token-revoke --all`. Tokens minted before per-token revocation landed have no addressable prefix — clear them with `--all`.
 
 ## OpenAPI spec for tool-discovery
 
@@ -152,7 +161,7 @@ Run:
 
 ```bash
 pip install 'python-telegram-bot==21.*' requests
-export YOUOS_URL=http://bbots-mac-mini:8901
+export YOUOS_URL=http://bbots-mac-mini:8765
 export YOUOS_TOKEN=<from `youos token-create`>
 export YOUOS_ACCOUNT=drbaher@gmail.com  # optional; falls back to user.emails[0]
 export TELEGRAM_TOKEN=<from @BotFather>
@@ -167,7 +176,7 @@ python examples/telegram_bot.py
 import os, requests
 from telegram.ext import Application, CommandHandler
 
-YOUOS = os.environ["YOUOS_URL"]            # http://bbots-mac-mini:8901
+YOUOS = os.environ["YOUOS_URL"]            # http://bbots-mac-mini:8765
 TOKEN = os.environ["YOUOS_TOKEN"]
 HEAD  = {"X-YouOS-Token": TOKEN}
 

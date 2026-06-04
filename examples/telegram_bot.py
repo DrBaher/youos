@@ -40,7 +40,7 @@ Setup
    safely via Funnel + token auth):
 
        pip install python-telegram-bot==21.* requests
-       export YOUOS_URL=http://bbots-mac-mini:8901
+       export YOUOS_URL=http://bbots-mac-mini:8765
        export YOUOS_TOKEN=<the token from step 1>
        export YOUOS_ACCOUNT=drbaher@gmail.com   # optional; falls back to user.emails[0]
        export TELEGRAM_TOKEN=<from @BotFather>

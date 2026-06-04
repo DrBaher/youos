@@ -70,7 +70,7 @@ youos status
 `youos status` should now print:
 
 ```
-Tailscale:   ✅ http://bbots-mac-mini:8901
+Tailscale:   ✅ http://bbots-mac-mini:8765
 ```
 
 ### 5. Open `/triage` on your phone
@@ -78,10 +78,10 @@ Tailscale:   ✅ http://bbots-mac-mini:8901
 On your phone (with Tailscale running and connected to the same Tailnet):
 
 ```
-http://bbots-mac-mini:8901/triage
+http://bbots-mac-mini:8765/triage
 ```
 
-Or use the IP form (`http://100.79.48.17:8901/triage`) if MagicDNS isn't resolving on your phone.
+Or use the IP form (`http://100.79.48.17:8765/triage`) if MagicDNS isn't resolving on your phone.
 
 First visit prompts for the PIN. After that, it's cookied for ~30 days.
 
