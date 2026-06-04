@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — needs-reply: standards-based automated-mail detection (b215)
+
+### Detect automated/notification mail by how it self-identifies, not by sender
+
+Domain lists are brittle — every new ESP/tool slips through until added. `classify()` now hard-skips on the headers automated systems set on themselves, regardless of the From address:
+
+- **`Auto-Submitted` (RFC 3834)** — any value other than `no` (`auto-generated` / `auto-replied`). The universal marker: catches receipts, notifications, calendar, ticketing, out-of-office, DocuSign/Booking-style mail with no domain entry.
+- **`X-Auto-Response-Suppress`** — Outlook/Exchange system mail.
+- **`Precedence: auto_reply`** (joins the existing `bulk`/`junk`).
+
+These are captured by the existing full-header fetch, so new sweeps benefit immediately. Tests cover each header (and that `Auto-Submitted: no` is correctly NOT skipped).
+
 ## Unreleased — triage: don't draft to yourself + more automation domains (b214)
 
 ### From a review of a real 54-draft queue
