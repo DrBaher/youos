@@ -97,6 +97,44 @@ TRANSACTIONAL_TEMPLATE_PAT = re.compile(
     re.IGNORECASE,
 )
 
+# Meeting recaps / summaries / transcripts / recordings — FYI distributions,
+# not a request for a reply. A human or a bot mails "here are the notes / the
+# recording is ready / action items from our sync"; the agent shouldn't draft a
+# reply to a recap. Soft penalty (subject or body) so a recap that genuinely
+# asks something ("notes attached — can you confirm the owner of item 3?") can
+# still surface when the question signal fires. Real-inbox finding (b205):
+# meeting summaries were getting auto-drafted on baher@work.example.
+MEETING_SUMMARY_PAT = re.compile(
+    r"\b(?:"
+    r"meeting (?:summary|notes|recap|minutes|recording|transcript)|"
+    r"(?:summary|notes|recap|minutes|transcript|recording) (?:of|from) "
+    r"(?:our|the|your|today'?s|yesterday'?s) "
+    r"(?:meeting|call|sync|standup|stand-up|session|discussion)|"
+    r"notes from (?:our|the|today'?s|yesterday'?s) (?:meeting|call|sync|chat)|"
+    r"action items (?:from|of)|"
+    r"(?:recording|transcript) (?:is )?(?:ready|available|attached|enclosed)|"
+    r"here(?:'s| are) (?:the|your) (?:notes|summary|recap|action items)|"
+    r"recap of (?:our|the|today'?s)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# Marketing/bulk body footer indicators — for mass mail that omits the
+# List-Unsubscribe / List-Id headers (some marketing tools put the opt-out only
+# in the body). Soft penalty, body-only. Conservative phrases that rarely
+# appear in 1:1 human mail.
+MARKETING_BODY_PAT = re.compile(
+    r"(?:"
+    r"unsubscribe|"
+    r"view (?:this email )?in (?:your )?browser|"
+    r"manage (?:your )?(?:email )?preferences|"
+    r"update your preferences|"
+    r"you(?:'re| are) receiving this (?:email|because)|"
+    r"no longer wish to receive|opt[-\s]?out"
+    r")",
+    re.IGNORECASE,
+)
+
 # --- Soft-penalty patterns (might still want a personal reply) -------------
 
 # `noreply@` / `donotreply@` — was hard-skip, now a soft penalty because
@@ -234,6 +272,53 @@ def _matches_skip_list(sender_email: str | None, skip_list: list[str]) -> bool:
     return False
 
 
+def _header_emails(header_value: str | None) -> set[str]:
+    """Parse a To/Cc header into a set of lowercased email addresses. Tolerates
+    display names, angle brackets, and comma/semicolon separators via the stdlib
+    address parser; returns an empty set on anything unparseable."""
+    if not header_value:
+        return set()
+    from email.utils import getaddresses
+
+    out: set[str] = set()
+    try:
+        for _name, addr in getaddresses([header_value]):
+            addr = (addr or "").strip().lower()
+            if "@" in addr:
+                out.add(addr)
+    except Exception:
+        return set()
+    return out
+
+
+def _addressed_to_me(
+    headers: dict[str, str], account_emails: set[str]
+) -> tuple[float, str | None]:
+    """Penalty + reason for mail the user wasn't directly addressed on.
+
+    Returns ``(penalty, reason)`` where ``penalty <= 0``. Soft penalties (the
+    mail surfaces for review instead of auto-drafting) rather than hard skips —
+    a user may still want to weigh in on a thread they were CC'd on, but the
+    agent shouldn't draft a reply *as them* when they aren't the recipient.
+
+    Only fires when we actually know the user's addresses AND the message
+    carries a parseable To/Cc — otherwise we can't tell, so we don't penalize
+    (avoids over-penalizing mail to an unconfigured alias)."""
+    if not account_emails:
+        return 0.0, None
+    to = _header_emails(headers.get("to"))
+    cc = _header_emails(headers.get("cc"))
+    if not to and not cc:
+        return 0.0, None  # no parseable recipients → can't judge
+    if account_emails & to:
+        return 0.0, None  # directly addressed — fine
+    if account_emails & cc:
+        return -0.35, "you were CC'd, not a direct recipient"
+    # Present recipients, none of them us → arrived via alias / group / list /
+    # bcc. Strongest demotion: replying as the user here is usually wrong.
+    return -0.45, "you aren't a direct recipient (via alias/group/bcc)"
+
+
 def classify(
     msg: InboxMessage,
     *,
@@ -241,11 +326,13 @@ def classify(
     threshold: float = 0.6,
     skip_senders: list[str] | None = None,
     vip_senders: list[str] | None = None,
+    account_emails: list[str] | None = None,
 ) -> NeedsReplyVerdict:
     """Decide whether this inbound deserves a draft.
 
     Hard skips (return immediately with score 0):
-      - ``List-Unsubscribe`` header (newsletter / mass mail)
+      - ``List-Unsubscribe`` / ``List-Id`` header (newsletter / mailing list)
+      - ``Precedence: bulk|junk`` header (bulk/auto mail)
       - mailer-daemon / bounces sender
       - automation domain (GitHub, GitLab, BitBucket, Atlassian, CircleCI,
         Travis, ``notifications.*``, ``mailchimp/mailgun/sendgrid/amazonses``)
@@ -259,7 +346,10 @@ def classify(
       −0.20 ``noreply@`` / ``donotreply@`` (was a hard skip; softened
       because transactional ``noreply@`` carries lead/form content),
       −0.20 operational mailbox prefix (``billing|support|info|hello|
-      notifications|alerts|admin|team|...@``), −0.15 cold-outreach flag.
+      notifications|alerts|admin|team|...@``), −0.15 cold-outreach flag,
+      −0.25 meeting recap/summary, −0.20 marketing body footer,
+      −0.25 CC'd-not-addressed / −0.35 not-a-recipient (when ``account_emails``
+      is known) so mail directed at someone else surfaces instead of drafting.
     """
     reasons: list[str] = []
 
@@ -271,6 +361,17 @@ def classify(
         return NeedsReplyVerdict(False, 0.0, [f"skip-list match ({msg.sender_email!r})"])
     if msg.headers.get("list-unsubscribe"):
         return NeedsReplyVerdict(False, 0.0, ["list-unsubscribe (newsletter)"])
+    # List-Id marks mailing-list / bulk distribution mail (marketing tools,
+    # discussion lists) even when List-Unsubscribe is absent. b205: marketing
+    # mail without List-Unsubscribe was getting drafted on a real inbox.
+    if msg.headers.get("list-id"):
+        return NeedsReplyVerdict(False, 0.0, ["list-id (mailing list / bulk)"])
+    # Precedence: bulk|junk is the classic bulk/auto-mail marker. (`list` is
+    # left out — some human discussion lists set it — those are caught by
+    # List-Id when present.)
+    _prec = (msg.headers.get("precedence") or "").strip().lower()
+    if _prec in ("bulk", "junk"):
+        return NeedsReplyVerdict(False, 0.0, [f"precedence: {_prec} (bulk mail)"])
     if msg.sender and MAILER_DAEMON_PAT.search(msg.sender):
         return NeedsReplyVerdict(False, 0.0, [f"mailer-daemon/bounce ({msg.sender!r})"])
     if msg.sender and AUTOMATION_DOMAIN_PAT.search(msg.sender):
@@ -308,6 +409,19 @@ def classify(
     # 3) Lightweight needs-reply score.
     score = 0.5  # start at the boundary; signals tip it one way or the other
 
+    # Addressed-to-me: don't draft a reply *as the user* to mail directed at
+    # someone else. CC-only is a soft demotion (they may still want to chime in);
+    # not-a-recipient (alias/group/bcc) is stronger. No-op unless we know the
+    # user's own addresses and the message has a parseable To/Cc. b205: real
+    # inbox was drafting replies to threads addressed to colleagues.
+    if account_emails:
+        addr_penalty, addr_reason = _addressed_to_me(
+            msg.headers, {e.lower() for e in account_emails if e}
+        )
+        if addr_penalty:
+            score += addr_penalty
+            reasons.append(addr_reason)
+
     # Soft penalty for `noreply@` / `donotreply@` — was a hard skip, but
     # transactional notifications (demo-form alerts, password resets) come
     # from these too. Penalty rather than skip lets strong positive signals
@@ -337,17 +451,38 @@ def classify(
         reasons.append("transactional template (body)")
         transactional = True
 
+    # Meeting recap / summary / transcript — an FYI distribution, not a request.
+    # Subject or body; treated like a template (suppresses the imperative bonus,
+    # since recaps are full of "review / confirm / follow up" verbs).
+    meeting_summary = False
+    if (msg.subject and MEETING_SUMMARY_PAT.search(msg.subject)) or (
+        msg.body and MEETING_SUMMARY_PAT.search(msg.body[:500])
+    ):
+        score -= 0.25
+        reasons.append("meeting recap/summary (FYI, not a request)")
+        meeting_summary = True
+
+    # Marketing/bulk body footer (unsubscribe / "view in browser" / "manage
+    # preferences") for mass mail that omitted the List-* headers.
+    if msg.body and MARKETING_BODY_PAT.search(msg.body):
+        score -= 0.20
+        reasons.append("marketing/bulk body footer")
+
+    # Imperative bonus is suppressed for any template-like FYI mail (transactional
+    # confirmations, meeting recaps) where the verbs are boilerplate, not asks.
+    suppress_imperative = transactional or meeting_summary
+
     if "?" in scoring_text[-200:]:
         score += 0.20
         reasons.append("ends with a question")
 
     if ACTION_VERB_PAT.search(scoring_text):
-        # Imperative verbs are ubiquitous in transactional templates
-        # ("looking forward to see you", "click here to confirm"). When the
-        # template detector already fired, suppress the imperative bonus —
-        # the verb is template noise, not a request for action.
-        if transactional:
-            reasons.append("imperative verb present — suppressed (transactional)")
+        # Imperative verbs are ubiquitous in templates / recaps ("looking
+        # forward to see you", "review the action items"). When a template-like
+        # detector already fired, suppress the imperative bonus — the verb is
+        # boilerplate, not a request for action.
+        if suppress_imperative:
+            reasons.append("imperative verb present — suppressed (template/recap)")
         else:
             score += 0.10
             reasons.append("imperative verb present")
@@ -432,6 +567,7 @@ def classify_many(
     threshold: float = 0.6,
     skip_senders: list[str] | None = None,
     vip_senders: list[str] | None = None,
+    account_emails: list[str] | None = None,
 ) -> list[tuple[InboxMessage, NeedsReplyVerdict]]:
     """Vectorised helper. Returns pairs in the input order."""
     return [
@@ -440,6 +576,7 @@ def classify_many(
             classify(
                 m, history=history, threshold=threshold,
                 skip_senders=skip_senders, vip_senders=vip_senders,
+                account_emails=account_emails,
             ),
         )
         for m in messages
