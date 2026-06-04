@@ -268,6 +268,7 @@
       </select>
       <button class="btn" id="runBtn">Run triage now</button>
       <button class="btn secondary" id="refreshBtn">Refresh list</button>
+      <button class="btn secondary" id="rescreenBtn" title="Re-check every queued draft against the current filters and dismiss the ones the agent would no longer draft (calendar invites, meeting recaps, marketing). Use this to clean a backlog drafted under older rules.">Re-screen queue</button>
       <button class="btn secondary" id="helpBtn" title="Keyboard shortcuts">?</button>
     </div>
     <div class="toolbar" style="margin-top:6px">
@@ -599,6 +600,41 @@
   filterSender.addEventListener('input', applyClientFilter);
   filterMinScore.addEventListener('change', applyClientFilter);
 
+  // Re-screen the queue: re-check every queued draft against the CURRENT
+  // filters and dismiss the ones the agent would no longer draft (calendar
+  // invites, meeting recaps, marketing). Cleans a backlog drafted under older
+  // rules — forward sweeps are idempotent and never re-evaluate old rows.
+  async function rescreenQueue() {
+    const btn = $('rescreenBtn');
+    btn.disabled = true; status.textContent = 'Re-screening…';
+    try {
+      const payload = acct.value ? { account: acct.value } : {};
+      const dry = await fetch('/api/agent/rescreen', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, dry_run: true }),
+      }).then(r => r.json());
+      if (!dry.dismissed) {
+        status.textContent = 'Re-screen: nothing to clean — every queued draft still passes the current filters.';
+        return;
+      }
+      const cats = Object.entries(dry.by_category || {}).map(([k, v]) => `${v} ${k}`).join(', ');
+      if (!confirm(`Dismiss ${dry.dismissed} queued draft(s) the current filters would skip${cats ? ' (' + cats + ')' : ''}?`)) {
+        status.textContent = '';
+        return;
+      }
+      const res = await fetch('/api/agent/rescreen', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, dry_run: false }),
+      }).then(r => r.json());
+      status.textContent = `Re-screen: dismissed ${res.dismissed} stale draft(s).`;
+      await fetchPending();
+    } catch (e) {
+      status.textContent = 'Re-screen failed: ' + e;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   async function runTriage() {
     runBtn.disabled = true; status.textContent = 'Triaging…';
     try {
@@ -720,6 +756,7 @@
     if (t.tagName !== 'BUTTON') return;
     if (t.id === 'runBtn')     { runTriage(); return; }
     if (t.id === 'refreshBtn') { fetchPending(); return; }
+    if (t.id === 'rescreenBtn') { rescreenQueue(); return; }
     const action = t.getAttribute('data-action');
     const id = t.getAttribute('data-id');
     if (action === 'toggle' && id) { toggleCard(id); return; }

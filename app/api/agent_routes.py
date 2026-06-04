@@ -216,6 +216,81 @@ def dismiss(row_id: int, request: Request, body: DismissBody | None = None) -> d
     return {"ok": True, "row": store.get(_db_url(request), row_id)}
 
 
+class RescreenBody(BaseModel):
+    account: str | None = Field(default=None)
+    dry_run: bool = Field(default=False)
+
+
+# Reasons (substrings) that mark a pending draft as one the CURRENT rules would
+# no longer draft. Limited to signals derivable from the row's STORED content
+# (subject/body/sender) — header-only checks (List-Id, CC-only) can't be
+# re-evaluated here because the original To/Cc wasn't persisted on the row.
+_RESCREEN_MARKERS = ("meeting recap", "calendar", "marketing", "transactional")
+
+
+@router.post("/api/agent/rescreen")
+def rescreen(request: Request, body: RescreenBody | None = None) -> dict:
+    """Re-evaluate already-queued ``draft`` rows against the CURRENT needs-reply
+    rules and dismiss the ones the agent would no longer draft (calendar invites,
+    meeting recaps, marketing, transactional). Forward sweeps are idempotent per
+    message, so a precision fix never retroactively cleans a backlog drafted
+    under older rules — this does.
+
+    Conservative: a row is dismissed only when its fresh verdict is a HARD SKIP
+    (score 0 — e.g. a calendar-invite subject) OR carries one of the
+    content-derivable noise reasons. A draft that merely scores lower now is
+    left alone. CC-only / not-a-direct-recipient can't be re-checked (the
+    original To/Cc wasn't stored on the row); new sweeps handle those at draft
+    time. ``dry_run`` reports what would be dismissed without changing anything.
+    """
+    from app.agent.inbox_fetch import InboxMessage
+    from app.agent.needs_reply import SenderHistory, classify
+    from app.agent.scheduler import get_agent_config
+    from app.core.config import get_user_emails
+
+    body = body or RescreenBody()
+    db = _db_url(request)
+    cfg = get_agent_config()
+    threshold = float(cfg.get("threshold", 0.6))
+    skip_senders = cfg.get("skip_senders") or []
+    vip_senders = cfg.get("vip_senders") or []
+    acct_emails = list(dict.fromkeys(
+        ([body.account.lower()] if body.account else [])
+        + [e.lower() for e in get_user_emails() if e]
+    ))
+    try:
+        history = SenderHistory.from_database_url(db)
+    except Exception:
+        history = None
+
+    rows = store.list_pending(db, account=body.account, status="pending", tier="draft", limit=2000)
+    dismissed = 0
+    by_category: dict[str, int] = {}
+    for r in rows:
+        msg = InboxMessage(
+            message_id=r.get("message_id", ""), thread_id=r.get("thread_id", ""),
+            account=r.get("account", ""), sender=r.get("sender") or "",
+            sender_email=r.get("sender_email"), subject=r.get("subject") or "",
+            body=r.get("body") or "", headers={}, received_at=r.get("received_at"),
+        )
+        v = classify(
+            msg, history=history, threshold=threshold,
+            skip_senders=skip_senders, vip_senders=vip_senders, account_emails=acct_emails,
+        )
+        marker = next(
+            (m for reason in v.reasons for m in _RESCREEN_MARKERS if m in reason.lower()),
+            None,
+        )
+        if v.score == 0.0 or marker:
+            label = marker or "hard-skip"
+            by_category[label] = by_category.get(label, 0) + 1
+            dismissed += 1
+            if not body.dry_run:
+                store.mark_dismissed(db, int(r["id"]), reason="noise",
+                                     note="auto: re-screened against current rules")
+    return {"scanned": len(rows), "dismissed": dismissed, "dry_run": body.dry_run, "by_category": by_category}
+
+
 @router.get("/api/agent/dismissal_stats")
 def dismissal_stats(
     request: Request,
