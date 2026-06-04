@@ -222,26 +222,30 @@ class RescreenBody(BaseModel):
 
 
 # Reasons (substrings) that mark a pending draft as one the CURRENT rules would
-# no longer draft. Limited to signals derivable from the row's STORED content
-# (subject/body/sender) — header-only checks (List-Id, CC-only) can't be
-# re-evaluated here because the original To/Cc wasn't persisted on the row.
-_RESCREEN_MARKERS = ("meeting recap", "calendar", "marketing", "transactional")
+# no longer draft. Content-derivable ones (subject/body/sender) work on any row;
+# the recipient ones (cc'd / not a direct recipient) only fire when the row has
+# stored To/Cc (b213 onward — older rows have NULL recipients and skip that check).
+_RESCREEN_MARKERS = (
+    "meeting recap", "calendar", "marketing", "transactional",
+    "cc'd", "not a direct recipient",
+)
 
 
 @router.post("/api/agent/rescreen")
 def rescreen(request: Request, body: RescreenBody | None = None) -> dict:
     """Re-evaluate already-queued ``draft`` rows against the CURRENT needs-reply
     rules and dismiss the ones the agent would no longer draft (calendar invites,
-    meeting recaps, marketing, transactional). Forward sweeps are idempotent per
-    message, so a precision fix never retroactively cleans a backlog drafted
-    under older rules — this does.
+    meeting recaps, marketing, transactional, and — for rows with stored To/Cc —
+    CC-only / not-a-direct-recipient). Forward sweeps are idempotent per message,
+    so a precision fix never retroactively cleans a backlog drafted under older
+    rules — this does.
 
     Conservative: a row is dismissed only when its fresh verdict is a HARD SKIP
-    (score 0 — e.g. a calendar-invite subject) OR carries one of the
-    content-derivable noise reasons. A draft that merely scores lower now is
-    left alone. CC-only / not-a-direct-recipient can't be re-checked (the
-    original To/Cc wasn't stored on the row); new sweeps handle those at draft
-    time. ``dry_run`` reports what would be dismissed without changing anything.
+    (score 0 — e.g. a calendar-invite subject) OR carries one of the noise
+    reasons above. A draft that merely scores lower now is left alone. Rows from
+    before b213 have no stored To/Cc, so their CC-only status can't be
+    re-derived; new sweeps handle that at draft time. ``dry_run`` reports what
+    would be dismissed without changing anything.
     """
     from app.agent.inbox_fetch import InboxMessage
     from app.agent.needs_reply import SenderHistory, classify
@@ -254,10 +258,7 @@ def rescreen(request: Request, body: RescreenBody | None = None) -> dict:
     threshold = float(cfg.get("threshold", 0.6))
     skip_senders = cfg.get("skip_senders") or []
     vip_senders = cfg.get("vip_senders") or []
-    acct_emails = list(dict.fromkeys(
-        ([body.account.lower()] if body.account else [])
-        + [e.lower() for e in get_user_emails() if e]
-    ))
+    user_emails = [e.lower() for e in get_user_emails() if e]
     try:
         history = SenderHistory.from_database_url(db)
     except Exception:
@@ -267,12 +268,22 @@ def rescreen(request: Request, body: RescreenBody | None = None) -> dict:
     dismissed = 0
     by_category: dict[str, int] = {}
     for r in rows:
+        # Rebuild the To/Cc headers from the stored recipients (b213) so the
+        # addressed-to-me check can run on rows that have them.
+        headers: dict[str, str] = {}
+        if r.get("to_recipients"):
+            headers["to"] = r["to_recipients"]
+        if r.get("cc_recipients"):
+            headers["cc"] = r["cc_recipients"]
         msg = InboxMessage(
             message_id=r.get("message_id", ""), thread_id=r.get("thread_id", ""),
             account=r.get("account", ""), sender=r.get("sender") or "",
             sender_email=r.get("sender_email"), subject=r.get("subject") or "",
-            body=r.get("body") or "", headers={}, received_at=r.get("received_at"),
+            body=r.get("body") or "", headers=headers, received_at=r.get("received_at"),
         )
+        # The user's own addresses for this row = the row's swept mailbox + aliases.
+        acct_emails = list(dict.fromkeys([(r.get("account") or "").lower()] + user_emails))
+        acct_emails = [e for e in acct_emails if e]
         v = classify(
             msg, history=history, threshold=threshold,
             skip_senders=skip_senders, vip_senders=vip_senders, account_emails=acct_emails,
