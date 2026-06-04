@@ -1330,6 +1330,8 @@ def _run_sweep(
                 hold=getattr(d, "hold", False),
                 urgency_score=getattr(d, "urgency_score", 0.0),
                 urgency_reasons=getattr(d, "urgency_reasons", None),
+                to_recipients=d.message.headers.get("to"),
+                cc_recipients=d.message.headers.get("cc"),
             )
             if row_id is not None:
                 persisted += 1
@@ -1372,6 +1374,8 @@ def _run_sweep(
                 standing_instructions_snapshot=standing_instructions,
                 urgency_score=_u[0],
                 urgency_reasons=_u[1],
+                to_recipients=msg.headers.get("to"),
+                cc_recipients=msg.headers.get("cc"),
             )
             if row_id is not None:
                 persisted += 1

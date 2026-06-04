@@ -72,6 +72,8 @@ def upsert_pending(
     hold: bool = False,
     urgency_score: float = 0.0,
     urgency_reasons: list[str] | None = None,
+    to_recipients: str | None = None,
+    cc_recipients: str | None = None,
 ) -> int | None:
     """Insert a triage result if the ``message_id`` isn't already stored.
 
@@ -94,8 +96,9 @@ def upsert_pending(
                 needs_reply_score, reasons_json, cold_outreach, tier,
                 draft, draft_model, draft_repairs_json, standing_instructions_snapshot,
                 thread_summary, quality_score, calibrated_score, hold,
-                urgency_score, urgency_reasons_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                urgency_score, urgency_reasons_json,
+                to_recipients, cc_recipients
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 message_id, thread_id, account,
@@ -113,6 +116,8 @@ def upsert_pending(
                 1 if hold else 0,
                 max(0.0, min(1.0, float(urgency_score))),
                 json.dumps(urgency_reasons or [], ensure_ascii=False),
+                to_recipients,
+                cc_recipients,
             ),
         )
         conn.commit()
