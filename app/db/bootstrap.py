@@ -347,6 +347,14 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
     # "separate column" the note above anticipated.
     if "dismissal_note" not in _cols:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN dismissal_note TEXT")
+    # Raw To/Cc header values (b213) so the queue records who the mail was
+    # addressed to — lets "Re-screen queue" retroactively catch CC-only / not-a-
+    # direct-recipient drafts, which it otherwise can't (the recipients weren't
+    # stored). Populated on new drafts; NULL on pre-b213 rows.
+    if "to_recipients" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN to_recipients TEXT")
+    if "cc_recipients" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN cc_recipients TEXT")
     # Long-thread "what changed" summary (opt-in agent.summarize_threads) so a
     # reviewer can catch up on a long thread without reading it.
     if "thread_summary" not in _cols:
