@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — triage: skip calendar invites + invite responses (b207)
+
+### Agent: stop drafting email replies to meeting invites
+
+Live-inbox finding: the agent drafted email replies to **meeting invitations** and to **accept/decline responses** for invites the user had *sent*. Calendar mail is handled in the calendar UI (accept / decline / propose new time), never by drafting a freeform email reply. `app/agent/needs_reply.py` now hard-skips:
+
+- **iTIP subject prefixes** (cross-provider, Google + Outlook): `Invitation:` / `Updated invitation:` (REQUEST), `Accepted:` / `Declined:` / `Tentative:` (REPLY), `Canceled[ event]:` (CANCEL) — anchored at the start after an optional `Re:`/`Fwd:` chain, with the colon, plus German equivalents (the inbox is DE/EN).
+- **Calendar content**: a `text/calendar` content-type or Exchange `Content-Class: …calendarmessage` header.
+
+Tests cover invitations, all three response types, cancellations, `Re: Invitation:`, the `text/calendar` header, and a negative (a normal `Re: …` reply still drafts). Full suite: 2173 passed.
+
 ## Unreleased — triage UX: queue-first + free-text dismiss reason (b206)
 
 ### From mobile use of the live triage page
