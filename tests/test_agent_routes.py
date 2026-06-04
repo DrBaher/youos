@@ -968,3 +968,80 @@ def test_agent_route_string_fields_are_length_bounded():
     with pytest.raises(ValidationError):
         DigestQueryTextBody(text="x" * 4_001)
     assert AmendBody(amended_draft="normal edit").amended_draft == "normal edit"
+
+
+# --- b203: triage rate-limit + offset pagination -----------------------------
+
+def _log_sweep_now(db_url: str, account: str, *, ago_seconds: int = 0) -> None:
+    """Append a sweep audit row started ``ago_seconds`` ago (UTC)."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.agent import store
+    ts = (datetime.now(timezone.utc) - timedelta(seconds=ago_seconds)).isoformat()
+    store.log_sweep(
+        db_url, account=account, trigger="api", window="24h", threshold=0.6,
+        fetched=0, kept=0, surfaced=0, persisted=0, errors=None,
+        standing_instructions_snapshot=None,
+        started_at=ts, finished_at=ts, duration_ms=10,
+    )
+
+
+def test_triage_rate_limited_returns_429_with_retry_after(authed_client, tmp_path):
+    """A sweep requested within agent.triage_min_interval_seconds (default 60)
+    of the account's last sweep is rejected with 429 + a Retry-After header —
+    before any (expensive, Gmail-hitting) run_triage call."""
+    db_url = f"sqlite:///{tmp_path}/var/youos.db"
+    _log_sweep_now(db_url, "you@example.com", ago_seconds=2)
+    r = authed_client.post("/api/agent/triage", json={"account": "you@example.com"})
+    assert r.status_code == 429
+    assert int(r.headers["Retry-After"]) > 0
+
+
+def test_triage_allowed_when_no_recent_sweep(authed_client, monkeypatch):
+    """With no prior sweep the guard passes and run_triage executes. run_triage
+    is stubbed so the test never touches Gmail/the model."""
+    class _Result:
+        fetched, kept, persisted = 3, 1, 1
+        surfaced: list = []
+
+    monkeypatch.setattr("app.agent.triage.run_triage", lambda **kw: _Result())
+    r = authed_client.post("/api/agent/triage", json={"account": "fresh@example.com"})
+    assert r.status_code == 200
+    assert r.json()["kept"] == 1
+
+
+def test_triage_guard_disabled_when_interval_zero(authed_client, tmp_path, monkeypatch):
+    """agent.triage_min_interval_seconds=0 disables the guard even right after a sweep."""
+    db_url = f"sqlite:///{tmp_path}/var/youos.db"
+    _log_sweep_now(db_url, "you@example.com", ago_seconds=0)
+    monkeypatch.setattr(
+        "app.agent.scheduler.get_agent_config",
+        lambda: {"triage_min_interval_seconds": 0},
+    )
+
+    class _Result:
+        fetched, kept, persisted = 0, 0, 0
+        surfaced: list = []
+
+    monkeypatch.setattr("app.agent.triage.run_triage", lambda **kw: _Result())
+    r = authed_client.post("/api/agent/triage", json={"account": "you@example.com"})
+    assert r.status_code == 200
+
+
+def test_pending_offset_paginates_without_overlap(authed_client):
+    """offset slices the queue; page 1 and page 2 are disjoint, and has_more
+    flips false on the last page. Fixture seeds exactly 2 pending rows."""
+    p0 = authed_client.get("/api/agent/pending?limit=1&offset=0").json()
+    p1 = authed_client.get("/api/agent/pending?limit=1&offset=1").json()
+    p2 = authed_client.get("/api/agent/pending?limit=1&offset=2").json()
+    assert p0["count"] == 1 and p0["has_more"] is True
+    assert p1["count"] == 1 and p1["has_more"] is True
+    assert p2["count"] == 0 and p2["has_more"] is False
+    assert p0["rows"][0]["id"] != p1["rows"][0]["id"]
+    assert {p0["rows"][0]["id"], p1["rows"][0]["id"]} == {
+        row["id"] for row in authed_client.get("/api/agent/pending").json()["rows"]
+    }
+
+
+def test_pending_offset_rejects_negative(authed_client):
+    assert authed_client.get("/api/agent/pending?offset=-1").status_code == 422

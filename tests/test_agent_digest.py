@@ -29,7 +29,16 @@ def db_url(tmp_path):
 
 def _seed(db_url):
     """Seed enough rows + audit entries that the digest has interesting numbers."""
+    from datetime import datetime, timedelta, timezone
+
     from app.agent import store
+
+    # Sweep timestamp must stay inside the digest's `days=7` window, so anchor it
+    # relative to *now* rather than a hardcoded date — a fixed date silently
+    # falls out of the window as the clock advances (the window-filtered
+    # auto_promoted aggregate then goes empty and these tests time-bomb).
+    sweep_started = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    sweep_finished = (datetime.now(timezone.utc) - timedelta(days=1) + timedelta(seconds=30)).isoformat()
 
     # Pending drafts (2) + a sent draft + a dismissed-as-noise row.
     # `_status` is the final lifecycle state we'll transition rows into
@@ -62,8 +71,8 @@ def _seed(db_url):
         db_url, account="you@x.com", trigger="scheduled", window="24h", threshold=0.6,
         fetched=20, kept=3, surfaced=1, persisted=4, errors=[],
         standing_instructions_snapshot=None,
-        started_at="2026-05-28T08:00:00+00:00",
-        finished_at="2026-05-28T08:00:30+00:00",
+        started_at=sweep_started,
+        finished_at=sweep_finished,
         duration_ms=30000,
         auto_promoted_senders=["spam@noise.com"],
     )

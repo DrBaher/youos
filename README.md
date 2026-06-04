@@ -133,7 +133,7 @@ source .venv/bin/activate
 youos service install          # or `youos serve` to run in the foreground
 
 # 3. Open the setup wizard in your browser
-open http://127.0.0.1:8901/welcome
+open http://127.0.0.1:8765/welcome
 ```
 
 The web wizard walks you through everything:
@@ -187,7 +187,7 @@ youos service status      # not installed | installed | running
 youos service uninstall   # stop + remove
 ```
 
-It serves at your configured host/port (default `127.0.0.1:8901`) and logs to
+It serves at your configured host/port (default `127.0.0.1:8765`) and logs to
 `var/server.log`. The onboarding wizard offers this too.
 
 ## Usage
