@@ -302,7 +302,7 @@ def test_booking_confirmation_subject_drops_below_threshold():
     assert not v.needs_reply
     assert "transactional template (subject)" in " ".join(v.reasons)
     # Imperative-verb bonus is suppressed (template noise, not a request).
-    assert any("suppressed (transactional)" in r for r in v.reasons)
+    assert any("suppressed (template/recap)" in r for r in v.reasons)
     assert v.score < 0.6
     # But still high enough to surface — user can still see it if they want.
     assert v.surface_for_review
@@ -445,3 +445,80 @@ def test_real_question_to_person_still_drafts():
     """Guard: the transactional terms don't over-suppress a genuine human ask."""
     v = classify(_msg(body="Could you confirm the delivery address for the order I placed? Thanks."))
     assert v.needs_reply
+
+
+# --- b205: addressed-to-me, marketing/list, meeting summaries ---------------
+
+ME = ["you@example.com"]
+
+
+def test_addressed_directly_in_to_is_not_penalized():
+    v = classify(_msg(
+        body="Hi — could you confirm the timeline for next week?",
+        headers={"to": "You <you@example.com>", "cc": "Bob <bob@x.com>"},
+    ), account_emails=ME)
+    assert v.needs_reply is True
+    assert not any("recipient" in r for r in v.reasons)
+
+
+def test_cc_only_is_demoted():
+    v = classify(_msg(
+        body="Could you confirm the timeline for next week?",
+        headers={"to": "Colleague <colleague@x.com>", "cc": "You <you@example.com>"},
+    ), account_emails=ME)
+    assert any("CC'd" in r for r in v.reasons)
+    assert v.needs_reply is False        # demoted below threshold
+    assert v.surface_for_review is True  # but still surfaced, not buried
+
+
+def test_not_a_recipient_strongly_demoted():
+    v = classify(_msg(
+        body="Could you confirm the timeline for next week?",
+        headers={"to": "Colleague <colleague@x.com>", "cc": "Other <other@x.com>"},
+    ), account_emails=ME)
+    assert any("via alias" in r for r in v.reasons)
+    assert v.needs_reply is False
+
+
+def test_addressed_to_me_noop_without_account_emails():
+    # Back-compat: no account_emails → no recipient penalty applied.
+    v = classify(_msg(
+        headers={"to": "Colleague <colleague@x.com>"},
+    ))
+    assert not any("recipient" in r for r in v.reasons)
+
+
+def test_addressed_to_me_noop_without_parseable_recipients():
+    v = classify(_msg(headers={}), account_emails=ME)
+    assert not any("recipient" in r for r in v.reasons)
+
+
+def test_list_id_header_hard_skips():
+    v = classify(_msg(headers={"list-id": "<news.acme.com>"}), account_emails=ME)
+    assert v.needs_reply is False
+    assert v.score == 0.0
+    assert "list-id" in v.reasons[0]
+
+
+def test_precedence_bulk_hard_skips():
+    v = classify(_msg(headers={"precedence": "bulk"}))
+    assert v.needs_reply is False
+    assert v.score == 0.0
+
+
+def test_meeting_summary_subject_is_demoted():
+    v = classify(_msg(
+        subject="Meeting summary — Q3 planning sync",
+        body="Here are the notes from our meeting. Action items: review the deck, confirm owners.",
+    ))
+    assert any("meeting recap/summary" in r for r in v.reasons)
+    assert v.needs_reply is False
+
+
+def test_marketing_body_footer_penalty():
+    v = classify(_msg(
+        sender="Acme <hello@acme.com>", sender_email="hello@acme.com",
+        subject="Big news from Acme",
+        body="Check out our new product! You're receiving this email because you signed up. Unsubscribe here.",
+    ))
+    assert any("marketing/bulk body footer" in r for r in v.reasons)
