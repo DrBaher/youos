@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — rules: tap a routing action to expand full details (b218)
+
+### See the whole action, not just the truncated line
+
+b217 truncates each routing-action row to one line, so the full subject was hidden. Now tapping a row expands a detail panel — **Action, Status, full Subject (wraps), From, When, Message id**, plus Undone/Detail when present — with a rotating chevron. Undo no longer toggles the row (stopPropagation). (Fixed a CSS gotcha where `display:grid` overrode the `[hidden]` attribute and showed every row expanded.)
+
 ## Unreleased — rules: fix "Undo" overlapping the action text (b217)
 
 ### Recent routing actions row layout
