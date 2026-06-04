@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — triage UX: queue-first + free-text dismiss reason (b206)
+
+### From mobile use of the live triage page
+
+- **Queue-first layout** (`templates/triage.html`). The page led with a wall of controls (account/window/run/refresh, filter/bulk bar, standing-instructions banner, agent-health card) and pushed the actual drafts below the fold — on a phone you saw no drafts at all. The agent runs automatically, so opening /triage should surface the work, not the knobs. The review queue (`#drafts`) + surface-for-review now render **immediately under the header**, with a compact status line; all controls move below the queue. Pure reorder — every element id is preserved (the JS uses `getElementById`), so handlers/shortcuts are unaffected.
+- **Free-text dismiss reason for "Other"** (`templates/triage.html` + API + store). Choosing "Other" in the dismiss dropdown now reveals a text box to say *why*. `DismissBody` gains a bounded `note` (≤500 chars); `store.mark_dismissed(..., note=)` writes it to a new `dismissal_note` column (added via the idempotent `agent_pending_drafts` migration the schema already anticipated). Captured only for `reason='other'`.
+
+Tests: dismiss-other persists the note + is returned on the row; note length-bounded (422 over 500); dismiss without a note still works. Visually verified the mobile layout (drafts first) and the "Other" → note reveal. Full suite: 2169 passed.
+
 ## Unreleased — triage precision: don't draft for the wrong mail (b205)
 
 ### Agent: three real-inbox false-positive classes the needs-reply filter missed

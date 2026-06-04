@@ -232,7 +232,21 @@
 
   <h1>Agent triage</h1>
   <p class="sub">Drafts the agent generated against your unread inbox. Never auto-sent — you review, edit, and act.</p>
+  <div class="status-line" id="statusLine" style="margin:6px 0 14px">Loading…</div>
 
+  <!-- Queue-first: the drafts you review are the primary content, shown
+       immediately under the header. The background agent populates this on a
+       schedule, so opening /triage should surface the work, not the controls.
+       Account/window/run + filters + standing instructions + health live BELOW
+       the queue. -->
+  <div id="drafts"></div>
+
+  <details class="surface-section" id="surfaceSection" style="display:none">
+    <summary id="surfaceSummary">Surface for review (borderline — not auto-drafted)</summary>
+    <div id="surfaceList"></div>
+  </details>
+
+  <!-- Controls &amp; settings — below the queue. -->
   <div class="toolbar">
     <input id="acctInput" type="email" placeholder="account email (e.g. baher@medicus.ai)" />
     <select id="windowSelect">
@@ -244,7 +258,6 @@
     <button class="btn" id="runBtn">Run triage now</button>
     <button class="btn secondary" id="refreshBtn">Refresh list</button>
     <button class="btn secondary" id="helpBtn" title="Keyboard shortcuts">?</button>
-    <span class="status-line" id="statusLine">Loading…</span>
   </div>
   <div class="toolbar" style="margin-top:-4px">
     <!-- Client-side filter + bulk-action bar — operates over the rows already
@@ -316,8 +329,6 @@
     }
   </style>
 
-  <div id="drafts"></div>
-
   <!-- Keyboard-shortcut help overlay (hidden by default). -->
   <div class="help-overlay" id="helpOverlay" role="dialog" aria-label="Keyboard shortcuts">
     <div class="help-box">
@@ -335,11 +346,6 @@
       <div class="help-close">Shortcuts are disabled while an input or textarea is focused. Press <kbd>Esc</kbd> to leave the textarea, then shortcuts come back.</div>
     </div>
   </div>
-
-  <details class="surface-section" id="surfaceSection" style="display:none">
-    <summary id="surfaceSummary">Surface for review (borderline — not auto-drafted)</summary>
-    <div id="surfaceList"></div>
-  </details>
 
   <details class="surface-section" id="activitySection">
     <summary id="activitySummary">Recent activity</summary>
@@ -435,7 +441,8 @@
   function dismissControls(rowId) {
     return `
       <span class="dismiss-group" style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap">
-        <select class="dismiss-reason" data-reason-for="${rowId}" title="Why? Helps the filter learn over time." style="font-size:12px;padding:4px 6px;border-radius:4px;border:1px solid var(--border)">
+        <select class="dismiss-reason" data-reason-for="${rowId}" title="Why? Helps the filter learn over time." style="font-size:12px;padding:4px 6px;border-radius:4px;border:1px solid var(--border)"
+                onchange="(function(s){var n=s.parentNode.querySelector('input.dismiss-note[data-note-for=&quot;${rowId}&quot;]');if(n){n.style.display=(s.value==='other')?'inline-block':'none';if(s.value==='other')n.focus();}})(this)">
           <option value="">Why? (optional)</option>
           <option value="noise">Noise — shouldn't have drafted</option>
           <option value="wrong_sender">Wrong sender</option>
@@ -443,6 +450,7 @@
           <option value="already_handled">Already handled outside YouOS</option>
           <option value="other">Other</option>
         </select>
+        <input type="text" class="dismiss-note" data-note-for="${rowId}" maxlength="500" placeholder="reason (optional)" style="display:none;font-size:12px;padding:4px 6px;border-radius:4px;border:1px solid var(--border);min-width:160px;background:var(--surface-2);color:var(--text)" />
         <label class="skip-sender-label" style="font-size:11px;color:var(--muted-2);display:inline-flex;align-items:center;gap:3px;cursor:pointer" title="Also add this sender to agent.skip_senders so future sweeps skip them.">
           <input type="checkbox" class="skip-sender-cb" data-skip-for="${rowId}" style="margin:0">also skip sender
         </label>
@@ -559,6 +567,12 @@
       const sel = card.querySelector(`select.dismiss-reason[data-reason-for="${id}"]`);
       const reason = sel && sel.value ? sel.value : null;
       if (reason) body = { reason };
+      // For "other", capture the free-text note the user typed.
+      if (reason === 'other') {
+        const noteEl = card.querySelector(`input.dismiss-note[data-note-for="${id}"]`);
+        const note = noteEl && noteEl.value.trim();
+        if (note) body.note = note;
+      }
       // "Also skip sender" — append the row's sender_email to agent.skip_senders
       // before the dismissal POST. Done first so even if dismissal fails the
       // skip-list update sticks (it's the more valuable side-effect).

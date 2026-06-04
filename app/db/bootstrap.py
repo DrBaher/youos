@@ -340,9 +340,13 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
     # 'wrong_sender' (right type of mail but the wrong person to reply now),
     # 'wrong_content' (draft missed the point — drafting-quality signal),
     # 'already_handled' (we replied outside YouOS — orthogonal to the filter),
-    # 'other' (free-text in a separate column if we ever add one).
+    # 'other' (free-text lives in dismissal_note, below).
     if "dismissal_reason" not in _cols:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN dismissal_reason TEXT")
+    # Free-text elaboration the UI captures when reason='other' (b206) — the
+    # "separate column" the note above anticipated.
+    if "dismissal_note" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN dismissal_note TEXT")
     # Long-thread "what changed" summary (opt-in agent.summarize_threads) so a
     # reviewer can catch up on a long thread without reading it.
     if "thread_summary" not in _cols:

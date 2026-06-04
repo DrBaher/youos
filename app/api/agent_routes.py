@@ -173,22 +173,26 @@ class DismissBody(BaseModel):
     """Optional dismissal reason — categorical so we can aggregate.
 
     The body itself is optional on the wire (legacy UI sends an empty POST);
-    when present, ``reason`` must be one of ``store.DISMISSAL_REASONS``.
+    when present, ``reason`` must be one of ``store.DISMISSAL_REASONS``. ``note``
+    is a free-text elaboration the UI captures when ``reason == "other"`` —
+    max_length bounds it like the other agent string fields (b146).
     """
 
     reason: str | None = Field(default=None)
+    note: str | None = Field(default=None, max_length=500)
 
 
 @router.post("/api/agent/pending/{row_id}/dismiss")
 def dismiss(row_id: int, request: Request, body: DismissBody | None = None) -> dict:
     reason = body.reason if body else None
+    note = (body.note.strip() if body and body.note else None) or None
     if reason is not None and reason not in store.DISMISSAL_REASONS:
         raise HTTPException(
             400,
             f"unknown dismissal reason: {reason!r} "
             f"(allowed: {', '.join(store.DISMISSAL_REASONS)})",
         )
-    if not store.mark_dismissed(_db_url(request), row_id, reason=reason):
+    if not store.mark_dismissed(_db_url(request), row_id, reason=reason, note=note):
         raise HTTPException(404, "pending row not found")
     return {"ok": True, "row": store.get(_db_url(request), row_id)}
 
