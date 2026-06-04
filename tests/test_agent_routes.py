@@ -1139,3 +1139,26 @@ def test_rescreen_dry_run_changes_nothing(authed_client, tmp_path):
     authed_client.post("/api/agent/rescreen", json={"dry_run": True})
     after = len(authed_client.get("/api/agent/pending?tier=draft").json()["rows"])
     assert before == after
+
+
+def test_rescreen_dismisses_cc_only_with_stored_recipients(authed_client, tmp_path):
+    """b213: with To/Cc persisted on the row, re-screen can retroactively catch
+    a CC-only draft (the user wasn't a direct recipient)."""
+    from app.agent import store
+    db_url = f"sqlite:///{tmp_path}/var/youos.db"
+    store.upsert_pending(
+        db_url, message_id="m-cc", thread_id="t-cc", account="you@example.com",
+        sender="Colleague <colleague@x.com>", sender_email="colleague@x.com",
+        subject="Project update", body="Could you confirm the timeline for next week?",
+        received_at="2026-05-28T10:00:00Z", needs_reply_score=0.8, reasons=[],
+        cold_outreach=False, tier="draft", draft="Sure.", draft_model="qwen",
+        draft_repairs=[], standing_instructions_snapshot=None,
+        to_recipients="Colleague <colleague@x.com>",
+        cc_recipients="You <you@example.com>",
+    )
+    res = authed_client.post("/api/agent/rescreen", json={}).json()
+    assert res["dismissed"] >= 1
+    assert "cc'd" in res["by_category"]
+    subjects = [r["subject"] for r in authed_client.get("/api/agent/pending?tier=draft").json()["rows"]]
+    assert "Project update" not in subjects      # CC-only draft cleaned
+    assert "Q3 pricing?" in subjects             # legit direct draft preserved

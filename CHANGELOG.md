@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — triage: persist To/Cc so re-screen can catch CC-only (b213)
+
+### Record recipients on each queued draft
+
+Re-screen (b212) couldn't retroactively catch CC-only / not-a-direct-recipient drafts because the original To/Cc was never stored on the row. Now it is: `agent_pending_drafts` gains `to_recipients` / `cc_recipients` columns (idempotent migration), `store.upsert_pending` accepts them, and `run_triage` populates them from the message headers on every drafted/surfaced row. `POST /api/agent/rescreen` rebuilds the To/Cc headers from those columns and runs the addressed-to-me check per row (using the row's own account + `user.emails`), so a re-screen now also dismisses CC-only drafts — for rows created from b213 onward. Pre-b213 rows have NULL recipients and still skip that check (can't re-derive without re-fetching); new sweeps already filter CC-only at draft time. Tests: a CC-only draft with stored recipients is dismissed while a direct draft is kept.
+
 ## Unreleased — triage: re-screen the queue against current rules (b212)
 
 ### Clean a backlog drafted under older rules
