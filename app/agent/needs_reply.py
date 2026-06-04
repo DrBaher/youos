@@ -362,7 +362,9 @@ def classify(
 
     Hard skips (return immediately with score 0):
       - ``List-Unsubscribe`` / ``List-Id`` header (newsletter / mailing list)
-      - ``Precedence: bulk|junk`` header (bulk/auto mail)
+      - ``Precedence: bulk|junk|auto_reply`` header (bulk/auto mail)
+      - ``Auto-Submitted`` (RFC 3834, != ``no``) or ``X-Auto-Response-Suppress``
+        header — standards-based automated-mail markers (sender-agnostic)
       - mailer-daemon / bounces sender
       - automation domain (GitHub, GitLab, BitBucket, Atlassian, CircleCI,
         Travis, ``notifications.*``, ``mailchimp/mailgun/sendgrid/amazonses``)
@@ -411,8 +413,19 @@ def classify(
     # left out — some human discussion lists set it — those are caught by
     # List-Id when present.)
     _prec = (msg.headers.get("precedence") or "").strip().lower()
-    if _prec in ("bulk", "junk"):
-        return NeedsReplyVerdict(False, 0.0, [f"precedence: {_prec} (bulk mail)"])
+    if _prec in ("bulk", "junk", "auto_reply"):
+        return NeedsReplyVerdict(False, 0.0, [f"precedence: {_prec} (bulk/auto mail)"])
+    # b215: standards-based automated-mail detection — sender-agnostic, so it
+    # catches notifications/receipts/calendar/ticketing/out-of-office without a
+    # domain list. RFC 3834: automated systems set Auto-Submitted to something
+    # other than "no" (auto-generated / auto-replied). Outlook/Exchange stamp
+    # X-Auto-Response-Suppress on system mail. These are how automated mail
+    # self-identifies regardless of the From address.
+    _autosub = (msg.headers.get("auto-submitted") or "").strip().lower()
+    if _autosub and _autosub != "no":
+        return NeedsReplyVerdict(False, 0.0, [f"auto-submitted: {_autosub} (automated)"])
+    if msg.headers.get("x-auto-response-suppress"):
+        return NeedsReplyVerdict(False, 0.0, ["x-auto-response-suppress (automated)"])
     if msg.sender and MAILER_DAEMON_PAT.search(msg.sender):
         return NeedsReplyVerdict(False, 0.0, [f"mailer-daemon/bounce ({msg.sender!r})"])
     if msg.sender and AUTOMATION_DOMAIN_PAT.search(msg.sender):
