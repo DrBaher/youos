@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — triage: account picker is a dropdown, not a text field (b211)
+
+### Pick your mailbox instead of typing it on a phone keyboard
+
+The Triage "account" field was a free-text `<input>` — on mobile, tapping it popped the keyboard to type a full address (and risk a typo). YouOS already knows your configured mailboxes, so it's now a native **dropdown**: new `GET /api/agent/accounts` returns `agent.accounts` (or `user.emails`), the page populates a `<select>` on load, auto-selects the remembered/first account, and "Run triage now" works on the default account when none is picked. Tap-to-select on mobile, no keyboard, no typos. Tests cover the endpoint (user.emails fallback, agent.accounts precedence + dedupe, empty case).
+
 ## Unreleased — mobile optimization pass across all pages (b210)
 
 ### Every page audited at phone width; horizontal scroll eliminated
