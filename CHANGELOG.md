@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — rules: fix "Undo" overlapping the action text (b217)
+
+### Recent routing actions row layout
+
+On the Rules page, each "Recent routing actions" row had the **Undo** button overlapping a long action subject — the description span was inline-nested, so its `text-overflow: ellipsis` never clipped and the text ran under the button. Wrapped the action+subject in a `.led-what` flex child that truncates as one line (with `…`), made `.led-main` grow and the badge/buttons not shrink. Each row is now a clean single line: badge · action · truncated subject · Undo.
+
 ## Unreleased — triage: loading spinner while a sweep runs (b216)
 
 ### Visible progress for the 30-60s triage sweep
