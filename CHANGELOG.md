@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — triage: compact, expandable draft cards (b209)
+
+### A scannable queue — quick approve/dismiss, expand to edit
+
+Each draft was a full card (inbound + editable textarea + 6 buttons), so a few drafts filled the whole phone screen. Now each renders **compact by default**: a one-line summary (subject · score/model · sender · draft preview) with **quick verdict actions always visible** — **Push to Gmail** (approve as-is) and **Dismiss** (with the reason dropdown). Click the header, the **Edit ▾** button, or press `e`/`x` to **expand** into the full view: inbound, editable draft, and Save edits / Copy / Save as training pair / Mark sent. Whole queue is scannable at a glance; you only open what you want to change. Keyboard: `x`/`o` toggle expand, `e` expands-and-focuses the textarea. Template-only; the draft textarea stays in the DOM either way so save/copy/train still work. Verified on mobile (compact + expanded) and via the opt-in UI smoke test.
+
 ## Unreleased — triage: controls in a collapsible at the top (b208)
 
 ### From mobile use: controls reachable up top, queue still the focus
