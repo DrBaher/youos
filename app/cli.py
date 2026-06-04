@@ -1346,25 +1346,47 @@ def token_create():
     print()
     print(f"  {token}")
     print()
-    print("Stored hashed on disk. Revoke all tokens with `youos token-revoke`.")
+    print("Stored hashed on disk. Revoke one with `youos token-revoke <prefix>`, all with `--all`.")
 
 
 @app.command("token-list")
 def token_list():
-    """Show how many API tokens are configured for this instance."""
-    from app.core.auth import load_api_token_hashes
+    """List API tokens for this instance (prefix + creation date; never the secret)."""
+    from app.core.auth import list_api_tokens
 
-    count = len(load_api_token_hashes())
-    print(f"{count} API token(s) configured.")
+    toks = list_api_tokens()
+    if not toks:
+        print("No API tokens configured.")
+        return
+    print(f"{len(toks)} API token(s):")
+    for t in toks:
+        prefix = t["prefix"] or "(legacy)"
+        created = t["created"] or "unknown"
+        print(f"  {prefix}…  created {created}")
+    print("\nRevoke one:  youos token-revoke <prefix>      Revoke all:  youos token-revoke --all")
 
 
 @app.command("token-revoke")
-def token_revoke():
-    """Revoke all API tokens for this instance."""
-    from app.core.auth import revoke_api_tokens
+def token_revoke(
+    prefix: str = typer.Argument(None, help="Prefix of the token to revoke (see `youos token-list`)."),
+    all_tokens: bool = typer.Option(False, "--all", help="Revoke ALL API tokens."),
+):
+    """Revoke a single API token by prefix, or all tokens with --all."""
+    from app.core.auth import revoke_api_token, revoke_api_tokens
 
-    count = revoke_api_tokens()
-    print(f"Revoked {count} API token(s).")
+    if all_tokens:
+        count = revoke_api_tokens()
+        print(f"Revoked all {count} API token(s).")
+        return
+    if not prefix:
+        print("Specify a token prefix to revoke (see `youos token-list`), or pass --all.")
+        raise typer.Exit(code=1)
+    removed = revoke_api_token(prefix)
+    if removed:
+        print(f"Revoked {removed} API token(s) with prefix {prefix!r}.")
+    else:
+        print(f"No API token with prefix {prefix!r} (run `youos token-list` to see prefixes).")
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":
