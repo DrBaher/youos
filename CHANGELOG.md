@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — triage precision: don't draft for the wrong mail (b205)
+
+### Agent: three real-inbox false-positive classes the needs-reply filter missed
+
+From live triage on a real inbox, the agent was drafting replies it shouldn't. Three fixes in `app/agent/needs_reply.py`:
+
+- **Mail not addressed to you.** The classifier never checked recipients — so a thread addressed **to a colleague** (you only CC'd, or reaching you via a team alias) got a draft written *as you*. Now `classify()` takes the user's own addresses (the swept mailbox + `user.emails`), parses To/Cc, and demotes: **−0.35 CC-only**, **−0.45 not-a-direct-recipient** (alias/group/bcc) — enough to drop them out of auto-draft into surface-for-review. No-op when we can't tell (no configured emails, or no parseable To/Cc), so a message to an unconfigured alias isn't wrongly buried.
+- **Marketing without `List-Unsubscribe`.** Added hard-skips on **`List-Id`** (mailing-list/bulk) and **`Precedence: bulk|junk`**, plus a soft penalty for marketing body footers (unsubscribe / "view in browser" / "manage preferences") that some senders put only in the body.
+- **Meeting recaps/summaries.** "Meeting summary / notes / recap / transcript / recording is ready / action items from…" are FYI distributions, not requests — now a −0.25 penalty (subject or body) that also suppresses the imperative-verb bonus (recaps are full of boilerplate "review/confirm" verbs).
+
+Threaded `account_emails` through `classify_many` and `run_triage`. Tests cover all three (To vs CC vs none, List-Id/Precedence skips, meeting-summary + marketing footers); full suite 2166 passed.
+
 ## Unreleased — harden the agent/orchestrator integration surface (b203)
 
 ### Agents: close the gaps an OpenClaw/Hermes integrator hits, and stop the docs lying about sending
