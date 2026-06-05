@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — needs-reply: narrow the team-thread rule (it over-suppressed) (b220)
+
+### A 3-person intro to you shouldn't be hidden
+
+b219's "a same-org colleague is copied → surface" branch fired on small **direct** threads too — e.g. an intro `To:` you + a colleague + an external contact got demoted and dismissed, even though it's clearly for you to answer. Real team broadcasts are already caught by the **5+ recipient** rule, so the colleague-only branch is dropped: **recipient count is the signal**. Small threads where you're directly addressed draft again (even with a colleague copied); 5+ group threads still surface. Restored the drafts the previous re-screen wrongly dismissed.
+
 ## Unreleased — needs-reply: don't draft for group/team threads (b219)
 
 ### "I'm in the To line, but with 7 colleagues" — a teammate owns that reply

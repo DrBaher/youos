@@ -648,14 +648,16 @@ def test_group_thread_5plus_recipients_surfaces_not_drafts():
     assert any("group thread" in r for r in v.reasons)
 
 
-def test_team_thread_colleague_copied_surfaces():
-    # Small thread but a same-org colleague is copied → team thread → surface.
+def test_small_thread_with_colleague_still_drafts():
+    # b220: a small direct thread (you + a colleague + an external — e.g. a
+    # 3-person intro) must STILL draft. Being directly addressed on a small
+    # thread means it's for you, even if a colleague is copied.
     v = classify(_msg(
         body="Could you confirm the plan for next week?",
         headers={"to": _to("baher@work.example", "colleague@work.example", "ext@partner.com")},
     ), account_emails=ME_ORG)
-    assert v.needs_reply is False
-    assert any("team thread" in r for r in v.reasons)
+    assert v.needs_reply is True
+    assert not any("group thread" in r or "team thread" in r for r in v.reasons)
 
 
 def test_direct_small_thread_still_drafts():
