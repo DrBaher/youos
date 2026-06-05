@@ -283,6 +283,23 @@ class SenderHistory:
 
 # --- Classifier -------------------------------------------------------------
 
+# Total recipients (To+Cc, incl. the user) at/above which a thread is treated as
+# a group/broadcast where a specific reply from the user usually isn't expected.
+GROUP_THREAD_MIN_RECIPIENTS = 5
+
+# Public/free mail providers — a shared domain here means nothing (anyone can
+# have a gmail.com address), so they never count as a "colleague" org domain.
+_PUBLIC_EMAIL_DOMAINS = frozenset({
+    "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
+    "yahoo.com", "yahoo.co.uk", "icloud.com", "me.com", "aol.com", "proton.me",
+    "protonmail.com", "gmx.com", "gmx.de", "web.de", "mail.com", "yandex.com",
+    "qq.com", "fastmail.com", "zoho.com",
+})
+
+
+def _domain(email: str | None) -> str:
+    return email.rsplit("@", 1)[-1].lower() if email and "@" in email else ""
+
 
 def _matches_skip_list(sender_email: str | None, skip_list: list[str]) -> bool:
     """True if the sender matches any user-configured skip entry. Entries are
@@ -477,13 +494,33 @@ def classify(
     # not-a-recipient (alias/group/bcc) is stronger. No-op unless we know the
     # user's own addresses and the message has a parseable To/Cc. b205: real
     # inbox was drafting replies to threads addressed to colleagues.
+    group_demote = False
     if account_emails:
-        addr_penalty, addr_reason = _addressed_to_me(
-            msg.headers, {e.lower() for e in account_emails if e}
-        )
+        _mine = {e.lower() for e in account_emails if e}
+        addr_penalty, addr_reason = _addressed_to_me(msg.headers, _mine)
         if addr_penalty:
             score += addr_penalty
             reasons.append(addr_reason)
+
+        # Group / team thread: you're one of many recipients, or a colleague from
+        # your own org is copied — a teammate is usually the designated responder,
+        # so surface for review instead of drafting as you (user policy b219).
+        # Only fires when To/Cc is parseable (else we can't tell).
+        _to = _header_emails(msg.headers.get("to"))
+        _cc = _header_emails(msg.headers.get("cc"))
+        _others = (_to | _cc) - _mine
+        if _others:
+            _colleague_domains = {
+                d for d in (_domain(e) for e in _mine) if d and d not in _PUBLIC_EMAIL_DOMAINS
+            }
+            _colleague = any(_domain(a) in _colleague_domains for a in _others)
+            _total = len(_others) + 1  # + the user
+            if _total >= GROUP_THREAD_MIN_RECIPIENTS:
+                group_demote = True
+                reasons.append(f"group thread ({_total} recipients) — a teammate likely owns the reply")
+            elif _colleague and len(_others) >= 2:
+                group_demote = True
+                reasons.append("team thread (a colleague from your org is copied)")
 
     # Soft penalty for `noreply@` / `donotreply@` — was a hard skip, but
     # transactional notifications (demo-form alerts, password resets) come
@@ -608,11 +645,14 @@ def classify(
         reasons.append("VIP sender (prioritized)")
 
     score = max(0.0, min(1.0, score))
-    needs_reply = score >= threshold
+    # A group/team thread never auto-drafts (a teammate likely owns the reply) —
+    # it's surfaced for review instead. A VIP sender overrides this (the user
+    # explicitly prioritizes them), so their group mail still drafts.
+    needs_reply = score >= threshold and not (group_demote and not is_vip)
     # Surface-for-review tier: didn't pass, but wasn't junk either — score is
-    # in the borderline band and no hard-skip ran (hard skips return early
-    # with score=0.0, never reach this).
-    surface_for_review = (not needs_reply) and score >= 0.30
+    # in the borderline band (or it's a demoted group thread). Hard skips return
+    # early with score=0.0 and never reach this.
+    surface_for_review = (not needs_reply) and (score >= 0.30 or group_demote)
     return NeedsReplyVerdict(
         needs_reply=needs_reply,
         score=score,
