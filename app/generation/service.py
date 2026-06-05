@@ -1026,40 +1026,97 @@ def _format_sender_context(profile: dict[str, Any]) -> str:
     return result
 
 
+# sender_type values (app/core/sender.py) vs persona ``modes`` keys: a sender is
+# "external_client" but the persona mode/pattern is conventionally "client".
+# Look mail up under both so either naming resolves.
+_PERSONA_TYPE_ALIASES: dict[str, str] = {"external_client": "client"}
+
+
+def _persona_type_keys(sender_type: str | None) -> list[str]:
+    keys = [sender_type] if sender_type else []
+    alias = _PERSONA_TYPE_ALIASES.get(sender_type or "")
+    if alias:
+        keys.append(alias)
+    return keys
+
+
+def _apply_name(template: str, name: str | None) -> str:
+    """Fill ``{name}`` / ``[name]`` with ``name``; if no name, collapse the
+    placeholder (and its leading space) so we never emit "Hi ," with a dangling
+    space before the punctuation."""
+    if not template:
+        return template
+    out = template
+    for ph in ("{name}", "[name]"):
+        if ph in out:
+            out = out.replace(ph, name) if name else out.replace(" " + ph, "").replace(ph, "")
+    return out.replace("  ", " ")
+
+
+def _signoff_name() -> str | None:
+    """The user's own name for a closing's ``{name}`` (e.g. "Best, Baher")."""
+    try:
+        from app.core.config import load_config
+
+        return ((load_config() or {}).get("user", {}).get("name") or "").strip() or None
+    except Exception:
+        return None
+
+
 def _resolve_greeting(persona: dict[str, Any], sender_type: str | None, first_name: str | None = None) -> str:
-    """Resolve greeting from persona config: mode greeting > greeting_patterns > default."""
+    """Resolve greeting: explicit mode greeting > greeting_patterns > default >
+    the flat ``greeting_style`` fallback. The flat fallback is skipped for
+    ``internal`` mail — the user doesn't greet colleagues (b222). Explicitly
+    configured internal greetings are still honored."""
+    modes = persona.get("modes") or {}
+    patterns = persona.get("greeting_patterns") or {}
     greeting = ""
-    modes = persona.get("modes", {})
-    greeting_patterns = persona.get("greeting_patterns", {})
-    if sender_type and sender_type in modes and "greeting" in modes[sender_type]:
-        greeting = modes[sender_type]["greeting"]
-    elif sender_type and sender_type in greeting_patterns:
-        greeting = greeting_patterns[sender_type]
-    elif "default" in greeting_patterns:
-        greeting = greeting_patterns["default"]
-    if greeting and "{name}" in greeting:
-        if first_name:
-            greeting = greeting.replace("{name}", first_name).replace("  ", " ")
-        else:
-            # No first name available — collapse "Hi {name}," into "Hi," rather
-            # than rendering the embarrassing "Hi ," with a leading space. The
-            # leading-space form of the placeholder is consumed first so the
-            # punctuation around it doesn't leave a dangling " ,".
-            greeting = greeting.replace(" {name}", "").replace("{name}", "")
-    return greeting
+    for k in _persona_type_keys(sender_type):
+        m = modes.get(k)
+        if isinstance(m, dict) and m.get("greeting"):
+            greeting = m["greeting"]
+            break
+    if not greeting:
+        for k in _persona_type_keys(sender_type):
+            if patterns.get(k):
+                greeting = patterns[k]
+                break
+    if not greeting and patterns.get("default"):
+        greeting = patterns["default"]
+    if not greeting and sender_type != "internal" and persona.get("greeting_style"):
+        greeting = persona["greeting_style"]
+    return _apply_name(greeting, first_name)
 
 
 def _resolve_closing(persona: dict[str, Any], sender_type: str | None) -> str:
-    """Resolve closing from persona config: mode closing > closing_patterns > default."""
+    """Resolve closing: explicit mode closing > closing_patterns > default > the
+    flat ``closing_informal`` (personal) / ``closing_formal`` fallback. The flat
+    fallback is skipped for ``internal`` mail (b222). ``{name}`` is filled with
+    the user's own sign-off name."""
+    modes = persona.get("modes") or {}
+    patterns = persona.get("closing_patterns") or {}
     closing = ""
-    modes = persona.get("modes", {})
-    closing_patterns = persona.get("closing_patterns", {})
-    if sender_type and sender_type in modes and "closing" in modes[sender_type]:
-        closing = modes[sender_type]["closing"]
-    elif sender_type and sender_type in closing_patterns:
-        closing = closing_patterns[sender_type]
-    elif "default" in closing_patterns:
-        closing = closing_patterns["default"]
+    for k in _persona_type_keys(sender_type):
+        m = modes.get(k)
+        if isinstance(m, dict) and m.get("closing"):
+            closing = m["closing"]
+            break
+    if not closing:
+        for k in _persona_type_keys(sender_type):
+            if patterns.get(k):
+                closing = patterns[k]
+                break
+    if not closing and patterns.get("default"):
+        closing = patterns["default"]
+    if not closing and sender_type != "internal":
+        if sender_type == "personal" and persona.get("closing_informal"):
+            closing = persona["closing_informal"]
+        elif persona.get("closing_formal"):
+            closing = persona["closing_formal"]
+        elif persona.get("closing_informal"):
+            closing = persona["closing_informal"]
+    if closing and ("{name}" in closing or "[name]" in closing):
+        closing = _apply_name(closing, _signoff_name())
     return closing
 
 
