@@ -45,6 +45,78 @@ def _clean_stderr(text: str | None, *, limit: int = 200) -> str:
     return re.sub(r"[\x00-\x1f\x7f]+", " ", (text or "")).strip()[:limit]
 
 
+def _text_to_html(text: str) -> str:
+    """Minimal plain-text → HTML: escape, preserve line breaks. Enough to wrap a
+    generated reply so a fetched HTML signature renders cleanly alongside it."""
+    import html as _html
+
+    return _html.escape(text or "").replace("\n", "<br>\n")
+
+
+def _compose_html_with_signature(body: str, signature_html: str) -> str:
+    """The reply body (as HTML) + a blank line + the user's Gmail signature."""
+    return f"{_text_to_html(body)}<br><br>{signature_html}"
+
+
+def get_signature(*, account: str, backend: str | None = None) -> str:
+    """Best-effort fetch of the account's Gmail send-as signature (HTML).
+
+    The Gmail API does NOT append the user's signature to API-created drafts
+    (only the web composer does), so to honor "always include my signature" we
+    fetch it and add it ourselves. Returns '' on any failure or when the backend
+    can't provide one — the caller then pushes without a signature rather than
+    failing the push.
+    """
+    from app.core.config import get_ingestion_google_backend
+
+    name = (backend or get_ingestion_google_backend()).strip().lower()
+    try:
+        if name == "gog":
+            return _gog_get_signature(account=account)
+        if name == "native":
+            return _native_get_signature(account=account)
+    except Exception:
+        logger.debug("signature fetch failed (account=%s backend=%s)", account, name, exc_info=True)
+    return ""
+
+
+def _pick_signature(items: Any, account: str) -> str:
+    """From a list of sendAs resources, the signature of the one matching
+    ``account`` (preferred) or the default/primary alias."""
+    acct = (account or "").lower()
+    fallback = ""
+    for s in items or []:
+        if not isinstance(s, dict):
+            continue
+        sig = s.get("signature") or ""
+        if not sig:
+            continue
+        if (s.get("sendAsEmail") or "").lower() == acct:
+            return sig
+        if (s.get("isDefault") or s.get("isPrimary")) and not fallback:
+            fallback = sig
+    return fallback
+
+
+def _gog_get_signature(*, account: str) -> str:
+    """``gog gmail settings sendas list`` → signature HTML (verified gog 0.17.0)."""
+    cmd = ["gog", "gmail", "settings", "sendas", "list", "--account", account, "--json", "--no-input"]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    if result.returncode != 0:
+        return ""
+    data = json.loads(result.stdout or "[]")
+    items = data if isinstance(data, list) else (
+        data.get("sendAs") or data.get("result") or data.get("items") or []
+    )
+    return _pick_signature(items, account)
+
+
+def _native_get_signature(*, account: str) -> str:
+    service = _native_gmail_service(account=account)
+    resp = service.users().settings().sendAs().list(userId="me").execute()
+    return _pick_signature(resp.get("sendAs", []), account)
+
+
 class GmailWriteError(RuntimeError):
     """Raised when a backend can't create the draft. Caller (the agent
     route) translates to an HTTP error with a useful message."""
@@ -90,6 +162,7 @@ def create_draft(
     subject: str,
     body: str,
     cc: str | None = None,
+    signature_html: str | None = None,
     backend: str | None = None,
 ) -> GmailDraftResult:
     """Create a Gmail draft addressed to ``to_email`` on the user's ``account``.
@@ -104,21 +177,25 @@ def create_draft(
     """
     from app.core.config import get_ingestion_google_backend
 
+    # When a signature is supplied the draft is sent as HTML (body + signature),
+    # so the user's formatted Gmail signature renders. Otherwise it stays plain.
+    body_html = _compose_html_with_signature(body, signature_html) if signature_html else None
+
     name = (backend or get_ingestion_google_backend()).strip().lower()
     if name == "gog":
         return _gog_create_draft(
             account=account, reply_to_message_id=reply_to_message_id,
-            to_email=to_email, subject=subject, body=body, cc=cc,
+            to_email=to_email, subject=subject, body=body, cc=cc, body_html=body_html,
         )
     if name == "gws":
         return _gws_create_draft(
             account=account, thread_id=thread_id,
-            to_email=to_email, subject=subject, body=body, cc=cc,
+            to_email=to_email, subject=subject, body=body, cc=cc, html=body_html,
         )
     if name == "native":
         return _native_create_draft(
             account=account, thread_id=thread_id,
-            to_email=to_email, subject=subject, body=body, cc=cc,
+            to_email=to_email, subject=subject, body=body, cc=cc, html=body_html,
         )
     raise ValueError(f"unknown ingestion.google_backend: {name!r}")
 
@@ -323,18 +400,22 @@ def _gog_send_email(*, account: str, to: str, subject: str, body: str) -> GmailS
 
 
 def _build_rfc822(
-    *, to_email: str, subject: str, body: str, cc: str | None = None,
+    *, to_email: str, subject: str, body: str, cc: str | None = None, html: str | None = None,
 ) -> bytes:
     """Build an RFC 822 message. Subject already includes the ``Re:`` prefix
     if the caller wants threading; Gmail handles thread continuity from the
     explicit ``thread_id`` we pass alongside the message. ``cc`` is a
-    comma-separated recipient string (reply-all keeps the thread's Cc)."""
+    comma-separated recipient string (reply-all keeps the thread's Cc). When
+    ``html`` is given the message is multipart/alternative (plain + HTML) so a
+    fetched Gmail signature renders."""
     msg = email.message.EmailMessage()
     msg["To"] = to_email
     if cc:
         msg["Cc"] = cc
     msg["Subject"] = subject
     msg.set_content(body)
+    if html:
+        msg.add_alternative(html, subtype="html")
     return msg.as_bytes()
 
 
@@ -346,6 +427,7 @@ def _gog_create_draft(
     subject: str,
     body: str,
     cc: str | None = None,
+    body_html: str | None = None,
 ) -> GmailDraftResult:
     """Verified ``gog gmail drafts create`` invocation (gog 0.17.0).
 
@@ -354,18 +436,25 @@ def _gog_create_draft(
     is by **message id** (not thread id): ``--reply-to-message-id`` sets
     In-Reply-To, References, *and* threadId in one shot.
 
-    Body is sent on stdin via ``--body-file -`` so multi-line bodies,
-    quotes, backticks, and other shell-hazardous content go through
-    unmangled.
+    Plain body is sent on stdin via ``--body-file -`` so multi-line / shell-
+    hazardous content passes through unmangled. When ``body_html`` is given
+    (e.g. body + Gmail signature) it's passed via the verified ``--body-html``
+    flag instead, producing an HTML draft.
     """
     cmd: list[str] = [
         "gog", "gmail", "drafts", "create",
         "--account", account,
         "--to", to_email,
         "--subject", subject,
-        "--body-file", "-",
         "--json", "--no-input",
     ]
+    stdin: str | None
+    if body_html is not None:
+        cmd += ["--body-html", body_html]  # verified flag: --body-html=STRING
+        stdin = None
+    else:
+        cmd += ["--body-file", "-"]
+        stdin = body
     if cc:
         cmd += ["--cc", cc]   # verified flag: gog gmail drafts create --cc=STRING (comma-separated)
     if reply_to_message_id:
@@ -373,7 +462,7 @@ def _gog_create_draft(
 
     try:
         result = subprocess.run(
-            cmd, input=body, capture_output=True, text=True, timeout=30,
+            cmd, input=stdin, capture_output=True, text=True, timeout=30,
         )
     except FileNotFoundError as exc:
         raise GmailWriteError("gog CLI not on PATH — install via Homebrew or set up the native backend") from exc
@@ -413,6 +502,7 @@ def _gws_create_draft(
     subject: str,
     body: str,
     cc: str | None = None,
+    html: str | None = None,
 ) -> GmailDraftResult:
     """Verified ``gws gmail users drafts create`` invocation (gws Google
     Workspace CLI, current as of 2026-05).
@@ -441,7 +531,7 @@ def _gws_create_draft(
 
     from app.ingestion.adapters import _resolve_gws_credentials_file
 
-    rfc = _build_rfc822(to_email=to_email, subject=subject, body=body, cc=cc)
+    rfc = _build_rfc822(to_email=to_email, subject=subject, body=body, cc=cc, html=html)
     raw_b64 = base64.urlsafe_b64encode(rfc).decode("ascii")
 
     request_body: dict[str, Any] = {"message": {"raw": raw_b64}}
@@ -523,6 +613,7 @@ def _native_create_draft(
     subject: str,
     body: str,
     cc: str | None = None,
+    html: str | None = None,
 ) -> GmailDraftResult:
     """Create a draft via Google's REST API directly.
 
@@ -534,7 +625,7 @@ def _native_create_draft(
     Tests mock ``googleapiclient.discovery.build`` so the auth + API
     stack is exercised by the call shape, not the network.
     """
-    rfc = _build_rfc822(to_email=to_email, subject=subject, body=body, cc=cc)
+    rfc = _build_rfc822(to_email=to_email, subject=subject, body=body, cc=cc, html=html)
     raw_b64 = base64.urlsafe_b64encode(rfc).decode("ascii")
 
     try:
