@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — push to Gmail: always include your Gmail signature (b223)
+
+### The API doesn't append your signature — so we fetch and add it
+
+The Gmail web composer appends your send-as signature; the Gmail **API** (what "Push to Gmail Drafts" uses) does not — so pushed drafts went out without it. Now push fetches your signature (`gog gmail settings sendas list` for gog, `users.settings.sendAs.list` for native — the send-as matching the account, else the default/primary) and includes it: the draft is created as **HTML** (body → HTML + signature), so your formatted signature (titles, links, logo) renders. Best-effort — a fetch failure pushes without it rather than blocking. Disable with `generation.push.include_signature: false`. Tests cover signature selection, the gog `--body-html` path, the multipart/alternative MIME build, and the default-on flag.
+
 ## Unreleased — drafts: greetings/closings actually render (except internal) (b222)
 
 ### Why drafts had no greeting

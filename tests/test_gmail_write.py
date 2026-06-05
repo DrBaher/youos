@@ -670,3 +670,57 @@ def test_reply_all_cc_none_for_one_to_one(monkeypatch):
     cc = push._reply_all_cc(sender_email="alice@partner.com",
                             to_recipients="Baher <baher@work.example>", cc_recipients=None)
     assert cc is None
+
+
+# --- b223: include Gmail signature on push -----------------------------------
+
+def test_pick_signature_prefers_account_then_default():
+    from app.ingestion.gmail_write import _pick_signature
+    items = [
+        {"sendAsEmail": "hello@x.com", "isDefault": True, "signature": "<i>default</i>"},
+        {"sendAsEmail": "me@x.com", "signature": "<b>mine</b>"},
+    ]
+    assert _pick_signature(items, "me@x.com") == "<b>mine</b>"
+    assert _pick_signature(items, "absent@x.com") == "<i>default</i>"
+    assert _pick_signature([], "me@x.com") == ""
+
+
+def test_gog_create_draft_with_signature_uses_body_html(monkeypatch):
+    captured: dict = {}
+
+    def _fake_run(cmd, input, capture_output, text, timeout):
+        captured["cmd"] = cmd
+        captured["stdin"] = input
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"id": "d1"}), stderr="")
+
+    monkeypatch.setattr("app.ingestion.gmail_write.subprocess.run", _fake_run)
+    monkeypatch.setattr("app.core.config.get_ingestion_google_backend", lambda: "gog")
+    from app.ingestion.gmail_write import create_draft
+    create_draft(account="me@x.com", reply_to_message_id="m1", to_email="a@x.com",
+                 subject="Re: x", body="Yes, that works.\nThanks.",
+                 signature_html="<div>Baher Al Hakim<br>CEO</div>")
+    cmd = captured["cmd"]
+    assert "--body-html" in cmd
+    html = cmd[cmd.index("--body-html") + 1]
+    assert "Yes, that works.<br>" in html         # body converted to HTML
+    assert "<div>Baher Al Hakim<br>CEO</div>" in html  # signature appended
+    assert "--body-file" not in cmd               # not the plain path
+    assert captured["stdin"] is None
+
+
+def test_build_rfc822_html_alternative_carries_signature():
+    from app.ingestion.gmail_write import _build_rfc822, _compose_html_with_signature
+    html = _compose_html_with_signature("hello", "<b>Sig</b>")
+    raw = _build_rfc822(to_email="a@x.com", subject="Re: x", body="hello", html=html).decode()
+    assert "multipart/alternative" in raw
+    assert "text/html" in raw
+    assert "Sig" in raw
+
+
+def test_push_include_signature_default_true(monkeypatch):
+    from app.agent import push
+    monkeypatch.setattr("app.core.config.load_config", lambda: {})
+    assert push._include_signature() is True
+    monkeypatch.setattr("app.core.config.load_config",
+                        lambda: {"generation": {"push": {"include_signature": False}}})
+    assert push._include_signature() is False
