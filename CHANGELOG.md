@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — push to Gmail: reply-all keeps the Cc list (b221)
+
+### Pushing a draft no longer drops everyone in copy
+
+"Push to Gmail Drafts" created the reply addressed only to the sender, silently dropping the thread's Cc. It now **replies-all by default**: To = the sender, Cc = everyone the original thread addressed (its To + Cc) minus you and the sender. `gmail_write.create_draft` gains a `cc` param (gog `--cc`, verified flag; native/gws set the `Cc` MIME header), and `push.py` computes the reply-all set from the To/Cc stored on the row (b213). Falls back to a plain reply when there's no one else to copy. Tests: gog `--cc` passed/omitted, `Cc` header in the MIME build, reply-all set drops self+sender.
+
 ## Unreleased — needs-reply: narrow the team-thread rule (it over-suppressed) (b220)
 
 ### A 3-person intro to you shouldn't be hidden

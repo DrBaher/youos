@@ -26,6 +26,22 @@ from app.agent import store
 logger = logging.getLogger(__name__)
 
 
+def _reply_all_cc(
+    *, sender_email: str, to_recipients: str | None, cc_recipients: str | None
+) -> str | None:
+    """Cc string for a reply-all: every address the original thread put in To or
+    Cc, minus the user's own addresses and the sender (who's the To of the
+    reply). Preserves the loop instead of dropping the Cc list. Returns None when
+    there's no one left to copy (a plain 1:1 reply)."""
+    from app.agent.needs_reply import _header_emails
+    from app.core.config import get_user_emails
+
+    mine = {e.lower() for e in get_user_emails() if e}
+    drop = mine | {(sender_email or "").lower()}
+    others = (_header_emails(to_recipients) | _header_emails(cc_recipients)) - drop
+    return ", ".join(sorted(others)) or None
+
+
 @dataclass
 class PushOutcome:
     """Result of a push attempt. ``ok`` distinguishes success from a handled
@@ -98,6 +114,16 @@ def push_pending_row(database_url: str, row_id: int, *, backend: str | None = No
     raw_subject = row.get("subject") or ""
     subject = raw_subject if raw_subject.lower().startswith("re:") else f"Re: {raw_subject}"
 
+    # Reply-all by default: keep everyone the original thread addressed (its To +
+    # Cc) in Cc, minus you and the person you're replying to (who goes in To). A
+    # plain reply-to-sender would silently drop the Cc list. Uses the To/Cc
+    # persisted on the row (b213); falls back to a bare reply when absent.
+    cc = _reply_all_cc(
+        sender_email=row["sender_email"],
+        to_recipients=row.get("to_recipients"),
+        cc_recipients=row.get("cc_recipients"),
+    )
+
     try:
         result = gmail_write.create_draft(
             account=row["account"],
@@ -106,6 +132,7 @@ def push_pending_row(database_url: str, row_id: int, *, backend: str | None = No
             to_email=row["sender_email"],
             subject=subject,
             body=body,
+            cc=cc,
             backend=backend,
         )
     except NotImplementedError as exc:
