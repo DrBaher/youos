@@ -227,7 +227,7 @@ class RescreenBody(BaseModel):
 # stored To/Cc (b213 onward — older rows have NULL recipients and skip that check).
 _RESCREEN_MARKERS = (
     "meeting recap", "calendar", "marketing", "transactional",
-    "cc'd", "not a direct recipient",
+    "cc'd", "not a direct recipient", "group thread", "team thread",
 )
 
 
