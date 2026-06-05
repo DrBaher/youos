@@ -502,25 +502,21 @@ def classify(
             score += addr_penalty
             reasons.append(addr_reason)
 
-        # Group / team thread: you're one of many recipients, or a colleague from
-        # your own org is copied — a teammate is usually the designated responder,
-        # so surface for review instead of drafting as you (user policy b219).
-        # Only fires when To/Cc is parseable (else we can't tell).
+        # Group / broadcast thread: you're one of many recipients — a teammate is
+        # usually the designated responder, so surface for review instead of
+        # drafting as you (user policy b219). Only fires when To/Cc is parseable.
+        #
+        # b220: the earlier "a colleague is copied" variant fired on small direct
+        # threads too (e.g. a 3-person intro To you + a colleague + an external
+        # contact) and wrongly suppressed mail you ARE meant to answer. Real team
+        # broadcasts are already caught by the recipient-count rule, so the
+        # colleague-only branch is dropped — count is the signal.
         _to = _header_emails(msg.headers.get("to"))
         _cc = _header_emails(msg.headers.get("cc"))
-        _others = (_to | _cc) - _mine
-        if _others:
-            _colleague_domains = {
-                d for d in (_domain(e) for e in _mine) if d and d not in _PUBLIC_EMAIL_DOMAINS
-            }
-            _colleague = any(_domain(a) in _colleague_domains for a in _others)
-            _total = len(_others) + 1  # + the user
-            if _total >= GROUP_THREAD_MIN_RECIPIENTS:
-                group_demote = True
-                reasons.append(f"group thread ({_total} recipients) — a teammate likely owns the reply")
-            elif _colleague and len(_others) >= 2:
-                group_demote = True
-                reasons.append("team thread (a colleague from your org is copied)")
+        _total = len(((_to | _cc) - _mine)) + 1  # other recipients + the user
+        if (_to or _cc) and _total >= GROUP_THREAD_MIN_RECIPIENTS:
+            group_demote = True
+            reasons.append(f"group thread ({_total} recipients) — a teammate likely owns the reply")
 
     # Soft penalty for `noreply@` / `donotreply@` — was a hard skip, but
     # transactional notifications (demo-form alerts, password resets) come
