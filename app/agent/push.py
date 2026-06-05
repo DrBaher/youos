@@ -26,6 +26,19 @@ from app.agent import store
 logger = logging.getLogger(__name__)
 
 
+def _include_signature() -> bool:
+    """``generation.push.include_signature`` — default True. Append the user's
+    Gmail signature to pushed drafts."""
+    try:
+        from app.core.config import load_config
+
+        gen = (load_config() or {}).get("generation", {})
+        push = gen.get("push", {}) if isinstance(gen, dict) else {}
+        return push.get("include_signature", True) is not False
+    except Exception:
+        return True
+
+
 def _reply_all_cc(
     *, sender_email: str, to_recipients: str | None, cc_recipients: str | None
 ) -> str | None:
@@ -124,6 +137,16 @@ def push_pending_row(database_url: str, row_id: int, *, backend: str | None = No
         cc_recipients=row.get("cc_recipients"),
     )
 
+    # Always include the user's Gmail signature (the API, unlike the web
+    # composer, won't append it). Best-effort: a fetch failure pushes without it
+    # rather than blocking. Disable with generation.push.include_signature: false.
+    signature_html = None
+    if _include_signature():
+        try:
+            signature_html = gmail_write.get_signature(account=row["account"], backend=backend) or None
+        except Exception:
+            logger.debug("signature fetch failed; pushing without it", exc_info=True)
+
     try:
         result = gmail_write.create_draft(
             account=row["account"],
@@ -133,6 +156,7 @@ def push_pending_row(database_url: str, row_id: int, *, backend: str | None = No
             subject=subject,
             body=body,
             cc=cc,
+            signature_html=signature_html,
             backend=backend,
         )
     except NotImplementedError as exc:
