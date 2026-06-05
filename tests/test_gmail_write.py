@@ -613,3 +613,60 @@ def test_gws_draft_refuses_unmapped_account(monkeypatch):
     monkeypatch.setattr(gw.subprocess, "run", _no_run)
     with pytest.raises(gw.GmailWriteError, match="refusing to fall back"):
         gw._gws_create_draft(account="other@x.com", thread_id=None, to_email="x@y.com", subject="s", body="b")
+
+
+def test_gog_create_draft_passes_cc(monkeypatch):
+    """b221: reply-all — a cc string is forwarded as gog's --cc flag."""
+    captured: dict = {}
+
+    def _fake_run(cmd, input, capture_output, text, timeout):
+        captured["cmd"] = cmd
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"id": "d1"}), stderr="")
+
+    monkeypatch.setattr("app.ingestion.gmail_write.subprocess.run", _fake_run)
+    monkeypatch.setattr("app.core.config.get_ingestion_google_backend", lambda: "gog")
+    from app.ingestion.gmail_write import create_draft
+    create_draft(account="me@x.com", reply_to_message_id="m1", to_email="a@x.com",
+                 subject="Re: x", body="hi", cc="b@x.com, c@x.com")
+    cmd = captured["cmd"]
+    assert cmd[cmd.index("--cc") + 1] == "b@x.com, c@x.com"
+
+
+def test_gog_create_draft_omits_cc_when_none(monkeypatch):
+    captured: dict = {}
+    monkeypatch.setattr("app.ingestion.gmail_write.subprocess.run",
+                        lambda cmd, input, capture_output, text, timeout: captured.update(cmd=cmd)
+                        or SimpleNamespace(returncode=0, stdout=json.dumps({"id": "d1"}), stderr=""))
+    monkeypatch.setattr("app.core.config.get_ingestion_google_backend", lambda: "gog")
+    from app.ingestion.gmail_write import create_draft
+    create_draft(account="me@x.com", reply_to_message_id="m1", to_email="a@x.com",
+                 subject="Re: x", body="hi")
+    assert "--cc" not in captured["cmd"]
+
+
+def test_build_rfc822_sets_cc_header():
+    from app.ingestion.gmail_write import _build_rfc822
+    raw = _build_rfc822(to_email="a@x.com", subject="Re: x", body="hi", cc="b@x.com, c@x.com").decode()
+    assert "To: a@x.com" in raw
+    assert "Cc: b@x.com, c@x.com" in raw
+
+
+def test_reply_all_cc_keeps_thread_drops_self_and_sender(monkeypatch):
+    from app.agent import push
+    monkeypatch.setattr("app.core.config.get_user_emails",
+                        lambda: ("baher@medicus.ai", "drbaher@gmail.com"))
+    cc = push._reply_all_cc(
+        sender_email="alice@partner.com",
+        to_recipients="Alice <alice@partner.com>, Baher <baher@medicus.ai>, Bob <bob@x.com>",
+        cc_recipients="Carol <carol@x.com>, Me <drbaher@gmail.com>",
+    )
+    # sender (To of reply) + both of the user's addresses are dropped; rest kept.
+    assert cc == "bob@x.com, carol@x.com"
+
+
+def test_reply_all_cc_none_for_one_to_one(monkeypatch):
+    from app.agent import push
+    monkeypatch.setattr("app.core.config.get_user_emails", lambda: ("baher@medicus.ai",))
+    cc = push._reply_all_cc(sender_email="alice@partner.com",
+                            to_recipients="Baher <baher@medicus.ai>", cc_recipients=None)
+    assert cc is None
