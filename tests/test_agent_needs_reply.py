@@ -626,3 +626,53 @@ def test_x_auto_response_suppress_hard_skips():
 def test_precedence_auto_reply_hard_skips():
     v = classify(_msg(headers={"precedence": "auto_reply"}, body="I am out of office."))
     assert v.needs_reply is False and v.score == 0.0
+
+
+# --- b219: group / team thread demotion --------------------------------------
+
+ME_ORG = ["baher@medicus.ai", "drbaher@gmail.com"]
+
+
+def _to(*emails):
+    return ", ".join(f"X <{e}>" for e in emails)
+
+
+def test_group_thread_5plus_recipients_surfaces_not_drafts():
+    # You're in To, but alongside 4+ others → group thread → surface, not draft.
+    v = classify(_msg(
+        body="Could you confirm the plan? please review.",
+        headers={"to": _to("baher@medicus.ai", "a@x.com", "b@x.com", "c@x.com", "d@x.com")},
+    ), account_emails=ME_ORG)
+    assert v.needs_reply is False
+    assert v.surface_for_review is True
+    assert any("group thread" in r for r in v.reasons)
+
+
+def test_team_thread_colleague_copied_surfaces():
+    # Small thread but a same-org colleague is copied → team thread → surface.
+    v = classify(_msg(
+        body="Could you confirm the plan for next week?",
+        headers={"to": _to("baher@medicus.ai", "colleague@medicus.ai", "ext@partner.com")},
+    ), account_emails=ME_ORG)
+    assert v.needs_reply is False
+    assert any("team thread" in r for r in v.reasons)
+
+
+def test_direct_small_thread_still_drafts():
+    # Addressed to you + one external person, no colleague → still drafts.
+    v = classify(_msg(
+        body="Could you confirm the timeline for next week?",
+        headers={"to": _to("baher@medicus.ai", "client@partner.com")},
+    ), account_emails=ME_ORG)
+    assert v.needs_reply is True
+    assert not any("group thread" in r or "team thread" in r for r in v.reasons)
+
+
+def test_public_domain_not_treated_as_colleague():
+    # A gmail.com recipient must NOT count as a colleague (drbaher uses gmail).
+    v = classify(_msg(
+        body="Could you confirm the timeline for next week?",
+        headers={"to": _to("baher@medicus.ai", "someone@gmail.com", "other@gmail.com")},
+    ), account_emails=ME_ORG)
+    # 3 total recipients (< 5) and no org colleague → not demoted as team thread.
+    assert v.needs_reply is True

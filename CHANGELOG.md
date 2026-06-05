@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — needs-reply: don't draft for group/team threads (b219)
+
+### "I'm in the To line, but with 7 colleagues" — a teammate owns that reply
+
+Real-inbox finding: the agent drafted a reply to a thread the user perceived as "not addressed to me" — but they *were* in `To`, on a group email to 8 people (them + 6 Medicus colleagues + the sender's colleague). Addressed-to-me (b205) only catches CC-only; a large group thread where you're one of many To recipients slipped through.
+
+`classify()` now demotes (surface, don't draft) when, per user policy:
+- you're one of **5+ total recipients** (a broadcast/group thread), or
+- a **same-org colleague** is copied on a multi-recipient thread (a teammate is the likely responder).
+
+Surfaced for review, never auto-drafted — a **VIP sender overrides** it (their group mail still drafts). Public/free domains (gmail.com etc.) never count as a "colleague" org domain. Sender-agnostic; uses the To/Cc already stored on the row. `Re-screen queue` also clears existing backlog of these (markers added). Tests cover 5+ groups, colleague-copied threads, direct small threads still drafting, and the public-domain guard.
+
 ## Unreleased — rules: tap a routing action to expand full details (b218)
 
 ### See the whole action, not just the truncated line

@@ -3,11 +3,11 @@ autoresearch:
   iterations: 80
   schedule: 0 1 * * *
 benchmarks:
-  last_refresh_count: 0
+  last_refresh_count: 11758
 ingestion:
   accounts: []
   initial_months: 12
-  mode: quick_start # default onboarding path: quick first value, background full ingest
+  mode: quick_start
   quick_start_enabled: true
   quick_start_months: 3
   quick_start_max_threads: 200
@@ -15,10 +15,6 @@ ingestion:
 model:
   adapter_path: models/adapters/latest
   base: mlx-community/Qwen3-4B-Instruct-2507-4bit
-  # Dedicated multilingual (DE/EN) retrieval embedder, decoupled from `base`
-  # (b177/b180). Loaded via mlx_embeddings on Apple Silicon; 384-d, MIT license.
-  # Changing this id marks existing rows stale (b177 tagging) → run
-  # `python scripts/index_embeddings.py --reindex` to re-embed the corpus.
   embedding_model: intfloat/multilingual-e5-small
   fallback: claude
   ollama:
@@ -26,16 +22,6 @@ model:
     model: mistral
     base_url: http://localhost:11434
 generation:
-  # Best-of-N drafting (b186/b194). When n > 1, callers that opt in
-  # (multi_candidate_ok=True) generate n drafts on a temperature spread and keep
-  # the highest draft_quality_score one. Measured lift on an 80-case voice-match
-  # benchmark (4B+LoRA): n=5 gives voice +0.013, lenfit +0.078, style +0.018 vs
-  # n=1, scaling ~linearly with n. The cost is n× generation, so it is gated to
-  # paths where latency is HIDDEN — the autonomous triage sweep (drafts wait in
-  # the review queue) and the compare-models harness. Interactive drafting
-  # (/draft, /feedback, CLI, review-queue regenerate) ignores this and stays
-  # single-candidate / fast. Deterministic eval (golden/autoresearch) is also
-  # exempt (always one greedy candidate). Set n: 1 to disable everywhere.
   multi_candidate:
     n: 5
 persona:
