@@ -139,3 +139,50 @@ def test_no_injection_when_no_sender_type():
     # Should fall back to default patterns
     assert "Begin your reply with: Hi," in prompt
     assert "End your reply with: Best," in prompt
+
+
+# --- b222: flat greeting_style/closing fallback + internal exclusion ----------
+
+# The real BaherOS persona shape: a flat greeting_style + closing_*; modes exist
+# but their greeting/closing are unset (None).
+def _flat_persona():
+    return {
+        "greeting_style": "Hi [name],",
+        "closing_formal": "Best,\n{name}",
+        "closing_informal": "Cheers,\n{name}",
+        "modes": {
+            "internal": {"greeting": None, "closing": None},
+            "client": {"greeting": None, "closing": None},
+            "personal": {"greeting": None, "closing": None},
+        },
+    }
+
+
+def test_flat_greeting_style_used_for_external(monkeypatch):
+    monkeypatch.setattr("app.generation.service._signoff_name", lambda: "Baher")
+    p = _flat_persona()
+    # external_client maps to the "client" mode (both unset) → falls back to greeting_style.
+    assert _resolve_greeting(p, "external_client", "Alice") == "Hi Alice,"
+    assert _resolve_closing(p, "external_client") == "Best,\nBaher"
+
+
+def test_flat_personal_uses_informal_closing(monkeypatch):
+    monkeypatch.setattr("app.generation.service._signoff_name", lambda: "Baher")
+    p = _flat_persona()
+    assert _resolve_greeting(p, "personal", "Sam") == "Hi Sam,"
+    assert _resolve_closing(p, "personal") == "Cheers,\nBaher"
+
+
+def test_internal_gets_no_flat_fallback():
+    # With nothing explicitly configured for internal, colleagues get no
+    # greeting/closing (user policy: greet everyone EXCEPT internal).
+    p = _flat_persona()
+    assert _resolve_greeting(p, "internal", "Nadine") == ""
+    assert _resolve_closing(p, "internal") == ""
+
+
+def test_internal_explicit_greeting_still_honored():
+    p = _flat_persona()
+    p["modes"]["internal"] = {"greeting": "Hey {name},", "closing": "Cheers,"}
+    assert _resolve_greeting(p, "internal", "Nadine") == "Hey Nadine,"
+    assert _resolve_closing(p, "internal") == "Cheers,"

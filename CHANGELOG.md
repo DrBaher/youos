@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased — drafts: greetings/closings actually render (except internal) (b222)
+
+### Why drafts had no greeting
+
+`_resolve_greeting`/`_resolve_closing` only read `modes[].greeting` / `*_patterns` — they never fell back to the flat `greeting_style` / `closing_formal` / `closing_informal` a real persona uses, and `sender_type` is `external_client` while the persona mode is `client` (mismatch), and `modes.*.greeting: None` short-circuited the lookup. Net: greetings/closings never resolved, so every draft came out bare.
+
+Fixes:
+- Fall back to flat `greeting_style` (greeting) and `closing_informal` (personal) / `closing_formal` (else) when no per-mode/pattern value is set.
+- Map `external_client` ↔ `client` so either persona naming resolves.
+- Treat `None` mode values as unset (no more short-circuit).
+- Fill `[name]`/`{name}` (recipient first name in greetings; the user's own name in closings).
+- **Skip the flat fallback for `internal`** — the user greets everyone *except* colleagues (explicit per-mode internal greetings are still honored).
+
+Pair with enabling `generation.repair.enforce_greeting_closing` so the persona greeting/closing is added when the model drops it. Tests cover the flat fallback, personal→informal, the internal exclusion, and that an explicit internal greeting still works.
+
 ## Unreleased — push to Gmail: reply-all keeps the Cc list (b221)
 
 ### Pushing a draft no longer drops everyone in copy
