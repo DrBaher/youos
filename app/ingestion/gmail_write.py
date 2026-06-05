@@ -89,6 +89,7 @@ def create_draft(
     to_email: str,
     subject: str,
     body: str,
+    cc: str | None = None,
     backend: str | None = None,
 ) -> GmailDraftResult:
     """Create a Gmail draft addressed to ``to_email`` on the user's ``account``.
@@ -107,17 +108,17 @@ def create_draft(
     if name == "gog":
         return _gog_create_draft(
             account=account, reply_to_message_id=reply_to_message_id,
-            to_email=to_email, subject=subject, body=body,
+            to_email=to_email, subject=subject, body=body, cc=cc,
         )
     if name == "gws":
         return _gws_create_draft(
             account=account, thread_id=thread_id,
-            to_email=to_email, subject=subject, body=body,
+            to_email=to_email, subject=subject, body=body, cc=cc,
         )
     if name == "native":
         return _native_create_draft(
             account=account, thread_id=thread_id,
-            to_email=to_email, subject=subject, body=body,
+            to_email=to_email, subject=subject, body=body, cc=cc,
         )
     raise ValueError(f"unknown ingestion.google_backend: {name!r}")
 
@@ -322,13 +323,16 @@ def _gog_send_email(*, account: str, to: str, subject: str, body: str) -> GmailS
 
 
 def _build_rfc822(
-    *, to_email: str, subject: str, body: str,
+    *, to_email: str, subject: str, body: str, cc: str | None = None,
 ) -> bytes:
     """Build an RFC 822 message. Subject already includes the ``Re:`` prefix
     if the caller wants threading; Gmail handles thread continuity from the
-    explicit ``thread_id`` we pass alongside the message."""
+    explicit ``thread_id`` we pass alongside the message. ``cc`` is a
+    comma-separated recipient string (reply-all keeps the thread's Cc)."""
     msg = email.message.EmailMessage()
     msg["To"] = to_email
+    if cc:
+        msg["Cc"] = cc
     msg["Subject"] = subject
     msg.set_content(body)
     return msg.as_bytes()
@@ -341,6 +345,7 @@ def _gog_create_draft(
     to_email: str,
     subject: str,
     body: str,
+    cc: str | None = None,
 ) -> GmailDraftResult:
     """Verified ``gog gmail drafts create`` invocation (gog 0.17.0).
 
@@ -361,6 +366,8 @@ def _gog_create_draft(
         "--body-file", "-",
         "--json", "--no-input",
     ]
+    if cc:
+        cmd += ["--cc", cc]   # verified flag: gog gmail drafts create --cc=STRING (comma-separated)
     if reply_to_message_id:
         cmd += ["--reply-to-message-id", reply_to_message_id]
 
@@ -405,6 +412,7 @@ def _gws_create_draft(
     to_email: str,
     subject: str,
     body: str,
+    cc: str | None = None,
 ) -> GmailDraftResult:
     """Verified ``gws gmail users drafts create`` invocation (gws Google
     Workspace CLI, current as of 2026-05).
@@ -433,7 +441,7 @@ def _gws_create_draft(
 
     from app.ingestion.adapters import _resolve_gws_credentials_file
 
-    rfc = _build_rfc822(to_email=to_email, subject=subject, body=body)
+    rfc = _build_rfc822(to_email=to_email, subject=subject, body=body, cc=cc)
     raw_b64 = base64.urlsafe_b64encode(rfc).decode("ascii")
 
     request_body: dict[str, Any] = {"message": {"raw": raw_b64}}
@@ -514,6 +522,7 @@ def _native_create_draft(
     to_email: str,
     subject: str,
     body: str,
+    cc: str | None = None,
 ) -> GmailDraftResult:
     """Create a draft via Google's REST API directly.
 
@@ -525,7 +534,7 @@ def _native_create_draft(
     Tests mock ``googleapiclient.discovery.build`` so the auth + API
     stack is exercised by the call shape, not the network.
     """
-    rfc = _build_rfc822(to_email=to_email, subject=subject, body=body)
+    rfc = _build_rfc822(to_email=to_email, subject=subject, body=body, cc=cc)
     raw_b64 = base64.urlsafe_b64encode(rfc).decode("ascii")
 
     try:
