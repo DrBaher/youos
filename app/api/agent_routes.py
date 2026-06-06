@@ -32,6 +32,30 @@ def _db_url(request: Request) -> str:
 # --- read --------------------------------------------------------------------
 
 
+class CaptureOutcomesBody(BaseModel):
+    account: str | None = Field(default=None)
+
+
+@router.post("/api/agent/capture_outcomes")
+def capture_outcomes(request: Request, body: CaptureOutcomesBody | None = None) -> dict:
+    """Reconcile queued YouOS drafts against the user's REAL Gmail sends — pair
+    each draft with the reply the user actually sent on that thread (training
+    signal + issue/calibration view). Idempotent; safe to call repeatedly.
+    Returns counts + avg edit distance + a high-divergence ("drafts that missed")
+    count. Synchronous: fetches each open thread, can take a while."""
+    from app.agent.outcome_capture import capture_send_outcomes
+    from app.core.config import get_user_emails
+
+    body = body or CaptureOutcomesBody()
+    account = body.account
+    if not account:
+        emails = get_user_emails()
+        if not emails:
+            raise HTTPException(400, "no account configured (user.emails empty)")
+        account = emails[0]
+    return capture_send_outcomes(_db_url(request), account=account)
+
+
 @router.get("/api/agent/sweeps")
 def list_agent_sweeps(
     request: Request,
