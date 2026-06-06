@@ -12,7 +12,12 @@ Safety:
 - macOS notification fires only when persisted > 0 in that iteration, so a
   quiet inbox doesn't generate Notification Center spam.
 - Config is re-read every iteration so flipping ``agent.enabled false``
-  takes effect on the next tick (no restart needed).
+  takes effect on the next tick (no restart needed). This holds even for an
+  edit made by ANOTHER process (the nightly auto-tuning ``agent.threshold``,
+  a ``youos config set`` CLI): ``get_agent_config`` calls
+  ``reload_config_if_changed``, which drops the in-process ``load_config``
+  cache when the file's mtime changes — without it the server would pin the
+  stale value until restart.
 """
 
 from __future__ import annotations
@@ -54,9 +59,16 @@ def _safe_float(value: Any, default: float) -> float:
 def get_agent_config() -> dict[str, Any]:
     """Read ``agent.*`` settings from ``youos_config.yaml``. All keys have
     safe defaults so a missing section is fine. Numeric reads degrade to their
-    default on a malformed value so a poisoned flag can't crash the loop."""
-    from app.core.config import load_config
+    default on a malformed value so a poisoned flag can't crash the loop.
 
+    Honours config edits made by OTHER processes (the nightly's threshold
+    auto-tune, a ``youos config set`` CLI) via ``reload_config_if_changed`` —
+    without it the server's in-process ``load_config`` cache would pin stale
+    values until a restart, so a nightly-tuned threshold would never take
+    effect on the running scheduler."""
+    from app.core.config import load_config, reload_config_if_changed
+
+    reload_config_if_changed()
     cfg = load_config() or {}
     a = cfg.get("agent", {}) if isinstance(cfg, dict) else {}
     if not isinstance(a, dict):

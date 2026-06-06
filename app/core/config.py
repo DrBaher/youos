@@ -40,6 +40,39 @@ def load_config(config_path: Path | None = None) -> dict[str, Any]:
     return _load_raw_config(config_path)
 
 
+# Last-seen mtime of the config file, for cross-process hot-reload. The
+# long-lived server caches load_config in-process; a config write by ANOTHER
+# process (the nightly's threshold auto-tune, `youos config set` from a CLI)
+# changes the file on disk but can't reach that cache. reload_config_if_changed
+# bridges that gap: callers that must honour external edits (the agent
+# scheduler) check it so the next read reflects on-disk reality.
+_config_mtime: float | None = None
+
+
+def reload_config_if_changed(config_path: Path | None = None) -> bool:
+    """Clear the load_config cache if the config file changed on disk since the
+    last check. Returns True if it reloaded.
+
+    Cheap (one ``stat``); intended to be called per scheduler tick so a config
+    write from another process (e.g. the nightly auto-tuning ``agent.threshold``)
+    takes effect without a server restart. The first call only records the
+    baseline mtime (the server already loaded fresh config at startup)."""
+    global _config_mtime
+    path = config_path or CONFIG_PATH
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return False
+    if _config_mtime is None:
+        _config_mtime = mtime
+        return False
+    if mtime != _config_mtime:
+        _config_mtime = mtime
+        load_config.cache_clear()
+        return True
+    return False
+
+
 def get_user_name(config: dict[str, Any] | None = None) -> str:
     cfg = config or load_config()
     return cfg.get("user", {}).get("name", "") or "User"
