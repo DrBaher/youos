@@ -408,6 +408,144 @@ def get_corpus_stats(database_url: str) -> dict:
         conn.close()
 
 
+def get_draft_vs_sent_stats(database_url: str, *, account: str | None = None, worst_n: int = 5, days: int = 60) -> dict:
+    """How YouOS drafts compare to what the user *actually* sent.
+
+    Built from the ground-truth outcomes ``outcome_capture`` records:
+
+    * ``agent_pending_drafts.outcome`` (``sent`` / ``no_send``) → the send rate
+      (did you reply to the queued draft) and the no-reply count — the
+      over-/under-drafting signal.
+    * the ``(inbound, youos_draft, your_sent)`` feedback pairs it writes (tagged
+      with a known ``feedback_note``) → average edit distance, the
+      high-divergence count, and the worst-N concrete examples (the "drafts that
+      missed" list).
+
+    Also returns a bounded threshold recommendation (see
+    ``app.agent.threshold_tuner``) so the Stats panel can surface "raise the
+    needs-reply threshold to X" with a one-click Apply. All counts are scoped to
+    ``days`` so a months-old outcome doesn't anchor the picture.
+    """
+    from app.db.bootstrap import resolve_sqlite_path
+
+    empty = {
+        "available": False,
+        "paired": 0,
+        "no_send": 0,
+        "sent_total": 0,
+        "send_rate": None,
+        "avg_edit_distance": None,
+        "high_divergence": 0,
+        "worst_examples": [],
+        "recommendation": None,
+    }
+
+    db_path = resolve_sqlite_path(database_url)
+    if not db_path.exists():
+        return empty
+
+    # The exact note outcome_capture stamps on its pairs — the only reliable way
+    # to isolate real draft-vs-sent comparisons from the rest of feedback_pairs.
+    note_like = "auto: real Gmail send outcome%"
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        # Send rate + no-reply count from the decided queue outcomes.
+        sent_total = no_send = 0
+        try:
+            acct_clause = " AND account = ?" if account else ""
+            params: list = [f"-{int(days)} days"]
+            if account:
+                params.append(account)
+            rows = conn.execute(
+                "SELECT outcome, COUNT(*) AS n FROM agent_pending_drafts "
+                f"WHERE outcome IN ('sent','no_send') AND created_at >= datetime('now', ?){acct_clause} "  # noqa: S608
+                "GROUP BY outcome",
+                params,
+            ).fetchall()
+            counts = {str(r["outcome"]): int(r["n"]) for r in rows}
+            sent_total = counts.get("sent", 0)
+            no_send = counts.get("no_send", 0)
+        except sqlite3.OperationalError:
+            return empty
+
+        decided = sent_total + no_send
+        send_rate = round(sent_total / decided, 4) if decided else None
+
+        # Pair metrics from the outcome-capture feedback pairs.
+        paired = 0
+        avg_ed = None
+        high_div = 0
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n, ROUND(AVG(edit_distance_pct), 4) AS avg_ed, "
+                "SUM(CASE WHEN edit_distance_pct >= 0.6 THEN 1 ELSE 0 END) AS high "
+                "FROM feedback_pairs "
+                "WHERE feedback_note LIKE ? AND created_at >= datetime('now', ?)",
+                (note_like, f"-{int(days)} days"),
+            ).fetchone()
+            if row:
+                paired = int(row["n"] or 0)
+                avg_ed = row["avg_ed"]
+                high_div = int(row["high"] or 0)
+        except sqlite3.OperationalError:
+            pass
+
+        # Worst-N concrete examples: where the draft diverged most from the send.
+        worst: list[dict] = []
+        try:
+            ex_rows = conn.execute(
+                "SELECT inbound_text, generated_draft, edited_reply, edit_distance_pct, sender_type "
+                "FROM feedback_pairs "
+                "WHERE feedback_note LIKE ? AND created_at >= datetime('now', ?) "
+                "ORDER BY edit_distance_pct DESC LIMIT ?",
+                (note_like, f"-{int(days)} days", int(worst_n)),
+            ).fetchall()
+
+            def _snip(s: str | None, n: int = 240) -> str:
+                t = (s or "").strip().replace("\r\n", "\n")
+                return t if len(t) <= n else t[:n].rstrip() + "…"
+
+            for r in ex_rows:
+                worst.append({
+                    "inbound": _snip(r["inbound_text"], 200),
+                    "draft": _snip(r["generated_draft"]),
+                    "sent": _snip(r["edited_reply"]),
+                    "edit_distance": r["edit_distance_pct"],
+                    "sender_type": r["sender_type"],
+                })
+        except sqlite3.OperationalError:
+            pass
+    finally:
+        conn.close()
+
+    # Threshold recommendation from the same decided outcomes.
+    recommendation = None
+    try:
+        from app.agent.scheduler import get_agent_config
+        from app.agent.threshold_tuner import recommend_threshold
+
+        current = get_agent_config()["threshold"]
+        auto_on = bool(get_agent_config().get("auto_tune_threshold", True))
+        rec = recommend_threshold(current=current, sent=sent_total, no_send=no_send)
+        recommendation = {**rec.to_dict(), "auto_tune_enabled": auto_on}
+    except Exception:
+        recommendation = None
+
+    return {
+        "available": decided > 0 or paired > 0,
+        "paired": paired,
+        "no_send": no_send,
+        "sent_total": sent_total,
+        "send_rate": send_rate,
+        "avg_edit_distance": avg_ed,
+        "high_divergence": high_div,
+        "worst_examples": worst,
+        "recommendation": recommendation,
+    }
+
+
 def get_model_status(configs_dir: Path) -> dict:
     """Get model and adapter status."""
     adapter_exists = (ADAPTER_PATH / "adapters.safetensors").exists()

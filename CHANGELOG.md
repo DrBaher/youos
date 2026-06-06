@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — act on the send-outcome signal: auto-tune the threshold + a "drafts vs your sends" panel (b225)
+
+Builds on the b224 outcome capture, which records — per queued draft — whether you actually replied (`sent`) or not (`no_send`), plus a `(draft, your_sent)` pair with the edit distance. b225 turns that signal into action:
+
+### Auto-tune the needs-reply threshold
+
+New `app/agent/threshold_tuner.py` reads the decided `sent` / `no_send` outcomes and recommends a bounded nudge to `agent.threshold`: when most queued drafts go **unanswered** (over-drafting), raise it so YouOS drafts more selectively; when almost all earn a reply, lower it. Deliberately conservative — one small `step` (0.05) per run, a dead-band around the 40% target send rate so it doesn't oscillate, a 25-outcome minimum before it acts, and hard 0.50–0.85 bounds. The nightly applies it (`step_tune_threshold`, after the calibrator) gated on the new `agent.auto_tune_threshold` flag (default on, whitelisted in Settings); the running server picks the new value up on its next reload. The first prod signal (5 replied / 37 unanswered ≈ 12% reply rate) recommends 0.60 → 0.65.
+
+### Stats: "Drafts vs Your Sends" panel
+
+A new Stats card (`get_draft_vs_sent_stats`) surfaces the loop's ground truth: reply rate, drafts you replied to vs didn't, pairs reconciled with a real send, **average edit distance** (how far drafts land from what you actually wrote), the high-divergence count, and the **worst-divergence examples** (expandable draft-vs-sent diffs — the "drafts that missed" list). It shows the threshold recommendation inline with a one-click **Apply** button (writes `agent.threshold` via `/api/config/set`) so you can act without waiting for the nightly. Tests cover the tuner logic (raise/lower/hold/clamp/min-samples), the DB outcome reader, and the stats aggregation; panel visually verified on a seeded demo instance.
+
 ## Unreleased — close the loop: pair YouOS drafts with your real Gmail sends (b224)
 
 ### Learn from what you actually send

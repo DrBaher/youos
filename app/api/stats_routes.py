@@ -16,6 +16,7 @@ from app.core.config import load_config
 from app.core.settings import get_adapter_path, get_var_dir
 from app.core.stats import (
     get_corpus_stats,
+    get_draft_vs_sent_stats,
     get_drafting_model_status,
     get_latest_ingest_status,
     get_model_readiness,
@@ -351,6 +352,9 @@ def stats_data(request: Request) -> dict[str, Any]:
     model["drafting"] = get_drafting_model_status(settings.database_url)
     pipeline_last_run = get_pipeline_status(get_var_dir().parent)
     draft_events = summarize_draft_events(settings.database_url)
+    # How YouOS drafts compare to what the user actually sent (outcome capture)
+    # + the threshold recommendation for the one-click Apply.
+    draft_vs_sent = get_draft_vs_sent_stats(settings.database_url)
 
     # Extract benchmark_trend from model status (kept together for source consistency)
     benchmark_trend = model.pop("benchmark_trend", [])
@@ -610,4 +614,5 @@ def stats_data(request: Request) -> dict[str, Any]:
         "feedback_by_persona": feedback_by_persona,
         "persona_adapters": persona_adapters,
         "draft_events": draft_events,
+        "draft_vs_sent": draft_vs_sent,
     }

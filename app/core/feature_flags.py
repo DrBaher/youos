@@ -110,6 +110,19 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.auto_tune_threshold",
+        "label": "Auto-tune needs-reply threshold from outcomes",
+        "type": "bool",
+        "default": True,
+        "help": (
+            "Let the nightly nudge the needs-reply threshold based on whether "
+            "you actually reply to queued drafts: raise it when most go "
+            "unanswered (over-drafting), lower it when almost all earn a reply. "
+            "Bounded and conservative (one small step per run). Turn off to pin "
+            "the threshold to its manual value."
+        ),
+    },
+    {
         "key": "agent.notify_macos",
         "label": "macOS notification on new drafts",
         "type": "bool",
