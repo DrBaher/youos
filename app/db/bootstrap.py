@@ -355,6 +355,15 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN to_recipients TEXT")
     if "cc_recipients" not in _cols:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN cc_recipients TEXT")
+    # Outcome capture (b224): once we've checked whether the user actually sent a
+    # reply on this thread (matching the YouOS draft to the real send), the row
+    # is marked so we don't re-check it. ``outcome``: 'sent' (a real reply was
+    # found → a training pair was stored) | 'no_send' (no reply after the window
+    # → a needs-reply calibration signal). NULL = not yet decided.
+    if "outcome_captured" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN outcome_captured INTEGER DEFAULT 0")
+    if "outcome" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN outcome TEXT")
     # Long-thread "what changed" summary (opt-in agent.summarize_threads) so a
     # reviewer can catch up on a long thread without reading it.
     if "thread_summary" not in _cols:
