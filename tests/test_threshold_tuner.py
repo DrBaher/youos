@@ -136,3 +136,41 @@ def test_recommend_from_database_raises_on_low_send_rate(db):
     _seed(db, "no_send", 37)
     r = recommend_from_database(db, current=0.60, account="you@example.com")
     assert r.changed and r.recommended == 0.65
+
+
+# --- Cross-process hot-reload (nightly writes config; server must pick it up) ---
+
+
+def test_get_agent_config_hot_reloads_external_threshold_write(tmp_path, monkeypatch):
+    """A config write by ANOTHER process (the nightly auto-tune) must take
+    effect on the running server without a restart — get_agent_config drops the
+    stale load_config cache when the file's mtime changes.
+
+    The second write goes straight to the file (NOT via save_config, which
+    clears the cache in-process) to faithfully simulate a separate process: the
+    server's own load_config cache stays warm, so only reload_config_if_changed
+    can surface the new value."""
+    import os
+
+    import yaml
+
+    import app.core.config as cfgmod
+    from app.agent.scheduler import get_agent_config
+    from app.core.config import load_config
+
+    cfg_path = tmp_path / "youos_config.yaml"
+    monkeypatch.setattr(cfgmod, "CONFIG_PATH", cfg_path)
+    monkeypatch.setattr(cfgmod, "_config_mtime", None)
+    load_config.cache_clear()
+
+    cfg_path.write_text(yaml.safe_dump({"agent": {"threshold": 0.60}}))
+    # Warm the in-process cache exactly as a running server would.
+    assert get_agent_config()["threshold"] == 0.60
+
+    # Separate process rewrites the file directly — no cache_clear reaches us.
+    cfg_path.write_text(yaml.safe_dump({"agent": {"threshold": 0.65}}))
+    st = cfg_path.stat()
+    os.utime(cfg_path, (st.st_atime + 5, st.st_mtime + 5))  # ensure mtime differs
+
+    # Only the mtime-based hot-reload can make the warm-cache server see 0.65.
+    assert get_agent_config()["threshold"] == 0.65

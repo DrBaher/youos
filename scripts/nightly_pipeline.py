@@ -600,7 +600,9 @@ def step_tune_threshold(verbose: bool = False) -> str:
     drafts go unanswered (over-drafting), lower it when almost all earn a reply.
     Bounded, one step per run, dormant below a sample floor. Gated on
     ``agent.auto_tune_threshold`` (default True); writes config only on a real
-    change. The running server picks the new value up on its next reload.
+    change. The running server hot-reloads the new value within one scheduler
+    tick (``get_agent_config`` → ``reload_config_if_changed``), so no restart is
+    needed for it to take effect.
     """
     print(f"\n{'=' * 60}")
     print("STEP: Auto-tune needs-reply threshold")
@@ -633,7 +635,7 @@ def step_tune_threshold(verbose: bool = False) -> str:
         cfg["agent"] = {}
     cfg["agent"]["threshold"] = rec.recommended
     save_config(cfg)
-    print(f"  [OK] threshold {current:.2f} -> {rec.recommended:.2f} (applies on next server reload)")
+    print(f"  [OK] threshold {current:.2f} -> {rec.recommended:.2f} (hot-reloaded on next scheduler tick)")
     return f"tuned {current:.2f}->{rec.recommended:.2f}"
 
 
