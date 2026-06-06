@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — hot-reload config so nightly auto-tunes actually take effect (b226)
+
+The b225 threshold auto-tune writes `agent.threshold` to `youos_config.yaml` from the nightly — a **separate process** from the long-lived server. But the server caches `load_config` in-process (`@lru_cache`), and `save_config`'s `cache_clear()` only clears the *writer's* cache, never the server's. Net: the nightly would faithfully write 0.65, and the running scheduler would keep drafting at the stale 0.60 **until the next restart** — silently invalidating the whole feedback loop (and the scheduler's own "config re-read every tick" promise, which the cross-process cache defeated).
+
+Fix: `app/core/config.reload_config_if_changed()` — a cheap `stat()`-based check that drops the `load_config` cache when the file's mtime changes. `get_agent_config()` calls it every read, so a config edit by **any** process (the nightly auto-tune, a `youos config set` CLI) is picked up within one scheduler tick — no restart. Test simulates a separate-process write (direct file write, bypassing the in-process `cache_clear`) and asserts the warm-cache server surfaces the new value; verified it reproduces the stale-read bug when the fix is disabled.
+
 ## Unreleased — act on the send-outcome signal: auto-tune the threshold + a "drafts vs your sends" panel (b225)
 
 Builds on the b224 outcome capture, which records — per queued draft — whether you actually replied (`sent`) or not (`no_send`), plus a `(draft, your_sent)` pair with the edit distance. b225 turns that signal into action:
