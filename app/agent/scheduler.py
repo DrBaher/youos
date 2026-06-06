@@ -73,6 +73,11 @@ def get_agent_config() -> dict[str, Any]:
         "window": str(a.get("window", "24h")),
         "limit": _safe_int(a.get("limit", 25), 25),
         "threshold": _safe_float(a.get("threshold", 0.6), 0.6),
+        # When True (default), the nightly auto-tunes ``threshold`` from real
+        # send outcomes (sent vs no_send) — raising it when most queued drafts
+        # go unanswered, lowering it when almost all earn a reply. See
+        # app.agent.threshold_tuner.
+        "auto_tune_threshold": bool(a.get("auto_tune_threshold", True)),
         "notify_macos": bool(a.get("notify_macos", True)),
         # Minimum spacing between on-demand /api/agent/triage sweeps for one
         # account. A sweep is a full fetch+filter+draft cycle (~30-60s, costs

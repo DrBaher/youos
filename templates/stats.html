@@ -232,6 +232,33 @@ body {
         <div id="deBreakdown" style="margin-top:0.7rem;"></div>
       </div>
 
+      <!-- Drafts vs your real sends (from outcome capture) -->
+      <div class="card full-width" id="draftVsSentCard" style="display:none;">
+        <h2>Drafts vs Your Sends <span class="card-updated" id="dvsUpdated"></span></h2>
+        <p style="color:var(--faint);font-size:0.8rem;margin:0 0 0.7rem;">
+          How YouOS drafts compare with what you actually sent, reconciled from your real Gmail replies (last 60 days).
+        </p>
+        <div class="stat-row"><span class="stat-label">Drafts you replied to</span><span class="stat-value" id="dvsSent">-</span></div>
+        <div class="stat-row"><span class="stat-label">Drafts you didn't reply to</span><span class="stat-value" id="dvsNoSend">-</span></div>
+        <div class="stat-row"><span class="stat-label">Reply rate</span><span class="stat-value" id="dvsSendRate">-</span></div>
+        <div class="stat-row"><span class="stat-label">Paired with a real send</span><span class="stat-value" id="dvsPaired">-</span></div>
+        <div class="stat-row"><span class="stat-label">Avg edit distance (draft → sent)</span><span class="stat-value" id="dvsAvgEd">-</span></div>
+        <div class="stat-row"><span class="stat-label">High-divergence drafts (≥60%)</span><span class="stat-value" id="dvsHighDiv">-</span></div>
+
+        <!-- Threshold recommendation + one-click apply -->
+        <div id="dvsRecBox" style="display:none;margin-top:0.9rem;padding:0.8rem;border:1px solid var(--surface-2);border-radius:8px;background:var(--surface-1);">
+          <div style="font-weight:600;margin-bottom:0.3rem;">Needs-reply threshold</div>
+          <div id="dvsRecReason" style="color:var(--faint);font-size:0.82rem;line-height:1.5;margin-bottom:0.5rem;"></div>
+          <div class="stat-row" style="border:none;padding:2px 0;"><span class="stat-label">Current</span><span class="stat-value" id="dvsRecCurrent">-</span></div>
+          <div class="stat-row" style="border:none;padding:2px 0;"><span class="stat-label">Recommended</span><span class="stat-value" id="dvsRecNew">-</span></div>
+          <div id="dvsAutoNote" style="color:var(--faint);font-size:0.75rem;margin:0.4rem 0;"></div>
+          <button class="btn-autoresearch" id="dvsApplyBtn" style="display:none;margin-top:0.3rem;">Apply recommended threshold</button>
+        </div>
+
+        <!-- Worst-divergence examples -->
+        <div id="dvsWorst" style="margin-top:0.9rem;"></div>
+      </div>
+
       <!-- Per-persona adapters -->
       <div class="card" id="personaAdaptersCard" style="display:none;">
         <h2>Per-Persona Adapters</h2>
@@ -508,6 +535,74 @@ body {
           deDist('By model', de.by_model) +
           deDist('By length', de.by_length_flag) + deDist('By confidence', de.by_confidence) +
           deDist('By sender type', de.by_sender_type) + deDist('By intent', de.by_intent);
+      }
+
+      // Drafts vs your real sends (outcome capture)
+      var dvs = d.draft_vs_sent || {};
+      if (dvs.available) {
+        document.getElementById('draftVsSentCard').style.display = 'block';
+        document.getElementById('dvsUpdated').textContent = 'Updated ' + now;
+        var pct = function(x) { return x != null ? Math.round(x * 100) + '%' : 'N/A'; };
+        document.getElementById('dvsSent').textContent = (dvs.sent_total || 0).toLocaleString();
+        document.getElementById('dvsNoSend').textContent = (dvs.no_send || 0).toLocaleString();
+        document.getElementById('dvsSendRate').textContent = pct(dvs.send_rate);
+        document.getElementById('dvsPaired').textContent = (dvs.paired || 0).toLocaleString();
+        document.getElementById('dvsAvgEd').textContent = pct(dvs.avg_edit_distance);
+        document.getElementById('dvsHighDiv').textContent = (dvs.high_divergence || 0).toLocaleString();
+
+        // Threshold recommendation + Apply
+        var rec = dvs.recommendation;
+        if (rec) {
+          document.getElementById('dvsRecBox').style.display = 'block';
+          document.getElementById('dvsRecReason').textContent = rec.reason || '';
+          document.getElementById('dvsRecCurrent').textContent = rec.current;
+          document.getElementById('dvsRecNew').textContent = rec.recommended +
+            (rec.changed ? '' : ' (no change)');
+          document.getElementById('dvsAutoNote').textContent = rec.auto_tune_enabled
+            ? 'Auto-tuning is on — the nightly applies this automatically. You can also apply it now.'
+            : 'Auto-tuning is off — apply manually or enable it in Settings.';
+          var applyBtn = document.getElementById('dvsApplyBtn');
+          if (rec.changed) {
+            applyBtn.style.display = 'inline-block';
+            applyBtn.textContent = 'Apply threshold ' + rec.recommended;
+            applyBtn.onclick = async function() {
+              applyBtn.disabled = true;
+              applyBtn.textContent = 'Applying…';
+              try {
+                var resp = await fetch('/api/config/set', {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ key: 'agent.threshold', value: rec.recommended }),
+                });
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                applyBtn.textContent = '✓ Applied ' + rec.recommended;
+                document.getElementById('dvsRecCurrent').textContent = rec.recommended;
+              } catch (e) {
+                applyBtn.disabled = false;
+                applyBtn.textContent = 'Error — retry';
+              }
+            };
+          }
+        }
+
+        // Worst-divergence examples
+        var worst = dvs.worst_examples || [];
+        if (worst.length) {
+          var html = '<div style="font-weight:600;margin-bottom:0.4rem;">Where drafts diverged most</div>';
+          worst.forEach(function(w) {
+            html += '<details style="margin:0 0 6px;border:1px solid var(--surface-2);border-radius:6px;padding:6px 10px;">' +
+              '<summary style="cursor:pointer;font-size:0.82rem;">' +
+              '<span style="color:#f0ad4e;">' + pct(w.edit_distance) + ' different</span> · ' +
+              YouOS.esc(w.sender_type || 'unknown') + ' — ' + YouOS.esc((w.inbound || '').slice(0, 80)) +
+              '</summary>' +
+              '<div style="margin-top:6px;font-size:0.8rem;line-height:1.5;">' +
+              '<div style="color:var(--faint);margin-bottom:3px;">YouOS drafted:</div>' +
+              '<div style="background:var(--surface-1);padding:6px 8px;border-radius:4px;white-space:pre-wrap;">' + YouOS.esc(w.draft) + '</div>' +
+              '<div style="color:var(--faint);margin:6px 0 3px;">You actually sent:</div>' +
+              '<div style="background:var(--surface-1);padding:6px 8px;border-radius:4px;white-space:pre-wrap;">' + YouOS.esc(w.sent) + '</div>' +
+              '</div></details>';
+          });
+          document.getElementById('dvsWorst').innerHTML = html;
+        }
       }
 
       // Per-persona adapter status

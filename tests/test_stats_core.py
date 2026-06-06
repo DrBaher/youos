@@ -221,3 +221,63 @@ def test_get_corpus_stats_excludes_organic(tmp_path):
     outcome = result["outcome_metrics"]
     assert outcome["accept_unchanged_pct"] == 0.0  # the single real row was edited
     assert outcome["median_edit_distance"] == 0.5
+
+
+def test_get_draft_vs_sent_stats(tmp_path, monkeypatch):
+    """Drafts-vs-sends panel: send rate, edit distance, worst examples, and a
+    bounded threshold recommendation from the captured outcomes."""
+    monkeypatch.setenv("YOUOS_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("YOUOS_DATABASE_URL", f"sqlite:///{tmp_path}/var/youos.db")
+    (tmp_path / "var").mkdir()
+    (tmp_path / "configs").mkdir()
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "schema.sql").write_text((Path(__file__).resolve().parents[1] / "docs" / "schema.sql").read_text())
+    monkeypatch.setattr("app.core.config.CONFIG_PATH", tmp_path / "youos_config.yaml")
+    from app.core.config import load_config
+    load_config.cache_clear()
+    from app.core.settings import get_settings
+    get_settings.cache_clear()
+    from app.db.bootstrap import bootstrap_database
+    bootstrap_database()
+    db_url = f"sqlite:///{tmp_path}/var/youos.db"
+
+    from app.agent import store
+    # 5 replied (sent) + 37 unreplied (no_send) — the real prod over-drafting shape.
+    for outcome, n in (("sent", 5), ("no_send", 37)):
+        for i in range(n):
+            rid = store.upsert_pending(
+                db_url, message_id=f"m-{outcome}-{i}", thread_id=f"t-{outcome}-{i}",
+                account="you@example.com", sender="A <a@x.com>", sender_email="a@x.com",
+                subject="s", body="b", received_at="2026-06-01T10:00:00Z",
+                needs_reply_score=0.8, reasons=[], cold_outreach=False, tier="draft",
+                draft="d", draft_model="qwen", draft_repairs=[], standing_instructions_snapshot=None,
+            )
+            c = sqlite3.connect(f"{tmp_path}/var/youos.db")
+            c.execute("UPDATE agent_pending_drafts SET outcome=?, outcome_captured=1 WHERE id=?", (outcome, rid))
+            c.commit()
+            c.close()
+
+    # A captured outcome feedback pair (high divergence) tagged with the known note.
+    c = sqlite3.connect(f"{tmp_path}/var/youos.db")
+    c.execute(
+        "INSERT INTO feedback_pairs (inbound_text, generated_draft, edited_reply, feedback_note, "
+        "rating, used_in_finetune, edit_distance_pct, organic, sender_type) VALUES (?,?,?,?,?,0,?,0,?)",
+        ("Can you confirm?", "Yes, confirmed.", "No, let's push to next week instead.",
+         "auto: real Gmail send outcome (draft vs what you actually sent)", 2, 0.85, "external_client"),
+    )
+    c.commit()
+    c.close()
+
+    from app.core.stats import get_draft_vs_sent_stats
+    r = get_draft_vs_sent_stats(db_url, account="you@example.com")
+    assert r["available"] is True
+    assert r["sent_total"] == 5 and r["no_send"] == 37
+    assert r["send_rate"] is not None and r["send_rate"] < 0.2
+    assert r["paired"] == 1
+    assert r["high_divergence"] == 1
+    assert len(r["worst_examples"]) == 1
+    assert "push to next week" in r["worst_examples"][0]["sent"]
+    # Over-drafting → recommendation raises the threshold (default 0.6 -> 0.65).
+    assert r["recommendation"]["changed"] is True
+    assert r["recommendation"]["recommended"] == 0.65

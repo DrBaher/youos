@@ -592,6 +592,51 @@ def step_fit_calibrator(verbose: bool = False) -> str:
     return f"fitted (n={cal.n_samples})"
 
 
+def step_tune_threshold(verbose: bool = False) -> str:
+    """Auto-tune ``agent.threshold`` from real send outcomes.
+
+    Uses the (sent / no_send) outcomes ``outcome_capture`` recorded to nudge the
+    needs-reply threshold toward a healthy send rate: raise it when most queued
+    drafts go unanswered (over-drafting), lower it when almost all earn a reply.
+    Bounded, one step per run, dormant below a sample floor. Gated on
+    ``agent.auto_tune_threshold`` (default True); writes config only on a real
+    change. The running server picks the new value up on its next reload.
+    """
+    print(f"\n{'=' * 60}")
+    print("STEP: Auto-tune needs-reply threshold")
+    print(f"{'=' * 60}")
+
+    db_path = resolve_sqlite_path(get_settings().database_url)
+    if not db_path.exists():
+        print("  [SKIP] threshold tuner — DB not yet created")
+        return "skipped (no DB)"
+
+    from app.agent.scheduler import get_agent_config
+    from app.agent.threshold_tuner import recommend_from_database
+    from app.core.config import load_config, save_config
+
+    cfg = load_config() or {}
+    agent_cfg = cfg.get("agent", {}) if isinstance(cfg, dict) else {}
+    if isinstance(agent_cfg, dict) and not agent_cfg.get("auto_tune_threshold", True):
+        print("  [SKIP] threshold tuner — agent.auto_tune_threshold is off")
+        return "skipped (disabled)"
+
+    current = get_agent_config()["threshold"]
+    rec = recommend_from_database(f"sqlite:///{db_path}", current=current)
+    print(f"  [..] {rec.reason}")
+    if not rec.changed:
+        return f"held at {current:.2f} ({rec.samples} outcomes)"
+
+    # Persist the new threshold, preserving the rest of the config.
+    cfg.setdefault("agent", {})
+    if not isinstance(cfg["agent"], dict):
+        cfg["agent"] = {}
+    cfg["agent"]["threshold"] = rec.recommended
+    save_config(cfg)
+    print(f"  [OK] threshold {current:.2f} -> {rec.recommended:.2f} (applies on next server reload)")
+    return f"tuned {current:.2f}->{rec.recommended:.2f}"
+
+
 def step_deduplicate(verbose: bool = False) -> bool:
     """Run corpus deduplication (best-effort)."""
     return _run_step(
@@ -1320,6 +1365,18 @@ def main() -> None:
         results["calibrator"] = f"error: {exc}"
         steps["calibrator"] = True
     _record_duration("calibrator", _t)
+
+    # 7b. Auto-tune the needs-reply threshold from real send outcomes (sent vs
+    # no_send). Bounded, conservative, gated on agent.auto_tune_threshold;
+    # best-effort, never fails the run.
+    _t = time.monotonic()
+    try:
+        results["threshold_tuner"] = step_tune_threshold(verbose=verbose)
+        steps["threshold_tuner"] = True
+    except Exception as exc:
+        results["threshold_tuner"] = f"error: {exc}"
+        steps["threshold_tuner"] = True
+    _record_duration("threshold_tuner", _t)
 
     # Include recent git log after autoresearch
     try:
