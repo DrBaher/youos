@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — close the loop: pair YouOS drafts with your real Gmail sends (b224)
+
+### Learn from what you actually send
+
+YouOS drafts a reply; you often answer directly in Gmail. Until now that real reply was never compared to the draft, so the agent couldn't learn from it. New `app/agent/outcome_capture.py` reconciles each queued draft against your **actual send on the same thread** (matched by **thread id** — the old `inbound_text` join never matched):
+
+- A reply found → a `(inbound, youos_draft, your_sent)` **feedback pair** (the highest-fidelity training signal: the real draft vs what you really wrote) with the edit distance between them. These flow into the nightly LoRA fine-tune; high-divergence pairs are the "drafts that missed" issue list.
+- No reply after a window → an honest `no_send` outcome (a needs-reply calibration signal), recorded without a pair.
+
+Idempotent via a per-row `outcome_captured` marker. Wired into the nightly pipeline (`step_capture_send_outcomes`, before export/fine-tune) and exposed as `POST /api/agent/capture_outcomes` (returns scanned/paired/no_send + avg edit distance + high-divergence count — the issue/calibration view). Quote/signature-stripped so pairs are clean. Tests cover pairing, no_send, idempotency, and the recent-no-reply-left-pending case.
+
 ## Unreleased — push to Gmail: always include your Gmail signature (b223)
 
 ### The API doesn't append your signature — so we fetch and add it

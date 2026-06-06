@@ -525,6 +525,44 @@ def step_capture_queue_feedback(verbose: bool = False) -> str:
     return f"captured {r['captured']} (scanned {r['scanned']})"
 
 
+def step_capture_send_outcomes(verbose: bool = False) -> str:
+    """Pair queued YouOS drafts with the user's REAL Gmail sends (matched by
+    thread) → ``(inbound, draft, your_sent)`` feedback pairs + a ``no_send``
+    needs-reply signal. The most faithful training signal (the actual draft vs
+    what you actually sent). Idempotent; best-effort per account."""
+    print(f"\n{'=' * 60}")
+    print("STEP: Capture send outcomes (drafts vs real sends)")
+    print(f"{'=' * 60}")
+
+    db_path = resolve_sqlite_path(get_settings().database_url)
+    if not db_path.exists():
+        print("  [SKIP] send_outcomes — DB not yet created")
+        return "skipped (no DB)"
+
+    from app.agent.outcome_capture import capture_send_outcomes
+    from app.agent.scheduler import get_agent_config
+    from app.core.config import get_user_emails
+
+    accounts = get_agent_config().get("accounts") or list(get_user_emails())
+    accounts = [a for a in dict.fromkeys((a or "").strip() for a in accounts) if a]
+    if not accounts:
+        print("  [SKIP] send_outcomes — no account configured")
+        return "skipped (no account)"
+
+    paired = no_send = scanned = 0
+    for acct in accounts:
+        try:
+            r = capture_send_outcomes(f"sqlite:///{db_path}", account=acct)
+            paired += r["paired"]
+            no_send += r["no_send"]
+            scanned += r["scanned"]
+            print(f"  [OK] {acct}: paired {r['paired']}, no_send {r['no_send']}, "
+                  f"scanned {r['scanned']}, avg_edit_distance {r['avg_edit_distance']}")
+        except Exception as exc:
+            print(f"  [WARN] {acct}: {exc}")
+    return f"paired {paired}, no_send {no_send} (scanned {scanned})"
+
+
 def step_fit_calibrator(verbose: bool = False) -> str:
     """Refit the needs-reply score calibrator from decided queue rows.
 
@@ -1019,6 +1057,18 @@ def main() -> None:
         results["queue_feedback"] = f"error: {exc}"
         steps["queue_feedback"] = True  # never fails the run
     _record_duration("queue_feedback", _t)
+
+    # Reconcile queued drafts against the user's REAL Gmail sends (thread-matched)
+    # → (draft, your_sent) training pairs + a no_send needs-reply signal. Runs
+    # before auto-feedback/export so its pairs flow into the same fine-tune.
+    _t = time.monotonic()
+    try:
+        results["send_outcomes"] = step_capture_send_outcomes(verbose=verbose)
+        steps["send_outcomes"] = True
+    except Exception as exc:
+        results["send_outcomes"] = f"error: {exc}"
+        steps["send_outcomes"] = True  # never fails the run
+    _record_duration("send_outcomes", _t)
 
     # 2. Auto-feedback extraction
     _t = time.monotonic()

@@ -1162,3 +1162,27 @@ def test_rescreen_dismisses_cc_only_with_stored_recipients(authed_client, tmp_pa
     subjects = [r["subject"] for r in authed_client.get("/api/agent/pending?tier=draft").json()["rows"]]
     assert "Project update" not in subjects      # CC-only draft cleaned
     assert "Q3 pricing?" in subjects             # legit direct draft preserved
+
+
+# --- b224: capture_outcomes endpoint -----------------------------------------
+
+def test_capture_outcomes_endpoint(authed_client, monkeypatch):
+    import base64
+    def _b64(s): return base64.urlsafe_b64encode(s.encode()).decode()
+    def _m(mid, frm, text):
+        return {"id": mid, "payload": {"mimeType": "text/plain",
+                "headers": [{"name": "From", "value": frm}], "body": {"data": _b64(text)}}}
+
+    class _Src:
+        def get_thread(self, *, account, thread_id):
+            return {"messages": [
+                _m("m-draft", "Alice <alice@partner.com>", "Could you confirm the Q3 pricing?"),
+                _m("m-r", "You <you@example.com>", "Confirmed — pricing held through Q3, happy to put it in writing."),
+            ]}
+    monkeypatch.setattr("app.ingestion.adapters.get_google_source", lambda backend=None: _Src())
+
+    r = authed_client.post("/api/agent/capture_outcomes", json={"account": "you@example.com"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["paired"] >= 1
+    assert body["avg_edit_distance"] is not None
