@@ -174,3 +174,128 @@ def test_get_agent_config_hot_reloads_external_threshold_write(tmp_path, monkeyp
 
     # Only the mtime-based hot-reload can make the warm-cache server see 0.65.
     assert get_agent_config()["threshold"] == 0.65
+
+
+# --- Recency window + since-filter (b228) -----------------------------------
+#
+# Forensic finding (baheros, 2026-06-11): with a 60-day window and no
+# change-awareness, ~95 no_send outcomes from drafts queued under OLD
+# thresholds kept reading as "over-drafting" for weeks after the tuner had
+# already raised the threshold — so it marched straight to the 0.85 ceiling
+# while the post-change send rate was actually 62%.
+
+
+def _backdate(db_url, *, outcome, days):
+    import sqlite3
+
+    c = sqlite3.connect(db_url.removeprefix("sqlite:///"))
+    c.execute(
+        f"UPDATE agent_pending_drafts SET created_at = datetime('now', '-{int(days)} days') "
+        "WHERE outcome = ?",
+        (outcome,),
+    )
+    c.commit()
+    c.close()
+
+
+def _iso_days_ago(days):
+    from datetime import datetime, timedelta, timezone
+
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+
+
+def test_outcome_counts_since_filters_pre_change_drafts(db):
+    _seed(db, "no_send", 10)
+    _backdate(db, outcome="no_send", days=5)
+    _seed(db, "sent", 3)
+
+    sent, no_send = outcome_counts(db, account="you@example.com", since=_iso_days_ago(1))
+    assert (sent, no_send) == (3, 0)
+    # Without since, both cohorts are visible (they're inside the days window).
+    sent, no_send = outcome_counts(db, account="you@example.com")
+    assert (sent, no_send) == (3, 10)
+
+
+def test_outcome_counts_default_window_excludes_stale_outcomes(db):
+    _seed(db, "no_send", 30)
+    _backdate(db, outcome="no_send", days=30)
+
+    assert outcome_counts(db, account="you@example.com") == (0, 0)
+
+
+def test_recommend_from_database_holds_when_evidence_predates_change(db):
+    # 37 unanswered drafts from BEFORE the threshold last moved must not push
+    # it further; the 2 fresh outcomes alone are below the sample floor.
+    _seed(db, "no_send", 37)
+    _backdate(db, outcome="no_send", days=5)
+    _seed(db, "sent", 2)
+
+    r = recommend_from_database(db, current=0.80, account="you@example.com", since=_iso_days_ago(1))
+    assert not r.changed
+    assert r.samples == 2
+
+
+def test_step_tune_threshold_stamps_changed_at(db, monkeypatch):
+    import yaml
+
+    import app.core.config as cfgmod
+
+    cfgmod.CONFIG_PATH.write_text(yaml.safe_dump({"agent": {"threshold": 0.60}}))
+    cfgmod.load_config.cache_clear()
+    monkeypatch.setattr(cfgmod, "_config_mtime", None)
+    _seed(db, "no_send", 30)
+
+    from scripts.nightly_pipeline import step_tune_threshold
+
+    out = step_tune_threshold()
+    assert out == "tuned 0.60->0.65"
+    data = yaml.safe_load(cfgmod.CONFIG_PATH.read_text())
+    assert data["agent"]["threshold"] == 0.65
+    assert data["agent"]["threshold_changed_at"]
+
+
+def test_step_tune_threshold_ignores_pre_change_outcomes(db, monkeypatch):
+    import yaml
+
+    import app.core.config as cfgmod
+
+    cfgmod.CONFIG_PATH.write_text(
+        yaml.safe_dump({"agent": {"threshold": 0.80, "threshold_changed_at": _iso_days_ago(1)}})
+    )
+    cfgmod.load_config.cache_clear()
+    monkeypatch.setattr(cfgmod, "_config_mtime", None)
+    _seed(db, "no_send", 30)
+    _backdate(db, outcome="no_send", days=3)
+
+    from scripts.nightly_pipeline import step_tune_threshold
+
+    out = step_tune_threshold()
+    assert out.startswith("held at 0.80")
+    assert yaml.safe_load(cfgmod.CONFIG_PATH.read_text())["agent"]["threshold"] == 0.80
+
+
+def test_set_flag_threshold_stamps_changed_at(tmp_path):
+    import yaml
+
+    from app.core.feature_flags import set_flag
+
+    cfg_path = tmp_path / "youos_config.yaml"
+    set_flag("agent.threshold", 0.7, config_path=cfg_path)
+    data = yaml.safe_load(cfg_path.read_text())
+    assert data["agent"]["threshold"] == 0.7
+    first_stamp = data["agent"]["threshold_changed_at"]
+    assert first_stamp
+
+    # Re-writing the SAME value must not move the stamp (no fake evidence reset).
+    set_flag("agent.threshold", 0.7, config_path=cfg_path)
+    assert yaml.safe_load(cfg_path.read_text())["agent"]["threshold_changed_at"] == first_stamp
+
+
+def test_set_flag_other_keys_do_not_stamp(tmp_path):
+    import yaml
+
+    from app.core.feature_flags import set_flag
+
+    cfg_path = tmp_path / "youos_config.yaml"
+    set_flag("agent.enabled", True, config_path=cfg_path)
+    assert "threshold_changed_at" not in yaml.safe_load(cfg_path.read_text()).get("agent", {})
