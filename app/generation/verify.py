@@ -57,6 +57,31 @@ _CLAIM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("confirmed", re.compile(r"\b(?:is|are|now)\s+confirmed\b", re.IGNORECASE)),
 )
 
+# Status assertions (b229). Live no_send review (2026-06-11) found the worst
+# draft failure mode is asserting a COMPLETED state of the world — "June
+# payment has been received", "Resignation filed with ADGM", "Direct debit is
+# now active", "No further action needed" — when the agent did nothing and the
+# thread says otherwise (one inbound was literally chasing the payment the
+# draft claimed was received). Unlike the softer _CLAIM_PATTERNS above these
+# are collected separately (``status_claims``): an AUTONOMOUS draft asserting
+# an ungrounded completed state collapses quality (→ b188 abstain → the email
+# is surfaced for review instead of queued with a fabricated draft).
+# Interactive /draft calls and the deterministic eval path are unaffected.
+# Same grounding rule: flagged only when ``claim_key`` is absent from the
+# inbound + thread, so echoing the sender's own "no further action needed" or
+# "has been filed" is never flagged. Bounded literals — no backtracking.
+_STATUS_CLAIM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("received", re.compile(r"\b(?:has|have|had)\s+been\s+received\b|\b(?:was|were)\s+received\b", re.IGNORECASE)),
+    ("filed", re.compile(r"\b(?:has|have)\s+been\s+filed\b|\b(?:was|were)\s+filed\b|\bfiled\s+with\s+(?:the\s+)?[A-Z]", re.IGNORECASE)),
+    ("paid", re.compile(r"\b(?:has|have)\s+been\s+paid\b|\b(?:was|were)\s+paid\b", re.IGNORECASE)),
+    ("processed", re.compile(r"\b(?:has|have)\s+been\s+processed\b|\b(?:was|were)\s+processed\b", re.IGNORECASE)),
+    ("sent", re.compile(r"\b(?:has|have)\s+been\s+sent\b|\b(?:was|were)\s+sent\s+(?:to|out)\b", re.IGNORECASE)),
+    ("updated", re.compile(r"\b(?:has|have)\s+been\s+updated\b", re.IGNORECASE)),
+    ("resolved", re.compile(r"\b(?:is|are|has\s+been|have\s+been)\s+(?:now\s+)?resolved\b", re.IGNORECASE)),
+    ("active", re.compile(r"\b(?:is|are)\s+now\s+(?:active|live|enabled|in\s+place|set\s+up)\b", re.IGNORECASE)),
+    ("no further action", re.compile(r"\bno\s+(?:further\s+)?action\s+(?:is\s+)?(?:needed|required)\b", re.IGNORECASE)),
+)
+
 # Hard cap on the text any of the above regexes scan. The inbound + thread
 # history are attacker-controlled and otherwise uncapped on this path (the
 # 4000-char prompt cap protects generation, not verify_draft). 20 KB is far
@@ -69,6 +94,10 @@ class VerifyResult:
     ok: bool                                  # False if any blocking issue
     blocking: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # Ungrounded completed-state assertions (b229). Warning-severity for
+    # interactive drafting, but the autonomous path collapses quality on them —
+    # see the caller in app.generation.service.
+    status_claims: list[str] = field(default_factory=list)
 
     @property
     def issues(self) -> list[str]:
@@ -158,4 +187,21 @@ def verify_draft(
                 seen_claims.add(phrase)
                 warnings.append(f"unsupported claim not in the inbound: {m.group(0).strip()}")
 
-    return VerifyResult(ok=not blocking, blocking=blocking, warnings=warnings)
+    # 6) Ungrounded status assertions (b229) — the draft states a completed
+    # state of the world ("has been received", "filed with X", "is now active",
+    # "no further action needed") that appears nowhere in the inbound/thread.
+    # Recorded separately so the autonomous path can act on them; also mirrored
+    # into warnings so the review UI shows them.
+    status_claims: list[str] = []
+    for key, pat in _STATUS_CLAIM_PATTERNS:
+        if key in hay_l:
+            continue
+        m = pat.search(d_core)
+        if m:
+            phrase = m.group(0).strip().lower()
+            if phrase not in seen_claims:
+                seen_claims.add(phrase)
+                status_claims.append(m.group(0).strip())
+                warnings.append(f"asserts unverified status: {m.group(0).strip()}")
+
+    return VerifyResult(ok=not blocking, blocking=blocking, warnings=warnings, status_claims=status_claims)

@@ -214,3 +214,55 @@ def test_lookup_facts_bounded_on_huge_no_at_sender():
     t0 = time.perf_counter()
     lookup_facts(sender="x" * 100_000, inbound_text="hi", database_url="sqlite:///:memory:", conn=conn)
     assert time.perf_counter() - t0 < 0.5  # was ~14s at 80k, longer at 100k
+
+
+# --- ungrounded status assertions (b229) ------------------------------------
+# Live no_send review (2026-06-11): the worst draft failures asserted completed
+# states the thread contradicted ("June payment has been received" replying to
+# a payment chaser; "Resignation filed with ADGM" when the sender said THEY
+# would file it). These are collected in ``status_claims`` so the autonomous
+# path can collapse quality on them; they stay warning-severity (ok=True).
+
+
+def test_ungrounded_received_assertion_flagged():
+    r = verify_draft(
+        "Hi,\n\nJune payment has been received. No further action needed.",
+        inbound="I wanted to check in on your outstanding June payment.",
+    )
+    assert r.ok  # warning severity, never blocking
+    assert len(r.status_claims) == 2  # "has been received" + "no further action"
+    assert any("received" in c.lower() for c in r.status_claims)
+    assert any("asserts unverified status" in w for w in r.warnings)
+
+
+def test_grounded_status_echo_not_flagged():
+    # Echoing the sender's own wording is grounded — not a fabrication.
+    r = verify_draft(
+        "Thanks — glad the payment has been received and nothing further is needed.",
+        inbound="Your payment has been received; no further action needed from you.",
+    )
+    assert r.status_claims == []
+
+
+def test_filed_with_authority_assertion_flagged():
+    r = verify_draft(
+        "Received. Resignation filed with ADGM. Entity remains active.",
+        inbound="Please find attached our resignation letter. We will file it today.",
+    )
+    assert any("filed" in c.lower() for c in r.status_claims)
+
+
+def test_now_active_assertion_flagged():
+    r = verify_draft(
+        "Direct debit is now active and will streamline future payments.",
+        inbound="We are introducing direct debit payments — would you like to opt in?",
+    )
+    assert any("active" in c.lower() for c in r.status_claims)
+
+
+def test_plain_reply_has_no_status_claims():
+    r = verify_draft(
+        "Hi Alice — yes, Thursday 14:00 works for me. Talk soon.",
+        inbound="Does Thursday 14:00 work for you?",
+    )
+    assert r.status_claims == []
