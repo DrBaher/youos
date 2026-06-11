@@ -355,6 +355,13 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN to_recipients TEXT")
     if "cc_recipients" not in _cols:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN cc_recipients TEXT")
+    # Outreach rows (b232): a NEW outbound draft to a lead-form prospect
+    # (rules outreach_draft action) rather than a reply to the inbound's
+    # sender. Push composes a fresh message (no thread/In-Reply-To, subject
+    # as-is) and outcome capture skips these (the user's send starts a new
+    # thread the notification-thread reconciliation can't see).
+    if "outreach" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN outreach INTEGER NOT NULL DEFAULT 0")
     # Outcome capture (b224): once we've checked whether the user actually sent a
     # reply on this thread (matching the YouOS draft to the real send), the row
     # is marked so we don't re-check it. ``outcome``: 'sent' (a real reply was

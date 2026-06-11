@@ -125,17 +125,26 @@ def push_pending_row(database_url: str, row_id: int, *, backend: str | None = No
 
     body = row.get("amended_draft") or row.get("draft") or ""
     raw_subject = row.get("subject") or ""
-    subject = raw_subject if raw_subject.lower().startswith("re:") else f"Re: {raw_subject}"
+    # Outreach rows (b232) are NEW outbound mail to a lead-form prospect, not
+    # replies: subject goes out as-is (no "Re:"), there is no thread to attach
+    # to, and nobody to reply-all.
+    is_outreach = bool(row.get("outreach"))
+    if is_outreach:
+        subject = raw_subject
+        cc = None
+    else:
+        subject = raw_subject if raw_subject.lower().startswith("re:") else f"Re: {raw_subject}"
 
-    # Reply-all by default: keep everyone the original thread addressed (its To +
-    # Cc) in Cc, minus you and the person you're replying to (who goes in To). A
-    # plain reply-to-sender would silently drop the Cc list. Uses the To/Cc
-    # persisted on the row (b213); falls back to a bare reply when absent.
-    cc = _reply_all_cc(
-        sender_email=row["sender_email"],
-        to_recipients=row.get("to_recipients"),
-        cc_recipients=row.get("cc_recipients"),
-    )
+        # Reply-all by default: keep everyone the original thread addressed (its
+        # To + Cc) in Cc, minus you and the person you're replying to (who goes
+        # in To). A plain reply-to-sender would silently drop the Cc list. Uses
+        # the To/Cc persisted on the row (b213); falls back to a bare reply when
+        # absent.
+        cc = _reply_all_cc(
+            sender_email=row["sender_email"],
+            to_recipients=row.get("to_recipients"),
+            cc_recipients=row.get("cc_recipients"),
+        )
 
     # Always include the user's Gmail signature (the API, unlike the web
     # composer, won't append it). Best-effort: a fetch failure pushes without it
@@ -150,8 +159,8 @@ def push_pending_row(database_url: str, row_id: int, *, backend: str | None = No
     try:
         result = gmail_write.create_draft(
             account=row["account"],
-            reply_to_message_id=row.get("message_id"),
-            thread_id=row.get("thread_id"),
+            reply_to_message_id=None if is_outreach else row.get("message_id"),
+            thread_id=None if is_outreach else row.get("thread_id"),
             to_email=row["sender_email"],
             subject=subject,
             body=body,
