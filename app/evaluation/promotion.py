@@ -14,6 +14,7 @@ around the existing finetune + golden-eval steps.
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -129,11 +130,20 @@ def restore_adapter(previous_dir: Path | str, latest_dir: Path | str) -> bool:
     latest = Path(latest_dir)
     real = latest.resolve() if latest.exists() else latest
     real.mkdir(parents=True, exist_ok=True)
-    for f in list(real.iterdir()):
-        if f.is_file():
-            f.unlink()
+    # Replace each file atomically (copy to temp + os.replace), THEN remove
+    # leftovers not in the snapshot. The old delete-everything-then-copy order
+    # left a window (crash, or a warm-server reload racing the copy) where the
+    # live dir held a missing or half-copied adapter (b242). copy (not copy2)
+    # → fresh mtime → triggers the warm server's reload.
+    restored = set()
     for f in prev_files:
-        shutil.copy(f, real / f.name)  # copy (not copy2) → fresh mtime → triggers reload
+        tmp = real / f".{f.name}.restore.tmp"
+        shutil.copy(f, tmp)
+        os.replace(tmp, real / f.name)
+        restored.add(f.name)
+    for f in list(real.iterdir()):
+        if f.is_file() and f.name not in restored:
+            f.unlink()
     return True
 
 
