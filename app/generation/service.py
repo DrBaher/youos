@@ -1126,10 +1126,33 @@ def _resolve_closing(persona: dict[str, Any], sender_type: str | None) -> str:
 # OFF by default (behavior-preserving) — flip them on per instance once their
 # effect has been verified against real drafts.
 
-_GREETING_TOKENS = ("hi ", "hi,", "hey", "hello", "dear", "good morning", "good afternoon", "good evening")
+_GREETING_TOKENS = (
+    "hi ", "hi,", "hey", "hello", "dear", "good morning", "good afternoon", "good evening",
+    # German (b231: "Liebe Amina" wasn't recognized, so the repair pass
+    # prepended "Hey," on top — a double greeting on every German draft)
+    "liebe ", "lieber ", "hallo", "sehr geehrte", "guten morgen", "guten tag",
+    "guten abend", "servus", "moin", "grüß ",
+    # French / Spanish / Italian
+    "bonjour", "bonsoir", "salut ", "cher ", "chère ", "hola", "buenos días",
+    "buenas tardes", "querido", "querida", "ciao", "gentile ", "caro ", "cara ",
+    # Arabic
+    "مرحبا", "أهلا", "اهلا", "عزيزي", "عزيزتي", "السلام عليكم",
+)
 _CLOSING_TOKENS = (
     "best", "cheers", "regards", "kind regards", "thanks", "thank you",
     "sincerely", "talk soon", "warmly", "all the best", "speak soon",
+    # German (matched as substrings of the last 3 lines — only multi-word /
+    # unambiguous forms; "lg"/"mfg" abbreviations would false-match inside
+    # ordinary words)
+    "mit freundlichen grüßen", "mit besten grüßen", "freundliche grüße",
+    "viele grüße", "liebe grüße", "beste grüße", "herzliche grüße",
+    "schöne grüße", "mit lieben grüßen",
+    # French / Spanish / Italian
+    "cordialement", "amicalement", "bien à vous", "à bientôt",
+    "saludos", "un abrazo", "un saludo", "gracias", "cordiali saluti",
+    "un saluto", "a presto", "grazie",
+    # Arabic
+    "مع التحية", "تحياتي", "شكرا", "مع خالص التحية",
 )
 
 
@@ -1316,12 +1339,24 @@ def _repair_draft(
             repairs.append("decoded_html_entities")
 
     if config.get("enforce_greeting_closing"):
-        if greeting and not _draft_has_greeting(text, greeting):
-            text = f"{greeting}\n\n{text.lstrip()}"
-            repairs.append("added_greeting")
-        if closing and not _draft_has_closing(text, closing):
-            text = f"{text.rstrip()}\n\n{closing}"
-            repairs.append("added_closing")
+        # b231: the configured persona greeting/closing are English. Prepending
+        # "Hey," to a German draft (or "Best," under "Mit freundlichen Grüßen")
+        # is worse than no greeting — skip the additions for non-English drafts
+        # and let the model's own in-language greeting stand.
+        draft_is_english = True
+        try:
+            from app.core.text_utils import detect_language
+
+            draft_is_english = detect_language(text) == "en"
+        except Exception:
+            pass
+        if draft_is_english:
+            if greeting and not _draft_has_greeting(text, greeting):
+                text = f"{greeting}\n\n{text.lstrip()}"
+                repairs.append("added_greeting")
+            if closing and not _draft_has_closing(text, closing):
+                text = f"{text.rstrip()}\n\n{closing}"
+                repairs.append("added_closing")
 
     return text, repairs, _length_flag(text, target_words, p25=p25, p75=p75)
 
@@ -2888,6 +2923,15 @@ def generate_draft(
             if sender_profile:
                 sender_context = _format_sender_context(sender_profile)
                 first_name = first_name_from_display_name(sender_profile.get("display_name"))
+            if not first_name:
+                # b231: no profile row (or a profile without a display name)
+                # left every greeting a bare "Hi," — fall back to the display
+                # name in the sender header itself ("Nadine Nehme <n@x>").
+                from email.utils import parseaddr
+
+                display = parseaddr(request.sender)[0]
+                if display:
+                    first_name = first_name_from_display_name(display)
 
         # Look up facts (user prefs, contact facts, project context)
         memory_facts = lookup_facts(
@@ -3291,6 +3335,20 @@ def generate_draft(
         )
         _verify_issues = _vr.issues
         if _vr.blocking and _quality is not None:
+            _quality = min(_quality, 0.1)
+        # b229: an AUTONOMOUS draft asserting a completed state the thread
+        # doesn't support ("payment has been received", "filed with ADGM",
+        # "no further action needed") is a fabrication — the agent did nothing
+        # and can't know. Collapse quality so b188 abstain surfaces the email
+        # for review instead of queueing a confidently-wrong draft. Interactive
+        # and deterministic/eval requests are exempt (same guards as abstain),
+        # so /draft and the golden eval are unaffected.
+        elif (
+            _vr.status_claims
+            and _quality is not None
+            and not getattr(request, "interactive", True)
+            and not getattr(request, "deterministic", False)
+        ):
             _quality = min(_quality, 0.1)
     except Exception:
         pass
