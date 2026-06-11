@@ -696,9 +696,9 @@ function showFactsToast(facts) {
   facts.forEach(f => {
     const el = document.createElement('div');
     el.className = 'facts-toast-item';
-    el.innerHTML = '&#x2728; Fact saved: <strong>[' + f.type + ']</strong> ' +
-      (f.key && f.key !== 'default' && f.key !== 'unknown' ? '<em>' + f.key + '</em> &mdash; ' : '') +
-      f.fact;
+    el.innerHTML = '&#x2728; Fact saved: <strong>[' + YouOS.esc(f.type) + ']</strong> ' +
+      (f.key && f.key !== 'default' && f.key !== 'unknown' ? '<em>' + YouOS.esc(f.key) + '</em> &mdash; ' : '') +
+      YouOS.esc(f.fact);
     container.appendChild(el);
     setTimeout(() => {
       el.classList.add('leaving');
@@ -896,11 +896,11 @@ function showFactsToast(facts) {
       if (p.first_seen) statsLine += ' · first seen ' + p.first_seen.split('T')[0];
     }
     senderCard.innerHTML =
-      '<div><span class="sc-name">' + (p.display_name || p.email) + '</span>' +
-      (p.company ? ' <span class="sc-company">(' + p.company + ')</span>' : '') +
-      '<span class="sc-type-badge" style="background:' + typeBg + '">' + (p.sender_type || 'unknown').replace('_',' ') + '</span></div>' +
+      '<div><span class="sc-name">' + YouOS.esc(p.display_name || p.email) + '</span>' +
+      (p.company ? ' <span class="sc-company">(' + YouOS.esc(p.company) + ')</span>' : '') +
+      '<span class="sc-type-badge" style="background:' + typeBg + '">' + YouOS.esc((p.sender_type || 'unknown').replace('_',' ')) + '</span></div>' +
       (statsLine ? '<div class="sc-stats">' + statsLine + '</div>' : '') +
-      '<div class="' + noteClass + '" id="scNote">' + noteText + '</div>';
+      '<div class="' + noteClass + '" id="scNote">' + YouOS.esc(noteText) + '</div>';
     senderCard.classList.add('visible');
 
     const noteEl = document.getElementById('scNote');
@@ -1284,12 +1284,12 @@ function showFactsToast(facts) {
       const d = await res.json();
       const confColors = {high:'#2ecc71',medium:'#f0ad4e',low:'#e74c3c'};
       let html = '<span style="display:inline-block;padding:0.15rem 0.5rem;border-radius:4px;background:' + (confColors[d.confidence]||'#555') + ';color:#fff;font-size:0.75rem;font-weight:600;">' + (d.confidence||'unknown') + '</span>';
-      if (d.intent && d.intent !== 'general') html += ' <span style="color:#888;">Intent: ' + d.intent + '</span>';
-      if (d.detected_mode) html += ' <span style="color:#888;">Mode: ' + d.detected_mode + '</span>';
+      if (d.intent && d.intent !== 'general') html += ' <span style="color:#888;">Intent: ' + YouOS.esc(d.intent) + '</span>';
+      if (d.detected_mode) html += ' <span style="color:#888;">Mode: ' + YouOS.esc(d.detected_mode) + '</span>';
       if (d.exemplars && d.exemplars.length > 0) {
         html += '<div style="margin-top:0.4rem;color:#aaa;">Top exemplars:</div>';
         d.exemplars.slice(0, 3).forEach((ex, i) => {
-          html += '<div style="margin-left:0.5rem;color:#ccc;font-size:0.78rem;">' + (i+1) + '. ' + (ex.subject || ex.source_id || 'unknown') + ' (score: ' + (ex.score != null ? ex.score.toFixed(2) : 'N/A') + ')</div>';
+          html += '<div style="margin-left:0.5rem;color:#ccc;font-size:0.78rem;">' + (i+1) + '. ' + YouOS.esc(ex.subject || ex.source_id || 'unknown') + ' (score: ' + (ex.score != null ? ex.score.toFixed(2) : 'N/A') + ')</div>';
         });
       }
       panel.innerHTML = html;
@@ -2046,7 +2046,7 @@ function showFactsToast(facts) {
       groups[type].forEach(f => {
         const item = document.createElement('div');
         item.className = 'facts-item';
-        const tagsHtml = (f.tags || []).map(t => `<span class="facts-tag">${t}</span>`).join('');
+        const tagsHtml = (f.tags || []).map(t => `<span class="facts-tag">${escHtml(t)}</span>`).join('');
         item.innerHTML =
           `<span class="facts-type-pill facts-type-${f.type}">${TYPE_LABELS[f.type] || f.type}</span>` +
           `<div class="facts-body">` +
@@ -2076,7 +2076,7 @@ function showFactsToast(facts) {
   }
 
   function escHtml(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
   // Filter buttons
