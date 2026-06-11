@@ -467,7 +467,9 @@ def step_store_prune(verbose: bool = False) -> dict:
         print("  [SKIP] store_prune — DB not yet created")
         return {}
     removed = prune_agent_tables(f"sqlite:///{db_path}")
-    print(f"  [OK] pruned {sum(removed.values())} rows: {removed}")
+    rows = sum(v for k, v in removed.items() if k != "vacuum_ok")
+    vac = "vacuumed" if removed.get("vacuum_ok") else "VACUUM SKIPPED (busy) — pages not reclaimed"
+    print(f"  [OK] pruned {rows} rows ({vac}): {removed}")
     return removed
 
 

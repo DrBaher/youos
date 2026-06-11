@@ -1272,8 +1272,9 @@ def store_prune(
 
     settings = get_settings()
     removed = prune_agent_tables(settings.database_url, older_than_days=days)
-    total = sum(removed.values())
-    print(f"Pruned {total} rows (>{days}d): {removed}")
+    total = sum(v for k, v in removed.items() if k != "vacuum_ok")
+    vac = "vacuumed" if removed.get("vacuum_ok") else "VACUUM skipped (busy)"
+    print(f"Pruned {total} rows (>{days}d, {vac}): {removed}")
 
 
 @app.command("snapshot-list")
