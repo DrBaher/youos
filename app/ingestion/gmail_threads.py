@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import os
 import re
 import sqlite3
 import subprocess
@@ -1492,6 +1491,12 @@ def _ensure_sqlite_schema(db_path: Path) -> None:
     connection = sqlite3.connect(db_path)
     try:
         connection.executescript(schema_sql)
+        # schema.sql only CREATEs IF NOT EXISTS — a pre-existing DB keeps its
+        # old column set, and the reply-pair INSERT names ALTER-added columns
+        # ("table reply_pairs has no column named language" on legacy DBs).
+        from app.db.bootstrap import _migrate_reply_pairs
+
+        _migrate_reply_pairs(connection)
         connection.commit()
     finally:
         connection.close()
@@ -1586,7 +1591,14 @@ def _import_source_label(export_path: Path | None, *, live: GogLiveOptions | Non
 
 
 def _default_sqlite_path() -> Path:
-    database_url = os.getenv("YOUOS_DATABASE_URL", "sqlite:///var/youos.db")
+    # Resolve through the settings layer (YOUOS_DATA_DIR → instance var/, or an
+    # explicit YOUOS_DATABASE_URL) — NOT a bare os.getenv with a repo-relative
+    # fallback. The old fallback sent the nightly's ingestion subprocess to the
+    # repo's dev var/youos.db on instances configured via YOUOS_DATA_DIR, so
+    # the live corpus never received a single ingested thread.
+    from app.core.settings import get_settings
+
+    database_url = get_settings().database_url
     prefix = "sqlite:///"
     if not database_url.startswith(prefix):
         raise ValueError("Only sqlite:/// database URLs are supported for Gmail ingestion.")
