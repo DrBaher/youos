@@ -678,3 +678,59 @@ def test_public_domain_not_treated_as_colleague():
     ), account_emails=ME_ORG)
     # 3 total recipients (< 5) and no org colleague → not demoted as team thread.
     assert v.needs_reply is True
+
+
+# --- bulk/marketing draft-tier cap (b230) ------------------------------------
+
+
+def test_marketing_footer_caps_at_surface_tier():
+    """Bulk mail with strong bonus signals (question, short body, imperative)
+    used to clear the draft threshold despite the -0.20 footer penalty — and
+    the model tends to continue the sender's pitch. Bulk now surfaces, never
+    drafts."""
+    v = classify(
+        _msg(
+            sender="Sydney Castle <sydney@levelvector.example>",
+            sender_email="sydney@levelvector.example",
+            subject="A couple of ways of seeing it",
+            body=(
+                "We combined balances into one LOC, up to a single limit. "
+                "If that falls to someone else on your team, who would I reach? "
+                "Please review and unsubscribe here if you prefer."
+            ),
+        ),
+        threshold=0.6,
+    )
+    assert not v.needs_reply
+    assert v.surface_for_review
+    assert any("marketing/bulk body footer" in r for r in v.reasons)
+    assert any("surfaced, not drafted" in r for r in v.reasons)
+
+
+def test_marketing_footer_vip_still_drafts():
+    v = classify(
+        _msg(
+            sender="Important Person <vip@partner.com>",
+            sender_email="vip@partner.com",
+            body=(
+                "Could you confirm the timeline for next week? "
+                "You can unsubscribe from these updates any time."
+            ),
+        ),
+        threshold=0.6,
+        vip_senders=["vip@partner.com"],
+    )
+    assert v.needs_reply
+
+
+def test_marketing_footer_below_threshold_still_surfaces():
+    v = classify(
+        _msg(
+            sender="News Bot <news@blast.example>",
+            sender_email="news@blast.example",
+            body="Our latest roundup. View this email in your browser.",
+        ),
+        threshold=0.6,
+    )
+    assert not v.needs_reply
+    assert v.surface_for_review

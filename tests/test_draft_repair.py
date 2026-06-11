@@ -302,3 +302,56 @@ def test_repair_strip_trailing_signature_now_catches_trailing_name(monkeypatch):
     assert "Baher Al Hakim" not in text
     assert text.strip().endswith("Let me know what works.")
     assert "stripped_trailing_signature" in repairs
+
+
+# --- multilingual greeting/closing awareness (b231) ---------------------------
+# Live finding (2026-06-11): a German draft opening "Liebe Amina," wasn't
+# recognized as a greeting, so enforce_greeting_closing prepended "Hey," on
+# top — a double greeting — and closed an informal mail with the English
+# formal closing. Non-English greetings/closings are now recognized, and the
+# (English) persona greeting/closing are never added to a non-English draft.
+
+_ENFORCE = {
+    "enforce_greeting_closing": True,
+    "strip_trailing_signature": False,
+    "strip_quote_tail": False,
+    "decode_html_entities": False,
+}
+
+
+def test_german_greeting_recognized_no_double_greeting():
+    draft = "Liebe Amina,\n\ndie Formulare sind erhalten – danke!\n\nMit freundlichen Grüßen"
+    text, repairs, _ = svc._repair_draft(
+        draft, greeting="Hey,", closing="Best,\nBaher", target_words=None, config=_ENFORCE,
+    )
+    assert "added_greeting" not in repairs
+    assert "added_closing" not in repairs
+    assert text == draft
+
+
+def test_german_draft_without_greeting_gets_no_english_prepend():
+    draft = "die Unterlagen sind angekommen und ich melde mich nächste Woche bei dir."
+    text, repairs, _ = svc._repair_draft(
+        draft, greeting="Hey,", closing="Best,\nBaher", target_words=None, config=_ENFORCE,
+    )
+    assert "added_greeting" not in repairs
+    assert not text.startswith("Hey,")
+
+
+def test_english_draft_still_gets_greeting_and_closing():
+    draft = "Confirmed for Thursday — see you then."
+    text, repairs, _ = svc._repair_draft(
+        draft, greeting="Hi Alice,", closing="Best,\nBaher", target_words=None, config=_ENFORCE,
+    )
+    assert "added_greeting" in repairs and "added_closing" in repairs
+    assert text.startswith("Hi Alice,") and text.rstrip().endswith("Baher")
+
+
+def test_multilingual_greeting_detection():
+    for opener in ("Hallo Thomas,", "Sehr geehrte Frau Müller,", "Bonjour Marie,", "Hola Ana,"):
+        assert svc._draft_has_greeting(f"{opener}\n\nText.", "Hi,"), opener
+
+
+def test_multilingual_closing_detection():
+    for closer in ("Mit freundlichen Grüßen", "Viele Grüße\nBaher", "Cordialement", "Un saludo"):
+        assert svc._draft_has_closing(f"Text.\n\n{closer}", "Best,"), closer
