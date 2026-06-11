@@ -253,6 +253,12 @@ class DraftRequest:
     # only decides WHETHER a given request is allowed to fan out. Hard-blocked on
     # the deterministic/eval path regardless (see generate_draft).
     multi_candidate_ok: bool = False
+    # Holdout exclusion (b234): forwarded to retrieval so a replayed
+    # historical inbound can't retrieve its own stored answer (the exact
+    # reply pair, or same-thread documents/chunks containing the real reply).
+    # Used by the inbox-replay backtest; empty in production.
+    exclude_reply_pair_ids: tuple[int, ...] = ()
+    exclude_thread_ids: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -2862,6 +2868,8 @@ def generate_draft(
                 intent_hint=detected_intent,
                 intent_hint_2=intent_hint_2,
                 thread_id=request.thread_id,
+                exclude_reply_pair_ids=request.exclude_reply_pair_ids,
+                exclude_thread_ids=request.exclude_thread_ids,
             ),
             database_url=database_url,
             configs_dir=configs_dir,
@@ -3286,10 +3294,12 @@ def generate_draft(
     # Capture the draft event (exemplars/intent/sender_type/confidence the
     # draft was produced with) for the nightly's training signal. Fault-
     # isolated: never affects the returned draft. Skipped for forced-backend
-    # (benchmark/comparison) drafts — they're not real user drafts and would
-    # pollute both the training signal and the "drafting with" status derived
-    # from draft_events.model_used.
-    if request.backend_override is None:
+    # (benchmark/comparison) drafts AND the deterministic eval family (golden/
+    # autoresearch/replay-backtest) — neither are real user drafts, and both
+    # pollute the training signal and the "drafting with" status derived from
+    # draft_events.model_used (observed live: eval sweeps logged 500–1200
+    # draft_events/day vs ~40 real ones).
+    if request.backend_override is None and not request.deterministic:
         _log_draft_event(
             database_url,
             inbound_text=request.inbound_message,
