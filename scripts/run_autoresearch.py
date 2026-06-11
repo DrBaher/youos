@@ -131,12 +131,20 @@ def _git_tag_run(
     tag_name = f"autoresearch-{timestamp}"
     tag_msg = f"composite {baseline_composite:.4f} → {final_composite:.4f}, {improvements_kept} improvements"
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["git", "tag", tag_name, "-m", tag_msg],
             capture_output=True,
+            text=True,
             timeout=10,
             cwd=ROOT_DIR,
         )
+        if result.returncode != 0:
+            # rc check (b247): a silently-failed tag drops the run's audit marker.
+            logger.warning(
+                "autoresearch git tag failed (exit %s): %s",
+                result.returncode,
+                (result.stderr or "").strip()[:200],
+            )
     except Exception as exc:
         logger.warning("Failed to create autoresearch git tag: %s", exc)
 

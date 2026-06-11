@@ -77,12 +77,18 @@ def _remove_cron() -> None:
 
     try:
         if shutil.which("openclaw"):
-            subprocess.run(
+            result = subprocess.run(
                 ["openclaw", "cron", "remove", "--name", "youos:nightly"],
                 capture_output=True,
                 timeout=10,
             )
-            print("  Removed nightly cron job.")
+            if result.returncode == 0:
+                print("  Removed nightly cron job.")
+            else:
+                # rc check (b247): an orphaned cron survives teardown and keeps
+                # launching the nightly against a torn-down instance.
+                print("  WARNING: failed to remove the nightly cron job. Remove manually:")
+                print("    openclaw cron remove --name youos:nightly")
     except Exception:
         pass
 

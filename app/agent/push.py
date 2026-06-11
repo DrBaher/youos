@@ -172,7 +172,10 @@ def push_pending_row(database_url: str, row_id: int, *, backend: str | None = No
         try:
             signature_html = gmail_write.get_signature(account=row["account"], backend=backend) or None
         except Exception:
-            logger.debug("signature fetch failed; pushing without it", exc_info=True)
+            # WARNING (b247): a persistently broken signature fetch (e.g. a gog
+            # scope change) silently dropped the signature from every pushed
+            # draft with nothing above DEBUG.
+            logger.warning("signature fetch failed; pushing without it", exc_info=True)
 
     try:
         result = gmail_write.create_draft(

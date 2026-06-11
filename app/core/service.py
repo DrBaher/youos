@@ -95,8 +95,16 @@ def install() -> tuple[bool, str]:
 def uninstall() -> tuple[bool, str]:
     path = plist_path()
     if path.exists():
-        subprocess.run(["launchctl", "unload", str(path)], capture_output=True, check=False)
+        result = subprocess.run(["launchctl", "unload", str(path)], capture_output=True, check=False)
         path.unlink()
+        if result.returncode != 0:
+            # rc check (b247): if unload failed, the KeepAlive job stays loaded
+            # (until logout) even though the plist is gone — say so.
+            return True, (
+                f"Removed {path}, but `launchctl unload` failed (exit {result.returncode}) — "
+                "the running job may persist until logout; stop it with: "
+                f"launchctl remove {LABEL}"
+            )
         return True, f"Stopped and removed {path}."
     return True, "Not installed (nothing to remove)."
 
