@@ -72,7 +72,6 @@ def _run(cmd: list[str]) -> None:
 @app.command()
 def quickstart():
     """Lightweight 3-step onramp for users who already have gog configured."""
-    import yaml
     from rich.console import Console
     from rich.progress import Progress
 
@@ -110,7 +109,9 @@ def quickstart():
             "user": user_cfg,
             "ingestion": {"accounts": emails},
         }
-        config_path.write_text(yaml.dump(config, default_flow_style=False))
+        from app.core.config import save_config
+
+        save_config(config, config_path)
         console.print(f"  Config written to {config_path}")
     else:
         console.print("\n[bold]Step 2/3:[/bold] Config already exists, skipping.")
@@ -1074,10 +1075,12 @@ def model_set(
     """Set the base model for fine-tuning and generation."""
     import yaml
 
+    from app.core.config import save_config
+
     config_path = ROOT_DIR / "youos_config.yaml"
     config = yaml.safe_load(config_path.read_text()) if config_path.exists() else {}
     config.setdefault("model", {})["base"] = model_name
-    config_path.write_text(yaml.dump(config, default_flow_style=False))
+    save_config(config, config_path)
     typer.echo(f"✅ Model set to {model_name}")
     typer.echo("   Run `youos finetune` to train a new adapter on this model.")
 

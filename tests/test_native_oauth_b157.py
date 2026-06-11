@@ -83,17 +83,19 @@ def test_load_credentials_refuses_wrong_account_token(monkeypatch, tmp_path):
         src._load_credentials("me@x.com")
 
 
-@pytest.mark.skipif(not hasattr(os, "O_NOFOLLOW"), reason="O_NOFOLLOW unavailable on this platform")
-def test_write_secret_refuses_symlinked_destination(tmp_path):
+def test_write_secret_never_writes_through_symlinked_destination(tmp_path):
     """b157: write_secret must not follow a pre-planted symlink and write the
-    secret through to the link target."""
+    secret through to the link target. Since b240 the write is atomic
+    (temp + os.replace), so the symlink is REPLACED by the secret file
+    rather than refused — the target stays untouched either way."""
     victim = tmp_path / "victim.txt"
     victim.write_text("original")
     link = tmp_path / "secret.json"
     os.symlink(victim, link)
-    with pytest.raises(OSError):
-        write_secret(link, "SECRET_TOKEN")
+    write_secret(link, "SECRET_TOKEN")
     assert victim.read_text() == "original"  # link target untouched
+    assert not link.is_symlink()  # the planted link itself was replaced
+    assert link.read_text() == "SECRET_TOKEN"
 
 
 def test_harden_token_dir_makes_dir_owner_only(tmp_path):
