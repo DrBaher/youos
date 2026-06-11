@@ -44,6 +44,12 @@ DEFAULT_TOLERANCE = 0.10
 DEFAULT_STEP = 0.05
 DEFAULT_MIN_SAMPLES = 25
 DEFAULT_BOUNDS = (0.50, 0.85)
+# Outcome recency window. 14 days, not 60: the tuner must judge the threshold
+# by drafts created under (or near) the CURRENT value. On baheros a 60-day
+# window let ~95 pre-tune no_sends dominate for weeks after the threshold rose,
+# so the tuner kept "seeing" over-drafting it had already fixed and walked
+# straight to the ceiling.
+DEFAULT_OUTCOME_WINDOW_DAYS = 14
 
 
 @dataclass
@@ -169,11 +175,20 @@ def recommend_threshold(
     )
 
 
-def outcome_counts(database_url: str, *, account: str | None = None, days: int = 60) -> tuple[int, int]:
+def outcome_counts(
+    database_url: str,
+    *,
+    account: str | None = None,
+    days: int = DEFAULT_OUTCOME_WINDOW_DAYS,
+    since: str | None = None,
+) -> tuple[int, int]:
     """``(sent, no_send)`` decided outcome counts from ``agent_pending_drafts``.
 
-    Counts only rows reconciled by ``outcome_capture`` within ``days`` (so a
-    stale outcome from months ago doesn't anchor the tuner to old behaviour).
+    Counts only rows reconciled by ``outcome_capture`` whose draft was created
+    within ``days`` (so a stale outcome from months ago doesn't anchor the
+    tuner to old behaviour) — and, when ``since`` is given (the last threshold
+    change, ISO timestamp), only drafts created after it: drafts queued under a
+    previous threshold are evidence about THAT threshold, not the current one.
     Returns ``(0, 0)`` if the table/columns don't exist yet.
     """
     import sqlite3
@@ -182,6 +197,9 @@ def outcome_counts(database_url: str, *, account: str | None = None, days: int =
 
     where = "outcome IN (?, ?) AND created_at >= datetime('now', ?)"
     params: list[Any] = [*_DECIDED_OUTCOMES, f"-{int(days)} days"]
+    if since:
+        where += " AND created_at >= datetime(?)"
+        params.append(since)
     if account:
         where += " AND account = ?"
         params.append(account)
@@ -202,12 +220,15 @@ def recommend_from_database(
     *,
     current: float,
     account: str | None = None,
-    days: int = 60,
+    days: int = DEFAULT_OUTCOME_WINDOW_DAYS,
+    since: str | None = None,
     **kwargs: Any,
 ) -> ThresholdRecommendation:
     """Convenience: read decided outcome counts from the DB and recommend.
 
-    Extra keyword args pass through to :func:`recommend_threshold` (target,
-    tolerance, step, min_samples, bounds)."""
-    sent, no_send = outcome_counts(database_url, account=account, days=days)
+    Pass ``since`` = the last threshold change (``agent.threshold_changed_at``)
+    so pre-change outcomes don't keep arguing against a threshold that already
+    moved. Extra keyword args pass through to :func:`recommend_threshold`
+    (target, tolerance, step, min_samples, bounds)."""
+    sent, no_send = outcome_counts(database_url, account=account, days=days, since=since)
     return recommend_threshold(current=current, sent=sent, no_send=no_send, **kwargs)

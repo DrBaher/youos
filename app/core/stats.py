@@ -520,15 +520,23 @@ def get_draft_vs_sent_stats(database_url: str, *, account: str | None = None, wo
     finally:
         conn.close()
 
-    # Threshold recommendation from the same decided outcomes.
+    # Threshold recommendation on the SAME evidence the nightly tuner uses
+    # (its default recency window + only drafts created since the last
+    # threshold change) — not the panel's display window, so the Apply button
+    # always previews exactly what the nightly would do.
     recommendation = None
     try:
         from app.agent.scheduler import get_agent_config
-        from app.agent.threshold_tuner import recommend_threshold
+        from app.agent.threshold_tuner import recommend_from_database
+        from app.core.config import load_config
 
         current = get_agent_config()["threshold"]
         auto_on = bool(get_agent_config().get("auto_tune_threshold", True))
-        rec = recommend_threshold(current=current, sent=sent_total, no_send=no_send)
+        agent_cfg = (load_config() or {}).get("agent")
+        since = None
+        if isinstance(agent_cfg, dict):
+            since = str(agent_cfg.get("threshold_changed_at") or "").strip() or None
+        rec = recommend_from_database(database_url, current=current, account=account, since=since)
         recommendation = {**rec.to_dict(), "auto_tune_enabled": auto_on}
     except Exception:
         recommendation = None
