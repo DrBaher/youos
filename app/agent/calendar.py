@@ -37,6 +37,34 @@ def _parse_rfc3339(s: str) -> datetime:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
+_WEEKDAY_NUMS = {
+    "mon": 0, "monday": 0, "tue": 1, "tues": 1, "tuesday": 1,
+    "wed": 2, "weds": 2, "wednesday": 2, "thu": 3, "thur": 3, "thurs": 3, "thursday": 3,
+    "fri": 4, "friday": 4, "sat": 5, "saturday": 5, "sun": 6, "sunday": 6,
+}
+
+
+def parse_preferred_weekdays(value) -> set[int] | None:
+    """Parse a config ``preferred_weekdays`` list (b266) — names ('tue'/'thu',
+    case-insensitive) or 0–6 ints — into a weekday-number set, or None when
+    unset/empty/all-invalid (= no restriction, every weekday allowed)."""
+    if not value:
+        return None
+    if isinstance(value, (str, int)):
+        value = [value]
+    out: set[int] = set()
+    try:
+        for item in value:
+            s = str(item).strip().lower()
+            if s in _WEEKDAY_NUMS:
+                out.add(_WEEKDAY_NUMS[s])
+            elif s.isdigit() and 0 <= int(s) <= 6:
+                out.add(int(s))
+    except TypeError:
+        return None
+    return out or None
+
+
 def fetch_busy(
     account: str,
     *,
@@ -107,11 +135,16 @@ def compute_open_slots(
     work_end_hour: int = 17,
     slot_minutes: int = 30,
     max_slots: int = 3,
+    preferred_weekdays: set[int] | None = None,
 ) -> list[tuple[datetime, datetime]]:
     """Compute up to ``max_slots`` open meeting slots (one per business day, for
     spread) over the next ``business_days`` weekdays, within work hours in the
     user's timezone, not overlapping ``busy``. Pure + deterministic given
-    ``now``. Returns tz-aware (user-tz) ``(start, end)`` tuples."""
+    ``now``. Returns tz-aware (user-tz) ``(start, end)`` tuples.
+
+    ``preferred_weekdays`` (b266), when given, restricts proposals to those
+    weekday numbers (Mon=0 … Sun=6) — e.g. ``{1, 3}`` for Tue/Thu only. The
+    horizon stretches to find ``business_days`` *preferred* days."""
     # A non-positive slot length makes the slot-scan loop never advance (step=0)
     # or run backwards — an infinite loop that hangs the triage worker. No valid
     # slots exist for it, so bail. (slot_minutes can come from config, which on a
@@ -132,13 +165,18 @@ def compute_open_slots(
     out: list[tuple[datetime, datetime]] = []
     days_seen = 0
     offset = 0
-    # Scan calendar days until we've covered `business_days` weekdays (with a
-    # buffer for weekends) or filled max_slots.
-    while days_seen < business_days and len(out) < max_slots and offset <= business_days + 9:
+    # Scan calendar days until we've covered `business_days` weekdays or filled
+    # max_slots. A wider offset cap so a restrictive preferred_weekdays set
+    # (e.g. Tue/Thu only) can still find enough days; days_seen only counts the
+    # days we actually consider, so the cap never over-runs in the common case.
+    max_offset = business_days * 3 + 14
+    while days_seen < business_days and len(out) < max_slots and offset <= max_offset:
         day = (now_local + timedelta(days=offset)).date()
         offset += 1
         if day.weekday() >= 5:  # Sat/Sun
             continue
+        if preferred_weekdays is not None and day.weekday() not in preferred_weekdays:
+            continue  # b266: not a preferred meeting day
         days_seen += 1
 
         win_start = datetime.combine(day, time(work_start_hour), tzinfo=zone)
@@ -183,6 +221,7 @@ def propose_open_slot_intervals(
     max_slots: int = 3,
     backend: str | None = None,
     extra_busy: list[tuple[datetime, datetime]] | None = None,
+    preferred_weekdays: set[int] | None = None,
 ) -> list[tuple[datetime, datetime]]:
     """Fetch free/busy and return the open slots as ``(start, end)`` intervals
     (empty on any failure). ``extra_busy`` is unioned into the calendar's busy
@@ -210,6 +249,7 @@ def propose_open_slot_intervals(
         busy, now=now, tz=tz, business_days=business_days,
         work_start_hour=work_start_hour, work_end_hour=work_end_hour,
         slot_minutes=slot_minutes, max_slots=max_slots,
+        preferred_weekdays=preferred_weekdays,
     )
 
 
@@ -225,6 +265,7 @@ def propose_open_slots(
     max_slots: int = 3,
     backend: str | None = None,
     extra_busy: list[tuple[datetime, datetime]] | None = None,
+    preferred_weekdays: set[int] | None = None,
 ) -> str:
     """Fetch free/busy and return a prompt-ready 'open slots' string (empty on
     any failure). Failure-isolated: a calendar problem never breaks drafting."""
@@ -233,6 +274,6 @@ def propose_open_slots(
             account, now=now, tz=tz, business_days=business_days,
             work_start_hour=work_start_hour, work_end_hour=work_end_hour,
             slot_minutes=slot_minutes, max_slots=max_slots, backend=backend,
-            extra_busy=extra_busy,
+            extra_busy=extra_busy, preferred_weekdays=preferred_weekdays,
         )
     )

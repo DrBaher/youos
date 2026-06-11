@@ -422,6 +422,8 @@ def _calendar_config() -> dict[str, Any]:
         except (TypeError, ValueError):
             return default
 
+    from app.agent.calendar import parse_preferred_weekdays
+
     return {
         "enabled": bool(cal.get("enabled", False)),
         "tz": str(tz),
@@ -430,6 +432,10 @@ def _calendar_config() -> dict[str, Any]:
         "work_end_hour": _i("work_end_hour", 17),
         "slot_minutes": _i("slot_minutes", 30),
         "max_slots": _i("max_slots", 3),
+        # b266: restrict proposals to preferred weekdays (e.g. ["tue","thu"]);
+        # None = every weekday. The preferred HOURS are the existing
+        # work_start_hour/work_end_hour range.
+        "preferred_weekdays": parse_preferred_weekdays(cal.get("preferred_weekdays")),
     }
 
 
@@ -463,7 +469,7 @@ def _calendar_slot_note(
             account, tz=cfg["tz"], business_days=cfg["business_days"],
             work_start_hour=cfg["work_start_hour"], work_end_hour=cfg["work_end_hour"],
             slot_minutes=cfg["slot_minutes"], max_slots=cfg["max_slots"],
-            extra_busy=exclude_busy,
+            extra_busy=exclude_busy, preferred_weekdays=cfg.get("preferred_weekdays"),
         )
     except Exception as exc:
         logger.warning("calendar slot proposal failed: %s", exc)

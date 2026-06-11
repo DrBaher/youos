@@ -484,7 +484,10 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
             "When the agent drafts a reply to a meeting request, read your "
             "calendar free/busy (via the gog CLI) and offer concrete open slots "
             "in the draft. Never creates events — proposes times you send. "
-            "Off by default; needs the gog calendar scope authorized."
+            "Off by default; needs the gog calendar scope authorized. Tune "
+            "preferred times in youos_config.yaml under agent.calendar: "
+            "preferred_weekdays (e.g. [tue, thu]) + work_start_hour/"
+            "work_end_hour for the daily range."
         ),
     },
     {
