@@ -624,7 +624,14 @@ def step_tune_threshold(verbose: bool = False) -> str:
         return "skipped (disabled)"
 
     current = get_agent_config()["threshold"]
-    rec = recommend_from_database(f"sqlite:///{db_path}", current=current)
+    # Only judge the current threshold by drafts created since it was last
+    # changed — outcomes from drafts queued under a previous value would keep
+    # re-arguing a case the tuner already acted on (observed on baheros: stale
+    # pre-tune no_sends marched the threshold to the ceiling).
+    since = None
+    if isinstance(agent_cfg, dict):
+        since = str(agent_cfg.get("threshold_changed_at") or "").strip() or None
+    rec = recommend_from_database(f"sqlite:///{db_path}", current=current, since=since)
     print(f"  [..] {rec.reason}")
     if not rec.changed:
         return f"held at {current:.2f} ({rec.samples} outcomes)"
@@ -634,6 +641,7 @@ def step_tune_threshold(verbose: bool = False) -> str:
     if not isinstance(cfg["agent"], dict):
         cfg["agent"] = {}
     cfg["agent"]["threshold"] = rec.recommended
+    cfg["agent"]["threshold_changed_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     save_config(cfg)
     print(f"  [OK] threshold {current:.2f} -> {rec.recommended:.2f} (hot-reloaded on next scheduler tick)")
     return f"tuned {current:.2f}->{rec.recommended:.2f}"

@@ -635,6 +635,23 @@ def set_flag(key: str, raw_value: Any, *, config_path: Path | None = None) -> An
         raise KeyError(f"unknown flag {key!r}; known: {', '.join(known_keys())}")
     value = coerce_value(_BY_KEY[key], raw_value)
     cfg = copy.deepcopy(load_config(config_path))
+    if key == "agent.threshold":
+        # Stamp the change time so the auto-tuner only counts outcomes from
+        # drafts created under the new value (manual Apply and `youos config
+        # set` must reset the tuner's evidence window just like the nightly).
+        old = _get_dotted(cfg, key, _BY_KEY[key]["default"])
+        try:
+            unchanged = abs(float(old) - float(value)) <= 1e-9
+        except (TypeError, ValueError):
+            unchanged = False
+        if not unchanged:
+            from datetime import datetime, timezone
+
+            _set_dotted(
+                cfg,
+                "agent.threshold_changed_at",
+                datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            )
     _set_dotted(cfg, key, value)
     save_config(cfg, config_path)
     return value
