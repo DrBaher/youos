@@ -70,6 +70,17 @@ def _ensure_embedding_columns(conn: sqlite3.Connection) -> None:
         if "embedding_model_id" not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN embedding_model_id TEXT")
             print(f"  Migrated: added embedding_model_id column to {table}")
+        # Partial index over embedded rows (b260): retrieval's per-call
+        # embedding-coverage gate runs
+        #   SELECT COUNT(*) ... WHERE embedding IS NOT NULL AND LENGTH(embedding) > 0
+        # which was a full table SCAN (~17ms at 50k rows, twice per retrieve).
+        # SQLite uses this partial index to answer that COUNT as a narrow
+        # index scan. Created here (not schema.sql) because the embedding
+        # column itself is added lazily above.
+        conn.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{table}_embedded ON {table}(id) "
+            "WHERE embedding IS NOT NULL AND LENGTH(embedding) > 0"
+        )
     conn.commit()
 
 
