@@ -36,14 +36,29 @@ from app.core.settings import get_adapter_path
 _proc: subprocess.Popen | None = None
 _lock = threading.Lock()
 _started_adapter_sig: float | None = None
+# b242: refuse to spawn once shutdown has begun — without this, the prewarm
+# thread could spawn the ~3GB child AFTER lifespan's stop() ran, leaving an
+# orphan (own session) on the port past process exit.
+_shutting_down = False
+# b242: after repeated startup timeouts, fast-fail instead of kill/respawn
+# churn — a model that legitimately needs longer than startup_timeout (cold
+# disk, swap pressure) would otherwise be killed at the deadline forever,
+# each cycle burning a full model load, and every stacked caller paying its
+# own full timeout under the lock.
+_consecutive_startup_timeouts = 0
+_respawn_blocked_until = 0.0
+_RESPAWN_COOLDOWN_SECONDS = 300.0
 
 
 def _safetensors_ok(path) -> bool:
     """Cheap structural validity check for a ``.safetensors`` file — its 8-byte
-    little-endian header length plus a JSON-parseable header — WITHOUT loading
-    mlx. A killed / disk-full / sleep-mid-train finetune can leave a truncated
-    adapters.safetensors in the live dir; this keeps the warm server from loading
-    it (and wedging all drafting) — it falls back to the base model instead (b163)."""
+    little-endian header length, a JSON-parseable header, AND the file being
+    large enough to contain every tensor's recorded data range — WITHOUT
+    loading mlx. A killed / disk-full / sleep-mid-train finetune can leave a
+    truncated adapters.safetensors in the live dir; this keeps the warm server
+    from loading it (and wedging all drafting) — it falls back to the base
+    model instead (b163). The data-offsets bound (b242) catches files truncated
+    mid-tensor-data, which pass the header check alone."""
     try:
         size = path.stat().st_size
         if size < 8:
@@ -53,9 +68,21 @@ def _safetensors_ok(path) -> bool:
             if n <= 0 or 8 + n > size:
                 return False
             header = f.read(n)
-        json.loads(header)  # the header must be valid JSON
+        parsed = json.loads(header)  # the header must be valid JSON
+        if not isinstance(parsed, dict):
+            return False
+        max_end = 0
+        for key, val in parsed.items():
+            if key == "__metadata__":
+                continue
+            offs = val.get("data_offsets") if isinstance(val, dict) else None
+            if not (isinstance(offs, (list, tuple)) and len(offs) == 2):
+                return False
+            max_end = max(max_end, int(offs[1]))
+        if 8 + n + max_end > size:
+            return False  # truncated mid-tensor-data
         return True
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
         return False
 
 
@@ -210,6 +237,84 @@ def is_healthy(*, timeout: float = 0.5) -> bool:
         return False
 
 
+def _pidfile():
+    from app.core.settings import get_var_dir
+
+    return get_var_dir() / "model_server.pid"
+
+
+def _write_pidfile(proc: subprocess.Popen) -> None:
+    """Record the managed child so a LATER process can find and kill it (b242).
+
+    The child runs in its own session (start_new_session=True) and survives a
+    parent crash/SIGKILL. Without this record, the restarted parent sees a
+    healthy server it didn't spawn and can neither reload it after a retrain
+    (it keeps serving the pre-crash adapter weights, while the sig-stamp claims
+    otherwise) nor stop it; the CLI's stop/restart had the same blindness."""
+    try:
+        from app.core.atomic_io import atomic_write_json
+
+        atomic_write_json(_pidfile(), {"pid": proc.pid, "port": _port()})
+    except Exception:
+        # Best-effort record; never let bookkeeping break the spawn (also
+        # tolerates the fake procs the test suite injects).
+        pass
+
+
+def _clear_pidfile() -> None:
+    try:
+        _pidfile().unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _kill_recorded_server() -> None:
+    """Kill the server recorded in the pidfile, if it is alive and still looks
+    like an mlx_lm.server (PID-reuse guard). Cross-process companion to
+    _reap_locked for children this process doesn't own (b242)."""
+    try:
+        rec = json.loads(_pidfile().read_text(encoding="utf-8"))
+        pid = int(rec["pid"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return
+    try:
+        out = subprocess.run(  # noqa: S603
+            ["/bin/ps", "-p", str(pid), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout
+    except Exception:
+        out = ""
+    if "mlx_lm.server" not in out:
+        _clear_pidfile()  # stale record (pid gone or reused by something else)
+        return
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+    # Not our child — can't wait(); poll for exit, escalate to SIGKILL.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.2)
+    else:
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+    _clear_pidfile()
+
+
 def ensure_running(*, startup_timeout: float = 40.0) -> bool:
     """Start the server if it isn't already healthy; wait until it is.
 
@@ -218,27 +323,42 @@ def ensure_running(*, startup_timeout: float = 40.0) -> bool:
     failure returns False so the caller can fall back to the subprocess/cloud
     path rather than erroring.
     """
-    global _proc, _started_adapter_sig
+    global _proc, _started_adapter_sig, _consecutive_startup_timeouts, _respawn_blocked_until
     # Never auto-spawn the heavy (~3GB) model server inside the test suite — many
     # tests exercise the generation path via TestClient and must not start a real
     # server. The server's own spawn tests clear this env var to test the logic.
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return is_healthy()
+    if _shutting_down:
+        return False
     # Fast path: already healthy AND serving the current adapter.
     if is_healthy() and _adapter_sig() == _started_adapter_sig:
         return True
     with _lock:
+        if _shutting_down:
+            return False
         # Re-check UNDER the lock so concurrent post-retrain threads don't each
         # tear down + respawn the server: the first to win reloads and stamps
         # _started_adapter_sig; the rest see it current here and return (b159).
         if is_healthy() and _adapter_sig() == _started_adapter_sig:
             return True
+        if time.monotonic() < _respawn_blocked_until:
+            return False  # in cooldown after repeated startup timeouts (b242)
         # We own the (re)start. Reap any existing handle first — a stale-adapter
         # healthy server (reload), a wedged server (alive but never /health), or a
         # half-started dud. _reap_locked (NOT stop(), which would re-acquire the
         # held lock and deadlock) kills + reaps it so we spawn fresh.
         if _proc is not None:
             _reap_locked()
+        elif is_healthy():
+            # A healthy server THIS process didn't spawn: a previous
+            # incarnation's child that survived a parent crash, or a CLI-started
+            # one. It may be serving stale adapter weights and we can't reload
+            # it through _proc — kill the recorded pid so our fresh spawn can
+            # bind (b242). Without this, the duplicate spawn bind-fails while
+            # the orphan answers /health, and the stale weights get re-stamped
+            # as current forever.
+            _kill_recorded_server()
         cmd = [sys.executable, "-m", "mlx_lm.server", "--model", get_base_model(), "--port", str(_port())]
         # b174: set the server's DEFAULT sampling to the Qwen3-4B recommended
         # values (temp=0.7, top_p=0.8, top_k=20, min_p=0). mlx_lm.server applies
@@ -248,27 +368,59 @@ def ensure_running(*, startup_timeout: float = 40.0) -> bool:
         # the 16GB box can't grow the KV cache without limit (Qwen3 default
         # context is 262K; we never need that for an email reply).
         cmd.extend(_server_launch_args())
+        # Capture the sig at the same instant the adapter arg is read: stamping
+        # a re-read sig AFTER the health wait let a promotion that landed
+        # mid-model-load get stamped as already-served — the server then kept
+        # the OLD weights with no reload ever triggering (b242 TOCTOU).
+        sig_at_spawn = _adapter_sig()
         adapter = _adapter_arg()
         if adapter:
             cmd.extend(["--adapter-path", adapter])
+        # Keep the child's stderr (b242): a server that dies during startup —
+        # bad adapter, OOM, port bind — was undiagnosable with DEVNULL. One
+        # file per spawn (truncate) keeps it bounded.
+        stderr_target = subprocess.DEVNULL
+        stderr_fh = None
+        try:
+            log_path = _pidfile().parent / "model_server.stderr.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            stderr_fh = open(log_path, "wb")
+            stderr_target = stderr_fh
+        except OSError:
+            pass
         try:
             _proc = subprocess.Popen(  # noqa: S603
                 cmd,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=stderr_target,
                 start_new_session=True,
             )
         except Exception:
             _proc = None
             return False
+        finally:
+            if stderr_fh is not None:
+                stderr_fh.close()  # child holds its own dup
+        _write_pidfile(_proc)
         # Poll /health until the model finishes loading.
         deadline = time.monotonic() + startup_timeout
         while time.monotonic() < deadline:
             if _proc is not None and _proc.poll() is not None:
                 _proc = None  # died during startup
+                _clear_pidfile()
+                if is_healthy():
+                    logging.getLogger(__name__).warning(
+                        "model server spawn died but an UNMANAGED server still "
+                        "answers on port %s — refusing to adopt it (it may be "
+                        "serving stale adapter weights); falling back to the "
+                        "subprocess path. Stop the stray server to recover.",
+                        _port(),
+                    )
                 return False
             if is_healthy(timeout=1.0):
-                _started_adapter_sig = _adapter_sig()  # remember what it loaded
+                _started_adapter_sig = sig_at_spawn  # what THIS spawn loaded
+                _consecutive_startup_timeouts = 0
+                _respawn_blocked_until = 0.0
                 return True
             time.sleep(0.5)
         # Startup timed out but the child is still ALIVE (booting too slowly, or
@@ -276,6 +428,16 @@ def ensure_running(*, startup_timeout: float = 40.0) -> bool:
         # respawns fresh instead of re-skipping the spawn and blocking the full
         # timeout again forever (the wedged/partial-start leak, b159).
         _reap_locked()
+        _consecutive_startup_timeouts += 1
+        if _consecutive_startup_timeouts >= 2:
+            _respawn_blocked_until = time.monotonic() + _RESPAWN_COOLDOWN_SECONDS
+            logging.getLogger(__name__).warning(
+                "model server failed to become healthy within %.0fs twice in a "
+                "row; pausing respawns for %.0fs (callers fall back to the "
+                "subprocess path). See var/model_server.stderr.log.",
+                startup_timeout,
+                _RESPAWN_COOLDOWN_SECONDS,
+            )
     return False
 
 
@@ -296,6 +458,7 @@ def _reap_locked() -> None:
     _proc = None
     if proc is None:
         return
+    _clear_pidfile()  # the record points at the child we're about to kill (b242)
     if proc.poll() is not None:
         # Already exited — reap it so it doesn't linger as a zombie.
         try:
@@ -328,9 +491,28 @@ def _reap_locked() -> None:
 
 
 def stop() -> None:
-    """Terminate the managed server (whole process group) AND reap it (b154)."""
+    """Terminate the managed server (whole process group) AND reap it (b154).
+
+    Also kills a server recorded in the pidfile that THIS process doesn't own
+    (b242) — that makes ``youos model server stop``/``restart`` work from the
+    CLI process, which previously no-op'd (its ``_proc`` is always None) while
+    printing success, leaving an unmanaged orphan behind."""
     with _lock:
         _reap_locked()
+        _kill_recorded_server()
+
+
+def shutdown() -> None:
+    """stop() for process exit: additionally refuse any future spawn (b242).
+
+    The lifespan teardown can win the race against the prewarm daemon thread —
+    stop() then no-ops (nothing spawned yet) and the prewarm thread spawns the
+    ~3GB child AFTER teardown, orphaning it past process exit. The flag is set
+    BEFORE taking the lock so a prewarm already inside ensure_running rechecks
+    it under the lock and refuses."""
+    global _shutting_down
+    _shutting_down = True
+    stop()
 
 
 def restart() -> bool:

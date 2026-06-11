@@ -308,11 +308,13 @@ async def _lifespan(app: FastAPI):
 
     clear_embedding_cache()
 
-    # Stop the managed model server so it doesn't outlive YouOS.
+    # Stop the managed model server so it doesn't outlive YouOS. shutdown()
+    # (not stop()) so a prewarm thread that loses the race can't spawn the
+    # ~3GB child AFTER teardown and orphan it past process exit (b242).
     try:
         from app.core import model_server
 
-        model_server.stop()
+        model_server.shutdown()
     except Exception:
         pass
 
