@@ -201,6 +201,13 @@ NON_HUMAN_MAILBOX_PAT = re.compile(
 
 # Action verbs in the imperative — strong "the sender wants something from
 # you" signal. Conservative list to avoid false positives.
+# Deliberately English-only (b257): this and the marketing/transactional/
+# service patterns above detect ENGLISH automated-mail and action-request
+# phrasing. On non-English mail they simply don't fire, so a non-English
+# human email gets neither the spam penalty nor the action-verb boost and
+# falls through to the language-agnostic signals (addressed-to-me, thread
+# participation, headers). That's intended — these are content heuristics for
+# English copy, not a multilingual classifier.
 ACTION_VERB_PAT = re.compile(
     r"\b(?:please|could you|can you|would you|let me know|send|share|review|"
     r"approve|confirm|check|update|fix|investigate|reply|respond|forward)\b",

@@ -35,7 +35,12 @@ from typing import Any
 # means the same thing here as it does when drafting/repairing.
 from app.generation.service import _CLOSING_TOKENS, _GREETING_TOKENS
 
-_WORD_RE = re.compile(r"[A-Za-z0-9']+")
+# Unicode-aware (b257, following b254): the old [A-Za-z0-9'] kept only ASCII,
+# so the lexical-overlap component of voice_match scored a non-English draft
+# vs reference as near-zero-signal — and voice_match feeds the golden
+# composite (the adapter-promotion gate) and model comparison. Keeps
+# contractions ("don't") via the optional apostrophe-suffix.
+_WORD_RE = re.compile(r"[^\W_]+(?:'[^\W_]+)*")
 _SENT_RE = re.compile(r"[.!?]+")
 _CONTRACTION_RE = re.compile(r"\b\w+'(t|re|ll|ve|m|s|d)\b", re.IGNORECASE)
 
