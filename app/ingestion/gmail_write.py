@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.secure_io import write_secret
+from app.ingestion.adapters import require_account_argv
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,7 @@ def _pick_signature(items: Any, account: str) -> str:
 def _gog_get_signature(*, account: str) -> str:
     """``gog gmail settings sendas list`` → signature HTML (verified gog 0.17.0)."""
     cmd = ["gog", "gmail", "settings", "sendas", "list", "--account", account, "--json", "--no-input"]
+    require_account_argv(cmd)
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
     if result.returncode != 0:
         return ""
@@ -258,6 +260,7 @@ def _gog_send_draft(*, account: str, draft_id: str, dry_run: bool) -> GmailSendR
         cmd.append("--dry-run")
 
     try:
+        require_account_argv(cmd)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except FileNotFoundError as exc:
         raise GmailWriteError("gog CLI not on PATH — install via Homebrew or set up the native backend") from exc
@@ -328,6 +331,7 @@ def _gog_forward(*, account: str, message_id: str, to: str, note: str | None) ->
         cmd += ["--note", note]
 
     try:
+        require_account_argv(cmd)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except FileNotFoundError as exc:
         raise GmailWriteError("gog CLI not on PATH — install via Homebrew or set up the native backend") from exc
@@ -387,6 +391,7 @@ def _gog_send_email(*, account: str, to: str, subject: str, body: str) -> GmailS
         "--json", "--no-input",
     ]
     try:
+        require_account_argv(cmd)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except FileNotFoundError as exc:
         raise GmailWriteError("gog CLI not on PATH — install via Homebrew or set up the native backend") from exc
@@ -484,6 +489,7 @@ def _gog_create_draft(
         cmd += [f"--attach={att}"]
 
     try:
+        require_account_argv(cmd)
         result = subprocess.run(
             cmd, input=stdin, capture_output=True, text=True, timeout=30,
         )
@@ -580,6 +586,7 @@ def _gws_create_draft(
         env["GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE"] = str(creds)
 
     try:
+        require_account_argv(cmd)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env)
     except FileNotFoundError as exc:
         raise GmailWriteError(
@@ -714,8 +721,13 @@ def _native_gmail_service(*, account: str) -> Any:
         Path(token_dir_cfg).expanduser()
         if token_dir_cfg else get_instance_root() / "var" / "google_tokens"
     )
-    safe = account.replace("/", "_").replace("\\", "_")
+    # Normalized like adapters._token_path (b245), with verbatim legacy fallback.
+    safe = account.strip().lower().replace("/", "_").replace("\\", "_")
     token_path = token_dir / f"{safe}.json"
+    if not token_path.exists():
+        legacy = token_dir / f"{account.replace('/', '_').replace(chr(92), '_')}.json"
+        if legacy.exists():
+            token_path = legacy
     if not token_path.exists():
         raise RuntimeError(
             f"No stored Google credentials for {account!r} at {token_path}. "
@@ -756,6 +768,7 @@ class GmailModifyResult:
 
 def _gog(args: list[str], *, timeout: int = 20) -> subprocess.CompletedProcess:
     try:
+        require_account_argv(args)
         return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError as exc:
         raise GmailWriteError("gog CLI not on PATH") from exc

@@ -190,12 +190,23 @@ def _resolve_gws_credentials_file(
     case preserved, so an exact-case match silently missed and fell back to the
     ambient mailbox. And when a per-account map IS configured but this account
     isn't in it, we REFUSE rather than silently use ambient creds for the wrong
-    mailbox (b161). With no map configured (single-account/ambient), fall back."""
+    mailbox (b161). With no map configured AND a single ingestion account,
+    fall back to ambient; with no map but MULTIPLE accounts, REFUSE (b245) —
+    every account would silently read/draft the ambient mailbox (reads use
+    userId:"me", so nothing downstream catches the mismatch)."""
     creds_map = credentials if credentials is not None else _load_gws_credentials()
-    if not account:
-        return None
     norm = {str(k).strip().lower(): v for k, v in creds_map.items()}
-    hit = norm.get(account.strip().lower())
+    acct = (account or "").strip().lower()
+    if not acct:
+        if norm:
+            # A per-account map is configured: an empty account must not
+            # quietly become the ambient mailbox (b245).
+            raise ValueError(
+                "empty account with a per-account gws credentials map configured; "
+                "refusing the ambient-mailbox fallback"
+            )
+        return None
+    hit = norm.get(acct)
     if hit:
         return str(hit)
     if norm:
@@ -204,7 +215,44 @@ def _resolve_gws_credentials_file(
             "back to the ambient mailbox (would read/draft the wrong account). "
             "Add it to ingestion.gws_credentials."
         )
-    return None  # no per-account map → single-account / ambient credentials
+    if _multiple_ingestion_accounts():
+        raise ValueError(
+            f"No gws credentials map is configured but multiple ingestion accounts "
+            f"are; refusing the ambient fallback for {account!r} (every account "
+            "would read/draft the ambient mailbox). Configure "
+            "ingestion.gws_credentials with one file per account."
+        )
+    return None  # no per-account map, single account → ambient credentials
+
+
+def _multiple_ingestion_accounts() -> bool:
+    """True when >1 ingestion account is configured (b245). Defensive: a
+    config hiccup must not turn into a refusal storm — default to False
+    (single-account, ambient allowed)."""
+    try:
+        from app.core.config import get_ingestion_accounts
+
+        return len([a for a in get_ingestion_accounts() if str(a).strip()]) > 1
+    except Exception:
+        return False
+
+
+def require_account_argv(cmd) -> None:
+    """Refuse to spawn a gog/gws CLI whose ``--account`` value is empty (b245).
+
+    Real gog errors on an UNKNOWN account (exit 4, verified live in b161's
+    audit), but an EMPTY value's behavior is undefined and could fall back to
+    the CLI's default account — a wrong-mailbox read/write. Fail closed before
+    the spawn."""
+    toks = list(cmd)
+    for i, tok in enumerate(toks):
+        if tok == "--account":
+            val = toks[i + 1] if i + 1 < len(toks) else ""
+            if not str(val).strip():
+                raise ValueError(
+                    "refusing to run gog/gws with an empty --account value "
+                    "(could operate on the wrong mailbox)"
+                )
 
 
 def _unwrap_gws_envelope(raw: Any) -> Any:
@@ -554,8 +602,18 @@ class NativeSource:
         return get_instance_root() / "var" / "google_tokens"
 
     def _token_path(self, account: str) -> Path:
-        safe = account.replace("/", "_").replace("\\", "_")
-        return self._token_dir() / f"{safe}.json"
+        # Normalize like every other account compare (b245): a case/whitespace
+        # edit of network-settable user.emails otherwise misses the token file
+        # (fail-safe RuntimeError, but a spurious outage). Verbatim-named
+        # legacy token files keep working via the fallback.
+        normalized = account.strip().lower()
+        safe = normalized.replace("/", "_").replace("\\", "_")
+        path = self._token_dir() / f"{safe}.json"
+        if not path.exists():
+            legacy = self._token_dir() / f"{account.replace('/', '_').replace(chr(92), '_')}.json"
+            if legacy.exists():
+                return legacy
+        return path
 
     def _client_secrets(self) -> str:
         if self._client_secrets_override:
