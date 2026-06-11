@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 CAL_TIMEOUT_SECONDS = 20
 
 
+class CalendarFetchError(RuntimeError):
+    """free/busy could not be fetched (b246) — distinct from a successfully
+    fetched, genuinely free calendar (which is an empty busy list)."""
+
+
 def _parse_rfc3339(s: str) -> datetime:
     dt = datetime.fromisoformat(s.strip().replace("Z", "+00:00"))
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
@@ -55,22 +60,29 @@ def fetch_busy(
         "gog", "calendar", "freebusy", "--account", account, "--all",
         "--from", from_iso, "--to", to_iso, "--json", "--no-input",
     ]
+    # Fail CLOSED on any backend failure (b246): returning [] made an unknown
+    # account / missing gog / timeout / garbage output indistinguishable from
+    # a genuinely FREE calendar — drafts then confidently offered meeting
+    # times with zero calendar knowledge (audit probe: exit-4 "account not
+    # found" produced the same slot proposals as a real empty calendar).
+    # propose_open_slots catches this and omits the slot offer instead.
+    from app.ingestion.adapters import require_account_argv
+
+    require_account_argv(cmd)
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=CAL_TIMEOUT_SECONDS)
-    except FileNotFoundError:
-        logger.info("calendar: gog not on PATH")
-        return []
-    except subprocess.TimeoutExpired:
-        logger.info("calendar: gog freebusy timed out")
-        return []
+    except FileNotFoundError as exc:
+        raise CalendarFetchError("gog not on PATH") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise CalendarFetchError(f"gog freebusy timed out ({CAL_TIMEOUT_SECONDS}s)") from exc
     if result.returncode != 0:
-        logger.info("calendar: gog freebusy exit %s: %s", result.returncode, (result.stderr or "").strip()[:200])
-        return []
+        stderr = (result.stderr or "").strip()[:200]
+        raise CalendarFetchError(f"gog freebusy exit {result.returncode}: {stderr or 'no stderr'}")
 
     try:
         payload = json.loads(result.stdout or "{}")
-    except json.JSONDecodeError:
-        return []
+    except json.JSONDecodeError as exc:
+        raise CalendarFetchError("gog freebusy returned non-JSON output") from exc
 
     busy: list[tuple[datetime, datetime]] = []
     cals = payload.get("calendars", {}) if isinstance(payload, dict) else {}
@@ -185,7 +197,9 @@ def propose_open_slots(
     except NotImplementedError:
         return ""
     except Exception as exc:
-        logger.info("calendar: free/busy fetch failed: %s", exc)
+        # WARN (b246): a failed fetch now means the draft silently loses its
+        # slot proposal — that should be visible, not a debug-level mystery.
+        logger.warning("calendar: free/busy fetch failed, omitting slot proposal: %s", exc)
         return ""
     slots = compute_open_slots(
         busy, now=now, tz=tz, business_days=business_days,
