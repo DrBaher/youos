@@ -246,10 +246,11 @@ def update_refresh_count(reply_pair_count: int) -> None:
     else:
         config = {}
     config.setdefault("benchmarks", {})["last_refresh_count"] = reply_pair_count
-    CONFIG_PATH.write_text(
-        yaml.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False, width=120),
-        encoding="utf-8",
-    )
+    # Atomic via save_config (b240): this runs from the nightly while the
+    # server is live; a torn config.yaml would disable PIN auth on reload.
+    from app.core.config import save_config
+
+    save_config(config, CONFIG_PATH)
 
 
 def main() -> None:
