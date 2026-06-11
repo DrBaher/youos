@@ -15,6 +15,7 @@ try:
 except ImportError:  # pragma: no cover - non-POSIX (Windows); YouOS targets darwin
     fcntl = None  # type: ignore[assignment]
 
+from app.core.atomic_io import atomic_write_json
 from app.core.settings import Settings
 from app.db.bootstrap import resolve_sqlite_path
 
@@ -123,10 +124,10 @@ def run_startup_safety_checks(settings: Settings) -> SafetyReport:
             warnings.append(f"Regression detected: {table} dropped from {prev} to 0")
 
     timestamp = datetime.now(timezone.utc).isoformat()
-    state_path.write_text(
-        json.dumps({"timestamp": timestamp, "table_counts": counts}, indent=2),
-        encoding="utf-8",
-    )
+    # Atomic (b241): server startup, the report API route, and the CLI
+    # health-check all rewrite these concurrently; a torn baseline disarms
+    # the drop-to-zero regression detector for the next run.
+    atomic_write_json(state_path, {"timestamp": timestamp, "table_counts": counts})
 
     report = SafetyReport(
         db_path=str(db_path),
@@ -134,10 +135,7 @@ def run_startup_safety_checks(settings: Settings) -> SafetyReport:
         table_counts=counts,
         timestamp=timestamp,
     )
-    (var_dir / "startup_safety_report.json").write_text(
-        json.dumps(report.to_dict(), indent=2),
-        encoding="utf-8",
-    )
+    atomic_write_json(var_dir / "startup_safety_report.json", report.to_dict())
     return report
 
 
