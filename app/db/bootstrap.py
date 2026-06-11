@@ -136,13 +136,20 @@ def _migrate_reply_pairs(connection: sqlite3.Connection) -> None:
 
 
 def _migrate_sender_profiles(connection: sqlite3.Connection) -> None:
-    """Add avg_response_hours column to sender_profiles if missing."""
+    """Add avg_response_hours / reply_language columns to sender_profiles if missing."""
     try:
         cols = {row[1] for row in connection.execute("PRAGMA table_info(sender_profiles)").fetchall()}
     except Exception:
         return
     if "avg_response_hours" not in cols:
         connection.execute("ALTER TABLE sender_profiles ADD COLUMN avg_response_hours REAL")
+    # b237: the language the user ACTUALLY replies to this sender in (majority
+    # over their real replies). Replay backtest showed inbound-language
+    # mirroring is the wrong heuristic — e.g. French automated alerts answered
+    # in English. NULL = no confident signal; generation falls back to
+    # mirroring the inbound.
+    if "reply_language" not in cols:
+        connection.execute("ALTER TABLE sender_profiles ADD COLUMN reply_language TEXT")
 
 
 def _migrate_memory(connection: sqlite3.Connection) -> None:

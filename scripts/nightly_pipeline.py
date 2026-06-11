@@ -647,6 +647,87 @@ def step_tune_threshold(verbose: bool = False) -> str:
     return f"tuned {current:.2f}->{rec.recommended:.2f}"
 
 
+def step_replay_backtest(verbose: bool = False) -> str:
+    """Weekly inbox-replay backtest (b238): drafts vs the user's real replies.
+
+    Runs every ``interval_days`` (default 7) — it costs 10-15 min of local
+    model time, and its job is trend/regression detection, not nightly noise.
+    Gated on ``evaluation.replay_backtest.enabled`` (default True; skips in
+    seconds on a fresh corpus with no usable pairs). Appends one summary line
+    to ``var/replay_history.jsonl`` so the metrics are trendable, and writes
+    the full report to ``var/replay_backtest.json``.
+    """
+    print(f"\n{'=' * 60}")
+    print("STEP: Inbox-replay backtest (weekly)")
+    print(f"{'=' * 60}")
+
+    import json as _json
+
+    from app.core.config import load_config
+
+    cfg = (load_config() or {}).get("evaluation") or {}
+    rb = cfg.get("replay_backtest") if isinstance(cfg, dict) else {}
+    rb = rb if isinstance(rb, dict) else {}
+    if not rb.get("enabled", True):
+        print("  [SKIP] disabled (evaluation.replay_backtest.enabled)")
+        return "skipped (disabled)"
+    interval_days = max(1, int(rb.get("interval_days", 7) or 7))
+    n_cases = max(5, int(rb.get("cases", 60) or 60))
+
+    stamp_path = get_var_dir() / "replay_last_run.txt"
+    if stamp_path.exists():
+        try:
+            last = datetime.fromisoformat(stamp_path.read_text(encoding="utf-8").strip())
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            age_days = (datetime.now(timezone.utc) - last).days
+            if age_days < interval_days:
+                print(f"  [SKIP] last run {age_days}d ago (< every {interval_days}d)")
+                return f"skipped (ran {age_days}d ago)"
+        except (ValueError, OSError):
+            pass
+
+    from app.evaluation.replay import aggregate, run_replay, sample_pairs, to_report
+
+    db_path = resolve_sqlite_path(get_settings().database_url)
+    database_url = f"sqlite:///{db_path}"
+    cases = sample_pairs(database_url, n=n_cases)
+    if len(cases) < 5:
+        print(f"  [SKIP] only {len(cases)} usable pairs — corpus too small")
+        return f"skipped ({len(cases)} usable pairs)"
+
+    embed_fn = None
+    try:
+        from app.core.embeddings import get_embedding
+
+        embed_fn = get_embedding
+    except Exception:
+        pass
+
+    print(f"  [..] replaying {len(cases)} cases (answers held out)")
+    results = run_replay(
+        cases, database_url=database_url, configs_dir=get_settings().configs_dir, embed_fn=embed_fn,
+    )
+    summary = aggregate(results)
+    var_dir = get_var_dir()
+    (var_dir / "replay_backtest.json").write_text(
+        _json.dumps(to_report(results, summary), indent=1, ensure_ascii=False), encoding="utf-8",
+    )
+    now = datetime.now(timezone.utc)
+    history_line = {
+        "run_at": now.isoformat(timespec="seconds"),
+        **{k: summary.get(k) for k in ("cases", "scored", "errors", "avg_voice_match", "avg_similarity", "avg_rewrite_distance")},
+        "issue_counts": {k: v["count"] for k, v in (summary.get("issues") or {}).items()},
+    }
+    with open(var_dir / "replay_history.jsonl", "a", encoding="utf-8") as fh:
+        fh.write(_json.dumps(history_line, ensure_ascii=False) + "\n")
+    stamp_path.write_text(now.isoformat(), encoding="utf-8")
+    vm = summary.get("avg_voice_match")
+    rw = summary.get("avg_rewrite_distance")
+    print(f"  [OK] {summary['scored']} scored — voice_match {vm}, rewrite {rw}")
+    return f"ran {summary['scored']} cases (voice {vm}, rewrite {rw})"
+
+
 def step_deduplicate(verbose: bool = False) -> bool:
     """Run corpus deduplication (best-effort)."""
     return _run_step(
@@ -1387,6 +1468,15 @@ def main() -> None:
         results["threshold_tuner"] = f"error: {exc}"
         steps["threshold_tuner"] = True
     _record_duration("threshold_tuner", _t)
+
+    _t = time.monotonic()
+    try:
+        results["replay_backtest"] = step_replay_backtest(verbose=verbose)
+        steps["replay_backtest"] = True
+    except Exception as exc:
+        results["replay_backtest"] = f"error: {exc}"
+        steps["replay_backtest"] = True
+    _record_duration("replay_backtest", _t)
 
     # Include recent git log after autoresearch
     try:

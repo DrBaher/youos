@@ -867,11 +867,13 @@ def lookup_sender_profile(email: str, database_url: str, conn: sqlite3.Connectio
             "last_seen": row["last_seen"],
             "topics": json.loads(row["topics_json"]) if row["topics_json"] else [],
         }
-        # Include avg_response_hours if available
-        try:
-            profile_dict["avg_response_hours"] = row["avg_response_hours"]
-        except (IndexError, KeyError):
-            pass
+        # Include avg_response_hours / reply_language if available (columns
+        # added by later migrations; absent on older instance DBs).
+        for _opt in ("avg_response_hours", "reply_language"):
+            try:
+                profile_dict[_opt] = row[_opt]
+            except (IndexError, KeyError):
+                pass
         return profile_dict
     finally:
         if _own_conn:
@@ -2931,6 +2933,13 @@ def generate_draft(
             if sender_profile:
                 sender_context = _format_sender_context(sender_profile)
                 first_name = first_name_from_display_name(sender_profile.get("display_name"))
+                # b237: the user's OWN reply-language habit with this sender
+                # beats mirroring the inbound's language (replay backtest:
+                # French automated alerts are answered in English). Only a
+                # confident majority is stored (see _majority_reply_language).
+                _profile_lang = str(sender_profile.get("reply_language") or "").strip()
+                if _profile_lang:
+                    detected_lang = _profile_lang
             if not first_name:
                 # b231: no profile row (or a profile without a display name)
                 # left every greeting a bare "Hi," — fall back to the display
@@ -3342,6 +3351,10 @@ def generate_draft(
             thread_history=request.thread_history,
             account_email=request.account_email,
             sender=request.sender,
+            # b237: when a per-sender reply-language habit overrode the
+            # inbound's language, the draft is SUPPOSED to differ from the
+            # inbound — verify against the intended language, not the inbound.
+            expected_language=detected_lang,
         )
         _verify_issues = _vr.issues
         if _vr.blocking and _quality is not None:
