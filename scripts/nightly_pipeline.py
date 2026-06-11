@@ -6,6 +6,7 @@ but don't block subsequent steps.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import subprocess
 import sys
@@ -1035,6 +1036,34 @@ def should_skip_dedup(db_path: Path) -> tuple[bool, str]:
     return False, ""
 
 
+# Disk-pressure thresholds (b253). Below the floor the nightly ABORTS before
+# its first step — the daily snapshot is a full-DB copy (the disk-filler),
+# and a mid-train ENOSPC leaves artifacts the atomic writes only partially
+# defend against. Below the warn level the run proceeds but reports
+# ok_with_warnings (b250).
+DISK_FLOOR_GB = 2.0
+DISK_WARN_GB = 5.0
+
+
+def check_disk_pressure() -> tuple[float, str]:
+    """Free disk (GB) at the active instance + verdict 'ok'|'warn'|'abort'.
+
+    A statvfs failure must never block the pipeline — it reports ok with
+    infinite headroom (the doctor covers interactive diagnosis)."""
+    try:
+        target = get_var_dir()
+        probe = target if target.exists() else target.parent
+        st = os.statvfs(probe)
+        free_gb = (st.f_bavail * st.f_frsize) / (1024 ** 3)
+    except Exception:
+        return float("inf"), "ok"
+    if free_gb < DISK_FLOOR_GB:
+        return free_gb, "abort"
+    if free_gb < DISK_WARN_GB:
+        return free_gb, "warn"
+    return free_gb, "ok"
+
+
 def _derive_status(steps: dict, results: dict) -> tuple[str, list[str]]:
     """Overall pipeline status + the steps that errored without failing the run.
 
@@ -1110,6 +1139,40 @@ def main() -> None:
 
     def _record_duration(name: str, t0: float) -> None:
         step_durations[name] = round(time.monotonic() - t0, 3)
+
+    # 0. Disk-pressure pre-step (b253): refuse to start a run that would
+    # finish filling the disk. Runs BEFORE the daily snapshot (a full-DB
+    # copy) on purpose.
+    free_gb, disk_verdict = check_disk_pressure()
+    if disk_verdict == "abort":
+        msg = (
+            f"only {free_gb:.1f}GB free (< {DISK_FLOOR_GB:.0f}GB floor) — aborting "
+            "before the full-DB snapshot; free disk space and re-run"
+        )
+        print(f"\n  [ABORT] disk pressure: {msg}")
+        _write_pipeline_log({
+            "schema_version": "v1",
+            "run_at": start.isoformat(),
+            "duration_seconds": 0.0,
+            "status": "failed",
+            "warning_steps": [],
+            "steps": {"disk_space": False},
+            "step_durations": {},
+            "errors": [f"Disk pressure: {msg}"],
+            "skipped_steps": [],
+            "benchmark_rotated": False,
+            "golden_composite": None,
+            "embedding_coverage": {},
+            "draft_events_summary": {},
+        })
+        return
+    if disk_verdict == "warn":
+        # "error:"-prefixed with steps True → surfaces as ok_with_warnings (b250).
+        results["disk_space"] = f"error: low disk — {free_gb:.1f}GB free (< {DISK_WARN_GB:.0f}GB)"
+        print(f"\n  [WARN] low disk: {free_gb:.1f}GB free (< {DISK_WARN_GB:.0f}GB)")
+    else:
+        results["disk_space"] = f"{free_gb:.1f}GB free"
+    steps["disk_space"] = True
 
     # -1. Daily snapshot — first, so the snapshot reflects pre-pipeline state.
     # If the nightly later corrupts something (a bad fine-tune, a bad migration),
