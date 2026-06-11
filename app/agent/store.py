@@ -181,17 +181,77 @@ def get(database_url: str, row_id: int) -> dict[str, Any] | None:
     return _row_to_dict(row) if row else None
 
 
-def update_draft_inplace(database_url: str, row_id: int, *, draft: str) -> bool:
+def _slots_to_json(slots) -> str | None:
+    """Serialize [(start_dt, end_dt), ...] as JSON [[start_iso, end_iso], ...]."""
+    if not slots:
+        return None
+    import json as _json
+
+    return _json.dumps([[s.isoformat(), e.isoformat()] for s, e in slots])
+
+
+def set_proposed_slots(database_url: str, row_id: int, slots) -> None:
+    """Persist the open-meeting slots a draft proposed (b265), so later drafts
+    can avoid offering the same time. ``slots`` is [(start_dt, end_dt), ...]."""
+    payload = _slots_to_json(slots)
+    if payload is None:
+        return
+    with closing(_connect(database_url)) as conn:
+        conn.execute(
+            "UPDATE agent_pending_drafts SET proposed_slots_json = ? WHERE id = ?",
+            (payload, row_id),
+        )
+        conn.commit()
+
+
+def pending_proposed_slots(database_url: str, account: str, *, exclude_row_id: int | None = None):
+    """All meeting slots currently proposed by OTHER still-pending drafts for
+    ``account`` (b265), as [(start_dt, end_dt), ...] — feed as ``extra_busy`` so
+    a new proposal won't double-book a time another queued draft already
+    offered. Only pending/amended rows count; a dismissed/sent draft frees its
+    slots."""
+    import json as _json
+    from datetime import datetime
+
+    out: list[tuple[datetime, datetime]] = []
+    sql = (
+        "SELECT proposed_slots_json FROM agent_pending_drafts "
+        "WHERE account = ? AND tier = 'draft' AND status IN ('pending', 'amended') "
+        "AND proposed_slots_json IS NOT NULL"
+    )
+    params: list[Any] = [account]
+    if exclude_row_id is not None:
+        sql += " AND id != ?"
+        params.append(exclude_row_id)
+    with closing(_connect(database_url)) as conn:
+        rows = conn.execute(sql, params).fetchall()
+    for r in rows:
+        try:
+            for pair in _json.loads(r["proposed_slots_json"] or "[]"):
+                out.append((datetime.fromisoformat(pair[0]), datetime.fromisoformat(pair[1])))
+        except (ValueError, TypeError, KeyError, IndexError):
+            continue  # a malformed/legacy value never breaks de-confliction
+    return out
+
+
+def update_draft_inplace(database_url: str, row_id: int, *, draft: str, proposed_slots=None) -> bool:
     """Replace a pending row's draft text in place, bumping updated_at but
     leaving status unchanged (b264). Used to refresh stale calendar slots so
     the row stays in the review queue with current times — distinct from
     ``mark_amended`` (which flips status to 'amended'). Only a live row
-    (pending/amended) is touched; never resurrects a dismissed/sent row."""
+    (pending/amended) is touched; never resurrects a dismissed/sent row.
+    ``proposed_slots`` (b265), when given, replaces the row's stored slots."""
+    sets = "draft = ?, updated_at = CURRENT_TIMESTAMP"
+    params: list[Any] = [draft]
+    if proposed_slots is not None:
+        sets += ", proposed_slots_json = ?"
+        params.append(_slots_to_json(proposed_slots))
+    params.append(row_id)
     with closing(_connect(database_url)) as conn:
         cur = conn.execute(
-            "UPDATE agent_pending_drafts SET draft = ?, updated_at = CURRENT_TIMESTAMP "
+            f"UPDATE agent_pending_drafts SET {sets} "
             "WHERE id = ? AND status IN ('pending', 'amended')",
-            (draft, row_id),
+            params,
         )
         conn.commit()
     return (cur.rowcount or 0) > 0
