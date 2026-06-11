@@ -1064,8 +1064,14 @@ def test_calendar_proposes_slots_for_meeting_requests(monkeypatch, tmp_path):
         "work_start_hour": 9, "work_end_hour": 17, "slot_minutes": 30, "max_slots": 3,
     })
     monkeypatch.setattr("app.agent.rules.load_rules", lambda: [])
-    monkeypatch.setattr("app.agent.calendar.propose_open_slots",
-                        lambda account, **kw: "Tue Jun 2, 2:00 PM–2:30 PM; Wed Jun 3, 10:00 AM–10:30 AM")
+    from datetime import datetime, timezone
+    monkeypatch.setattr(
+        "app.agent.calendar.propose_open_slot_intervals",
+        lambda account, **kw: [
+            (datetime(2026, 6, 2, 14, 0, tzinfo=timezone.utc), datetime(2026, 6, 2, 14, 30, tzinfo=timezone.utc)),
+            (datetime(2026, 6, 3, 10, 0, tzinfo=timezone.utc), datetime(2026, 6, 3, 10, 30, tzinfo=timezone.utc)),
+        ],
+    )
 
     seen = {}
 
