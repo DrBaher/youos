@@ -58,7 +58,9 @@ def test_short_model_name_handles_4bit_and_empty():
 def _make_adapter(tmp_path, *, base_in_meta):
     adir = tmp_path / "adapter"
     adir.mkdir(exist_ok=True)
-    blob = b'{"x":{}}'
+    # b242: _safetensors_ok now also validates per-tensor data_offsets, so the
+    # minimal fake must be a well-formed (zero-length) tensor entry.
+    blob = b'{"x":{"dtype":"F32","shape":[0],"data_offsets":[0,0]}}'
     hdr = len(blob).to_bytes(8, "little")
     (adir / "adapters.safetensors").write_bytes(hdr + blob)
     if base_in_meta is not None:
