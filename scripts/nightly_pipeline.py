@@ -1035,6 +1035,30 @@ def should_skip_dedup(db_path: Path) -> tuple[bool, str]:
     return False, ""
 
 
+def _derive_status(steps: dict, results: dict) -> tuple[str, list[str]]:
+    """Overall pipeline status + the steps that errored without failing the run.
+
+    Several observability steps deliberately set ``steps[name] = True`` inside
+    their except blocks ("never fails the run") while recording the exception
+    in ``results[name]`` as ``"error: ..."``. Before b250 that meant the
+    overall status said "ok" while steps had errored — visible only to someone
+    reading the results blob. Those runs now report ``ok_with_warnings`` and
+    list the offenders in ``warning_steps``.
+    """
+    warning_steps = sorted(
+        name
+        for name, ok in steps.items()
+        if ok and isinstance(results.get(name), str) and results[name].startswith("error:")
+    )
+    if all(steps.values()):
+        status = "ok_with_warnings" if warning_steps else "ok"
+    elif any(steps.values()):
+        status = "partial"
+    else:
+        status = "failed"
+    return status, warning_steps
+
+
 def _write_pipeline_log(run_log: dict) -> None:
     """Write pipeline run log to the active instance's pipeline_last_run.json."""
 
@@ -1499,14 +1523,7 @@ def main() -> None:
         pass
 
     # Determine overall status
-    all_ok = all(steps.values())
-    any_ok = any(steps.values())
-    if all_ok:
-        status = "ok"
-    elif any_ok:
-        status = "partial"
-    else:
-        status = "failed"
+    status, warning_steps = _derive_status(steps, results)
 
     # Write pipeline log
     # Check if benchmarks were rotated this run
@@ -1560,6 +1577,7 @@ def main() -> None:
         "run_at": start.isoformat(),
         "duration_seconds": round(elapsed, 2),
         "status": status,
+        "warning_steps": warning_steps,
         "steps": steps,
         "step_durations": step_durations,
         "errors": errors,
