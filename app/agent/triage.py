@@ -440,35 +440,42 @@ def _calendar_config() -> dict[str, Any]:
 _CAL_SLOT_MARKER = "You are free at:"
 
 
-def _calendar_slot_note(account: str, *, cal_cfg: dict[str, Any] | None = None) -> str | None:
-    """Fresh open-slot instruction for a meeting-request reply, or None.
+def _calendar_slot_note(
+    account: str, *, cal_cfg: dict[str, Any] | None = None, exclude_busy=None
+) -> tuple[str | None, list]:
+    """Fresh open-slot instruction for a meeting-request reply + the structured
+    slots it chose: ``(note, slots)`` or ``(None, [])``.
 
     Extracted (b264) so both the triage sweep AND the stale-draft refresh
     compute slots from the CURRENT time — a draft left in the queue for days
-    would otherwise keep proposing times that have since passed. Failure-
-    isolated; never creates events; returns None when calendar is off, no slots
-    are currently free, or the lookup fails (the b246 fail-closed contract)."""
+    would otherwise keep proposing times that have since passed. ``exclude_busy``
+    (b265) is a list of ``(start, end)`` intervals already proposed by other
+    queued drafts, fed as busy so two drafts never offer the same time.
+    Failure-isolated; never creates events; returns ``(None, [])`` when calendar
+    is off, no slots are currently free, or the lookup fails (b246)."""
     cfg = cal_cfg or _calendar_config()
     if not cfg.get("enabled"):
-        return None
+        return None, []
     try:
-        from app.agent.calendar import propose_open_slots
+        from app.agent.calendar import format_slots, propose_open_slot_intervals
 
-        slots = propose_open_slots(
+        slots = propose_open_slot_intervals(
             account, tz=cfg["tz"], business_days=cfg["business_days"],
             work_start_hour=cfg["work_start_hour"], work_end_hour=cfg["work_end_hour"],
             slot_minutes=cfg["slot_minutes"], max_slots=cfg["max_slots"],
+            extra_busy=exclude_busy,
         )
     except Exception as exc:
         logger.warning("calendar slot proposal failed: %s", exc)
-        return None
+        return None, []
     if not slots:
-        return None
-    return (
-        f"The sender is asking to meet. {_CAL_SLOT_MARKER} {slots}. "
+        return None, []
+    note = (
+        f"The sender is asking to meet. {_CAL_SLOT_MARKER} {format_slots(slots)}. "
         f"Offer 2–3 of these specific times (times are in {cfg['tz']}); "
         "do not invent any other availability."
     )
+    return note, slots
 
 
 def refresh_stale_meeting_drafts(database_url: str | None, account: str) -> dict[str, int]:
@@ -484,7 +491,11 @@ def refresh_stale_meeting_drafts(database_url: str | None, account: str) -> dict
     creates events. Best-effort per row."""
     from contextlib import closing
 
-    from app.agent.store import _connect, update_draft_inplace
+    from app.agent.store import (
+        _connect,
+        pending_proposed_slots,
+        update_draft_inplace,
+    )
 
     summary = {"scanned": 0, "refreshed": 0, "no_slots": 0, "errors": 0}
     if not database_url:
@@ -503,10 +514,14 @@ def refresh_stale_meeting_drafts(database_url: str | None, account: str) -> dict
         ).fetchall()
     if not rows:
         return summary
-    # Your availability is the same regardless of who asked — compute once.
-    note = _calendar_slot_note(account)
+    # Seed exclusions from every other queued draft so refreshed drafts don't
+    # collide — with each other OR with non-stale drafts (b265). A row's own
+    # OLD slots are in the past, so they never block its fresh future ones.
+    acc: list = list(pending_proposed_slots(db, account))
     for r in rows:
         summary["scanned"] += 1
+        # Distinct slots per draft: exclude everything proposed so far.
+        note, slots = _calendar_slot_note(account, exclude_busy=acc)
         if not note:
             summary["no_slots"] += 1
             continue
@@ -528,8 +543,9 @@ def refresh_stale_meeting_drafts(database_url: str | None, account: str) -> dict
                 configs_dir=settings.configs_dir,
             )
             new_draft = (resp.draft or "").strip()
-            if new_draft and update_draft_inplace(db, r["id"], draft=new_draft):
+            if new_draft and update_draft_inplace(db, r["id"], draft=new_draft, proposed_slots=slots):
                 summary["refreshed"] += 1
+                acc.extend(slots)
         except Exception:
             summary["errors"] += 1
             logger.warning("stale meeting-draft refresh failed for row %s", r["id"], exc_info=True)
@@ -1188,6 +1204,14 @@ def _run_sweep(
     # changing the public ``TriageResult.surfaced`` tuple shape. Drafts carry
     # urgency on the TriageDraft directly.
     _urgency_by_mid: dict[str, tuple[float, list[str]]] = {}
+    # b265: meeting slots already proposed — seeded from other still-queued
+    # drafts, then grown as this sweep proposes more — so no two drafts ever
+    # offer the same time. Keyed-by-message map carries each draft's chosen
+    # slots to the persist step (where the row id exists) for storage.
+    from app.agent.store import pending_proposed_slots
+
+    _proposed_slots_acc: list = list(pending_proposed_slots(database_url, account)) if database_url else []
+    _proposed_by_mid: dict[str, list] = {}
     cap_hit_count = 0
     # b232: lead-form outreach. (msg, verdict, rule, contact, rendered draft)
     # tuples persisted as NEW-outbound draft rows addressed to the prospect.
@@ -1327,10 +1351,16 @@ def _run_sweep(
 
         # Calendar: a meeting request → propose real open slots so the draft
         # offers concrete times. Failure-isolated; never creates events.
+        # Excludes slots already proposed by other queued drafts + earlier in
+        # this sweep so no two drafts double-book the same time (b265).
         if cal_cfg["enabled"] and _intents and "meeting_request" in _intents:
-            note = _calendar_slot_note(account, cal_cfg=cal_cfg)
+            note, _slots = _calendar_slot_note(
+                account, cal_cfg=cal_cfg, exclude_busy=_proposed_slots_acc
+            )
             if note:
                 effective_instructions = f"{effective_instructions}\n{note}" if effective_instructions else note
+                _proposed_slots_acc.extend(_slots)
+                _proposed_by_mid[msg.message_id] = _slots
 
         # Long-thread catch-up summary (depends only on the thread, not the
         # draft). Failure-isolated.
@@ -1480,6 +1510,13 @@ def _run_sweep(
             )
             if row_id is not None:
                 persisted += 1
+                # Persist the meeting slots this draft proposed so later drafts
+                # avoid them (b265).
+                _slots = _proposed_by_mid.get(d.message.message_id)
+                if _slots:
+                    from app.agent.store import set_proposed_slots
+
+                    set_proposed_slots(database_url, row_id, _slots)
                 # Only freshly-persisted draft rows are auto-push candidates
                 # (row_id is None on the idempotent repeat — already handled).
                 auto_push_candidates.append((row_id, d))

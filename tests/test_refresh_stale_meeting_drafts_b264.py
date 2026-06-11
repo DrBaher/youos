@@ -53,7 +53,7 @@ def _seed(db_url, *, snapshot, created_days_ago):
 
 def test_stale_meeting_draft_refreshed_in_place(db, monkeypatch):
     rid = _seed(db, snapshot="The sender is asking to meet. You are free at: Mon Jun 2 2pm.", created_days_ago=5)
-    monkeypatch.setattr(triage, "_calendar_slot_note", lambda account, cal_cfg=None: "You are free at: Thu Jun 18, 2:00 PM.")
+    monkeypatch.setattr(triage, "_calendar_slot_note", lambda account, cal_cfg=None, exclude_busy=None: ("You are free at: Thu Jun 18, 2:00 PM.", []))
 
     fake = type("R", (), {"draft": "Happy to meet — I'm free Thu Jun 18 at 2 PM.", "model_used": "qwen"})()
     monkeypatch.setattr("app.generation.service.generate_draft", lambda req, **k: fake)
@@ -71,7 +71,7 @@ def test_stale_meeting_draft_refreshed_in_place(db, monkeypatch):
 
 def test_non_meeting_draft_untouched(db, monkeypatch):
     _seed(db, snapshot="just a normal instruction", created_days_ago=5)  # no slot marker
-    monkeypatch.setattr(triage, "_calendar_slot_note", lambda account, cal_cfg=None: "You are free at: Thu.")
+    monkeypatch.setattr(triage, "_calendar_slot_note", lambda account, cal_cfg=None, exclude_busy=None: ("You are free at: Thu.", []))
     called = {"gen": 0}
     monkeypatch.setattr("app.generation.service.generate_draft", lambda req, **k: called.__setitem__("gen", 1))
     r = triage.refresh_stale_meeting_drafts(db, "you@example.com")
@@ -80,14 +80,14 @@ def test_non_meeting_draft_untouched(db, monkeypatch):
 
 def test_today_meeting_draft_not_stale(db, monkeypatch):
     _seed(db, snapshot="You are free at: Tue 2pm.", created_days_ago=0)  # drafted today
-    monkeypatch.setattr(triage, "_calendar_slot_note", lambda account, cal_cfg=None: "You are free at: Thu.")
+    monkeypatch.setattr(triage, "_calendar_slot_note", lambda account, cal_cfg=None, exclude_busy=None: ("You are free at: Thu.", []))
     r = triage.refresh_stale_meeting_drafts(db, "you@example.com")
     assert r["scanned"] == 0  # today's slots aren't stale yet
 
 
 def test_no_current_slots_leaves_draft(db, monkeypatch):
     rid = _seed(db, snapshot="You are free at: Mon Jun 2.", created_days_ago=5)
-    monkeypatch.setattr(triage, "_calendar_slot_note", lambda account, cal_cfg=None: None)  # calendar full / off
+    monkeypatch.setattr(triage, "_calendar_slot_note", lambda account, cal_cfg=None, exclude_busy=None: (None, []))  # calendar full / off
     r = triage.refresh_stale_meeting_drafts(db, "you@example.com")
     assert r["scanned"] == 1 and r["refreshed"] == 0 and r["no_slots"] == 1
     c = sqlite3.connect(db.removeprefix("sqlite:///"))
@@ -106,14 +106,16 @@ def test_update_draft_inplace_keeps_status_and_skips_terminal(db):
 
 
 def test_calendar_slot_note_marker_present(monkeypatch):
+    from datetime import datetime, timezone
     monkeypatch.setattr(triage, "_calendar_config", lambda: {
         "enabled": True, "tz": "Europe/Vienna", "business_days": 5,
         "work_start_hour": 9, "work_end_hour": 17, "slot_minutes": 30, "max_slots": 3,
     })
-    monkeypatch.setattr("app.agent.calendar.propose_open_slots", lambda *a, **k: "Thu Jun 18, 2:00 PM")
-    note = triage._calendar_slot_note("you@example.com")
+    slot = (datetime(2026, 6, 18, 14, 0, tzinfo=timezone.utc), datetime(2026, 6, 18, 14, 30, tzinfo=timezone.utc))
+    monkeypatch.setattr("app.agent.calendar.propose_open_slot_intervals", lambda *a, **k: [slot])
+    note, slots = triage._calendar_slot_note("you@example.com")
     assert triage._CAL_SLOT_MARKER in note
-    assert "Thu Jun 18" in note
+    assert slots == [slot]
 
 
 def test_calendar_slot_note_none_when_no_slots(monkeypatch):
@@ -121,5 +123,5 @@ def test_calendar_slot_note_none_when_no_slots(monkeypatch):
         "enabled": True, "tz": "UTC", "business_days": 5,
         "work_start_hour": 9, "work_end_hour": 17, "slot_minutes": 30, "max_slots": 3,
     })
-    monkeypatch.setattr("app.agent.calendar.propose_open_slots", lambda *a, **k: "")
-    assert triage._calendar_slot_note("you@example.com") is None
+    monkeypatch.setattr("app.agent.calendar.propose_open_slot_intervals", lambda *a, **k: [])
+    assert triage._calendar_slot_note("you@example.com") == (None, [])

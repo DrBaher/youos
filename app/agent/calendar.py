@@ -171,6 +171,48 @@ def format_slots(slots: list[tuple[datetime, datetime]]) -> str:
     return "; ".join(parts)
 
 
+def propose_open_slot_intervals(
+    account: str,
+    *,
+    now: datetime | None = None,
+    tz: str = "UTC",
+    business_days: int = 5,
+    work_start_hour: int = 9,
+    work_end_hour: int = 17,
+    slot_minutes: int = 30,
+    max_slots: int = 3,
+    backend: str | None = None,
+    extra_busy: list[tuple[datetime, datetime]] | None = None,
+) -> list[tuple[datetime, datetime]]:
+    """Fetch free/busy and return the open slots as ``(start, end)`` intervals
+    (empty on any failure). ``extra_busy`` is unioned into the calendar's busy
+    set before computing openings — used to avoid offering a slot another
+    queued draft already proposed (b265). Failure-isolated."""
+    now = now or datetime.now(timezone.utc)
+    try:
+        horizon = now + timedelta(days=business_days + 9)
+        busy = fetch_busy(
+            account,
+            from_iso=now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            to_iso=horizon.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            backend=backend,
+        )
+    except NotImplementedError:
+        return []
+    except Exception as exc:
+        # WARN (b246): a failed fetch now means the draft silently loses its
+        # slot proposal — that should be visible, not a debug-level mystery.
+        logger.warning("calendar: free/busy fetch failed, omitting slot proposal: %s", exc)
+        return []
+    if extra_busy:
+        busy = list(busy) + list(extra_busy)
+    return compute_open_slots(
+        busy, now=now, tz=tz, business_days=business_days,
+        work_start_hour=work_start_hour, work_end_hour=work_end_hour,
+        slot_minutes=slot_minutes, max_slots=max_slots,
+    )
+
+
 def propose_open_slots(
     account: str,
     *,
@@ -182,28 +224,15 @@ def propose_open_slots(
     slot_minutes: int = 30,
     max_slots: int = 3,
     backend: str | None = None,
+    extra_busy: list[tuple[datetime, datetime]] | None = None,
 ) -> str:
     """Fetch free/busy and return a prompt-ready 'open slots' string (empty on
     any failure). Failure-isolated: a calendar problem never breaks drafting."""
-    now = now or datetime.now(timezone.utc)
-    try:
-        horizon = now + timedelta(days=business_days + 9)
-        busy = fetch_busy(
-            account,
-            from_iso=now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            to_iso=horizon.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            backend=backend,
+    return format_slots(
+        propose_open_slot_intervals(
+            account, now=now, tz=tz, business_days=business_days,
+            work_start_hour=work_start_hour, work_end_hour=work_end_hour,
+            slot_minutes=slot_minutes, max_slots=max_slots, backend=backend,
+            extra_busy=extra_busy,
         )
-    except NotImplementedError:
-        return ""
-    except Exception as exc:
-        # WARN (b246): a failed fetch now means the draft silently loses its
-        # slot proposal — that should be visible, not a debug-level mystery.
-        logger.warning("calendar: free/busy fetch failed, omitting slot proposal: %s", exc)
-        return ""
-    slots = compute_open_slots(
-        busy, now=now, tz=tz, business_days=business_days,
-        work_start_hour=work_start_hour, work_end_hour=work_end_hour,
-        slot_minutes=slot_minutes, max_slots=max_slots,
     )
-    return format_slots(slots)
