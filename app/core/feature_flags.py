@@ -530,6 +530,24 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
 
 _BY_KEY: dict[str, dict[str, Any]] = {f["key"]: f for f in KNOWN_FLAGS}
 
+# Send-frontier flags (b259): the toggles that ARM real outbound (send,
+# auto-send, forward, the digest send path) or DISARM the kill-switch. The
+# never-send invariant must be tamper-proof against a NETWORK config-write —
+# a token-authed orchestrator (the documented integration model) is
+# all-or-nothing, so if these were network-writable a compromised/over-broad
+# token could flip agent.send.enabled and then send, which the audit
+# probe-confirmed. They are therefore set out-of-band ONLY: `youos config
+# set` (CLI, local shell) or a direct config-file edit. set_flag refuses them
+# on the network path.
+SEND_FRONTIER_FLAGS: frozenset[str] = frozenset({
+    "agent.send.enabled",
+    "agent.outbound_kill_switch",
+    "agent.auto_send.enabled",
+    "agent.auto_send.mode",
+    "agent.actions.allow_forward",
+    "agent.digests.enabled",
+})
+
 
 def known_keys() -> list[str]:
     return [f["key"] for f in KNOWN_FLAGS]
@@ -605,9 +623,20 @@ def coerce_value(flag: dict, raw: Any) -> Any:
 
 
 def list_flags(config: dict | None = None) -> list[dict[str, Any]]:
-    """All known flags with their current effective value (config or default)."""
+    """All known flags with their current effective value (config or default).
+
+    Send-frontier flags carry ``network_locked: True`` (b259) so the settings
+    UI can disable their controls — they are CLI/config-file only.
+    """
     cfg = config if config is not None else load_config()
-    return [{**f, "value": _get_dotted(cfg, f["key"], f["default"])} for f in KNOWN_FLAGS]
+    return [
+        {
+            **f,
+            "value": _get_dotted(cfg, f["key"], f["default"]),
+            "network_locked": f["key"] in SEND_FRONTIER_FLAGS,
+        }
+        for f in KNOWN_FLAGS
+    ]
 
 
 def get_flag(key: str, config: dict | None = None) -> Any:
@@ -617,12 +646,27 @@ def get_flag(key: str, config: dict | None = None) -> Any:
     return _get_dotted(cfg, key, _BY_KEY[key]["default"])
 
 
-def set_flag(key: str, raw_value: Any, *, config_path: Path | None = None) -> Any:
+class SendFrontierWriteError(PermissionError):
+    """A send-frontier flag was set on a network path (b259). Caught by the
+    API route and turned into a 403 directing the user to the CLI."""
+
+
+def set_flag(
+    key: str, raw_value: Any, *, config_path: Path | None = None, allow_send_frontier: bool = True
+) -> Any:
     """Validate + coerce + persist a flag. Returns the stored value.
 
     Raises ``KeyError`` for an unknown (non-whitelisted) key and ``ValueError``
-    for a value that doesn't fit the flag's type.
+    for a value that doesn't fit the flag's type. When ``allow_send_frontier``
+    is False (the network path passes this), a send-frontier flag raises
+    ``SendFrontierWriteError`` instead of being written — the never-send
+    invariant stays tamper-proof against a token-authed caller (b259).
     """
+    if not allow_send_frontier and key in SEND_FRONTIER_FLAGS:
+        raise SendFrontierWriteError(
+            f"{key} controls the send frontier and cannot be set over the network; "
+            "set it locally with `youos config set` or edit youos_config.yaml"
+        )
     if key not in _BY_KEY:
         if key == "server.pin":
             # server.pin isn't a feature flag — it's a hashed credential. Point

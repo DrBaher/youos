@@ -107,10 +107,14 @@ def get_config_flags() -> dict:
 def set_config_flag(body: ConfigSetRequest) -> dict:
     """Set one whitelisted feature flag. Restricted to the feature-flag
     whitelist, so this can't write arbitrary config keys."""
-    from app.core.feature_flags import set_flag
+    from app.core.feature_flags import SendFrontierWriteError, set_flag
 
     try:
-        value = set_flag(body.key, body.value)
+        # Network path: refuse send-frontier flags (b259) so a token-authed
+        # orchestrator can't arm sends the never-send default keeps off.
+        value = set_flag(body.key, body.value, allow_send_frontier=False)
+    except SendFrontierWriteError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from None
     except KeyError as exc:
         # server.pin gets a helpful message (use /api/config/set-pin); other
         # unknown keys get the generic one.
