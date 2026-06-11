@@ -539,12 +539,9 @@ def _run_persona_analysis(config: dict) -> dict | None:
         config["persona"]["closing_informal"] = chosen_informal.replace("\\n", "\n")
         config["persona"]["custom_constraints"] = banned_phrases
 
-        import yaml as _yaml2
+        from app.core.config import save_config as _save_config
 
-        CONFIG_PATH.write_text(
-            _yaml2.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False, width=120),
-            encoding="utf-8",
-        )
+        _save_config(config, CONFIG_PATH)
 
         # Save analysis JSON
         output_path = ROOT_DIR / "configs" / "persona_analysis.json"
@@ -831,11 +828,10 @@ def main() -> None:
     config.setdefault("review", {})["batch_size"] = 10
     config["review"].setdefault("draft_model", "claude")  # 'claude', 'local', or 'auto'
 
-    # Save config
-    CONFIG_PATH.write_text(
-        yaml.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False, width=120),
-        encoding="utf-8",
-    )
+    # Save config (atomic, b240)
+    from app.core.config import save_config as _save_config_main
+
+    _save_config_main(config, CONFIG_PATH)
     print(f"\nConfiguration saved to {CONFIG_PATH}")
 
     # Step 5: Bootstrap database
@@ -869,11 +865,8 @@ def main() -> None:
                     confirm = input("Mark these as internal domains? [Y/n] ").strip().lower()
                     if confirm != "n":
                         config.setdefault("user", {})["internal_domains"] = suggested_domains
-                        import yaml as _yaml_e24
-                        CONFIG_PATH.write_text(
-                            _yaml_e24.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False, width=120),
-                            encoding="utf-8",
-                        )
+                        from app.core.config import save_config as _save_config_e24
+                        _save_config_e24(config, CONFIG_PATH)
                         print(f"  Saved internal domains: {', '.join(suggested_domains)}")
         except Exception:
             pass
