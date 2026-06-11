@@ -340,22 +340,22 @@
   <div class="container">
     <div class="section-head">
       <h2>Does it actually sound like you?</h2>
-      <p>We measured it. On the maintainer&rsquo;s own ~11,800-email corpus, YouOS drafted 80 held-out messages and scored each draft against the reply actually sent (&ldquo;voice-match&rdquo;). A small model fine-tuned on your mail captures what you&rsquo;d actually say &mdash; high semantic fidelity to your real reply, length-matched, in a few seconds, and never leaving your Mac.</p>
+      <p>We measured it &mdash; and ran the same 80 held-out messages through Claude for comparison. On the maintainer&rsquo;s own ~11,800-email corpus, each model drafted every message and was scored against the reply actually sent (&ldquo;voice-match&rdquo;). A small 4B model fine-tuned on your mail goes toe-to-toe with a frontier cloud model on sounding like you &mdash; level on semantic fidelity and voice, a hair ahead on tone &mdash; while drafting ~4.5&times; faster, staying closer to your real reply length, and never leaving your Mac.</p>
     </div>
     <table class="vs">
       <thead>
-        <tr><th></th><th class="win">YouOS<span>your local model + LoRA</span></th></tr>
+        <tr><th></th><th class="win">YouOS<span>your local 4B + LoRA</span></th><th>Claude<span>frontier cloud model</span></th></tr>
       </thead>
       <tbody>
-        <tr><td>Captures what you&rsquo;d say <span class="muted">(semantic fidelity)</span></td><td class="win">0.86</td></tr>
-        <tr><td>Sounds like you <span class="muted">(voice-match, composite)</span></td><td class="win">0.67</td></tr>
-        <tr><td>Matches your tone <span class="muted">(style)</span></td><td class="win">0.77</td></tr>
-        <tr><td>Matches your length</td><td class="win">~28 words</td></tr>
-        <tr><td>Speed per draft</td><td class="win">~4.3s</td></tr>
-        <tr><td>Your email leaves your Mac</td><td class="win">never</td></tr>
+        <tr><td>Captures what you&rsquo;d say <span class="muted">(semantic fidelity)</span></td><td>0.85</td><td>0.86</td></tr>
+        <tr><td>Sounds like you <span class="muted">(voice-match, composite)</span></td><td>0.66</td><td>0.68</td></tr>
+        <tr><td>Matches your tone <span class="muted">(style)</span></td><td class="win">0.75</td><td>0.73</td></tr>
+        <tr><td>Matches your length <span class="muted">(yours avg ~28 words)</span></td><td class="win">~25 words</td><td>~36 words</td></tr>
+        <tr><td>Speed per draft</td><td class="win">~3.7s</td><td>~16s</td></tr>
+        <tr><td>Your email leaves your Mac</td><td class="win">never</td><td>every draft</td></tr>
       </tbody>
     </table>
-    <p class="vs-note">Measured with <code>youos compare-models --limit 80 --semantic</code> on one corpus &mdash; it breaks out every sub-metric, and your numbers will differ. Every draft is generated and scored entirely on your Mac.</p>
+    <p class="vs-note">Measured with <code>youos compare-models --backends mlx,claude --semantic --limit 80</code> &mdash; the same 80 held-out messages through both models, on one corpus. The semantic and voice gaps are smaller than the local model&rsquo;s own run-to-run variation (sampling noise), so call those a tie; your numbers will differ. The local model runs entirely on your Mac &mdash; the Claude column needs an explicit opt-in to send those test messages to the cloud.</p>
   </div>
 </section>
 
@@ -471,7 +471,7 @@
       <details><summary>Is my email data private?</summary><p>Yes. Your corpus, model, fine-tuning, and drafts all stay on your Mac — nothing is uploaded. The only exception is the optional Claude cold-start/fallback before your local model is trained, which you can turn off in Settings.</p></details>
       <details><summary>Which model writes my drafts?</summary><p>By default, your fine-tuned local model (Qwen + your LoRA) once you've trained an adapter — fully on-device. Claude is only a cold-start or fallback. A per-draft badge always shows which model actually wrote a draft.</p></details>
       <details><summary>How does it learn my style?</summary><p>It ingests your sent Gmail (and optionally Google Docs / WhatsApp exports), retrieves your most relevant past replies as few-shot examples, and fine-tunes a LoRA adapter on your real replies + your edits — so drafts sound like you, not a generic AI.</p></details>
-      <details><summary>How do I know it actually sounds like me?</summary><p>Run <code>youos compare-models</code> — it drafts your held-out replies and scores them against what you actually wrote (voice-match), breaking out semantic fidelity, tone, and length match. On the maintainer's corpus the fine-tuned local model reaches high semantic fidelity to the real reply, fully on-device.</p></details>
+      <details><summary>How do I know it actually sounds like me?</summary><p>Run <code>youos compare-models</code> — it drafts your held-out replies and scores them against what you actually wrote (voice-match), breaking out semantic fidelity, tone, and length match. Add <code>--backends mlx,claude</code> to put your local model head-to-head with Claude: on the maintainer's corpus the fine-tuned 4B model matches Claude on semantic fidelity and voice, edges it on tone, and drafts ~4.5× faster — fully on-device.</p></details>
       <details><summary>Can I use it inside Gmail?</summary><p>Yes — install the YouOS browser extension (Chrome / Edge / Brave). It adds a panel to Gmail that drafts a reply in your voice, inserts it, and lets you rate it without leaving your inbox.</p></details>
       <details><summary>Do I need an Apple Silicon Mac?</summary><p>For the local model, yes (M1–M4) — it runs on MLX. Retrieval and the Claude fallback work on any Mac, but the fine-tuned-on-you experience needs Apple Silicon.</p></details>
       <details><summary>Is it free / open source?</summary><p>Yes — it's MIT-licensed and runs locally with no subscription. You only pay for Claude usage if you opt into the cloud fallback.</p></details>
