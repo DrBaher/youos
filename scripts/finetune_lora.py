@@ -510,8 +510,11 @@ def run_training(args: argparse.Namespace) -> str:
         "persona": persona,
     }
     meta_path = adapter_dir / "meta.json"
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(meta, f, indent=2)
+    # Atomic (b251): a torn meta.json is treated as "legacy adapter" by the
+    # warm server, silently forfeiting the cross-base refusal (b174).
+    from app.core.atomic_io import atomic_write_json
+
+    atomic_write_json(meta_path, meta)
 
     print("\nTraining complete.")
     print(f"  Adapter saved to: {adapter_dir}")

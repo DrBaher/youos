@@ -391,6 +391,12 @@ class GwsSource:
         results: list[dict[str, Any]] = []
         page_token: str | None = None
         while True:
+            # NOTE (P8-6): reads use userId:"me" (the mailbox is picked by the
+            # per-account credentials file), while the gws draft-create path
+            # passes userId:<account> — that asymmetry means a creds/account
+            # mismatch 403s on WRITE but silently reads the wrong mailbox,
+            # which is why _resolve_gws_credentials_file refuses ambiguous
+            # ambient fallbacks (b161/b245).
             params: dict[str, Any] = {"userId": "me", "q": query, "maxResults": _THREAD_PAGE_SIZE}
             if page_token:
                 params["pageToken"] = page_token
