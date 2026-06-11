@@ -25,8 +25,8 @@ from app.agent.rules import (
 # The exact glued format the form mailer produces (HTML table flattened).
 _DEMO_BODY = (
     "NEW DEMO REQUEST\n\n"
-    "Nameshakhawat Hussain Emailshakhayat1511@gmail.com Phone+8801733724919 "
-    "CountryBangladesh ReasonProduct demo Message i want to know your service "
+    "Namejordan lee Emailjordan.lee@lead.example Phone+15550100000 "
+    "CountryNarnia ReasonProduct demo Message i want to know your service "
     "about the Lab Test reports. How you can help?"
 )
 
@@ -34,7 +34,7 @@ _RULE = {
     "match": {"sender": "noreply@work.example", "subject_contains": "New demo request"},
     "action": "outreach_draft",
     "subject": "Your demo request",
-    "value": "Hi {first_name},\n\nThanks for your interest — happy to set up a demo.\n\nBest,\nBaher",
+    "value": "Hi {first_name},\n\nThanks for your interest — happy to set up a demo.\n\nBest,\nSam",
 }
 
 
@@ -66,10 +66,10 @@ def test_outreach_rule_rejects_intent_predicate():
 
 def test_extract_lead_contact_glued_format():
     c = extract_lead_contact(_DEMO_BODY)
-    assert c["email"] == "shakhayat1511@gmail.com"
-    assert c["name"] == "shakhawat Hussain"
-    assert c["first_name"] == "Shakhawat"
-    assert c["country"] == "Bangladesh"
+    assert c["email"] == "jordan.lee@lead.example"
+    assert c["name"] == "jordan lee"
+    assert c["first_name"] == "Jordan"
+    assert c["country"] == "Narnia"
     assert c["reason"] == "Product demo"
     assert "Lab Test" in c["message"]
 
@@ -100,7 +100,7 @@ def test_render_fills_placeholders_and_tolerates_missing():
         "Hi {first_name},\n\nRe {reason}: {message}\n\n{unknown_key}Best",
         extract_lead_contact(_DEMO_BODY),
     )
-    assert out.startswith("Hi Shakhawat,")
+    assert out.startswith("Hi Jordan,")
     assert "Product demo" in out
     assert "{" not in out
 
@@ -120,7 +120,7 @@ def test_match_outreach_rule_matches_and_filters_action():
     ]
     r = match_outreach_rule(
         rules, sender_email="noreply@work.example", domain="work.example",
-        subject="New demo request from shakhawat Hussain — Product demo", body=_DEMO_BODY,
+        subject="New demo request from jordan lee — Product demo", body=_DEMO_BODY,
     )
     assert r is not None and r["action"] == "outreach_draft"
     assert match_outreach_rule(
@@ -151,7 +151,7 @@ def outreach_env(monkeypatch, tmp_path):
             account="you@example.com",
             sender="Website <noreply@work.example>",
             sender_email="noreply@work.example",
-            subject="New demo request from shakhawat Hussain — Product demo",
+            subject="New demo request from jordan lee — Product demo",
             body=_DEMO_BODY,
             headers={},
         ),
@@ -177,10 +177,10 @@ def test_triage_persists_outreach_draft_to_prospect(outreach_env):
     assert row["tier"] == "draft"
     assert row["outreach"] == 1
     assert row["hold"] == 1  # never auto-push/auto-send a new-recipient outbound
-    assert row["sender_email"] == "shakhayat1511@gmail.com"
-    assert row["to_recipients"] == "shakhayat1511@gmail.com"
+    assert row["sender_email"] == "jordan.lee@lead.example"
+    assert row["to_recipients"] == "jordan.lee@lead.example"
     assert row["subject"] == "Your demo request"
-    assert row["draft"].startswith("Hi Shakhawat,")
+    assert row["draft"].startswith("Hi Jordan,")
     assert row["draft_model"] == "rule_template"
     assert "rule: outreach_draft (lead-form notification)" in row["reasons_json"]
 
@@ -215,14 +215,14 @@ def test_push_outreach_row_composes_fresh_message(monkeypatch, tmp_path):
     row_id = store.upsert_pending(
         database_url=url,
         message_id="demo-1", thread_id="dt-1", account="you@example.com",
-        sender="shakhawat Hussain", sender_email="shakhayat1511@gmail.com",
+        sender="jordan lee", sender_email="jordan.lee@lead.example",
         subject="Your demo request", body=_DEMO_BODY, received_at=None,
         needs_reply_score=0.6, reasons=["rule: outreach_draft (lead-form notification)"],
         cold_outreach=False, tier="draft",
-        draft="Hi Shakhawat,\n\nThanks for your interest.\n\nBest,\nBaher",
+        draft="Hi Jordan,\n\nThanks for your interest.\n\nBest,\nSam",
         draft_model="rule_template", draft_repairs=[],
         standing_instructions_snapshot=None,
-        hold=True, to_recipients="shakhayat1511@gmail.com", outreach=True,
+        hold=True, to_recipients="jordan.lee@lead.example", outreach=True,
     )
 
     captured = {}
@@ -241,7 +241,7 @@ def test_push_outreach_row_composes_fresh_message(monkeypatch, tmp_path):
 
     out = push_pending_row(url, row_id)
     assert out.ok
-    assert captured["to_email"] == "shakhayat1511@gmail.com"
+    assert captured["to_email"] == "jordan.lee@lead.example"
     assert captured["subject"] == "Your demo request"  # no "Re:" on a fresh message
     assert captured["thread_id"] is None
     assert captured["reply_to_message_id"] is None

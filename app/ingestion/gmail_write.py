@@ -163,6 +163,7 @@ def create_draft(
     body: str,
     cc: str | None = None,
     signature_html: str | None = None,
+    attachments: list[str] | None = None,
     backend: str | None = None,
 ) -> GmailDraftResult:
     """Create a Gmail draft addressed to ``to_email`` on the user's ``account``.
@@ -171,6 +172,11 @@ def create_draft(
     inbound the draft replies to). The gog backend (the only one with a
     verified CLI shape) sets In-Reply-To / References / threadId from this
     id; gws/native fall back to ``thread_id`` if given.
+
+    ``attachments`` (b233) are local file paths attached to the draft —
+    supported on the gog backend only (verified ``--attach`` flag, gog 0.22.0);
+    requesting them on gws/native raises ``GmailWriteError`` rather than
+    silently creating a draft whose body promises a file that isn't there.
 
     ``backend`` overrides the configured ``ingestion.google_backend``;
     leave None to use the default.
@@ -182,10 +188,15 @@ def create_draft(
     body_html = _compose_html_with_signature(body, signature_html) if signature_html else None
 
     name = (backend or get_ingestion_google_backend()).strip().lower()
+    if attachments and name != "gog":
+        raise GmailWriteError(
+            f"attachments are only supported on the gog backend (configured: {name!r})"
+        )
     if name == "gog":
         return _gog_create_draft(
             account=account, reply_to_message_id=reply_to_message_id,
             to_email=to_email, subject=subject, body=body, cc=cc, body_html=body_html,
+            attachments=attachments,
         )
     if name == "gws":
         return _gws_create_draft(
@@ -428,6 +439,7 @@ def _gog_create_draft(
     body: str,
     cc: str | None = None,
     body_html: str | None = None,
+    attachments: list[str] | None = None,
 ) -> GmailDraftResult:
     """Verified ``gog gmail drafts create`` invocation (gog 0.17.0).
 
@@ -459,6 +471,17 @@ def _gog_create_draft(
         cmd += ["--cc", cc]   # verified flag: gog gmail drafts create --cc=STRING (comma-separated)
     if reply_to_message_id:
         cmd += ["--reply-to-message-id", reply_to_message_id]
+    for att in attachments or []:
+        # Verified flag (gog 0.22.0): --attach=ATTACH,... (repeatable). The
+        # =-joined single-token form is used so a path can never be parsed as
+        # the next flag; Kong splits the value on commas, so a comma-bearing
+        # path cannot be passed faithfully — reject it instead of attaching
+        # the wrong files.
+        if "," in att:
+            raise GmailWriteError(
+                f"attachment path contains a comma (unsupported by the gog --attach flag): {att!r}"
+            )
+        cmd += [f"--attach={att}"]
 
     try:
         result = subprocess.run(
