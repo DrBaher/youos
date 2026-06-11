@@ -63,8 +63,12 @@ def verify_pin(pin: str, stored_hash: str) -> bool:
 
 def is_auth_enabled(config: dict[str, Any]) -> bool:
     """Check if PIN auth is enabled (non-empty pin hash in config)."""
-    pin_value = config.get("server", {}).get("pin", "")
-    return bool(pin_value)
+    # A hand-edited/damaged config can carry ``server:`` with a null/scalar
+    # value; don't let that raise inside the auth middleware (b240).
+    server = config.get("server")
+    if not isinstance(server, dict):
+        return False
+    return bool(server.get("pin", ""))
 
 
 def create_session_token() -> str:
