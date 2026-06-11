@@ -559,10 +559,18 @@ def classify(
         meeting_summary = True
 
     # Marketing/bulk body footer (unsubscribe / "view in browser" / "manage
-    # preferences") for mass mail that omitted the List-* headers.
+    # preferences") for mass mail that omitted the List-* headers. Besides the
+    # score penalty this is a draft-tier cap (b230): live no_send review found
+    # bulk mail still reaching the draft tier at 0.7+ because question/
+    # imperative/short-body bonuses outweighed the -0.20 — and drafts for sales
+    # blasts are never sent (worse, the model tends to continue the sender's
+    # pitch instead of replying). Bulk mail is surfaced, never drafted; a VIP
+    # sender overrides, same as the group-thread demotion below.
+    bulk_demote = False
     if msg.body and MARKETING_BODY_PAT.search(msg.body):
         score -= 0.20
         reasons.append("marketing/bulk body footer")
+        bulk_demote = True
 
     # Imperative bonus is suppressed for any template-like FYI mail (transactional
     # confirmations, meeting recaps) where the verbs are boilerplate, not asks.
@@ -642,13 +650,17 @@ def classify(
 
     score = max(0.0, min(1.0, score))
     # A group/team thread never auto-drafts (a teammate likely owns the reply) —
-    # it's surfaced for review instead. A VIP sender overrides this (the user
-    # explicitly prioritizes them), so their group mail still drafts.
-    needs_reply = score >= threshold and not (group_demote and not is_vip)
+    # it's surfaced for review instead. Bulk/marketing mail never auto-drafts
+    # either (b230). A VIP sender overrides both (the user explicitly
+    # prioritizes them), so their group mail / newsletters still draft.
+    demoted = (group_demote or bulk_demote) and not is_vip
+    if bulk_demote and not is_vip and score >= threshold:
+        reasons.append("bulk/marketing — surfaced, not drafted")
+    needs_reply = score >= threshold and not demoted
     # Surface-for-review tier: didn't pass, but wasn't junk either — score is
-    # in the borderline band (or it's a demoted group thread). Hard skips return
-    # early with score=0.0 and never reach this.
-    surface_for_review = (not needs_reply) and (score >= 0.30 or group_demote)
+    # in the borderline band (or it's a demoted group/bulk thread). Hard skips
+    # return early with score=0.0 and never reach this.
+    surface_for_review = (not needs_reply) and (score >= 0.30 or group_demote or bulk_demote)
     return NeedsReplyVerdict(
         needs_reply=needs_reply,
         score=score,
