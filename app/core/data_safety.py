@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -152,6 +153,9 @@ _TIER_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 # tier dir so prune reclaims it too.
 _SNAPSHOT_TIERS = ("hourly", "daily", "manual")
 _DEFAULT_STRAY_KEEP = 5
+# Pre-restore backups kept next to the live DB (b243): rollback targets for
+# recent restores only; older ones were never reclaimed before.
+_PRE_RESTORE_KEEP = 10
 
 
 def _validate_tier(tier: str) -> str:
@@ -165,6 +169,14 @@ def _validate_tier(tier: str) -> str:
     return tier
 
 
+# Bounded waits (b243): a restore stalled behind a wedged writer used to hold
+# the flock FOREVER (Python's sqlite3 backup retries SQLITE_BUSY indefinitely);
+# the nightly's create_snapshot — its FIRST step — then blocked on the flock,
+# silently hanging the whole pipeline for days. Both waits now fail loudly.
+_LOCK_ACQUIRE_DEADLINE_SECONDS = 120.0
+_BACKUP_DEADLINE_SECONDS = 120.0
+
+
 @contextmanager
 def _snapshot_lock(db_path: Path):
     """Cross-process exclusive lock serializing ALL snapshot writers — create,
@@ -175,7 +187,11 @@ def _snapshot_lock(db_path: Path):
     parallelism), and the nightly is a separate process, so a threading.Lock is
     insufficient. An ``fcntl.flock(LOCK_EX)`` on ``var/.snapshot.lock`` makes
     take-backup-then-overwrite atomic vs. any other snapshot writer. Degrades to
-    a no-op where fcntl is unavailable (non-POSIX)."""
+    a no-op where fcntl is unavailable (non-POSIX).
+
+    Acquisition is BOUNDED (b243): LOCK_NB + retry until
+    ``_LOCK_ACQUIRE_DEADLINE_SECONDS``, then TimeoutError — a holder wedged
+    mid-restore must fail the caller loudly, not hang the nightly forever."""
     if fcntl is None:  # pragma: no cover - non-POSIX
         yield
         return
@@ -186,13 +202,49 @@ def _snapshot_lock(db_path: Path):
         pass
     fd = os.open(lock_dir / ".snapshot.lock", os.O_CREAT | os.O_RDWR, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        deadline = time.monotonic() + _LOCK_ACQUIRE_DEADLINE_SECONDS
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        "another snapshot operation (create/restore/prune) has held "
+                        f"var/.snapshot.lock for over {_LOCK_ACQUIRE_DEADLINE_SECONDS:.0f}s "
+                        "— refusing to queue behind it"
+                    ) from None
+                time.sleep(0.5)
         yield
     finally:
         try:
             fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
+
+
+@contextmanager
+def snapshot_lock(db_path: Path):
+    """Public alias of the snapshot writers' lock, for OTHER whole-DB
+    operations (schema bootstrap, retention VACUUM) that must not interleave
+    with a snapshot create/restore/prune (b243)."""
+    with _snapshot_lock(db_path):
+        yield
+
+
+def _deadline_progress(what: str):
+    """sqlite3 ``backup(progress=...)`` callback that aborts a copy stuck
+    behind a busy writer. CPython invokes it every iteration — including
+    SQLITE_BUSY ones — so raising here bounds an otherwise-infinite retry
+    loop (b243)."""
+    deadline = time.monotonic() + _BACKUP_DEADLINE_SECONDS
+    def _cb(status: int, remaining: int, total: int) -> None:
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"{what} did not complete within {_BACKUP_DEADLINE_SECONDS:.0f}s "
+                "(database busy — a writer is holding the live DB)"
+            )
+    return _cb
 
 
 def _ensure_within(root: Path, candidate: Path) -> Path:
@@ -252,7 +304,7 @@ def _atomic_db_copy(db_path: Path, final_path: Path) -> None:
             conn.execute("PRAGMA wal_checkpoint(FULL)")
             dst = sqlite3.connect(tmp_path)
             try:
-                conn.backup(dst)
+                conn.backup(dst, pages=256, progress=_deadline_progress("snapshot copy"))
                 ok = dst.execute("PRAGMA quick_check").fetchone()
                 if not ok or ok[0] != "ok":
                     raise sqlite3.DatabaseError(f"snapshot failed integrity check: {ok}")
@@ -371,19 +423,25 @@ def prune_snapshots(
     keep_by_tier = {"hourly": hourly, "daily": daily, "manual": manual}
     root = _snapshot_root(db_path)
     removed: dict[str, int] = {"hourly": 0, "daily": 0, "manual": 0}
-    if not root.exists():
-        return removed
     with _snapshot_lock(db_path):
         # Iterate EVERY tier dir (not just the three known ones) so a stray tier
         # — e.g. a pre-existing one created before the create-time allowlist —
         # is still reclaimed under a default cap instead of growing forever.
-        for tier_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+        for tier_dir in sorted(p for p in root.iterdir() if p.is_dir()) if root.exists() else []:
             tier = tier_dir.name
             keep = keep_by_tier.get(tier, _DEFAULT_STRAY_KEEP)
             pairs = _snapshot_files_by_mtime(tier_dir.glob("youos-*.db"))
             for old, _mtime in pairs[keep:]:
                 old.unlink(missing_ok=True)
                 removed[tier] = removed.get(tier, 0) + 1
+        # Pre-restore backups (full DB copies dropped next to the live DB by
+        # every restore) were never reclaimed by any tier loop — unbounded
+        # growth on repeated restores (b243). Keep the newest few; they only
+        # matter as rollback targets for RECENT restores.
+        pre = _snapshot_files_by_mtime(db_path.parent.glob("youos.pre-restore-*.db"))
+        for old, _mtime in pre[_PRE_RESTORE_KEEP:]:
+            old.unlink(missing_ok=True)
+            removed["pre_restore"] = removed.get("pre_restore", 0) + 1
     return removed
 
 
@@ -449,7 +507,7 @@ def restore_snapshot(db_path: Path, snapshot_path: Path, *, dry_run: bool = Fals
         try:
             live = sqlite3.connect(db_path)
             try:
-                snap.backup(live)
+                snap.backup(live, pages=256, progress=_deadline_progress("snapshot restore"))
                 live.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 live.commit()
             finally:
