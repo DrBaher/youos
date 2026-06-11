@@ -69,7 +69,15 @@ from typing import Any
 DECLINE_INSTRUCTION = "Politely decline this request. Keep it short, courteous, and clear."
 
 # Draft-shaping actions (operate on the reply / whether to draft).
-_DRAFT_ACTIONS = ("skip", "decline", "prepend", "hold")
+# ``outreach_draft`` (b232) is the special case: the matched message is a
+# LEAD-FORM NOTIFICATION (e.g. the website's "New demo request from X" mail),
+# not a conversation — instead of replying to the notification's sender
+# (a noreply@ box), it extracts the prospect's contact details from the body
+# and queues a NEW outbound draft to the prospect, rendered from the rule's
+# ``value`` template. The draft is hold-gated (never auto-pushed/auto-sent);
+# a human always reviews and sends.
+_DRAFT_ACTIONS = ("skip", "decline", "prepend", "hold", "outreach_draft")
+OUTREACH_ACTION = "outreach_draft"
 # Mailbox-routing actions (operate on the inbound message itself — applied by
 # the agent-action framework to EVERY fetched message, not just drafts). Each
 # maps to a reversible Gmail label add/remove (see actions._action_to_labels):
@@ -193,6 +201,14 @@ def validate_rule(raw: Any) -> tuple[bool, str]:
             return False, "a label name cannot begin with '-'"
         if name.lower().startswith(_RESERVED_LABEL_PREFIX):
             return False, f"label names starting with {_RESERVED_LABEL_PREFIX!r} are reserved"
+    if action == OUTREACH_ACTION:
+        template = str(raw.get("value") or "").strip()
+        if not template:
+            return False, "an 'outreach_draft' rule needs a non-empty 'value' (the outreach template)"
+        if "intent" in match or "cold_outreach" in match:
+            # Outreach matching runs BEFORE intent classification and before
+            # the needs-reply verdict, so these predicates would never fire.
+            return False, "'intent'/'cold_outreach' predicates are not supported for outreach_draft rules (they run before classification)"
     if action == "forward":
         dest = str(raw.get("value") or "").strip()
         if not dest:
@@ -218,11 +234,16 @@ def normalize_rule(raw: Any) -> dict[str, Any] | None:
     ok, _ = validate_rule(raw)
     if not ok:
         return None
-    return {
+    norm = {
         "match": raw["match"],
         "action": str(raw["action"]).strip().lower(),
         "value": raw.get("value"),
     }
+    # outreach_draft carries an optional outbound subject line alongside the
+    # body template (other actions have no use for it, so it's dropped there).
+    if norm["action"] == OUTREACH_ACTION and str(raw.get("subject") or "").strip():
+        norm["subject"] = str(raw["subject"]).strip()
+    return norm
 
 
 def save_rules(rules: list[dict[str, Any]], *, config_path: Path | None = None) -> list[dict[str, Any]]:
@@ -480,3 +501,105 @@ def apply_rules(
         "instructions": "\n".join(combined) if combined else None,
         "matched": matched,
     }
+
+
+# ── outreach_draft (b232) ────────────────────────────────────────────────────
+# Website lead-form notifications ("New demo request from X") arrive from a
+# noreply@ box, so replying to the *sender* is useless — live review found the
+# agent drafting replies to noreply@work.example. The right move is a fresh
+# outbound email to the PROSPECT whose details are in the body, from one
+# consistent template.
+
+# Labeled fields as the form mailer flattens them ("Nameshakhawat Hussain
+# Emailshakha…@gmail.com Phone+880… CountryBangladesh ReasonProduct demo
+# Message i want to…"). Each label may or may not be followed by whitespace.
+_LEAD_FIELD_RE = re.compile(
+    r"Name\s*(?P<name>.*?)\s*Email\s*(?P<email>[^@\s]+@[^\s]+?)"
+    r"(?:\s*Phone\s*(?P<phone>\+?[\d\s().-]*?))?"
+    r"(?:\s*Country\s*(?P<country>.*?))?"
+    r"(?:\s*Reason\s*(?P<reason>.*?))?"
+    r"(?:\s*Message\s*(?P<message>.*))?$",
+    re.DOTALL,
+)
+_ANY_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def extract_lead_contact(body: str | None, *, exclude_emails: list[str] | None = None) -> dict[str, str]:
+    """Pull the prospect's contact fields out of a lead-form notification body.
+
+    Returns a dict with ``name``/``first_name``/``email``/``phone``/``country``/
+    ``reason``/``message`` keys (missing fields are empty strings). ``email`` is
+    empty when nothing usable was found — the caller must not draft then.
+    ``exclude_emails`` (the user's own addresses) are never returned as the
+    prospect.
+    """
+    out = {k: "" for k in ("name", "first_name", "email", "phone", "country", "reason", "message")}
+    text = (body or "").strip()
+    if not text:
+        return out
+    excluded = {e.strip().lower() for e in (exclude_emails or []) if e and e.strip()}
+
+    m = _LEAD_FIELD_RE.search(text[:5000])
+    if m:
+        for k in ("name", "email", "phone", "country", "reason", "message"):
+            v = (m.group(k) or "").strip()
+            out[k] = " ".join(v.split())
+    if out["email"].strip().lower() in excluded:
+        out["email"] = ""
+    if not out["email"]:
+        # Fallback: first email in the body that isn't the user's own.
+        for cand in _ANY_EMAIL_RE.findall(text[:5000]):
+            if cand.lower() not in excluded:
+                out["email"] = cand
+                break
+    if out["name"]:
+        out["first_name"] = out["name"].split()[0].capitalize()
+    return out
+
+
+def render_outreach_template(template: str, contact: dict[str, str]) -> str:
+    """Fill ``{name}``/``{first_name}``/``{email}``/``{phone}``/``{country}``/
+    ``{reason}``/``{message}`` placeholders; unknown placeholders and missing
+    fields render as empty. Never raises on a malformed template."""
+
+    class _Safe(dict):
+        def __missing__(self, key: str) -> str:
+            return ""
+
+    try:
+        text = template.format_map(_Safe(**{k: contact.get(k, "") for k in contact}))
+    except Exception:
+        text = template
+    # Collapse the artifacts of empty substitutions ("Hi ," / double blanks).
+    text = re.sub(r"[ \t]+,", ",", text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip() + "\n"
+
+
+def match_outreach_rule(
+    rules: list[dict[str, Any]],
+    *,
+    sender_email: str | None,
+    domain: str | None,
+    subject: str | None,
+    body: str | None,
+    to: str | None = None,
+    cc: str | None = None,
+) -> dict[str, Any] | None:
+    """First matching ``outreach_draft`` rule for this message, or None.
+
+    Runs BEFORE classification (outreach must fire even for messages the
+    needs-reply gate would skip or only surface — the notification sender is
+    typically automation), so intent/cold_outreach predicates are unsupported
+    (validate_rule rejects them at save time).
+    """
+    for r in rules:
+        if r.get("action") != OUTREACH_ACTION:
+            continue
+        if _rule_matches(
+            r["match"], sender_email=sender_email, domain=domain,
+            intents=None, cold_outreach=False,
+            subject=subject, body=body, to=to, cc=cc,
+        ):
+            return r
+    return None
