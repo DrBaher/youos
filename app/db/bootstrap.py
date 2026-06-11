@@ -78,6 +78,17 @@ def bootstrap_database() -> Path:
     schema_path = settings.configs_dir.parent / "docs" / "schema.sql"
     schema_sql = schema_path.read_text(encoding="utf-8")
 
+    # Whole-DB DDL + FTS rebuild must not interleave with a snapshot
+    # create/restore — e.g. an ALTER committed between a restore's pre-restore
+    # backup and its overwrite is silently reverted (b243). Function-level
+    # import: data_safety imports resolve_sqlite_path from this module.
+    from app.core.data_safety import snapshot_lock
+
+    with snapshot_lock(db_path):
+        return _bootstrap_database_locked(db_path, schema_sql)
+
+
+def _bootstrap_database_locked(db_path: Path, schema_sql: str) -> Path:
     connection = sqlite3.connect(db_path)
     _secure_db_dir(db_path)
     try:
