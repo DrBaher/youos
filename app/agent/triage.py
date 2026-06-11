@@ -793,6 +793,7 @@ def run_triage(
 
 def _maybe_apply_mailbox_actions(
     database_url: str | None, account: str, messages: list[InboxMessage],
+    *, history: "SenderHistory | None" = None,
 ) -> list[dict[str, Any]]:
     """Apply agent.rules mailbox routing (label/archive/star/mark_read/
     mark_important/mark_unimportant) to every fetched message. No-op unless
@@ -820,8 +821,11 @@ def _maybe_apply_mailbox_actions(
     from app.core.sender import extract_domain
 
     # Sender history → the ``known_contact`` predicate (do I have prior reply
-    # pairs with this sender?). Built once for the sweep; queries are cached.
-    history = SenderHistory.from_database_url(database_url)
+    # pairs with this sender?). Reuse the sweep's shared instance when given
+    # (b260) so the leading-wildcard LIKE scans run once per sender per sweep,
+    # not once per SenderHistory instance.
+    if history is None:
+        history = SenderHistory.from_database_url(database_url)
 
     remaining: int | float = cfg["daily_cap"] - act.count_actions_today(database_url, account=account)
     # Per-sweep label cache: fetch existing labels at most ONCE (only when a live
@@ -867,6 +871,7 @@ def _maybe_apply_mailbox_actions(
 
 def _maybe_forward(
     database_url: str | None, account: str, messages: list[InboxMessage],
+    *, history: "SenderHistory | None" = None,
 ) -> list[dict[str, Any]]:
     """Apply agent.rules 'forward' actions to fetched messages — the OUTBOUND
     path, kept separate from label routing because it SENDS mail. No-op unless
@@ -888,7 +893,8 @@ def _maybe_forward(
     if not any(r["action"] in OUTBOUND_ACTIONS for r in rules):
         return []
 
-    history = SenderHistory.from_database_url(database_url)
+    if history is None:
+        history = SenderHistory.from_database_url(database_url)
     remaining: int | float = cfg["daily_cap"] - act.count_actions_today(database_url, account=account)
     results: list[dict[str, Any]] = []
     for msg in messages:
@@ -956,13 +962,18 @@ def _run_sweep(
     # 1) Fetch unread inbox threads.
     messages = fetch_unread(account, window=window, limit=limit, backend=backend)
 
+    # Build the sweep's SenderHistory ONCE and share it across mailbox routing,
+    # forward routing, and scoring (b260): each used to build its own instance,
+    # so a sender seen in all three was LIKE-scanned three times.
+    history = SenderHistory.from_database_url(database_url)
+
     # 1b) Mailbox routing (the agent-action framework): apply label / archive /
     # star / mark_read / mark_important / mark_unimportant rules to EVERY fetched
     # message — routing isn't tied to drafting. Off by default + dry-run by
     # default; failure-isolated so a routing error can't break the sweep.
     mailbox_actions: list[dict[str, Any]] = []
     try:
-        mailbox_actions = _maybe_apply_mailbox_actions(database_url, account, messages)
+        mailbox_actions = _maybe_apply_mailbox_actions(database_url, account, messages, history=history)
         # A message routed to ARCHIVE shouldn't also be drafted/persisted — the
         # user's rule said "get this out of my inbox", so drop it from the draft
         # pipeline (in dry-run too, so the soak previews the real behaviour).
@@ -981,14 +992,12 @@ def _run_sweep(
     # off unless a forward rule exists. Failure-isolated. Results join the same
     # ledger/accumulator (forward never archives, so drafting is unaffected).
     try:
-        forward_actions = _maybe_forward(database_url, account, messages)
+        forward_actions = _maybe_forward(database_url, account, messages, history=history)
         mailbox_actions.extend(forward_actions)
     except Exception as exc:
         logger.warning("forward-routing step failed: %s", exc)
 
-    # 2) Score + filter. Sender-history uses the active instance's DB so a
-    # repeat-correspondent gets the prior-pairs boost.
-    history = SenderHistory.from_database_url(database_url)
+    # 2) Score + filter. Reuses the shared sweep history built above (b260).
 
     # ζ: read safety guardrails (skip-list, daily cap, strict-local) from
     # config. Pull them once per sweep so the values are stable across all
