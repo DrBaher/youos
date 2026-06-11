@@ -221,7 +221,11 @@ def _save_last_auto_feedback_at() -> None:
         except Exception:
             pass
     data["last_auto_feedback_at"] = datetime.now(timezone.utc).isoformat()
-    log_path.write_text(json.dumps(data, indent=2))
+    # Atomic (b241): a torn pipeline log silently drops golden_composite,
+    # turning the adapter-promotion gate into a cold-start auto-promote.
+    from app.core.atomic_io import atomic_write_json
+
+    atomic_write_json(log_path, data)
 
 
 def step_auto_feedback(verbose: bool = False) -> dict:
@@ -1031,11 +1035,11 @@ def should_skip_dedup(db_path: Path) -> tuple[bool, str]:
 
 def _write_pipeline_log(run_log: dict) -> None:
     """Write pipeline run log to the active instance's pipeline_last_run.json."""
-    import json
 
     log_path = _pipeline_log_path()
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text(json.dumps(run_log, indent=2))
+    from app.core.atomic_io import atomic_write_json
+
+    atomic_write_json(log_path, run_log)
 
 
 def main() -> None:
