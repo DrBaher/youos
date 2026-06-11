@@ -48,6 +48,28 @@ logger = logging.getLogger(__name__)
 _STREAM_TIMEOUT = 120
 
 
+def _drain_stderr(proc: subprocess.Popen) -> list[str]:
+    """Drain a child's stderr on a background thread into a bounded buffer (b247).
+
+    Both streaming children had stderr=PIPE that was never read: a chatty child
+    (mlx progress bars, CLI warnings) fills the ~64KB pipe and blocks writing —
+    stalling the stdout stream until the watchdog kills it — and the raised
+    error carried zero diagnostics. Returns the (mutating) buffer; join via
+    ``"".join(buf)[-2000:]`` after wait()."""
+    buf: list[str] = []
+
+    def _pump() -> None:
+        try:
+            for chunk in proc.stderr:  # type: ignore[union-attr]
+                if sum(len(c) for c in buf) < 65536:
+                    buf.append(chunk)
+        except Exception:
+            pass
+
+    threading.Thread(target=_pump, daemon=True).start()
+    return buf
+
+
 def _kill_proc_group(proc) -> None:
     """Best-effort SIGKILL of the child's whole process group (closes its stdout
     so a blocked stream read returns EOF). No-op if it already exited."""
@@ -278,6 +300,7 @@ def _stream_generate(body: StreamBody, settings):
                     start_new_session=True,
                     env={**os.environ, "PYTHONUNBUFFERED": "1"},
                 )
+                stderr_buf = _drain_stderr(proc)
                 watchdog = threading.Timer(_STREAM_TIMEOUT, _kill_proc_group, args=(proc,))
                 watchdog.daemon = True
                 watchdog.start()
@@ -285,7 +308,9 @@ def _stream_generate(body: StreamBody, settings):
                     yield f"data: {json.dumps({'token': piece})}\n\n"
                 proc.wait(timeout=120)
                 if proc.returncode != 0:
-                    raise RuntimeError("mlx_lm generate failed")
+                    raise RuntimeError(
+                        f"mlx_lm generate failed: {''.join(stderr_buf)[-2000:] or 'no stderr'}"
+                    )
                 # Streamed from the local LoRA adapter; derive the label from the
                 # configured base so it tracks a model migration (b174).
                 from app.core.config import model_label
@@ -302,6 +327,7 @@ def _stream_generate(body: StreamBody, settings):
                     text=True,
                     start_new_session=True,
                 )
+                stderr_buf = _drain_stderr(proc)
                 watchdog = threading.Timer(_STREAM_TIMEOUT, _kill_proc_group, args=(proc,))
                 watchdog.daemon = True
                 watchdog.start()
@@ -312,7 +338,9 @@ def _stream_generate(body: StreamBody, settings):
                     yield f"data: {json.dumps({'token': line})}\n\n"
                 proc.wait(timeout=120)
                 if proc.returncode != 0:
-                    raise RuntimeError("claude CLI failed")
+                    raise RuntimeError(
+                        f"claude CLI failed: {''.join(stderr_buf)[-2000:] or 'no stderr'}"
+                    )
                 model_used = "claude"  # streamed via the Claude CLI
         except Exception:
             # Fallback: generate full draft non-streaming

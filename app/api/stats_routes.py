@@ -182,19 +182,49 @@ def trigger_ingest(body: IngestRequest, request: Request) -> dict:
     query = f"in:anywhere {date_filter}".strip()
     script = ROOT_DIR / "scripts" / "ingest_gmail_threads.py"
     # Detached background process: fetch all threads within the date window.
-    subprocess.Popen(  # noqa: S603
-        [sys.executable, str(script), "--live", "--query", query, "--max-threads", "0"],
-        cwd=str(ROOT_DIR),
-        start_new_session=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    # Keep the handle + a stderr log (b247): a child that dies before writing
+    # its first DB status row (import error, bad venv) left the wizard polling
+    # /api/ingest/status forever with no trace anywhere.
+    global _ingest_proc
+    stderr_target: Any = subprocess.DEVNULL
+    try:
+        from app.core.settings import get_var_dir
+
+        log_path = get_var_dir() / "ingest_trigger.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        stderr_target = open(log_path, "wb")
+    except OSError:
+        pass
+    try:
+        _ingest_proc = subprocess.Popen(  # noqa: S603
+            [sys.executable, str(script), "--live", "--query", query, "--max-threads", "0"],
+            cwd=str(ROOT_DIR),
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_target,
+        )
+    finally:
+        if stderr_target is not subprocess.DEVNULL:
+            stderr_target.close()  # child holds its own dup
     return {"started": True, "lookback": body.lookback, "query": query}
+
+
+# Tracks the latest wizard-launched ingest spawn (single-worker dev server).
+_ingest_proc: Any = None
 
 
 @router.get("/api/ingest/status")
 def ingest_status(request: Request) -> dict:
-    return get_latest_ingest_status(request.app.state.settings.database_url)
+    status = get_latest_ingest_status(request.app.state.settings.database_url)
+    # Surface a spawn that died (b247) — DB-derived status can't see a child
+    # that never got far enough to write its first status row.
+    if _ingest_proc is not None:
+        rc = _ingest_proc.poll()
+        status["spawn_running"] = rc is None
+        if rc is not None and rc != 0:
+            status["spawn_exit_code"] = rc
+            status["spawn_error_hint"] = "ingest child exited nonzero — see var/ingest_trigger.log"
+    return status
 
 
 # Tracks an in-progress wizard-launched fine-tune (single-worker dev server).
@@ -212,17 +242,14 @@ def trigger_finetune() -> dict:
     global _finetune_proc
     if _finetune_proc is not None and _finetune_proc.poll() is None:
         raise HTTPException(status_code=409, detail="Fine-tuning is already running.")
-    scripts = ROOT_DIR / "scripts"
-    # Sequential export -> finetune -> benchmark in one detached process; paths
-    # are constants (no user input), invoked as an arg list (no shell).
-    code = (
-        "import subprocess,sys;"
-        f"subprocess.run([sys.executable, {str(scripts / 'export_feedback_jsonl.py')!r}], check=False);"
-        f"subprocess.run([sys.executable, {str(scripts / 'finetune_lora.py')!r}], check=False);"
-        f"subprocess.run([sys.executable, {str(scripts / 'run_golden_eval.py')!r}], check=False)"
-    )
+    # run_finetune_chain.py (b247) aborts on the first failed stage, bounds
+    # each stage with a timeout (a hung child used to wedge the 409 above
+    # until restart), logs to var/finetune_chain.log, and records progress in
+    # var/finetune_status.json. The old inline `-c` chain ran every stage
+    # check=False with DEVNULL: a failed export still fine-tuned (on the
+    # previous stale train.jsonl) and reported done.
     _finetune_proc = subprocess.Popen(  # noqa: S603
-        [sys.executable, "-c", code],
+        [sys.executable, str(ROOT_DIR / "scripts" / "run_finetune_chain.py")],
         cwd=str(ROOT_DIR),
         start_new_session=True,
         stdout=subprocess.DEVNULL,
@@ -235,7 +262,29 @@ def trigger_finetune() -> dict:
 def finetune_status() -> dict:
     running = _finetune_proc is not None and _finetune_proc.poll() is None
     adapter_ready = (get_adapter_path() / "adapters.safetensors").exists()
-    return {"status": "running" if running else ("done" if adapter_ready else "idle"), "adapter_ready": adapter_ready}
+    # Prefer the chain's own status record (b247): "adapter file exists" made
+    # ANY failure look like success once a previous adapter was on disk.
+    chain: dict = {}
+    try:
+        from app.core.settings import get_var_dir
+
+        status_path = get_var_dir() / "finetune_status.json"
+        if status_path.exists():
+            chain = json.loads(status_path.read_text(encoding="utf-8"))
+    except Exception:
+        chain = {}
+    if running:
+        status = "running"
+    elif chain.get("status") in ("done", "error"):
+        status = chain["status"]
+    else:
+        status = "done" if adapter_ready else "idle"  # pre-b247 back-compat
+    return {
+        "status": status,
+        "adapter_ready": adapter_ready,
+        "stage": chain.get("stage"),
+        "detail": chain.get("detail"),
+    }
 
 
 _benchmark_proc: Any = None
