@@ -178,9 +178,13 @@ def merge_persona_analysis(
             for change in changes:
                 print(f"  [DRY RUN] Would change: {change}")
         else:
-            persona_path.write_text(
+            # Atomic (b241): the live server parses persona.yaml per draft;
+            # a torn write silently strips greeting/closing/style patterns.
+            from app.core.atomic_io import atomic_write_text
+
+            atomic_write_text(
+                persona_path,
                 yaml.dump(persona, default_flow_style=False, allow_unicode=True, sort_keys=False),
-                encoding="utf-8",
             )
             # Append to merge log
             log_path.parent.mkdir(parents=True, exist_ok=True)

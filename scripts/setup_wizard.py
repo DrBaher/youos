@@ -525,9 +525,11 @@ def _run_persona_analysis(config: dict) -> dict | None:
                 constraints.append(f'never use: "{phrase}"')
             persona_config["style"]["constraints"] = constraints
 
-        persona_path.write_text(
+        from app.core.atomic_io import atomic_write_text as _atomic_write_text
+
+        _atomic_write_text(
+            persona_path,
             _yaml.dump(persona_config, default_flow_style=False, allow_unicode=True, sort_keys=False, width=120),
-            encoding="utf-8",
         )
         print(f"\nPersona saved to {persona_path}")
 
