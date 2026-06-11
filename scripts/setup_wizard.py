@@ -710,7 +710,7 @@ def _offer_nightly_pipeline(config: dict) -> None:
     # Try to set up cron
     try:
         if shutil.which("openclaw"):
-            subprocess.run(
+            result = subprocess.run(
                 [
                     "openclaw",
                     "cron",
@@ -722,9 +722,16 @@ def _offer_nightly_pipeline(config: dict) -> None:
                     "--command",
                     f"{sys.executable} {ROOT_DIR / 'scripts' / 'nightly_pipeline.py'}",
                 ],
+                capture_output=True,
                 timeout=10,
             )
-            print("  Registered with OpenClaw scheduler.")
+            # rc check (b247): printing success unconditionally hid a failed
+            # registration — the whole nightly loop then silently never ran.
+            if result.returncode == 0:
+                print("  Registered with OpenClaw scheduler.")
+            else:
+                print(f"  OpenClaw registration FAILED (exit {result.returncode}). Add to crontab manually:")
+                print(f"  {schedule} cd {ROOT_DIR} && {sys.executable} scripts/nightly_pipeline.py")
         else:
             print("  OpenClaw not found. Add to your system crontab manually:")
             print(f"  {schedule} cd {ROOT_DIR} && {sys.executable} scripts/nightly_pipeline.py")
@@ -840,12 +847,18 @@ def main() -> None:
     print()
     print("Initializing database...")
     try:
-        subprocess.run(
+        result = subprocess.run(
             [sys.executable, str(ROOT_DIR / "scripts" / "bootstrap_db.py")],
             timeout=30,
         )
+        if result.returncode != 0:
+            # rc check (b247): proceeding into ingestion against a missing/
+            # half-made schema produced confusing downstream errors.
+            print(f"  Database init FAILED (exit {result.returncode}) — fix this before continuing.")
+            return
     except Exception as exc:
         print(f"  Database init failed: {exc}")
+        return
 
     # Step 6: Ingestion
     _run_ingestion(config)

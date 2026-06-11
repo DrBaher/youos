@@ -125,13 +125,27 @@ def _trigger_sender_profile_rebuild() -> None:
     """Launch build_sender_profiles.py in the background."""
     global _last_sender_profile_rebuild
     try:
-        subprocess.Popen(
+        proc = subprocess.Popen(
             [sys.executable, str(ROOT_DIR / "scripts" / "build_sender_profiles.py")],
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
         )
         _last_sender_profile_rebuild = time.time()
         logger.info("Triggered background sender profile rebuild")
+
+        # Reap + report (b247): fire-and-forget logged success at LAUNCH time,
+        # so a crashing rebuild was invisible and profiles silently went stale.
+        def _reap() -> None:
+            _, stderr = proc.communicate()
+            if proc.returncode != 0:
+                logger.warning(
+                    "sender profile rebuild FAILED (exit %s): %s",
+                    proc.returncode,
+                    (stderr or "").strip()[-500:],
+                )
+
+        threading.Thread(target=_reap, daemon=True).start()
     except Exception as exc:
         logger.warning("Failed to trigger sender profile rebuild: %s", exc)
 
@@ -770,12 +784,18 @@ def trigger_autoresearch(request: Request) -> dict:
         return {"status": "already_running", "message": "Autoresearch is already running."}
 
     def _run() -> None:
+        # Failures are LOGGED (b247): the endpoint already returned "started",
+        # so a child that never spawned (missing venv python after a rebuild),
+        # timed out at 7200s, or exited nonzero previously vanished without a
+        # trace — the caller believed autoresearch ran.
         try:
             venv_python = Path(__file__).resolve().parents[3] / ".venv" / "bin" / "python3"
             script = Path(__file__).resolve().parents[3] / "scripts" / "nightly_pipeline.py"
-            subprocess.run([str(venv_python), str(script), "--autoresearch-only"], timeout=7200)
-        except Exception:
-            pass
+            result = subprocess.run([str(venv_python), str(script), "--autoresearch-only"], timeout=7200)
+            if result.returncode != 0:
+                logger.error("triggered autoresearch run exited nonzero: %s", result.returncode)
+        except Exception as exc:
+            logger.error("triggered autoresearch run failed to execute: %s", exc)
         finally:
             _autoresearch_lock.release()
 
