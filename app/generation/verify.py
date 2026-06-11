@@ -115,6 +115,7 @@ def verify_draft(
     thread_history: list[dict[str, str]] | None = None,
     account_email: str | None = None,
     sender: str | None = None,
+    expected_language: str | None = None,
 ) -> VerifyResult:
     """Run the deterministic checks. ``inbound`` + ``thread_history`` are the
     grounding corpus; ``account_email`` / ``sender`` are allowed email
@@ -134,14 +135,18 @@ def verify_draft(
     blocking: list[str] = []
     warnings: list[str] = []
 
-    # 1) Language match — the draft should answer in the inbound's language.
+    # 1) Language match — the draft should answer in the inbound's language,
+    # unless the caller knows better (b237: a per-sender reply-language habit
+    # can legitimately override the inbound's language; verify against the
+    # INTENDED language then, or the check would block exactly the behaviour
+    # the profile asked for).
     if d_core.strip() and (inbound or "").strip():
         from app.core.text_utils import detect_language
 
-        lang_in = detect_language(inbound)
+        lang_in = expected_language or detect_language(inbound)
         lang_out = detect_language(d_core)
         if lang_in != lang_out:
-            blocking.append(f"language mismatch (inbound={lang_in}, draft={lang_out})")
+            blocking.append(f"language mismatch (expected={lang_in}, draft={lang_out})")
 
     # 2) Invented email addresses — anything in the draft that isn't a
     # participant and wasn't in the inbound/thread.

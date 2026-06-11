@@ -587,6 +587,7 @@ class RetrievalService:
             INNER JOIN reply_pairs AS rp ON rp.id = rpfts.rowid
             LEFT JOIN documents AS d ON d.id = rp.document_id
             WHERE reply_pairs_fts MATCH ?
+              AND COALESCE(rp.quality_score, 1.0) > 0
             ORDER BY rpfts.rank
             LIMIT ?
             """,
@@ -845,6 +846,7 @@ class RetrievalService:
             FROM reply_pairs AS rp
             LEFT JOIN documents AS d
                 ON d.id = rp.document_id
+            WHERE COALESCE(rp.quality_score, 1.0) > 0
             ORDER BY COALESCE(rp.paired_at, d.updated_at, d.created_at, rp.created_ts) DESC
             LIMIT 500
             """

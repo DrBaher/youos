@@ -53,6 +53,7 @@ def _get_unprocessed_pairs(conn: sqlite3.Connection, since: str) -> list[sqlite3
         SELECT id, inbound_text, reply_text, source_type, source_id
         FROM reply_pairs
         WHERE auto_feedback_processed = 0
+          AND COALESCE(quality_score, 1.0) > 0
           AND created_ts >= ?
         ORDER BY created_ts DESC
         """,
@@ -126,6 +127,10 @@ def _capture_organic_pairs(conn: sqlite3.Connection, *, dry_run: bool = False) -
     cols = {row[1] for row in conn.execute("PRAGMA table_info(feedback_pairs)").fetchall()}
     if "organic" not in cols:
         conn.execute("ALTER TABLE feedback_pairs ADD COLUMN organic BOOLEAN DEFAULT 0")
+    # b235: the quality filter below references it; self-heal like `organic`.
+    rp_cols = {row[1] for row in conn.execute("PRAGMA table_info(reply_pairs)").fetchall()}
+    if "quality_score" not in rp_cols:
+        conn.execute("ALTER TABLE reply_pairs ADD COLUMN quality_score REAL DEFAULT 1.0")
 
     import re as _re
 
@@ -139,6 +144,7 @@ def _capture_organic_pairs(conn: sqlite3.Connection, *, dry_run: bool = False) -
         """
         SELECT rp.id, rp.inbound_text, rp.reply_text FROM reply_pairs rp
         WHERE rp.auto_feedback_processed = 0
+          AND COALESCE(rp.quality_score, 1.0) > 0
           AND rp.id NOT IN (SELECT DISTINCT reply_pair_id FROM feedback_pairs WHERE reply_pair_id IS NOT NULL)
           AND LENGTH(rp.reply_text) >= 10
         """
@@ -241,6 +247,11 @@ def extract_auto_feedback(
             print(f"Auto-threshold: {threshold} (corpus: {corpus_count} pairs)")
         # Check if auto_feedback_processed column exists
         cols = [row[1] for row in conn.execute("PRAGMA table_info(reply_pairs)").fetchall()]
+        if "quality_score" not in cols:
+            # b235: quality filter references it; older fixture/instance DBs
+            # may predate the bootstrap migration.
+            conn.execute("ALTER TABLE reply_pairs ADD COLUMN quality_score REAL DEFAULT 1.0")
+            cols.append("quality_score")
         if "auto_feedback_processed" not in cols:
             print("Error: auto_feedback_processed column missing. Run bootstrap_db.py first.")
             return {"captured": 0, "total": 0, "skipped": 0, "errors": 0}
