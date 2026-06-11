@@ -464,8 +464,8 @@ body {
         for (var j = 0; j < d.senders.top_senders.length; j++) {
           var s = d.senders.top_senders[j];
           var tr = document.createElement('tr');
-          tr.innerHTML = '<td>' + (s.display_name || s.email) + '</td><td>' +
-            (s.company || '-') + '</td><td>' + (s.sender_type || '-') + '</td><td>' +
+          tr.innerHTML = '<td>' + YouOS.esc(s.display_name || s.email) + '</td><td>' +
+            YouOS.esc(s.company || '-') + '</td><td>' + YouOS.esc(s.sender_type || '-') + '</td><td>' +
             (s.reply_count || 0) + '</td>';
           tbody.appendChild(tr);
         }
