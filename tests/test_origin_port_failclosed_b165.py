@@ -112,7 +112,10 @@ class _FakeRequest:
         self.url = _FakeURL(path)
         self.cookies = cookies
         self.method = method
-        self.headers = headers or {}
+        # Real clients always send Host (HTTP/1.1 requires it); without one a
+        # state-changing request is 421'd by the b239 missing-Host gate before
+        # reaching the Origin checks under test here.
+        self.headers = {"host": "127.0.0.1:8765", **(headers or {})}
 
 
 def _dispatch(mw, request):

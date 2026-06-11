@@ -63,8 +63,13 @@ def _host_allowed(request: Request, config: dict) -> bool:
         return True
     raw = request.headers.get("host", "")
     if not raw:
-        return True  # no Host header → a non-browser client; browsers (the only
-        # DNS-rebinding vector) always send Host, so a missing one isn't the threat
+        # No Host header → a non-browser client; browsers (the only DNS-rebinding
+        # vector) and HTTP libraries always send Host, so only hand-crafted raw
+        # requests land here (uvicorn accepts Host-less HTTP/1.1, verified live —
+        # the spec's MUST is not enforced before we run). Allow reads, but fail
+        # closed on state-changing methods (b239): on a specific bind there is
+        # no legit Host-less writer to break.
+        return request.method.upper() in ("GET", "HEAD", "OPTIONS")
     host = (urlsplit(f"//{raw}").hostname or "").lower()
     allowed = {"127.0.0.1", "localhost", "::1", "testserver", server_host}  # testserver = Starlette TestClient
     tailscale = (get_tailscale_hostname(config) or "").strip().lower()
