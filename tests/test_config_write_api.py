@@ -41,12 +41,16 @@ def test_set_bad_value_is_400():
 def test_set_valid_flag_returns_ok(monkeypatch):
     # Mock the writer so the test doesn't mutate the real config file.
     captured = {}
-    monkeypatch.setattr(ff, "set_flag", lambda k, v: captured.update(k=k, v=v) or True)
+    monkeypatch.setattr(
+        ff, "set_flag", lambda k, v, **kw: captured.update(k=k, v=v, kw=kw) or True
+    )
     r = client.post("/api/config/set", json={"key": "generation.multi_candidate.enabled", "value": "true"})
     assert r.status_code == 200
     body = r.json()
     assert body == {"ok": True, "key": "generation.multi_candidate.enabled", "value": True}
-    assert captured == {"k": "generation.multi_candidate.enabled", "v": "true"}
+    assert captured["k"] == "generation.multi_candidate.enabled"
+    assert captured["v"] == "true"
+    assert captured["kw"] == {"allow_send_frontier": False}  # b259: network path refuses frontier flags
 
 
 # --- b140: PIN-set endpoint (hashed) + helpful rejection of the flag form -----
