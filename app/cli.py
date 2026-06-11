@@ -1257,10 +1257,10 @@ def snapshot_create(
     db_path = resolve_sqlite_path(settings.database_url)
     try:
         snap = create_snapshot(db_path, tier=tier)
-    except ValueError as exc:
+        prune_snapshots(db_path)
+    except (ValueError, TimeoutError) as exc:
         print(f"Error: {exc}")
         raise typer.Exit(1) from exc
-    prune_snapshots(db_path)
     print(str(snap))
 
 
@@ -1273,8 +1273,13 @@ def store_prune(
 
     settings = get_settings()
     removed = prune_agent_tables(settings.database_url, older_than_days=days)
-    total = sum(v for k, v in removed.items() if k != "vacuum_ok")
-    vac = "vacuumed" if removed.get("vacuum_ok") else "VACUUM skipped (busy)"
+    total = sum(v for k, v in removed.items() if not k.startswith("vacuum"))
+    if removed.get("vacuum_skipped_small"):
+        vac = "vacuum skipped (little to reclaim)"
+    elif removed.get("vacuum_ok"):
+        vac = "vacuumed"
+    else:
+        vac = "VACUUM skipped (busy)"
     print(f"Pruned {total} rows (>{days}d, {vac}): {removed}")
 
 
@@ -1302,12 +1307,16 @@ def snapshot_prune(
     """
     settings = get_settings()
     db_path = resolve_sqlite_path(settings.database_url)
-    removed = prune_snapshots(
-        db_path,
-        keep_hourly=keep_hourly,
-        keep_daily=keep_daily,
-        keep_manual=keep_manual,
-    )
+    try:
+        removed = prune_snapshots(
+            db_path,
+            keep_hourly=keep_hourly,
+            keep_daily=keep_daily,
+            keep_manual=keep_manual,
+        )
+    except TimeoutError as exc:
+        print(f"Error: {exc}")
+        raise typer.Exit(1) from exc
     total = sum(removed.values())
     for tier, n in removed.items():
         print(f"{tier}: pruned {n}")
@@ -1334,7 +1343,7 @@ def snapshot_restore(
 
     try:
         backup_path = restore_snapshot(db_path, Path(snapshot_path), dry_run=dry_run)
-    except ValueError as exc:
+    except (ValueError, FileNotFoundError, TimeoutError) as exc:
         print(f"Error: {exc}")
         raise typer.Exit(1) from exc
     print(f"pre_restore_backup={backup_path}")
