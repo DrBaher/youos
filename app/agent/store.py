@@ -181,6 +181,22 @@ def get(database_url: str, row_id: int) -> dict[str, Any] | None:
     return _row_to_dict(row) if row else None
 
 
+def update_draft_inplace(database_url: str, row_id: int, *, draft: str) -> bool:
+    """Replace a pending row's draft text in place, bumping updated_at but
+    leaving status unchanged (b264). Used to refresh stale calendar slots so
+    the row stays in the review queue with current times — distinct from
+    ``mark_amended`` (which flips status to 'amended'). Only a live row
+    (pending/amended) is touched; never resurrects a dismissed/sent row."""
+    with closing(_connect(database_url)) as conn:
+        cur = conn.execute(
+            "UPDATE agent_pending_drafts SET draft = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND status IN ('pending', 'amended')",
+            (draft, row_id),
+        )
+        conn.commit()
+    return (cur.rowcount or 0) > 0
+
+
 def mark_amended(
     database_url: str, row_id: int, *, amended_draft: str, amended_by: str = "user",
 ) -> bool:

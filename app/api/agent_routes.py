@@ -1254,6 +1254,21 @@ def trigger_triage(body: TriageRunBody, request: Request) -> dict:
     except Exception:
         logger.warning("pre-triage outcome reconcile failed for %s", account, exc_info=True)
 
+    # Refresh any queued meeting-request drafts whose proposed open slots have
+    # gone stale (drafted on a prior day → times now in the past) with current
+    # availability, in place (b264). Best-effort; never creates events.
+    try:
+        from app.agent.triage import refresh_stale_meeting_drafts
+
+        rf = refresh_stale_meeting_drafts(_db_url(request), account)
+        if rf.get("refreshed"):
+            logger.info(
+                "pre-triage refreshed %d stale meeting-proposal draft(s) for %s",
+                rf["refreshed"], account,
+            )
+    except Exception:
+        logger.warning("stale meeting-draft refresh failed for %s", account, exc_info=True)
+
     result = run_triage(
         account=account,
         window=body.window,
