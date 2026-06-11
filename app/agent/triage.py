@@ -1077,7 +1077,54 @@ def _run_sweep(
     # urgency on the TriageDraft directly.
     _urgency_by_mid: dict[str, tuple[float, list[str]]] = {}
     cap_hit_count = 0
+    # b232: lead-form outreach. (msg, verdict, rule, contact, rendered draft)
+    # tuples persisted as NEW-outbound draft rows addressed to the prospect.
+    outreach_rows: list[tuple[InboxMessage, NeedsReplyVerdict, dict, dict, str]] = []
+    _has_outreach_rules = any(r.get("action") == "outreach_draft" for r in rules)
     for msg, verdict in classified:
+        # Outreach rules run BEFORE the needs-reply gate: the matched message is
+        # a website lead-form notification (typically automation the gate would
+        # skip or only surface), and the draft goes to the PROSPECT parsed from
+        # the body — not the notification's noreply@ sender.
+        if _has_outreach_rules:
+            from app.agent.rules import extract_lead_contact, match_outreach_rule, render_outreach_template
+            from app.core.sender import extract_domain as _xd
+
+            try:
+                _orule = match_outreach_rule(
+                    rules,
+                    sender_email=msg.sender_email,
+                    domain=_xd(msg.sender or msg.sender_email or ""),
+                    subject=msg.subject,
+                    body=msg.body,
+                    to=msg.headers.get("to"),
+                    cc=msg.headers.get("cc"),
+                )
+            except Exception as exc:
+                logger.warning("outreach rule match failed for %s: %s", msg.message_id, exc)
+                _orule = None
+            if _orule is not None:
+                if cap_remaining <= 0:
+                    cap_hit_count += 1
+                    skipped.append((msg, verdict))
+                    continue
+                contact = extract_lead_contact(msg.body, exclude_emails=_account_emails)
+                if contact.get("email"):
+                    rendered = render_outreach_template(str(_orule.get("value") or ""), contact)
+                    outreach_rows.append((msg, verdict, _orule, contact, rendered))
+                    cap_remaining -= 1
+                else:
+                    # Matched but unparseable — surface it so the user still
+                    # sees the lead, with the reason explaining why no draft.
+                    _v = NeedsReplyVerdict(
+                        needs_reply=False, score=verdict.score,
+                        reasons=verdict.reasons + ["outreach rule matched but no prospect email found in body"],
+                        cold_outreach=verdict.cold_outreach,
+                        surface_for_review=True,
+                    )
+                    skipped.append((msg, _v))
+                    surfaced.append((msg, _v))
+                continue
         if not verdict.needs_reply:
             skipped.append((msg, verdict))
             if verdict.surface_for_review:
@@ -1338,6 +1385,42 @@ def _run_sweep(
                 # Only freshly-persisted draft rows are auto-push candidates
                 # (row_id is None on the idempotent repeat — already handled).
                 auto_push_candidates.append((row_id, d))
+
+        # Tier 1.5 (b232): lead-form outreach drafts. The row is keyed on the
+        # NOTIFICATION's message_id (idempotent — one outreach per lead), but
+        # its sender fields carry the PROSPECT so the queue card and the push
+        # routing point at the person being contacted. subject = the rendered
+        # OUTBOUND subject (push sends it as-is, no "Re:"); body keeps the
+        # notification text so the reviewer sees the lead's details. Always
+        # hold-gated: a new-recipient outbound must never auto-push/auto-send.
+        for msg, verdict, _orule, contact, rendered in outreach_rows:
+            row_id = upsert_pending(
+                database_url=database_url,
+                message_id=msg.message_id,
+                thread_id=msg.thread_id,
+                account=msg.account,
+                sender=(contact.get("name") or contact["email"]),
+                sender_email=contact["email"],
+                subject=str(_orule.get("subject") or "").strip() or "Following up on your inquiry",
+                body=msg.body,
+                received_at=msg.received_at,
+                needs_reply_score=verdict.score,
+                reasons=verdict.reasons + ["rule: outreach_draft (lead-form notification)"],
+                cold_outreach=False,
+                tier="draft",
+                draft=rendered,
+                draft_model="rule_template",
+                draft_repairs=[],
+                standing_instructions_snapshot=standing_instructions,
+                hold=True,
+                urgency_score=_urgency_by_mid.get(msg.message_id, (0.0, []))[0],
+                urgency_reasons=_urgency_by_mid.get(msg.message_id, (0.0, []))[1],
+                to_recipients=contact["email"],
+                cc_recipients=None,
+                outreach=True,
+            )
+            if row_id is not None:
+                persisted += 1
 
         # Tier 2: borderline cases (no draft generated; the UI shows them
         # collapsed so the user can act manually).

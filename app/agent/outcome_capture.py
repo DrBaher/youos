@@ -123,6 +123,7 @@ def capture_send_outcomes(
               AND tier = 'draft'
               AND draft IS NOT NULL AND draft <> ''
               AND COALESCE(outcome_captured, 0) = 0
+              AND COALESCE(outreach, 0) = 0
               AND created_at >= datetime('now', ?)
             ORDER BY created_at DESC
             LIMIT ?
@@ -130,6 +131,8 @@ def capture_send_outcomes(
             (account, f"-{int(lookback_days)} days", int(limit)),
         ).fetchall()
 
+        if not rows:
+            return summary
         source = get_google_source(backend)
         for r in rows:
             summary["scanned"] += 1

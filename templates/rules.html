@@ -130,7 +130,7 @@
       </div>
       <div id="valueWrap" style="display:none;">
         <label class="fld" for="value" id="valueLabel">Value</label>
-        <input type="text" id="value" placeholder="">
+        <textarea id="value" rows="2" placeholder="" style="width:100%; resize:vertical; font:inherit;"></textarea>
       </div>
     </div>
 
@@ -203,14 +203,16 @@
     ["mark_important", "mark important"],
     ["mark_unimportant", "mark not important"],
     ["forward", "forward to (outbound — gated)"],
+    ["outreach_draft", "outreach draft to lead (template)"],
   ];
   const ACTION_LABEL = Object.fromEntries(ACTIONS.map((a) => [a[0], a[1]]));
   // Humanizer overrides so the rule reads naturally.
-  const ACTION_PHRASE = { forward: "forward to" };
+  const ACTION_PHRASE = { forward: "forward to", outreach_draft: "draft outreach to the lead using" };
   const VALUE_ACTIONS = {
     label: "Label name (e.g. Receipts)",
     prepend: "Instruction to add to the draft…",
     forward: "Destination email address(es), comma-separated",
+    outreach_draft: "Outreach template — placeholders: {first_name} {name} {email} {country} {reason} {message}",
   };
 
   // --- elements --------------------------------------------------------------
