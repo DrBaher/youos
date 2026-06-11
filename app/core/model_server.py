@@ -48,6 +48,12 @@ _shutting_down = False
 _consecutive_startup_timeouts = 0
 _respawn_blocked_until = 0.0
 _RESPAWN_COOLDOWN_SECONDS = 300.0
+# b249: set while one thread (the "starter") is mid-spawn/health-poll. The
+# poll itself runs OUTSIDE _lock now — previously the full startup_timeout
+# (default 40s) was held under the lock, so every concurrent ensure_running,
+# stop() and lifespan shutdown queued behind it, pinning anyio threadpool
+# workers. Followers wait on this event instead of the lock.
+_start_event: threading.Event | None = None
 
 
 def _safetensors_ok(path) -> bool:
@@ -323,7 +329,7 @@ def ensure_running(*, startup_timeout: float = 40.0) -> bool:
     failure returns False so the caller can fall back to the subprocess/cloud
     path rather than erroring.
     """
-    global _proc, _started_adapter_sig, _consecutive_startup_timeouts, _respawn_blocked_until
+    global _proc, _started_adapter_sig, _consecutive_startup_timeouts, _respawn_blocked_until, _start_event
     # Never auto-spawn the heavy (~3GB) model server inside the test suite — many
     # tests exercise the generation path via TestClient and must not start a real
     # server. The server's own spawn tests clear this env var to test the logic.
@@ -344,70 +350,93 @@ def ensure_running(*, startup_timeout: float = 40.0) -> bool:
             return True
         if time.monotonic() < _respawn_blocked_until:
             return False  # in cooldown after repeated startup timeouts (b242)
-        # We own the (re)start. Reap any existing handle first — a stale-adapter
-        # healthy server (reload), a wedged server (alive but never /health), or a
-        # half-started dud. _reap_locked (NOT stop(), which would re-acquire the
-        # held lock and deadlock) kills + reaps it so we spawn fresh.
-        if _proc is not None:
-            _reap_locked()
-        elif is_healthy():
-            # A healthy server THIS process didn't spawn: a previous
-            # incarnation's child that survived a parent crash, or a CLI-started
-            # one. It may be serving stale adapter weights and we can't reload
-            # it through _proc — kill the recorded pid so our fresh spawn can
-            # bind (b242). Without this, the duplicate spawn bind-fails while
-            # the orphan answers /health, and the stale weights get re-stamped
-            # as current forever.
-            _kill_recorded_server()
-        cmd = [sys.executable, "-m", "mlx_lm.server", "--model", get_base_model(), "--port", str(_port())]
-        # b174: set the server's DEFAULT sampling to the Qwen3-4B recommended
-        # values (temp=0.7, top_p=0.8, top_k=20, min_p=0). mlx_lm.server applies
-        # these only when a request omits the field — deterministic eval (b166)
-        # passes temperature=0 + seed per request and so overrides them, keeping
-        # eval reproducible. Bound generation length too so a runaway decode on
-        # the 16GB box can't grow the KV cache without limit (Qwen3 default
-        # context is 262K; we never need that for an email reply).
-        cmd.extend(_server_launch_args())
-        # Capture the sig at the same instant the adapter arg is read: stamping
-        # a re-read sig AFTER the health wait let a promotion that landed
-        # mid-model-load get stamped as already-served — the server then kept
-        # the OLD weights with no reload ever triggering (b242 TOCTOU).
-        sig_at_spawn = _adapter_sig()
-        adapter = _adapter_arg()
-        if adapter:
-            cmd.extend(["--adapter-path", adapter])
-        # Keep the child's stderr (b242): a server that dies during startup —
-        # bad adapter, OOM, port bind — was undiagnosable with DEVNULL. One
-        # file per spawn (truncate) keeps it bounded.
-        stderr_target = subprocess.DEVNULL
-        stderr_fh = None
-        try:
-            log_path = _pidfile().parent / "model_server.stderr.log"
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            stderr_fh = open(log_path, "wb")
-            stderr_target = stderr_fh
-        except OSError:
-            pass
-        try:
-            _proc = subprocess.Popen(  # noqa: S603
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=stderr_target,
-                start_new_session=True,
-            )
-        except Exception:
-            _proc = None
-            return False
-        finally:
-            if stderr_fh is not None:
-                stderr_fh.close()  # child holds its own dup
-        _write_pidfile(_proc)
-        # Poll /health until the model finishes loading.
+        if _start_event is not None:
+            # FOLLOWER (b249): another thread is mid-start. Wait for its
+            # outcome OUTSIDE the lock, then judge by the result — don't queue
+            # on the lock for its whole health poll, and don't double-spawn.
+            follower_event = _start_event
+        else:
+            follower_event = None
+            # We own the (re)start. Reap any existing handle first — a
+            # stale-adapter healthy server (reload), a wedged server (alive but
+            # never /health), or a half-started dud. _reap_locked (NOT stop(),
+            # which would re-acquire the held lock and deadlock) kills + reaps
+            # it so we spawn fresh.
+            if _proc is not None:
+                _reap_locked()
+            elif is_healthy():
+                # A healthy server THIS process didn't spawn: a previous
+                # incarnation's child that survived a parent crash, or a
+                # CLI-started one. It may be serving stale adapter weights and
+                # we can't reload it through _proc — kill the recorded pid so
+                # our fresh spawn can bind (b242). Without this, the duplicate
+                # spawn bind-fails while the orphan answers /health, and the
+                # stale weights get re-stamped as current forever.
+                _kill_recorded_server()
+            cmd = [sys.executable, "-m", "mlx_lm.server", "--model", get_base_model(), "--port", str(_port())]
+            # b174: set the server's DEFAULT sampling to the Qwen3-4B
+            # recommended values (temp=0.7, top_p=0.8, top_k=20, min_p=0).
+            # mlx_lm.server applies these only when a request omits the field —
+            # deterministic eval (b166) passes temperature=0 + seed per request
+            # and so overrides them, keeping eval reproducible. Bound generation
+            # length too so a runaway decode on the 16GB box can't grow the KV
+            # cache without limit.
+            cmd.extend(_server_launch_args())
+            # Capture the sig at the same instant the adapter arg is read:
+            # stamping a re-read sig AFTER the health wait let a promotion that
+            # landed mid-model-load get stamped as already-served (b242 TOCTOU).
+            sig_at_spawn = _adapter_sig()
+            adapter = _adapter_arg()
+            if adapter:
+                cmd.extend(["--adapter-path", adapter])
+            # Keep the child's stderr (b242): a server that dies during startup
+            # was undiagnosable with DEVNULL. One file per spawn keeps it bounded.
+            stderr_target = subprocess.DEVNULL
+            stderr_fh = None
+            try:
+                log_path = _pidfile().parent / "model_server.stderr.log"
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                stderr_fh = open(log_path, "wb")
+                stderr_target = stderr_fh
+            except OSError:
+                pass
+            try:
+                _proc = subprocess.Popen(  # noqa: S603
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=stderr_target,
+                    start_new_session=True,
+                )
+            except Exception:
+                _proc = None
+                return False
+            finally:
+                if stderr_fh is not None:
+                    stderr_fh.close()  # child holds its own dup
+            _write_pidfile(_proc)
+            my_proc = _proc
+            my_event = threading.Event()
+            _start_event = my_event
+
+    if follower_event is not None:
+        follower_event.wait(timeout=startup_timeout)
+        return is_healthy() and _adapter_sig() == _started_adapter_sig
+
+    # STARTER (b249): poll /health OUTSIDE the lock until the model finishes
+    # loading. stop()/shutdown()/another caller can take the lock meanwhile;
+    # every state mutation below re-acquires it and re-checks that OUR spawn
+    # is still the current one (stop() may have killed it mid-poll).
+    try:
         deadline = time.monotonic() + startup_timeout
         while time.monotonic() < deadline:
-            if _proc is not None and _proc.poll() is not None:
-                _proc = None  # died during startup
-                _clear_pidfile()
+            if _shutting_down:
+                return False  # stop()/shutdown() already reaped our child
+            if my_proc.poll() is not None:
+                # Died during startup.
+                with _lock:
+                    if _proc is my_proc:
+                        _proc = None
+                        _clear_pidfile()
                 if is_healthy():
                     logging.getLogger(__name__).warning(
                         "model server spawn died but an UNMANAGED server still "
@@ -418,27 +447,37 @@ def ensure_running(*, startup_timeout: float = 40.0) -> bool:
                     )
                 return False
             if is_healthy(timeout=1.0):
-                _started_adapter_sig = sig_at_spawn  # what THIS spawn loaded
-                _consecutive_startup_timeouts = 0
-                _respawn_blocked_until = 0.0
+                with _lock:
+                    if _shutting_down or _proc is not my_proc:
+                        return False  # superseded mid-poll — don't stamp
+                    _started_adapter_sig = sig_at_spawn  # what THIS spawn loaded
+                    _consecutive_startup_timeouts = 0
+                    _respawn_blocked_until = 0.0
                 return True
             time.sleep(0.5)
         # Startup timed out but the child is still ALIVE (booting too slowly, or
         # wedged and never answering /health). Reap it inline so the NEXT call
         # respawns fresh instead of re-skipping the spawn and blocking the full
         # timeout again forever (the wedged/partial-start leak, b159).
-        _reap_locked()
-        _consecutive_startup_timeouts += 1
-        if _consecutive_startup_timeouts >= 2:
-            _respawn_blocked_until = time.monotonic() + _RESPAWN_COOLDOWN_SECONDS
-            logging.getLogger(__name__).warning(
-                "model server failed to become healthy within %.0fs twice in a "
-                "row; pausing respawns for %.0fs (callers fall back to the "
-                "subprocess path). See var/model_server.stderr.log.",
-                startup_timeout,
-                _RESPAWN_COOLDOWN_SECONDS,
-            )
-    return False
+        with _lock:
+            if _proc is my_proc:
+                _reap_locked()
+            _consecutive_startup_timeouts += 1
+            if _consecutive_startup_timeouts >= 2:
+                _respawn_blocked_until = time.monotonic() + _RESPAWN_COOLDOWN_SECONDS
+                logging.getLogger(__name__).warning(
+                    "model server failed to become healthy within %.0fs twice in a "
+                    "row; pausing respawns for %.0fs (callers fall back to the "
+                    "subprocess path). See var/model_server.stderr.log.",
+                    startup_timeout,
+                    _RESPAWN_COOLDOWN_SECONDS,
+                )
+        return False
+    finally:
+        with _lock:
+            if _start_event is my_event:
+                _start_event = None
+        my_event.set()  # wake followers; they judge by health + stamped sig
 
 
 def _reap_locked() -> None:
