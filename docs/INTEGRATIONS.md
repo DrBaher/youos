@@ -116,6 +116,8 @@ A typical conversation:
 
 > **Sending is off by default.** `push_to_gmail` writes a Gmail Draft and is the only outbound action available out of the box. `send`/`confirm_send` exist but return **403** until the user sets `agent.send.enabled: true` (and leaves `agent.outbound_kill_switch: false`) — the never-send-without-authorization invariant. See `AGENT_SAFETY_MODEL.md`.
 >
+> **The send frontier cannot be armed over the API (b259).** The send-frontier flags (`agent.send.enabled`, `agent.outbound_kill_switch`, `agent.auto_send.enabled`, `agent.auto_send.mode`, `agent.actions.allow_forward`, `agent.digests.enabled`) are **not** writable via `POST /api/config/set` — it returns **403** for them. Because API tokens are all-or-nothing, this keeps the never-send default tamper-proof against a token-authed (or compromised) orchestrator: arming a send requires local access (`youos config set …` or a `youos_config.yaml` edit), not just a token. All other whitelisted flags remain API-writable.
+>
 > **No raw-inbox read, by design.** There is no endpoint to fetch arbitrary Gmail threads — agents act on YouOS's *triaged* queue. To ingest new mail, run a sweep (`POST /api/agent/triage`) and read the resulting `pending` rows.
 
 ## Token-auth contract
