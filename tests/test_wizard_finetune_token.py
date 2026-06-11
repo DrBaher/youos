@@ -48,9 +48,13 @@ def test_finetune_status_running(monkeypatch):
 def test_finetune_status_idle_then_done(monkeypatch, tmp_path):
     monkeypatch.setattr(sr, "_finetune_proc", None)
     monkeypatch.setattr(sr, "get_adapter_path", lambda: tmp_path)
-    assert client.get("/api/finetune/status").json() == {"status": "idle", "adapter_ready": False}
+    assert client.get("/api/finetune/status").json() == {
+        "status": "idle", "adapter_ready": False, "stage": None, "detail": None,
+    }
     (tmp_path / "adapters.safetensors").write_text("x")
-    assert client.get("/api/finetune/status").json() == {"status": "done", "adapter_ready": True}
+    assert client.get("/api/finetune/status").json() == {
+        "status": "done", "adapter_ready": True, "stage": None, "detail": None,
+    }
 
 
 # --- benchmark (validate the adapter so the readiness gate can clear) ------

@@ -58,13 +58,13 @@ def _validate_window(value: str) -> str:
     return value
 
 
-def _run(cmd: list[str]) -> None:
+def _run(cmd: list[str], cwd: str | None = None) -> None:
     """Run a wrapped script and propagate its exit code.
 
     Without this, `youos` exited 0 even when the underlying script failed, which
     silently broke scripting/CI gating.
     """
-    result = subprocess.run(cmd)
+    result = subprocess.run(cmd, cwd=cwd)
     if result.returncode != 0:
         raise typer.Exit(result.returncode)
 
@@ -873,7 +873,8 @@ def serve():
 
     port = get_server_port()
     host = get_server_host()
-    subprocess.run(
+    # via _run (b247): `youos serve` exited 0 even when uvicorn failed to bind.
+    _run(
         [
             sys.executable,
             "-m",
