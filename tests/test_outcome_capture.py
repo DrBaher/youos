@@ -132,3 +132,78 @@ def test_recent_no_reply_left_pending(db, monkeypatch):
     # Fresh row, no reply yet, generous no_send window → leave for a later run.
     r = outcome_capture.capture_send_outcomes(db, account="you@example.com", no_send_after_days=5)
     assert r["still_pending"] == 1 and r["paired"] == 0 and r["no_send"] == 0
+
+
+def test_answered_draft_is_dismissed_from_queue_b263(db, monkeypatch):
+    """b263: when you replied to the thread yourself, the queued draft must
+    leave the review queue (status->dismissed), not linger as 'pending'."""
+    import sqlite3
+
+    _seed_draft(db)
+    threads = {"t1": {"messages": [
+        _msg("m-in", "Alice <alice@x.com>", "Can you confirm the Q3 plan?"),
+        _msg("m-reply", "You <you@example.com>",
+             "Confirmed for the 18th — sending the plan now."),
+    ]}}
+    monkeypatch.setattr("app.ingestion.adapters.get_google_source", lambda backend=None: _FakeSource(threads))
+
+    r = outcome_capture.capture_send_outcomes(db, account="you@example.com")
+    assert r["paired"] == 1
+    assert r["removed_from_queue"] == 1
+
+    c = sqlite3.connect(db.removeprefix("sqlite:///"))
+    c.row_factory = sqlite3.Row
+    row = c.execute("SELECT status, outcome, dismissal_reason FROM agent_pending_drafts").fetchone()
+    assert row["status"] == "dismissed"
+    assert row["outcome"] == "sent"
+    assert row["dismissal_reason"] == "already_replied"
+    c.close()
+
+    # And it no longer appears in the pending queue the UI lists.
+    pend = store.list_pending(db, account="you@example.com", status="pending", tier="draft")
+    assert pend == []
+
+
+def test_no_send_stays_in_queue_b263(db, monkeypatch):
+    """A thread you HAVEN'T replied to must remain in the queue — only
+    already-answered drafts are auto-removed."""
+    import sqlite3
+
+    _seed_draft(db)
+    threads = {"t1": {"messages": [
+        _msg("m-in", "Alice <alice@x.com>", "Can you confirm the Q3 plan?"),
+        _msg("m-bump", "Alice <alice@x.com>", "Just bumping this."),
+    ]}}
+    monkeypatch.setattr("app.ingestion.adapters.get_google_source", lambda backend=None: _FakeSource(threads))
+
+    r = outcome_capture.capture_send_outcomes(db, account="you@example.com", no_send_after_days=0)
+    assert r["removed_from_queue"] == 0
+
+    c = sqlite3.connect(db.removeprefix("sqlite:///"))
+    assert c.execute("SELECT status FROM agent_pending_drafts").fetchone()[0] == "pending"
+    c.close()
+
+
+def test_already_pushed_row_not_downgraded_b263(db, monkeypatch):
+    """A draft you already pushed/sent via YouOS (status='sent') must not be
+    downgraded to 'dismissed' when reconciliation later sees your reply."""
+    import sqlite3
+
+    row_id = _seed_draft(db)
+    c = sqlite3.connect(db.removeprefix("sqlite:///"))
+    c.execute("UPDATE agent_pending_drafts SET status='sent' WHERE id=?", (row_id,))
+    c.commit()
+    c.close()
+
+    threads = {"t1": {"messages": [
+        _msg("m-in", "Alice <alice@x.com>", "Can you confirm the Q3 plan?"),
+        _msg("m-reply", "You <you@example.com>", "Confirmed for the 18th."),
+    ]}}
+    monkeypatch.setattr("app.ingestion.adapters.get_google_source", lambda backend=None: _FakeSource(threads))
+
+    r = outcome_capture.capture_send_outcomes(db, account="you@example.com")
+    assert r["removed_from_queue"] == 0  # status was already terminal
+
+    c = sqlite3.connect(db.removeprefix("sqlite:///"))
+    assert c.execute("SELECT status FROM agent_pending_drafts").fetchone()[0] == "sent"
+    c.close()

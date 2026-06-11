@@ -109,6 +109,7 @@ def capture_send_outcomes(
         "account": account, "scanned": 0, "paired": 0, "no_send": 0,
         "still_pending": 0, "errors": 0, "avg_edit_distance": None,
         "high_divergence": 0,  # pairs the draft got materially wrong (ed >= 0.6)
+        "removed_from_queue": 0,  # drafts dismissed because you already replied (b263)
     }
     eds: list[float] = []
 
@@ -174,6 +175,22 @@ def capture_send_outcomes(
                     "UPDATE agent_pending_drafts SET outcome_captured = 1, outcome = 'sent' WHERE id = ?",
                     (r["id"],),
                 )
+                # You already replied to this thread yourself, so the queued
+                # draft is moot — remove it from the review queue (b263).
+                # Previously the row kept status='pending' and lingered as a
+                # stale draft until the 90-day prune. Only dismiss a still-live
+                # row; never downgrade one you already acted on in YouOS
+                # (status 'sent'/'dismissed'). Distinct dismissal_reason so it
+                # doesn't pollute the 'noise' calibration aggregate.
+                dq = conn.execute(
+                    "UPDATE agent_pending_drafts "
+                    "SET status = 'dismissed', dismissed_at = CURRENT_TIMESTAMP, "
+                    "    dismissal_reason = 'already_replied' "
+                    "WHERE id = ? AND status IN ('pending', 'amended')",
+                    (r["id"],),
+                )
+                if dq.rowcount:
+                    summary["removed_from_queue"] += 1
                 summary["paired"] += 1
             elif (r["age_days"] or 0) >= no_send_after_days:
                 conn.execute(
