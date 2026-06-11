@@ -18,8 +18,10 @@ caller proceeds; everyone else gets the existing draft id back (idempotent).
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 from app.agent import store
 
@@ -129,6 +131,22 @@ def push_pending_row(database_url: str, row_id: int, *, backend: str | None = No
     # replies: subject goes out as-is (no "Re:"), there is no thread to attach
     # to, and nobody to reply-all.
     is_outreach = bool(row.get("outreach"))
+    # b233: attachments pinned on the row (outreach rules). Existence is
+    # re-checked at push time — the draft body may promise the file ("I have
+    # attached our deck"), so a missing file must FAIL the push with a clear
+    # message rather than create a send-ready-looking draft without it.
+    attachments: list[str] = []
+    try:
+        attachments = [str(p) for p in json.loads(row.get("attachments_json") or "[]") if str(p).strip()]
+    except (TypeError, ValueError):
+        attachments = []
+    missing = [p for p in attachments if not Path(p).is_file()]
+    if missing:
+        store.abort_push(database_url, row_id, prev_status=prev or "pending")
+        return PushOutcome(
+            False, http_status=400,
+            detail=f"attachment file(s) not found: {', '.join(missing)} — fix the path(s) in the rule or restore the file",
+        )
     if is_outreach:
         subject = raw_subject
         cc = None
@@ -166,6 +184,7 @@ def push_pending_row(database_url: str, row_id: int, *, backend: str | None = No
             body=body,
             cc=cc,
             signature_html=signature_html,
+            attachments=attachments or None,
             backend=backend,
         )
     except NotImplementedError as exc:
