@@ -433,6 +433,109 @@ def _calendar_config() -> dict[str, Any]:
     }
 
 
+
+# Marker embedded in the slot instruction (and thus in standing_instructions_
+# snapshot) so a meeting-proposal draft is identifiable later for staleness
+# refresh (b264).
+_CAL_SLOT_MARKER = "You are free at:"
+
+
+def _calendar_slot_note(account: str, *, cal_cfg: dict[str, Any] | None = None) -> str | None:
+    """Fresh open-slot instruction for a meeting-request reply, or None.
+
+    Extracted (b264) so both the triage sweep AND the stale-draft refresh
+    compute slots from the CURRENT time — a draft left in the queue for days
+    would otherwise keep proposing times that have since passed. Failure-
+    isolated; never creates events; returns None when calendar is off, no slots
+    are currently free, or the lookup fails (the b246 fail-closed contract)."""
+    cfg = cal_cfg or _calendar_config()
+    if not cfg.get("enabled"):
+        return None
+    try:
+        from app.agent.calendar import propose_open_slots
+
+        slots = propose_open_slots(
+            account, tz=cfg["tz"], business_days=cfg["business_days"],
+            work_start_hour=cfg["work_start_hour"], work_end_hour=cfg["work_end_hour"],
+            slot_minutes=cfg["slot_minutes"], max_slots=cfg["max_slots"],
+        )
+    except Exception as exc:
+        logger.warning("calendar slot proposal failed: %s", exc)
+        return None
+    if not slots:
+        return None
+    return (
+        f"The sender is asking to meet. {_CAL_SLOT_MARKER} {slots}. "
+        f"Offer 2–3 of these specific times (times are in {cfg['tz']}); "
+        "do not invent any other availability."
+    )
+
+
+def refresh_stale_meeting_drafts(database_url: str | None, account: str) -> dict[str, int]:
+    """Re-draft queued meeting replies whose proposed slots went stale (b264).
+
+    A meeting-request draft proposes open times over the next few business days
+    AT DRAFT TIME; left in the review queue for days, those times fall into the
+    past. This finds pending draft rows that proposed slots
+    (``standing_instructions_snapshot`` carries _CAL_SLOT_MARKER) and were last
+    drafted on a prior day, recomputes CURRENT slots, and regenerates the reply
+    IN PLACE — keeping the row in the queue (status unchanged) with fresh
+    availability. Only refreshes when slots are actually free now; never
+    creates events. Best-effort per row."""
+    from contextlib import closing
+
+    from app.agent.store import _connect, update_draft_inplace
+
+    summary = {"scanned": 0, "refreshed": 0, "no_slots": 0, "errors": 0}
+    if not database_url:
+        from app.core.settings import get_settings
+
+        database_url = get_settings().database_url
+    db = database_url
+    with closing(_connect(db)) as conn:
+        rows = conn.execute(
+            "SELECT id, body, sender, sender_email, subject, account, thread_id "
+            "FROM agent_pending_drafts "
+            "WHERE account = ? AND tier = 'draft' AND status IN ('pending', 'amended') "
+            "AND standing_instructions_snapshot LIKE '%' || ? || '%' "
+            "AND date(COALESCE(updated_at, created_at)) < date('now')",
+            (account, _CAL_SLOT_MARKER),
+        ).fetchall()
+    if not rows:
+        return summary
+    # Your availability is the same regardless of who asked — compute once.
+    note = _calendar_slot_note(account)
+    for r in rows:
+        summary["scanned"] += 1
+        if not note:
+            summary["no_slots"] += 1
+            continue
+        try:
+            from app.core.settings import get_settings
+            from app.generation.service import DraftRequest, generate_draft
+
+            settings = get_settings()
+            resp = generate_draft(
+                DraftRequest(
+                    inbound_message=r["body"] or "",
+                    sender=r["sender"] or r["sender_email"],
+                    subject=r["subject"],
+                    account_email=r["account"],
+                    thread_id=r["thread_id"],
+                    standing_instructions=note,
+                ),
+                database_url=db,
+                configs_dir=settings.configs_dir,
+            )
+            new_draft = (resp.draft or "").strip()
+            if new_draft and update_draft_inplace(db, r["id"], draft=new_draft):
+                summary["refreshed"] += 1
+        except Exception:
+            summary["errors"] += 1
+            logger.warning("stale meeting-draft refresh failed for row %s", r["id"], exc_info=True)
+    return summary
+
+
 def _parse_autopush_whitelist(raw: Any) -> list[str]:
     """Normalise the whitelist (comma/newline string or list) to lowercase entries."""
     if not raw:
@@ -1225,23 +1328,9 @@ def _run_sweep(
         # Calendar: a meeting request → propose real open slots so the draft
         # offers concrete times. Failure-isolated; never creates events.
         if cal_cfg["enabled"] and _intents and "meeting_request" in _intents:
-            try:
-                from app.agent.calendar import propose_open_slots
-
-                slots = propose_open_slots(
-                    account, tz=cal_cfg["tz"], business_days=cal_cfg["business_days"],
-                    work_start_hour=cal_cfg["work_start_hour"], work_end_hour=cal_cfg["work_end_hour"],
-                    slot_minutes=cal_cfg["slot_minutes"], max_slots=cal_cfg["max_slots"],
-                )
-                if slots:
-                    note = (
-                        f"The sender is asking to meet. You are free at: {slots}. "
-                        f"Offer 2–3 of these specific times (times are in {cal_cfg['tz']}); "
-                        "do not invent any other availability."
-                    )
-                    effective_instructions = f"{effective_instructions}\n{note}" if effective_instructions else note
-            except Exception as exc:
-                logger.warning("calendar slot proposal failed: %s", exc)
+            note = _calendar_slot_note(account, cal_cfg=cal_cfg)
+            if note:
+                effective_instructions = f"{effective_instructions}\n{note}" if effective_instructions else note
 
         # Long-thread catch-up summary (depends only on the thread, not the
         # draft). Failure-isolated.
