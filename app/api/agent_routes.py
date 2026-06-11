@@ -10,6 +10,7 @@ Never auto-sends. β.2 only shows you what's pending; β/Phase 2 adds the
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -18,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from app.agent import store
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["agent"])
 _TEMPLATE_DIR = Path(__file__).resolve().parents[1].parent / "templates"
 _TEMPLATE = _TEMPLATE_DIR / "triage.html"
@@ -1233,6 +1235,24 @@ def trigger_triage(body: TriageRunBody, request: Request) -> dict:
                     ),
                     headers={"Retry-After": str(retry_after)},
                 )
+
+    # Reconcile against your real Gmail sends FIRST (b263): if you already
+    # replied to a thread yourself, dismiss its now-stale queued draft before
+    # we surface the queue again — so a re-triage doesn't show outdated drafts
+    # for mail you've already answered. Best-effort + idempotent (it only
+    # fetches not-yet-reconciled threads); a reconcile failure must not block
+    # the sweep. The nightly runs this too.
+    try:
+        from app.agent.outcome_capture import capture_send_outcomes
+
+        rec = capture_send_outcomes(_db_url(request), account=account)
+        if rec.get("removed_from_queue"):
+            logger.info(
+                "pre-triage reconcile dismissed %d already-answered draft(s) for %s",
+                rec["removed_from_queue"], account,
+            )
+    except Exception:
+        logger.warning("pre-triage outcome reconcile failed for %s", account, exc_info=True)
 
     result = run_triage(
         account=account,
