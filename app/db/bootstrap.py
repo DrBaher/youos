@@ -458,6 +458,12 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
         connection.execute(
             "ALTER TABLE agent_pending_drafts ADD COLUMN urgency_reasons_json TEXT NOT NULL DEFAULT '[]'"
         )
+    # b265: the concrete open-meeting slots this draft proposed, as a JSON list
+    # of [start_iso, end_iso] pairs. Lets a later draft avoid offering the same
+    # time (each meeting draft otherwise picks the first opening each day, so
+    # they all collide). NULL for non-meeting drafts.
+    if "proposed_slots_json" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN proposed_slots_json TEXT")
 
 
 def _migrate_agent_actions(connection: sqlite3.Connection) -> None:
