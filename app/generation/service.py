@@ -671,7 +671,9 @@ _MEMORY_STOPWORDS = frozenset({
 
 def _extract_content_words(text: str) -> list[str]:
     """Extract significant words from text for project/topic matching."""
-    words = re.findall(r"\b[a-zA-Z]{4,}\b", text.lower())
+    # Unicode-aware (b257): non-ASCII inbound text yielded no content words,
+    # so project facts never matched for non-English mail.
+    words = re.findall(r"\b[^\W_]{4,}\b", text.lower(), re.UNICODE)
     return [w for w in words if w not in _MEMORY_STOPWORDS]
 
 
