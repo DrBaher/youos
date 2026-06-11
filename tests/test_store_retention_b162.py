@@ -15,15 +15,17 @@ def test_prune_removes_aged_keeps_live_and_recent(tmp_path):
     _migrate_agent_pending_drafts(conn)
     _migrate_agent_audit(conn)
 
-    def add_draft(mid, status, days_ago):
+    def add_draft(mid, status, days_ago, mined=1):
         conn.execute(
-            "INSERT INTO agent_pending_drafts (message_id, thread_id, account, needs_reply_score, tier, status, created_at) "
-            "VALUES (?, 't', 'a@x.com', 0.5, 'draft', ?, datetime('now', ?))",
-            (mid, status, f"-{days_ago} days"),
+            "INSERT INTO agent_pending_drafts (message_id, thread_id, account, needs_reply_score, tier, status, created_at, feedback_captured) "
+            "VALUES (?, 't', 'a@x.com', 0.5, 'draft', ?, datetime('now', ?), ?)",
+            (mid, status, f"-{days_ago} days", mined),
         )
 
-    add_draft("old-dismissed", "dismissed", 100)  # aged terminal -> pruned
-    add_draft("old-sent", "sent", 100)            # aged terminal -> pruned
+    add_draft("old-dismissed", "dismissed", 100)  # aged terminal, mined -> pruned
+    # b244: status='sent' with send_state NULL is recipient_trust evidence
+    # (user-confirmed send) — kept indefinitely now.
+    add_draft("old-sent", "sent", 100)
     add_draft("old-pending", "pending", 100)      # aged but LIVE -> kept
     add_draft("new-dismissed", "dismissed", 5)    # recent terminal -> kept
     conn.execute("INSERT INTO agent_audit (account, trigger, started_at) VALUES ('a@x.com','scheduled',datetime('now','-100 days'))")
@@ -32,12 +34,12 @@ def test_prune_removes_aged_keeps_live_and_recent(tmp_path):
     conn.close()
 
     removed = prune_agent_tables(f"sqlite:///{db}", older_than_days=90)
-    assert removed["agent_pending_drafts"] == 2
+    assert removed["agent_pending_drafts"] == 1  # old-dismissed only (b244: old-sent = trust evidence)
     assert removed["agent_audit"] == 1
 
     conn = sqlite3.connect(db)
     surviving = {r[0] for r in conn.execute("SELECT message_id FROM agent_pending_drafts")}
-    assert surviving == {"old-pending", "new-dismissed"}  # live-aged + recent-terminal kept
+    assert surviving == {"old-pending", "new-dismissed", "old-sent"}  # live-aged + recent-terminal + trust kept
     assert conn.execute("SELECT COUNT(*) FROM agent_audit").fetchone()[0] == 1
     conn.close()
 
