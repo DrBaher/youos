@@ -468,8 +468,13 @@ def step_store_prune(verbose: bool = False) -> dict:
         print("  [SKIP] store_prune — DB not yet created")
         return {}
     removed = prune_agent_tables(f"sqlite:///{db_path}")
-    rows = sum(v for k, v in removed.items() if k != "vacuum_ok")
-    vac = "vacuumed" if removed.get("vacuum_ok") else "VACUUM SKIPPED (busy) — pages not reclaimed"
+    rows = sum(v for k, v in removed.items() if k not in ("vacuum_ok", "vacuum_skipped_small"))
+    if removed.get("vacuum_skipped_small"):
+        vac = "vacuum skipped (little to reclaim)"
+    elif removed.get("vacuum_ok"):
+        vac = "vacuumed"
+    else:
+        vac = "VACUUM SKIPPED (busy) — pages not reclaimed"
     print(f"  [OK] pruned {rows} rows ({vac}): {removed}")
     return removed
 
@@ -1195,6 +1200,7 @@ def main() -> None:
         results["daily_snapshot"] = f"error: {exc}"
         steps["daily_snapshot"] = False
         errors.append(f"Daily snapshot error: {exc}")
+    _record_duration("daily_snapshot", _t)
 
     # -0.5. Store retention — AFTER the snapshot (so this morning's recovery point
     # keeps the full pre-prune DB), prune aged telemetry/terminal agent rows +
@@ -1202,14 +1208,14 @@ def main() -> None:
     _t = time.monotonic()
     try:
         removed = step_store_prune(verbose=verbose)
-        results["store_prune"] = f"pruned {sum(removed.values())} rows" if removed else "skipped"
+        pruned_rows = sum(v for k, v in removed.items() if not k.startswith("vacuum")) if removed else 0
+        results["store_prune"] = f"pruned {pruned_rows} rows" if removed else "skipped"
         steps["store_prune"] = True
     except Exception as exc:
         results["store_prune"] = f"error: {exc}"
         steps["store_prune"] = False
         errors.append(f"Store prune error: {exc}")
     _record_duration("store_prune", _t)
-    _record_duration("daily_snapshot", _t)
 
     # 0. Corpus deduplication (best-effort, before ingestion) — with skip gate
     _t = time.monotonic()
