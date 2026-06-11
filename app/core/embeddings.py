@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 _model = None
 _tokenizer = None
 _backend: str | None = None  # "dedicated" | "causal"
+_loaded_model_id: str | None = None  # which id the singleton actually loaded (b255)
 
 # Embedding-model id families that are DEDICATED retrieval encoders (backend #1).
 # Matched case-insensitively as substrings of the (lowercased) model id. These
@@ -135,11 +136,20 @@ def _load_model():
     other (causal) id loads via ``mlx_lm`` and is mean-pooled by hand. Sets the
     module-level ``_backend`` so the encode path knows how to read the model.
     """
-    global _model, _tokenizer, _backend
-    if _model is not None:
-        return _model, _tokenizer
-
+    global _model, _tokenizer, _backend, _loaded_model_id
     model_id = get_embedding_model_id()
+    if _model is not None:
+        if _loaded_model_id == model_id:
+            return _model, _tokenizer
+        # embeddings.model_id changed at runtime (b255): the singleton would
+        # otherwise keep serving vectors from the OLD model's space (and the
+        # lru cache would return them) while stored rows are validated against
+        # the NEW id — drop both and reload.
+        _model = None
+        _tokenizer = None
+        _backend = None
+        _get_embedding_cached.cache_clear()
+
     dedicated = _is_dedicated_embedder(model_id)
 
     if dedicated:
@@ -154,6 +164,7 @@ def _load_model():
         try:
             _model, _tokenizer = _emb_load(model_id)
             _backend = "dedicated"
+            _loaded_model_id = model_id
         except Exception as exc:
             _model = None
             _tokenizer = None
@@ -175,6 +186,7 @@ def _load_model():
     try:
         _model, _tokenizer = load(model_id)
         _backend = "causal"
+        _loaded_model_id = model_id
     except Exception as exc:
         # Fail loud rather than silently writing garbage / a wrong-space index.
         _model = None
@@ -229,13 +241,13 @@ def _embed_causal(text: str) -> tuple[float, ...]:
 
 
 @functools.lru_cache(maxsize=512)
-def _get_embedding_cached(text: str, kind: str) -> tuple[float, ...]:
+def _get_embedding_cached(text: str, kind: str, model_id: str) -> tuple[float, ...]:
     """Cached embed of *text* for the given *kind* ("query" | "passage").
 
     The kind is part of the cache key because E5 produces different vectors for
-    ``query:`` vs ``passage:`` prefixes.
+    ``query:`` vs ``passage:`` prefixes; the model id is too (b255) so a
+    runtime model swap can never serve a vector from the old space.
     """
-    model_id = get_embedding_model_id()
     _load_model()
     if _backend == "dedicated":
         return _embed_dedicated(text, model_id, kind=kind)
@@ -252,7 +264,7 @@ def get_embedding(text: str, *, kind: str = "query") -> tuple[float, ...]:
 
     Returns a tuple (hashable) for lru_cache compatibility.
     """
-    return _get_embedding_cached(text, kind)
+    return _get_embedding_cached(text, kind, get_embedding_model_id())
 
 
 def get_embedding_cache_info() -> dict[str, int]:
