@@ -390,44 +390,111 @@ def reap_stale_sending(database_url: str, *, older_than_minutes: int = 10) -> in
 
 # Retention for the append-only agent tables. A long-lived instance otherwise
 # grows these without bound, and every row is copied into every full-DB snapshot.
-# Conservative: only telemetry/audit rows and TERMINAL review-queue rows are
-# pruned — a live ('pending'/'amended') draft is never touched (b162).
+# Conservative: a live draft-tier 'pending'/'amended' row the user may still act
+# on is never touched (b162); b244 extends coverage to aged surface-tier rows,
+# decided-but-never-acted draft rows, and the previously-missed run ledgers.
 PRUNE_DEFAULT_DAYS = 90
+# Terminal rows whose feedback hasn't been mined yet get a 4x grace window
+# instead of a permanent exemption — if the miner is broken/disabled they'd
+# otherwise grow without bound (b244).
+PRUNE_UNMINED_GRACE_FACTOR = 4
+# Confirmed-send rows are recipient_trust evidence (all-time count gating the
+# gradual auto-send rollout): pruning them silently un-vetted relationships.
+# Real confirmed sends are few; they are kept indefinitely (b244).
+_NOT_TRUST_EVIDENCE = "NOT (COALESCE(send_state, '') = 'sent' OR (status = 'sent' AND send_state IS NULL))"
 
 
 def prune_agent_tables(database_url: str, *, older_than_days: int = PRUNE_DEFAULT_DAYS) -> dict[str, int]:
     """Delete aged rows from the append-only agent tables, then VACUUM to reclaim
-    the freed pages (so future snapshots shrink). Returns a per-table removed
-    count. Each table is pruned independently (try/except) so a schema-stale
-    instance still prunes the rest."""
+    the freed pages (so future snapshots shrink). Returns a per-label removed
+    count plus ``vacuum_ok`` (0/1 — callers exclude it from row totals). Each
+    delete runs independently (try/except) so a schema-stale instance still
+    prunes the rest."""
     cutoff = f"-{int(older_than_days)} days"
+    unmined_cutoff = f"-{int(older_than_days) * PRUNE_UNMINED_GRACE_FACTOR} days"
     deletes = [
         # Pure telemetry / audit history.
-        ("agent_audit", "DELETE FROM agent_audit WHERE datetime(started_at) <= datetime('now', ?)"),
-        ("draft_events", "DELETE FROM draft_events WHERE datetime(created_at) <= datetime('now', ?)"),
-        ("agent_actions", "DELETE FROM agent_actions WHERE datetime(created_at) <= datetime('now', ?)"),
-        # Digest per-message dedup ledger (retention >> any digest period).
-        ("agent_digest_items", "DELETE FROM agent_digest_items WHERE datetime(created_at) <= datetime('now', ?)"),
-        # Review queue: ONLY terminal rows — never a live pending/amended draft.
+        ("agent_audit", "DELETE FROM agent_audit WHERE datetime(started_at) <= datetime('now', ?)", cutoff),
+        ("draft_events", "DELETE FROM draft_events WHERE datetime(created_at) <= datetime('now', ?)", cutoff),
+        ("agent_actions", "DELETE FROM agent_actions WHERE datetime(created_at) <= datetime('now', ?)", cutoff),
+        # Digest per-message dedup ledger (retention >> any digest period) +
+        # the per-(digest, account, period) run ledger (b244 — was unbounded).
+        ("agent_digest_items", "DELETE FROM agent_digest_items WHERE datetime(created_at) <= datetime('now', ?)", cutoff),
+        ("agent_digest_runs", "DELETE FROM agent_digest_runs WHERE datetime(created_at) <= datetime('now', ?)", cutoff),
+        # Optimizer iteration log in the MAIN DB (b244 — b162 only trimmed the
+        # jsonl FILE; the table had no reader and no retention).
+        ("autoresearch_runs", "DELETE FROM autoresearch_runs WHERE datetime(created_ts) <= datetime('now', ?)", cutoff),
+        # Review queue, terminal rows: only after their feedback was mined
+        # (feedback_capture reads feedback_captured=0 with no time window —
+        # pruning unmined rows destroyed training signal, b244), and never
+        # confirmed-send trust evidence.
         (
             "agent_pending_drafts",
             "DELETE FROM agent_pending_drafts WHERE status IN ('sent', 'dismissed') "
+            "AND datetime(created_at) <= datetime('now', ?) "
+            f"AND COALESCE(feedback_captured, 0) = 1 AND {_NOT_TRUST_EVIDENCE}",
+            cutoff,
+        ),
+        # ... and unmined terminal rows at the 4x grace horizon (bound growth
+        # even when the miner never runs).
+        (
+            "agent_pending_drafts_unmined",
+            "DELETE FROM agent_pending_drafts WHERE status IN ('sent', 'dismissed') "
+            "AND datetime(created_at) <= datetime('now', ?) "
+            f"AND COALESCE(feedback_captured, 0) = 0 AND {_NOT_TRUST_EVIDENCE}",
+            unmined_cutoff,
+        ),
+        # Surface-tier rows sit at status='pending' forever (the user rarely
+        # dismisses each one) and carry the full inbound body — they were the
+        # worst unbounded case (b244).
+        (
+            "agent_pending_drafts_surface",
+            "DELETE FROM agent_pending_drafts WHERE tier = 'surface' AND status = 'pending' "
             "AND datetime(created_at) <= datetime('now', ?)",
+            cutoff,
+        ),
+        # Draft-tier rows outcome-capture already DECIDED (outcome recorded,
+        # e.g. 'no_send') but the user never acted on — dead queue rows.
+        (
+            "agent_pending_drafts_decided",
+            "DELETE FROM agent_pending_drafts WHERE tier = 'draft' AND status = 'pending' "
+            "AND COALESCE(outcome_captured, 0) = 1 "
+            "AND datetime(created_at) <= datetime('now', ?)",
+            cutoff,
         ),
     ]
     removed: dict[str, int] = {}
     with closing(_connect(database_url)) as conn:
-        for table, sql in deletes:
+        for label, sql, when in deletes:
             try:
-                cur = conn.execute(sql, (cutoff,))
-                removed[table] = cur.rowcount or 0
+                cur = conn.execute(sql, (when,))
+                removed[label] = cur.rowcount or 0
             except sqlite3.OperationalError:
-                removed[table] = 0  # table/column absent on this instance
+                removed[label] = 0  # table/column absent on this instance
         conn.commit()
+    # VACUUM only when rows were actually freed, under the cross-process
+    # snapshot lock (b244): it rewrites the whole DB file and must not
+    # interleave with a snapshot create/restore. A skipped VACUUM is now LOUD —
+    # the old bare `except: pass` let retention silently reclaim nothing every
+    # night (any concurrent read transaction fails VACUUM instantly).
+    removed["vacuum_ok"] = 1
+    if sum(v for k, v in removed.items() if k != "vacuum_ok"):
         try:
-            conn.execute("VACUUM")  # outside the txn above; reclaim freed pages
-        except sqlite3.OperationalError:
-            pass
+            from app.core.data_safety import snapshot_lock
+            from app.db.bootstrap import resolve_sqlite_path
+
+            db_path = resolve_sqlite_path(database_url)
+            with snapshot_lock(db_path), closing(_connect(database_url)) as conn:
+                conn.execute("VACUUM")
+        except (sqlite3.OperationalError, TimeoutError) as exc:
+            removed["vacuum_ok"] = 0
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "store-prune VACUUM skipped (%s) — freed pages were NOT reclaimed; "
+                "snapshots will not shrink until a later prune succeeds",
+                exc,
+            )
     return removed
 
 
@@ -687,14 +754,19 @@ def count_pushed_today(database_url: str, *, account: str) -> int:
 
 
 def count_persisted_today(database_url: str, *, account: str) -> int:
-    """Count rows persisted for ``account`` since UTC midnight. Used by ζ to
-    enforce ``agent.daily_draft_cap`` — defends against a runaway loop on a
-    noisy inbox. Counts both ``tier='draft'`` and ``tier='surface'`` rows."""
+    """Count DRAFT-tier rows persisted for ``account`` since UTC midnight. Used
+    by ζ to enforce ``agent.daily_draft_cap`` — defends against a runaway loop
+    on a noisy inbox.
+
+    Counts ``tier='draft'`` only (b244): the cap gates draft GENERATION, but
+    this counter used to include surface-tier rows too — ≥cap surfaces in one
+    busy day zeroed the budget and the agent silently stopped drafting
+    ("daily cap reached") while surfaces kept persisting uncapped."""
     with closing(_connect(database_url)) as conn:
         row = conn.execute(
             """
             SELECT COUNT(*) FROM agent_pending_drafts
-            WHERE account = ? AND date(created_at) = date('now')
+            WHERE account = ? AND tier = 'draft' AND date(created_at) = date('now')
             """,
             (account,),
         ).fetchone()
