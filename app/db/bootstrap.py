@@ -362,6 +362,10 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
     # thread the notification-thread reconciliation can't see).
     if "outreach" not in _cols:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN outreach INTEGER NOT NULL DEFAULT 0")
+    # b233: local file paths attached when the draft is pushed to Gmail
+    # (outreach rules can pin a standing attachment, e.g. a corporate deck).
+    if "attachments_json" not in _cols:
+        connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]'")
     # Outcome capture (b224): once we've checked whether the user actually sent a
     # reply on this thread (matching the YouOS draft to the real send), the row
     # is marked so we don't re-check it. ``outcome``: 'sent' (a real reply was

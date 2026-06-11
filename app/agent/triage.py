@@ -1394,6 +1394,19 @@ def _run_sweep(
         # notification text so the reviewer sees the lead's details. Always
         # hold-gated: a new-recipient outbound must never auto-push/auto-send.
         for msg, verdict, _orule, contact, rendered in outreach_rows:
+            # b233: standing attachments from the rule (e.g. a corporate deck).
+            # Existence-checked HERE so a moved/renamed file shows up on the
+            # queue card as a reason instead of only failing later at push.
+            from pathlib import Path as _P
+
+            _att_ok: list[str] = []
+            _att_notes: list[str] = []
+            for _ap in _orule.get("attachments") or []:
+                _resolved = _P(_ap).expanduser()
+                if _resolved.is_file():
+                    _att_ok.append(str(_resolved))
+                else:
+                    _att_notes.append(f"attachment missing on disk: {_ap}")
             row_id = upsert_pending(
                 database_url=database_url,
                 message_id=msg.message_id,
@@ -1405,7 +1418,7 @@ def _run_sweep(
                 body=msg.body,
                 received_at=msg.received_at,
                 needs_reply_score=verdict.score,
-                reasons=verdict.reasons + ["rule: outreach_draft (lead-form notification)"],
+                reasons=verdict.reasons + ["rule: outreach_draft (lead-form notification)"] + _att_notes,
                 cold_outreach=False,
                 tier="draft",
                 draft=rendered,
@@ -1418,6 +1431,7 @@ def _run_sweep(
                 to_recipients=contact["email"],
                 cc_recipients=None,
                 outreach=True,
+                attachments=_att_ok,
             )
             if row_id is not None:
                 persisted += 1
