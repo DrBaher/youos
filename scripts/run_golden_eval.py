@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import re
 from pathlib import Path
 from typing import Any
@@ -325,9 +324,9 @@ def run_golden_eval(
 def save_results(summary: dict[str, Any], path: Path | None = None) -> None:
     """Save golden results to JSON."""
     p = path or RESULTS_PATH
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2)
+    from app.core.atomic_io import atomic_write_json
+
+    atomic_write_json(p, summary)
 
 
 def format_scorecard(summary: dict[str, Any]) -> str:

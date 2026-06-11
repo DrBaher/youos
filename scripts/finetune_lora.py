@@ -76,8 +76,12 @@ def strip_curriculum_line(train_path: Path) -> bool:
     with open(train_path, encoding="utf-8") as f:
         lines = f.readlines()
     if lines and '"_curriculum"' in lines[0]:
-        with open(train_path, "w", encoding="utf-8") as f:
-            f.writelines(lines[1:])
+        # Atomic (b241): an in-place rewrite re-opened the exact hole the
+        # b163 exporter closed — a crash mid-write leaves a torn train.jsonl
+        # the next finetune run trains on (then retires the pairs).
+        from app.core.atomic_io import atomic_write_text
+
+        atomic_write_text(train_path, "".join(lines[1:]))
         return True
     return False
 
