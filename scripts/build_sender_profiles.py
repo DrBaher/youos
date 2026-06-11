@@ -110,7 +110,9 @@ _STOPWORDS = frozenset(
         "hi",
     }
 )
-_WORD_RE = re.compile(r"[a-z]{3,}")
+# Unicode-aware (b257): topic extraction over a non-English sender's subject
+# lines produced empty/garbage topics with the ASCII [a-z] pattern.
+_WORD_RE = re.compile(r"[^\W_]{3,}")
 
 
 def extract_email(author: str) -> str | None:
