@@ -21,7 +21,13 @@ ResultType = Literal["document", "chunk", "reply_pair"]
 ScopeType = Literal["all", "documents", "reply_pairs"]
 ModeHint = Literal["work", "personal", "unknown"]
 
-_TOKEN_PATTERN = re.compile(r"[a-z0-9]{2,}")
+# Unicode-aware (b254): the old [a-z0-9] pattern kept only ASCII runs, but
+# the FTS5 tables index with FTS5's unicode tokenizer — Arabic inbound text
+# tokenized to NOTHING (zero exemplars, drafter ran blind) and umlaut words
+# shattered into noise ("Frühstück" → fr/hst/ck). [^\W_] = unicode
+# alphanumerics; FTS5 query barewords accept codepoints >= 0x80, and the
+# query is folded by the same unicode61 tokenizer as the index.
+_TOKEN_PATTERN = re.compile(r"[^\W_]{2,}")
 
 _WORK_SIGNALS = re.compile(
     r"\b(proposal|integration|api|contract|client|invoice|pricing|budget|deadline|"
@@ -1263,7 +1269,8 @@ def _account_email_from_metadata(metadata: dict[str, Any]) -> str | None:
 
 
 def _tokenize(text: str) -> list[str]:
-    return list(dict.fromkeys(_TOKEN_PATTERN.findall(text.lower())))
+    # casefold (not lower) for full unicode case folding (b254).
+    return list(dict.fromkeys(_TOKEN_PATTERN.findall(text.casefold())))
 
 
 def _score_text(query: str, tokens: list[str], text: str) -> float:
