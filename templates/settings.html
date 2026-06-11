@@ -145,6 +145,20 @@
         status.className = "flag-status";
         const ctrl = controlFor(f);
 
+        // Send-frontier flags are CLI/config-file only (b259): the network
+        // config-set path refuses them so a token can't arm sends. Show the
+        // control disabled with a hint instead of letting it 403 on change.
+        if (f.network_locked) {
+          ctrl.el.disabled = true;
+          help.textContent = (f.help || "") + "  (set locally: youos config set " + f.key + " …)";
+          status.className = "flag-status";
+          status.textContent = "CLI only";
+          ctrlWrap.append(ctrl.node, status);
+          row.append(meta, ctrlWrap);
+          wrap.appendChild(row);
+          return;
+        }
+
         ctrl.el.addEventListener("change", () => {
           const value = ctrl.read();
           status.className = "flag-status";
