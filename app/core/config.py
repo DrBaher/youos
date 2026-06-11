@@ -32,7 +32,18 @@ def _load_raw_config(config_path: Path | None = None) -> dict[str, Any]:
     path = config_path or CONFIG_PATH
     if not path.exists():
         return {}
-    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    try:
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as exc:
+        # Deliberately fail CLOSED (b251): degrading to {} would silently
+        # disable PIN auth. save_config keeps the previous version as .bak —
+        # point the operator at it instead of a bare parser traceback.
+        bak = path.with_name(path.name + ".bak")
+        hint = f" The previous version is saved at {bak} — restore it to recover." if bak.exists() else ""
+        raise ValueError(
+            f"{path} is not valid YAML ({exc}); refusing to run with a damaged "
+            f"config (auth and identity settings would be lost).{hint}"
+        ) from exc
 
 
 @lru_cache(maxsize=1)
@@ -474,6 +485,14 @@ def get_account_for_sender(sender: str, config: dict[str, Any] | None = None) ->
 
 def save_config(config: dict[str, Any], config_path: Path | None = None) -> None:
     path = config_path or CONFIG_PATH
+    # Keep the previous version as .bak before replacing (b251). The write
+    # itself is atomic (b240), so this guards against a BAD SAVE or hand-edit
+    # rather than a torn write; the loader stays fail-closed and points here.
+    try:
+        if path.exists():
+            write_secret(path.with_name(path.name + ".bak"), path.read_text(encoding="utf-8"))
+    except OSError:
+        pass  # best-effort backup must never block the save
     # 0o600: youos_config.yaml holds the PBKDF2 PIN hash (a short PIN brute-forces
     # offline in seconds), so it must not be world-readable.
     write_secret(
