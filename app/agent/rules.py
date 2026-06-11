@@ -209,6 +209,17 @@ def validate_rule(raw: Any) -> tuple[bool, str]:
             # Outreach matching runs BEFORE intent classification and before
             # the needs-reply verdict, so these predicates would never fire.
             return False, "'intent'/'cold_outreach' predicates are not supported for outreach_draft rules (they run before classification)"
+        atts = raw.get("attachments")
+        if atts is not None:
+            if isinstance(atts, str):
+                atts = [atts]
+            if not isinstance(atts, list) or not all(isinstance(a, str) and a.strip() for a in atts):
+                return False, "'attachments' must be a file path or a list of file paths"
+            for a in atts:
+                if "," in a:
+                    # The gog --attach flag splits its value on commas; such a
+                    # path can never be passed faithfully to the CLI.
+                    return False, f"attachment path cannot contain a comma: {a!r}"
     if action == "forward":
         dest = str(raw.get("value") or "").strip()
         if not dest:
@@ -239,10 +250,19 @@ def normalize_rule(raw: Any) -> dict[str, Any] | None:
         "action": str(raw["action"]).strip().lower(),
         "value": raw.get("value"),
     }
-    # outreach_draft carries an optional outbound subject line alongside the
-    # body template (other actions have no use for it, so it's dropped there).
-    if norm["action"] == OUTREACH_ACTION and str(raw.get("subject") or "").strip():
-        norm["subject"] = str(raw["subject"]).strip()
+    # outreach_draft carries an optional outbound subject line and optional
+    # attachment paths alongside the body template (other actions have no use
+    # for them, so they're dropped there).
+    if norm["action"] == OUTREACH_ACTION:
+        if str(raw.get("subject") or "").strip():
+            norm["subject"] = str(raw["subject"]).strip()
+        atts = raw.get("attachments")
+        if isinstance(atts, str):
+            atts = [atts]
+        if isinstance(atts, list):
+            cleaned = [str(a).strip() for a in atts if str(a).strip()]
+            if cleaned:
+                norm["attachments"] = cleaned
     return norm
 
 
