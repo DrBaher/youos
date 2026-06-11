@@ -68,26 +68,71 @@ class ReplayResult:
     metrics: dict[str, Any] = field(default_factory=dict)
 
 
+def _hard_skipped_by_triage(r: sqlite3.Row) -> bool:
+    """Would today's needs-reply classifier hard-skip this inbound? (b236)
+
+    The first live run scored receipts/scan notifications the production
+    pipeline would never draft for anymore — the backtest should only measure
+    mail that would actually reach drafting today. Built without headers
+    (reply_pairs doesn't store them), so header-based hard skips can't fire;
+    sender/subject/body-based ones (automation domains, noreply boxes,
+    calendar subjects, service patterns) carry the load.
+    """
+    try:
+        import json as _json
+
+        from app.agent.inbox_fetch import InboxMessage
+        from app.agent.needs_reply import classify
+        from app.core.sender import extract_email
+
+        meta = {}
+        try:
+            meta = _json.loads(r["metadata_json"] or "{}")
+        except Exception:
+            meta = {}
+        author = r["inbound_author"] or ""
+        msg = InboxMessage(
+            message_id=f"replay-{r['id']}",
+            thread_id=r["thread_id"] or f"replay-t-{r['id']}",
+            account=str(meta.get("account_email") or "replay@example.invalid"),
+            sender=author,
+            sender_email=extract_email(author) or author,
+            subject=str(meta.get("subject") or ""),
+            body=r["inbound_text"] or "",
+            headers={},
+        )
+        v = classify(msg)
+        return v.score == 0.0 and not v.needs_reply and not v.surface_for_review
+    except Exception:
+        return False  # never let the filter kill sampling
+
+
 def sample_pairs(
     database_url: str,
     *,
     n: int = 80,
     newest_first: bool = True,
+    triage_filter: bool = True,
 ) -> list[ReplayCase]:
-    """The N most recent usable reply pairs (real human exchange, non-trivial)."""
+    """The N most recent usable reply pairs (real human exchange, non-trivial).
+
+    Excludes quality-demoted pairs (b235 corpus cleanup) and, when
+    ``triage_filter`` is on, inbounds today's classifier would hard-skip.
+    """
     path = database_url.removeprefix("sqlite:///")
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
             """
-            SELECT id, thread_id, inbound_text, reply_text, inbound_author, paired_at
+            SELECT id, thread_id, inbound_text, reply_text, inbound_author, paired_at, metadata_json
             FROM reply_pairs
             WHERE length(inbound_text) >= ? AND length(reply_text) >= ?
+              AND COALESCE(quality_score, 1.0) > 0
             ORDER BY paired_at DESC, id DESC
             LIMIT ?
             """,
-            (_MIN_INBOUND_CHARS, _MIN_REPLY_CHARS, n * 3),
+            (_MIN_INBOUND_CHARS, _MIN_REPLY_CHARS, n * 4),
         ).fetchall()
     finally:
         conn.close()
@@ -96,6 +141,8 @@ def sample_pairs(
     for r in rows:
         author = (r["inbound_author"] or "").lower()
         if any(tok in author for tok in _AUTOMATION_AUTHOR):
+            continue
+        if triage_filter and _hard_skipped_by_triage(r):
             continue
         cases.append(
             ReplayCase(

@@ -1205,8 +1205,14 @@ _OUT_OF_OFFICE = re.compile(
 )
 
 
-def _is_low_quality_reply(text: str) -> bool:
-    """E9: Return True for replies that are too short or purely acknowledgments/OOO."""
+def _is_low_quality_reply(text: str, *, reply_author: str | None = None) -> bool:
+    """E9: Return True for replies that are too short or purely acknowledgments/OOO.
+
+    b235: also drops signature-only "replies" — a forward or empty send whose
+    body is just the user's signature block ("FYI." + name/title/links). The
+    word-count check above can't catch those (a signature is many words), and
+    they poison fine-tuning, retrieval, and eval ground truth at once.
+    """
     stripped = text.strip()
     if len(stripped.split()) < 3:
         return True
@@ -1214,7 +1220,9 @@ def _is_low_quality_reply(text: str) -> bool:
         return True
     if _OUT_OF_OFFICE.search(stripped[:400]):
         return True
-    return False
+    from app.core.pair_quality import signature_only_reply
+
+    return signature_only_reply(stripped, reply_author=reply_author)
 
 
 def _is_forwarded_inbound(message: "NormalizedMessage") -> bool:
@@ -1235,8 +1243,11 @@ def _ingest_thread_reply_pairs(connection: sqlite3.Connection, thread: list[Norm
     for message in thread:
         if message.self_authored:
             if pending_inbound and message.body_text:
-                # E9: skip low-quality replies
-                if not _is_low_quality_reply(message.body_text):
+                # E9 + b235: skip low-quality / signature-only replies
+                if not _is_low_quality_reply(
+                    message.body_text,
+                    reply_author=_display_author(message.sender_name, message.sender_email),
+                ):
                     latest_inbound = pending_inbound[-1]
                     pair = _build_reply_pair(
                         pending_inbound,

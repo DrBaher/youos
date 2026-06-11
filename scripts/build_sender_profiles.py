@@ -186,6 +186,26 @@ def _compute_avg_response_hours(timestamps: list[str]) -> float | None:
     return round(statistics.median(intervals), 1)
 
 
+def _majority_reply_language(reply_texts: list[str | None]) -> str | None:
+    """The language the user actually replies to this sender in (b237).
+
+    Majority vote over real replies (>=20 chars so a bare ack can't vote).
+    Requires >=2 votes AND a strict majority — anything weaker returns None and
+    generation falls back to mirroring the inbound's language. Replay backtest
+    finding: inbound-language mirroring drafted French replies to French
+    automated alerts the user always answers in English.
+    """
+    from collections import Counter
+
+    from app.core.text_utils import detect_language
+
+    votes = [detect_language(t) for t in reply_texts if t and len(t.strip()) >= 20]
+    if len(votes) < 2:
+        return None
+    lang, count = Counter(votes).most_common(1)[0]
+    return lang if count * 2 > len(votes) else None
+
+
 def build_profiles(
     db_path: Path,
     *,
@@ -197,6 +217,12 @@ def build_profiles(
     conn = connect(db_path)  # tuned: 30s busy_timeout + WAL (vs the 5s sqlite3 default)
     conn.row_factory = sqlite3.Row
     try:
+        # Self-heal: reply_language (b237) may predate this instance's last
+        # bootstrap — the builder runs as a nightly subprocess, so it can't
+        # rely on a server restart having migrated the table.
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(sender_profiles)").fetchall()}
+        if "reply_language" not in cols:
+            conn.execute("ALTER TABLE sender_profiles ADD COLUMN reply_language TEXT")
         # Get unique inbound authors
         if sender_email:
             rows = conn.execute(
@@ -231,6 +257,9 @@ def build_profiles(
             first_seen = min(timestamps) if timestamps else None
             last_seen = max(timestamps) if timestamps else None
             avg_response_hours = _compute_avg_response_hours(timestamps)
+            reply_language = _majority_reply_language(
+                [r["reply_text"] for r in pairs]
+            )
 
             # Get subjects for topic extraction
             subject_rows = conn.execute(
@@ -258,6 +287,7 @@ def build_profiles(
                     """UPDATE sender_profiles SET
                         display_name = ?, domain = ?, company = ?, sender_type = ?,
                         reply_count = ?, avg_reply_words = ?, avg_response_hours = ?,
+                        reply_language = ?,
                         first_seen = ?, last_seen = ?,
                         topics_json = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE email = ?""",
@@ -269,6 +299,7 @@ def build_profiles(
                         reply_count,
                         avg_reply_words,
                         avg_response_hours,
+                        reply_language,
                         first_seen,
                         last_seen,
                         json.dumps(topics),
@@ -280,8 +311,9 @@ def build_profiles(
                 conn.execute(
                     """INSERT INTO sender_profiles
                         (email, display_name, domain, company, sender_type,
-                         reply_count, avg_reply_words, avg_response_hours, first_seen, last_seen, topics_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                         reply_count, avg_reply_words, avg_response_hours, reply_language,
+                         first_seen, last_seen, topics_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         email,
                         display_name,
@@ -291,6 +323,7 @@ def build_profiles(
                         reply_count,
                         avg_reply_words,
                         avg_response_hours,
+                        reply_language,
                         first_seen,
                         last_seen,
                         json.dumps(topics),
