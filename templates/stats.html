@@ -423,10 +423,14 @@ body {
         document.getElementById('pipelineCard').style.display = 'block';
         document.getElementById('pipelineRunAt').textContent = d.pipeline_last_run.run_at || 'N/A';
         var ps = d.pipeline_last_run.status || 'unknown';
-        var badgeColor = ps === 'ok' ? '#00c4a7' : (ps === 'partial' ? '#f0ad4e' : '#d9534f');
+        var badgeColor = ps === 'ok' ? '#00c4a7' : (ps === 'partial' || ps === 'ok_with_warnings' ? '#f0ad4e' : '#d9534f');
         document.getElementById('pipelineStatus').innerHTML =
           '<span style="color:' + badgeColor + '; font-weight:700;">' + ps.toUpperCase() + '</span>';
         var errDiv = document.getElementById('pipelineErrors');
+        if (d.pipeline_last_run.warning_steps && d.pipeline_last_run.warning_steps.length > 0) {
+          errDiv.innerHTML = '<div style="color:#f0ad4e; font-size:0.8rem; margin-top:0.5rem;">\u26a0 steps with recorded errors: ' +
+            YouOS.esc(d.pipeline_last_run.warning_steps.join(', ')) + '</div>';
+        }
         if (d.pipeline_last_run.errors && d.pipeline_last_run.errors.length > 0) {
           var errHtml = '<div style="margin-top:0.5rem;">';
           for (var ei = 0; ei < d.pipeline_last_run.errors.length; ei++) {
