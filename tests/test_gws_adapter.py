@@ -330,11 +330,17 @@ def test_resolve_gws_credentials_refuses_unmapped_on_configured_map():
         _resolve_gws_credentials_file("other@x.com", {"work@x.com": "/creds/work.json"})
 
 
-def test_resolve_gws_credentials_ambient_when_no_map():
+def test_resolve_gws_credentials_ambient_when_no_map(monkeypatch):
+    import app.ingestion.adapters as adapters
     from app.ingestion.adapters import _resolve_gws_credentials_file
 
+    # Single-account: no map → ambient (unchanged). Multi-account refusal and
+    # the empty-account-with-map refusal are pinned in
+    # tests/test_identity_binding_parity_b245.py (b245).
+    monkeypatch.setattr(adapters, "_multiple_ingestion_accounts", lambda: False)
     assert _resolve_gws_credentials_file("a@x.com", {}) is None      # no map → ambient
-    assert _resolve_gws_credentials_file(None, {"a@x.com": "/c"}) is None  # no account → ambient
+    with pytest.raises(ValueError):  # b245: no account + configured map → refuse
+        _resolve_gws_credentials_file(None, {"a@x.com": "/c"})
 
 
 def test_run_json_refuses_unmapped_account_on_configured_map(monkeypatch):
