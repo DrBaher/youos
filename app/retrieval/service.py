@@ -68,6 +68,12 @@ class RetrievalRequest:
     intent_hint: str | None = None
     intent_hint_2: str | None = None
     thread_id: str | None = None
+    # Holdout exclusion (b234): drop these from every result list BEFORE
+    # ranking. Used by the inbox-replay backtest so a historical inbound can't
+    # retrieve its own stored answer (the pair itself, or any document/chunk of
+    # the same thread — those contain the user's real reply verbatim).
+    exclude_reply_pair_ids: tuple[int, ...] = ()
+    exclude_thread_ids: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -281,6 +287,23 @@ class RetrievalService:
                     reply_pairs = self._retrieve_reply_pairs_fts(connection, query=query, tokens=tokens, request=request)
                 else:
                     reply_pairs = self._retrieve_reply_pairs_legacy(connection, query=query, tokens=tokens, request=request)
+
+            # Holdout exclusion (b234) — before reranking/boosting so an
+            # excluded match can't influence ordering either. An identical
+            # inbound ranks its own stored pair top-1, so without this a
+            # replay backtest would hand the model the answer.
+            if request.exclude_reply_pair_ids or request.exclude_thread_ids:
+                _xp = set(request.exclude_reply_pair_ids)
+                _xt = {t for t in request.exclude_thread_ids if t}
+
+                def _kept(m: RetrievalMatch) -> bool:
+                    if m.reply_pair_id is not None and m.reply_pair_id in _xp:
+                        return False
+                    return not (m.thread_id and m.thread_id in _xt)
+
+                documents = [m for m in documents if _kept(m)]
+                chunks = [m for m in chunks if _kept(m)]
+                reply_pairs = [m for m in reply_pairs if _kept(m)]
 
             # Hybrid semantic re-ranking
             semantic_enabled = False
