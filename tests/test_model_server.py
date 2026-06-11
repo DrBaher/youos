@@ -291,7 +291,7 @@ def test_lifespan_prewarms_and_stops_server():
     # the async lifespan is awkward to drive in a unit test).
     src = (Path(__file__).resolve().parents[1] / "app" / "main.py").read_text()
     assert "model_server.ensure_running" in src  # pre-warm
-    assert "model_server.stop()" in src          # clean shutdown
+    assert "model_server.shutdown()" in src      # clean shutdown + spawn refusal (b242)
 
 
 def test_ensure_running_skipped_under_pytest(monkeypatch):
