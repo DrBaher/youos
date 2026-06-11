@@ -468,6 +468,9 @@ def _gog_docs_cat(*, account: str, doc_id: str, max_bytes: int, all_tabs: bool) 
 
 
 def _run_gog_json(command: list[str]) -> Any:
+    from app.ingestion.adapters import require_account_argv
+
+    require_account_argv(command)
     try:
         completed = subprocess.run(
             command,
@@ -488,6 +491,9 @@ def _run_gog_json(command: list[str]) -> Any:
 
 
 def _run_gog_text(command: list[str]) -> str:
+    from app.ingestion.adapters import require_account_argv
+
+    require_account_argv(command)
     try:
         completed = subprocess.run(
             command,

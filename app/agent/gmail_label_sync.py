@@ -215,6 +215,9 @@ def _gog_search_labelled(*, account: str, label: str) -> list[dict]:
         "--max", "200",       # bound the per-sync workload
     ]
     try:
+        from app.ingestion.adapters import require_account_argv
+
+        require_account_argv(cmd)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=GOG_TIMEOUT_SECONDS)
     except FileNotFoundError as exc:
         raise RuntimeError("gog CLI not on PATH; cannot sync Gmail labels") from exc
@@ -252,6 +255,9 @@ def _gog_modify_remove_label(*, account: str, message_id: str, label: str) -> No
         "--remove", label,
         "--json", "--no-input",
     ]
+    from app.ingestion.adapters import require_account_argv
+
+    require_account_argv(cmd)
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=GOG_TIMEOUT_SECONDS)
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()

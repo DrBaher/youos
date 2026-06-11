@@ -165,6 +165,26 @@ def run_doctor_checks_full() -> tuple[bool, list[str], list[str]]:
     if not models_dir.exists() or not any(models_dir.iterdir()):
         warnings.append(f"{models_dir} is empty")
 
+    # Warning: gws backend + multiple accounts but no per-account credentials
+    # map — every gws call now REFUSES (b245) rather than silently reading the
+    # ambient mailbox for all accounts; surface the misconfig here too.
+    try:
+        from app.core.config import get_ingestion_accounts, load_config
+
+        cfg = load_config() or {}
+        ingestion = cfg.get("ingestion", {}) if isinstance(cfg, dict) else {}
+        backend = str(ingestion.get("backend", "")) if isinstance(ingestion, dict) else ""
+        creds = ingestion.get("gws_credentials", {}) if isinstance(ingestion, dict) else {}
+        accounts = [a for a in get_ingestion_accounts() if str(a).strip()]
+        if backend == "gws" and len(accounts) > 1 and not creds:
+            warnings.append(
+                f"ingestion.backend=gws with {len(accounts)} accounts but no "
+                "ingestion.gws_credentials map — gws calls will refuse (one "
+                "credentials file per account is required)"
+            )
+    except Exception:
+        pass
+
     # Warning: drafts are silently NOT using a LoRA adapter. The most common
     # silent failure — a user believes drafts are personalized while they run on
     # the base model (no adapter trained) or can't run locally at all (mlx_lm

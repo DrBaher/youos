@@ -322,6 +322,9 @@ def _fetch_for_digest(account: str, query: str, limit: int) -> list[dict[str, st
         # `--` end-of-flags so a negation query ("-from:x") isn't read as a flag.
         "--", query,
     ]
+    from app.ingestion.adapters import require_account_argv
+
+    require_account_argv(cmd)
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
         raise RuntimeError(f"gog search exit {result.returncode}: {(result.stderr or '').strip()[:200]}")
