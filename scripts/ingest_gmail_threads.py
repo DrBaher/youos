@@ -22,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--db-path",
         type=Path,
         default=None,
-        help="SQLite database path. Defaults to YOUOS_DATABASE_URL.",
+        help="SQLite database path. Defaults to the instance database (YOUOS_DATA_DIR/var/youos.db, or YOUOS_DATABASE_URL when set).",
     )
     parser.add_argument(
         "--user-email",
