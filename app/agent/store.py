@@ -402,6 +402,10 @@ PRUNE_UNMINED_GRACE_FACTOR = 4
 # gradual auto-send rollout): pruning them silently un-vetted relationships.
 # Real confirmed sends are few; they are kept indefinitely (b244).
 _NOT_TRUST_EVIDENCE = "NOT (COALESCE(send_state, '') = 'sent' OR (status = 'sent' AND send_state IS NULL))"
+# Don't VACUUM (whole-file rewrite, blocks writers) for less than ~1MB of
+# reclaimable pages (256 x 4KB default page size); the freelist carries over
+# to the next prune (b251).
+VACUUM_MIN_FREELIST_PAGES = 256
 
 
 def prune_agent_tables(database_url: str, *, older_than_days: int = PRUNE_DEFAULT_DAYS) -> dict[str, int]:
@@ -485,6 +489,20 @@ def prune_agent_tables(database_url: str, *, older_than_days: int = PRUNE_DEFAUL
 
             db_path = resolve_sqlite_path(database_url)
             with snapshot_lock(db_path), closing(_connect(database_url)) as conn:
+                # Freelist gate (b251): VACUUM rewrites the WHOLE file and
+                # blocks writers for its duration — don't pay that nightly to
+                # reclaim a few pages. Skip when the freed space is small;
+                # the freelist carries over, so a later prune reclaims it.
+                free = conn.execute("PRAGMA freelist_count").fetchone()[0]
+                if free < VACUUM_MIN_FREELIST_PAGES:
+                    import logging
+
+                    logging.getLogger(__name__).info(
+                        "store-prune: skipping VACUUM (%d free pages < %d threshold)",
+                        free,
+                        VACUUM_MIN_FREELIST_PAGES,
+                    )
+                    return removed
                 conn.execute("VACUUM")
         except (sqlite3.OperationalError, TimeoutError) as exc:
             removed["vacuum_ok"] = 0
