@@ -619,6 +619,9 @@ def _run_gog_json(command: list[str]) -> Any:
     propagating. Without this, a single rate-limited search page would
     abort the whole ingestion run on the first 429 of a long sync.
     """
+    from app.ingestion.adapters import require_account_argv
+
+    require_account_argv(command)
     last_error: str = ""
     for _attempt, backoff in enumerate((*_GOG_BACKOFF_SECONDS, None), start=1):
         try:
