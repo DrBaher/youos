@@ -502,6 +502,7 @@ def prune_agent_tables(database_url: str, *, older_than_days: int = PRUNE_DEFAUL
                         free,
                         VACUUM_MIN_FREELIST_PAGES,
                     )
+                    removed["vacuum_skipped_small"] = 1  # don't report "vacuumed" (b256)
                     return removed
                 conn.execute("VACUUM")
         except (sqlite3.OperationalError, TimeoutError) as exc:

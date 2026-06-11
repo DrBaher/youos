@@ -227,7 +227,12 @@ def _snapshot_lock(db_path: Path):
 def snapshot_lock(db_path: Path):
     """Public alias of the snapshot writers' lock, for OTHER whole-DB
     operations (schema bootstrap, retention VACUUM) that must not interleave
-    with a snapshot create/restore/prune (b243)."""
+    with a snapshot create/restore/prune (b243).
+
+    NOT re-entrant, even in-process (flock conflicts across open file
+    descriptions): calling create_snapshot/restore_snapshot/prune_snapshots/
+    bootstrap_database while already holding this lock burns the full acquire
+    deadline and then raises TimeoutError (b256)."""
     with _snapshot_lock(db_path):
         yield
 

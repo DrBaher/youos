@@ -118,6 +118,10 @@ def data_safety_snapshots_create(request: Request, tier: str = "manual") -> dict
         snapshot_path = create_snapshot(db_path, tier=tier)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        # b256: the bounded snapshot lock / backup deadline (b243) raised —
+        # surface the reason instead of a detail-free 500.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"status": "ok", "snapshot_path": str(snapshot_path)}
 
 
@@ -136,6 +140,8 @@ def data_safety_snapshots_restore(body: SnapshotRestoreBody, request: Request) -
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {
         "status": "ok",
         "restored_to_db": str(db_path),
