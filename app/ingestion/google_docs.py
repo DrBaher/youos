@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import subprocess
@@ -19,6 +20,8 @@ from app.ingestion.run_log import (
     finish_ingest_run,
     start_ingest_run,
 )
+
+logger = logging.getLogger(__name__)
 
 SUPPORTED_IMPORT_FORMAT = """
 Supported Google Docs import inputs:
@@ -280,7 +283,14 @@ def _load_doc_payloads(
         json_files = sorted(path for path in export_path.rglob("*.json") if path.is_file())
         payloads: list[dict[str, Any]] = []
         for path in json_files:
-            payloads.extend(_load_doc_payload_file(path))
+            # One corrupt/invalid .json (e.g. a torn cache file) must not sink
+            # the whole directory import — skip with a warning, like the gmail
+            # importer (b248; gmail got this in b129, docs never did, so one
+            # bad file poisoned every subsequent dir import until deleted).
+            try:
+                payloads.extend(_load_doc_payload_file(path))
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
+                logger.warning("docs ingest: skipping unreadable file %s: %s", path, exc)
         return LoadDocPayloadsResult(
             payloads=payloads,
             import_detail=str(export_path),
