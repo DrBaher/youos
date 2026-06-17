@@ -79,6 +79,54 @@ def test_log_draft_event_writes_row_and_self_heals_table(tmp_path, monkeypatch):
     assert row[6] == "qwen2.5-1.5b-base"
 
 
+def test_log_draft_event_persists_thread_id(tmp_path, monkeypatch):
+    """b269: thread_id is the stable key joining a logged draft to the user's
+    actual sent reply (reply_pairs.thread_id). It must round-trip."""
+    monkeypatch.setattr("app.core.config.load_config", lambda *a, **k: {})
+    url, path = _db_url(tmp_path)
+    assert _log_draft_event(url, **_sample(thread_id="thread-abc123")) is True
+    conn = sqlite3.connect(path)
+    try:
+        val = conn.execute("SELECT thread_id FROM draft_events").fetchone()[0]
+    finally:
+        conn.close()
+    assert val == "thread-abc123"
+
+
+def test_log_draft_event_self_heals_thread_id_on_legacy_table(tmp_path, monkeypatch):
+    """An instance whose draft_events predates thread_id must gain the column on
+    the next write (CREATE TABLE IF NOT EXISTS can't add it)."""
+    monkeypatch.setattr("app.core.config.load_config", lambda *a, **k: {})
+    url, path = _db_url(tmp_path)
+    # Simulate a legacy table: the exact pre-b269 shape — every column except
+    # thread_id (the only thing the self-heal should add).
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(
+            """CREATE TABLE draft_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                inbound_text TEXT NOT NULL, generated_draft TEXT NOT NULL,
+                account_email TEXT, sender TEXT, sender_type TEXT,
+                detected_mode TEXT, intent TEXT, confidence TEXT,
+                confidence_reason TEXT, model_used TEXT, retrieval_method TEXT,
+                exemplar_ids TEXT NOT NULL DEFAULT '[]', length_flag TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    assert _log_draft_event(url, **_sample(thread_id="t-legacy")) is True
+    conn = sqlite3.connect(path)
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(draft_events)").fetchall()}
+        val = conn.execute("SELECT thread_id FROM draft_events").fetchone()[0]
+    finally:
+        conn.close()
+    assert "thread_id" in cols
+    assert val == "t-legacy"
+
+
 def test_log_draft_event_skips_when_disabled(tmp_path, monkeypatch):
     monkeypatch.setattr("app.core.config.load_config", lambda *a, **k: {"generation": {"log_drafts": False}})
     url, path = _db_url(tmp_path)
@@ -125,4 +173,21 @@ def test_migration_creates_draft_events_table():
         cols = {r[1] for r in conn.execute("PRAGMA table_info(draft_events)").fetchall()}
     finally:
         conn.close()
-    assert {"inbound_text", "exemplar_ids", "intent", "sender_type", "length_flag"} <= cols
+    assert {"inbound_text", "exemplar_ids", "intent", "sender_type", "length_flag", "thread_id"} <= cols
+
+
+def test_migration_self_heals_thread_id_on_legacy_table():
+    """_migrate_draft_events adds thread_id to a table created before b269."""
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute(
+            "CREATE TABLE draft_events (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "inbound_text TEXT NOT NULL, generated_draft TEXT NOT NULL, "
+            "exemplar_ids TEXT NOT NULL DEFAULT '[]', "
+            "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+        _migrate_draft_events(conn)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(draft_events)").fetchall()}
+    finally:
+        conn.close()
+    assert "thread_id" in cols

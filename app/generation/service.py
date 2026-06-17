@@ -1413,6 +1413,7 @@ def _log_draft_event(
     retrieval_method: str | None,
     exemplar_ids: list[str],
     length_flag: str | None,
+    thread_id: str | None = None,
 ) -> bool:
     """Append one row to ``draft_events``. Never raises — logging a draft must
     not break drafting. Returns True if a row was written.
@@ -1434,19 +1435,25 @@ def _log_draft_event(
                     detected_mode TEXT, intent TEXT, confidence TEXT,
                     confidence_reason TEXT, model_used TEXT, retrieval_method TEXT,
                     exemplar_ids TEXT NOT NULL DEFAULT '[]', length_flag TEXT,
+                    thread_id TEXT,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )"""
             )
+            # b269: self-heal the join key on instances whose table predates it
+            # (CREATE TABLE IF NOT EXISTS won't add a column to an existing table).
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(draft_events)").fetchall()}
+            if "thread_id" not in cols:
+                conn.execute("ALTER TABLE draft_events ADD COLUMN thread_id TEXT")
             conn.execute(
                 """INSERT INTO draft_events
                    (inbound_text, generated_draft, account_email, sender, sender_type,
                     detected_mode, intent, confidence, confidence_reason, model_used,
-                    retrieval_method, exemplar_ids, length_flag)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    retrieval_method, exemplar_ids, length_flag, thread_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     inbound_text, draft, account_email, sender, sender_type, detected_mode,
                     intent, confidence, confidence_reason, model_used, retrieval_method,
-                    json.dumps([str(i) for i in (exemplar_ids or [])]), length_flag,
+                    json.dumps([str(i) for i in (exemplar_ids or [])]), length_flag, thread_id,
                 ),
             )
             conn.commit()
@@ -3338,6 +3345,7 @@ def generate_draft(
             retrieval_method=retrieval_response.retrieval_method,
             exemplar_ids=selected_ids,
             length_flag=length_flag,
+            thread_id=request.thread_id,
         )
 
     # Per-draft quality: how good is THIS draft (voice + structure, collapsed
