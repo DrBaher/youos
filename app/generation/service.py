@@ -801,6 +801,24 @@ _COURTESY_RULE = (
     "over-apologizing — keep your usual direct, concise register."
 )
 
+# Anti-over-commitment (b277). The local model freely invents firm commitments —
+# "I'll send it over tomorrow", "it's done", "I'll have it ready by Friday" — that
+# the user never made and can't guarantee. On the live replay backtest this was
+# the single biggest issue (over_commitment ~25% of cases) and a top driver of the
+# high rewrite distance: the user then edits "tomorrow" down to "probably next
+# week" or strikes the promise entirely. Targets FUTURE promises specifically —
+# distinct from the b179 grounding rule (present facts) and the verify-time
+# completed-state check. Phrased conditionally so it only bites replies that
+# actually involve a commitment; a normal informational reply is unaffected, and
+# "don't over-hedge" guards against tipping drafts into wishy-washy.
+_COMMITMENT_RULE = (
+    "Do not invent commitments. If a reply would promise a specific date, "
+    "deadline, turnaround, or deliverable that the sender did not propose and you "
+    "cannot be certain of, hedge or defer instead of stating it firmly — prefer "
+    "\"I'll follow up\", \"let me check and get back to you\", or \"I'll aim to\" "
+    "over \"I'll send it tomorrow\" or \"it's done\". Keep it brief; don't over-hedge."
+)
+
 # Language mirroring (b183). A draft must answer in the SAME language as the
 # inbound — a German email gets a German reply, not an English one. In a live
 # demo this silently regressed: the b173 chat refactor kept a language block but
@@ -1669,6 +1687,8 @@ def _assemble_system_text(
 
     courtesy_block = f"\n{_COURTESY_RULE}\n"
 
+    commitment_block = f"\n{_COMMITMENT_RULE}\n"
+
     style_hint = ""
     if include_exemplar_hint:
         style_hint = (
@@ -1686,6 +1706,7 @@ def _assemble_system_text(
         f"{language_block}"
         f"{grounding_block}"
         f"{courtesy_block}"
+        f"{commitment_block}"
         f"{style_hint}"
         f"\n"
         f"Draft a reply to the inbound message below in your style.\n"
@@ -1830,6 +1851,7 @@ def assemble_prompt(
         grounding_block = f"\n[GROUNDING] {_GROUNDING_RULE}\n"
 
     courtesy_block = f"\n[COURTESY] {_COURTESY_RULE}\n"
+    commitment_block = f"\n[COMMITMENT] {_COMMITMENT_RULE}\n"
 
     result = (
         f"[SYSTEM]\n"
@@ -1842,6 +1864,7 @@ def assemble_prompt(
         f"{language_block}"
         f"{grounding_block}"
         f"{courtesy_block}"
+        f"{commitment_block}"
         f"\n"
         f"[EXEMPLARS — {n} similar past replies]\n"
         f"{exemplars_text}\n"
