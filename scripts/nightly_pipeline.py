@@ -1020,11 +1020,62 @@ def should_skip_finetune(db_path: Path) -> tuple[bool, str]:
     return False, ""
 
 
+# Skip a STALLED autoresearch loop (b278). The loop mutates triage/retrieval
+# surfaces but scores a draft-quality golden composite those surfaces barely
+# touch — on baheros it kept 0 of 160 iterations with the composite pinned at
+# 0.4167 every night. Detect a run of completed sweeps that each kept nothing AND
+# never moved the composite, and skip rather than burn ~3 min/night walking in
+# place. Re-check every _RECHECK_DAYS so a corpus/surface change can revive it.
+_AUTORESEARCH_INERT_RUNS = 3
+_AUTORESEARCH_RECHECK_DAYS = 14
+
+
+def _autoresearch_is_inert(db_path: Path) -> tuple[bool, str]:
+    """True (+reason) when the last few completed sweeps each kept ZERO
+    improvements — a stalled loop not worth re-running (whether the surfaces are
+    structurally disconnected from the composite, or the config is already at a
+    local optimum). Conservative: needs ``_AUTORESEARCH_INERT_RUNS`` of history,
+    and forces a re-check every ``_AUTORESEARCH_RECHECK_DAYS`` so a corpus/surface
+    change can revive it rather than leaving it off forever."""
+    if not db_path.exists():
+        return False, ""
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT run_tag, MAX(created_ts) AS ts, COALESCE(SUM(kept), 0) AS kept "
+            "FROM autoresearch_runs GROUP BY run_tag ORDER BY ts DESC LIMIT ?",
+            (_AUTORESEARCH_INERT_RUNS,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return False, ""  # table absent → never ran; let it run
+    finally:
+        conn.close()
+    if len(rows) < _AUTORESEARCH_INERT_RUNS:
+        return False, ""  # not enough history to call it stalled
+    latest_ts = rows[0][1]
+    if latest_ts:  # periodic re-check: if the most recent sweep is old, run once
+        try:
+            last = datetime.fromisoformat(str(latest_ts).replace("Z", "+00:00"))
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            if (datetime.now(timezone.utc) - last).days >= _AUTORESEARCH_RECHECK_DAYS:
+                return False, ""
+        except (ValueError, TypeError):
+            pass
+    if all(int(r[2] or 0) == 0 for r in rows):
+        return True, (
+            f"[autoresearch] Skipping — stalled: the last {_AUTORESEARCH_INERT_RUNS} sweeps kept 0 "
+            f"improvements (mutation surfaces aren't moving the draft-quality composite). "
+            f"Re-checks every {_AUTORESEARCH_RECHECK_DAYS}d."
+        )
+    return False, ""
+
+
 def should_skip_autoresearch(db_path: Path) -> tuple[bool, str]:
     n = _count_new_feedback_since_last_run(db_path)
     if n < 5:
         return True, f"[autoresearch] Skipping — only {n} new pairs (need >= 5)"
-    return False, ""
+    return _autoresearch_is_inert(db_path)
 
 
 def should_skip_embeddings(db_path: Path) -> tuple[bool, str]:
