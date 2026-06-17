@@ -1,6 +1,7 @@
 """Tests for smart pipeline skip gates (Item 7)."""
 
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 from scripts.nightly_pipeline import (
     should_skip_autoresearch,
@@ -8,6 +9,28 @@ from scripts.nightly_pipeline import (
     should_skip_embeddings,
     should_skip_finetune,
 )
+
+
+def _add_autoresearch_runs(db, runs):
+    """runs: list of (run_tag, kept, created_ts) tuples."""
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS autoresearch_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "run_tag TEXT, iteration INTEGER, surface_name TEXT, mutation_desc TEXT, "
+        "baseline_composite REAL, candidate_composite REAL, outcome TEXT, kept INTEGER, created_ts TEXT)"
+    )
+    for tag, kept, ts in runs:
+        conn.execute(
+            "INSERT INTO autoresearch_runs (run_tag, kept, created_ts, baseline_composite, candidate_composite) "
+            "VALUES (?, ?, ?, 0.4, 0.4)",
+            (tag, kept, ts),
+        )
+    conn.commit()
+    conn.close()
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _create_db(tmp_path, *, pairs=0, feedback=0, null_embeddings=0, reply_pair_null=0, reply_pair_embedded=0):
@@ -85,6 +108,40 @@ def test_no_skip_autoresearch_enough_pairs(tmp_path):
     db = _create_db(tmp_path, feedback=10)
     skip, _ = should_skip_autoresearch(db)
     assert skip is False
+
+
+def test_skip_autoresearch_when_stalled(tmp_path):
+    """b278: the last 3 sweeps kept 0 improvements -> inert, skip."""
+    db = _create_db(tmp_path, feedback=10)
+    _add_autoresearch_runs(db, [("r1", 0, _now()), ("r2", 0, _now()), ("r3", 0, _now())])
+    skip, msg = should_skip_autoresearch(db)
+    assert skip is True
+    assert "stalled" in msg
+
+
+def test_no_skip_autoresearch_when_recent_improvement(tmp_path):
+    """A kept improvement in the recent window means the loop is live."""
+    db = _create_db(tmp_path, feedback=10)
+    _add_autoresearch_runs(db, [("r1", 1, _now()), ("r2", 0, _now()), ("r3", 0, _now())])
+    skip, _ = should_skip_autoresearch(db)
+    assert skip is False
+
+
+def test_no_skip_autoresearch_insufficient_history(tmp_path):
+    """Fewer than the required run history -> don't call it stalled yet."""
+    db = _create_db(tmp_path, feedback=10)
+    _add_autoresearch_runs(db, [("r1", 0, _now()), ("r2", 0, _now())])
+    skip, _ = should_skip_autoresearch(db)
+    assert skip is False
+
+
+def test_autoresearch_rechecks_after_stale_period(tmp_path):
+    """Even when stalled, force a periodic re-check so it can't stay off forever."""
+    db = _create_db(tmp_path, feedback=10)
+    old = (datetime.now(timezone.utc) - timedelta(days=20)).strftime("%Y-%m-%d %H:%M:%S")
+    _add_autoresearch_runs(db, [("r1", 0, old), ("r2", 0, old), ("r3", 0, old)])
+    skip, _ = should_skip_autoresearch(db)
+    assert skip is False  # > 14 days since the last sweep -> let it run again
 
 
 def test_skip_embeddings_all_indexed(tmp_path):
