@@ -45,6 +45,22 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "help": "Record each draft's conditions so the nightly can learn from them.",
     },
     {
+        "key": "generation.abstain.min_quality",
+        "label": "Draft-abstain quality floor",
+        "type": "float",
+        "default": 0.5,
+        "min": 0.0,
+        "max": 1.0,
+        "help": (
+            "On the autonomous sweep, withhold a draft whose quality score "
+            "(voice + structure; empty/fallback ~0.1) is below this and surface "
+            "the email for review with no draft. Lower = offer more mediocre "
+            "drafts you can edit (higher recall); higher = withhold more. "
+            "Clamped 0.0–1.0. Interactive /draft always drafts; separate from the "
+            "auto_push quality floor and never affects the never-send path."
+        ),
+    },
+    {
         "key": "autoresearch.draft_quality_weighting",
         "label": "Draft-quality autoresearch weighting",
         "type": "bool",
