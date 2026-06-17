@@ -45,6 +45,19 @@ AUTOMATION_DOMAIN_PAT = re.compile(
     re.IGNORECASE,
 )
 
+# Google's own system mailboxes. ``@google.com`` is human-tended in general
+# (real Googlers mail from it), so the AUTOMATION_DOMAIN list can't blanket the
+# domain — match only the machine local-parts. From a baheros queue review
+# (2026-06): the agent drafted replies to Gemini meeting-notes
+# (``gemini-notes@``), Drive share notices (``drive-shares-dm-noreply@``) and
+# calendar notifications (``calendar-notification@``). Real people at google.com
+# use ``first@google.com``, never these. Hard-skip.
+GOOGLE_SYSTEM_MAILBOX_PAT = re.compile(
+    r"\b(?:gemini-notes|calendar-notification|drive-shares[\w-]*|docs-noreply|"
+    r"[\w-]*-noreply)@google\.com\b",
+    re.IGNORECASE,
+)
+
 # Subject patterns specific to service/CI/notification mail. Hard-skip.
 # `[Org/Repo]` prefixes (GitHub, GitLab) and `<X> failed/succeeded` runs.
 SERVICE_SUBJECT_PAT = re.compile(
@@ -454,6 +467,8 @@ def classify(
         return NeedsReplyVerdict(False, 0.0, [f"mailer-daemon/bounce ({msg.sender!r})"])
     if msg.sender and AUTOMATION_DOMAIN_PAT.search(msg.sender):
         return NeedsReplyVerdict(False, 0.0, [f"automation domain ({msg.sender!r})"])
+    if msg.sender_email and GOOGLE_SYSTEM_MAILBOX_PAT.search(msg.sender_email):
+        return NeedsReplyVerdict(False, 0.0, [f"google system mailbox ({msg.sender_email})"])
     if msg.subject and SERVICE_SUBJECT_PAT.search(msg.subject):
         return NeedsReplyVerdict(False, 0.0, [f"service subject pattern ({msg.subject!r})"])
     # Calendar invites / invite responses — handled in the calendar UI, never by
