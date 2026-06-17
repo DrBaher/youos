@@ -120,6 +120,48 @@ def test_fit_from_database_uses_verdicts(tmp_path):
     assert cal.probability(0.3) < cal.probability(0.9)
 
 
+def test_fit_from_database_counts_replied_anywhere_as_positive(tmp_path):
+    """b271 signal: a queued row the user actually replied to (reply_pairs
+    inbound_message_ids) is positive even if still 'pending' in YouOS. Without it
+    these are excluded and the calibrator learns a falsely-low P."""
+    import json
+
+    db = tmp_path / "t.db"
+    conn = sqlite3.connect(db)
+    _migrate_agent_pending_drafts(conn)
+    conn.execute("CREATE TABLE reply_pairs (id INTEGER PRIMARY KEY, metadata_json TEXT)")
+
+    def insert(score, status, mid, reason=None):
+        conn.execute(
+            "INSERT INTO agent_pending_drafts "
+            "(message_id, thread_id, account, needs_reply_score, reasons_json, "
+            " cold_outreach, tier, status, dismissal_reason) "
+            "VALUES (?, ?, 'a@x.com', ?, '[]', 0, 'draft', ?, ?)",
+            (mid, f"t{mid}", score, status, reason),
+        )
+
+    # 30 pending high-score rows the user actually replied to (outside YouOS) +
+    # 30 low-score noise dismissals. Without the reply signal the 30 pending rows
+    # are excluded → only negatives remain → degenerate. With it they're positive.
+    for i in range(30):
+        insert(0.8, "pending", f"hi{i}")
+        conn.execute(
+            "INSERT INTO reply_pairs (metadata_json) VALUES (?)",
+            (json.dumps({"inbound_message_ids": [f"hi{i}"]}),),
+        )
+    for i in range(30):
+        insert(0.3, "dismissed", f"lo{i}", "noise")
+    conn.commit()
+    conn.close()
+
+    cal = fit_from_database(f"sqlite:///{db}", days=365, min_samples=10)
+    assert cal is not None
+    assert cal.n_samples == 60  # the 30 replied 'pending' rows are now labelable
+    # The replied high-score rows pull P(0.8) well above the noise P(0.3).
+    assert cal.probability(0.8) > 0.5
+    assert cal.probability(0.8) > cal.probability(0.3)
+
+
 def test_fit_from_database_none_when_no_decided_rows(tmp_path):
     db = tmp_path / "t.db"
     conn = sqlite3.connect(db)
