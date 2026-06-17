@@ -279,10 +279,18 @@ def _migrate_draft_events(connection: sqlite3.Connection) -> None:
             retrieval_method TEXT,
             exemplar_ids TEXT NOT NULL DEFAULT '[]',
             length_flag TEXT,
+            thread_id TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # b269: thread_id is the stable key that joins a logged draft to the user's
+    # actual sent reply (reply_pairs.thread_id) — the inbound_text join only hit
+    # ~1% of rows. Self-heal for instances whose draft_events predates the column.
+    cols = {row[1] for row in connection.execute("PRAGMA table_info(draft_events)").fetchall()}
+    if "thread_id" not in cols:
+        connection.execute("ALTER TABLE draft_events ADD COLUMN thread_id TEXT")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_draft_events_created ON draft_events(created_at)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_draft_events_thread ON draft_events(thread_id)")
 
 
 def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
