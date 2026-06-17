@@ -31,6 +31,20 @@ def test_list_flags_defaults_on_empty_config():
     assert by_key["model.server.enabled"]["value"] is True
 
 
+def test_abstain_min_quality_is_whitelisted_and_clamped(tmp_path):
+    """b276: the autonomous draft-abstain floor must be a first-class flag so it's
+    settable via the config API / Settings, not only by hand-editing YAML. The
+    key MUST match what generation._abstain_config reads."""
+    by_key = {f["key"]: f for f in ff.list_flags(config={})}
+    assert "generation.abstain.min_quality" in by_key
+    assert by_key["generation.abstain.min_quality"]["value"] == 0.5  # product default
+    cfg = tmp_path / "youos_config.yaml"
+    # Set + clamp to range.
+    assert ff.set_flag("generation.abstain.min_quality", "0.25", config_path=cfg) == 0.25
+    assert load_config(cfg)["generation"]["abstain"]["min_quality"] == 0.25
+    assert ff.set_flag("generation.abstain.min_quality", "1.7", config_path=cfg) == 1.0  # clamped
+
+
 def test_get_flag_from_config_and_default():
     cfg = {"generation": {"multi_candidate": {"enabled": True}}}
     assert ff.get_flag("generation.multi_candidate.enabled", config=cfg) is True
