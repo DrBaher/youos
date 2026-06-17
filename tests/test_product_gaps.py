@@ -8,6 +8,32 @@ from unittest.mock import patch
 
 from app.core.text_utils import detect_language
 
+
+def _registered_paths(app) -> set[str]:
+    """Every registered path, version-robustly.
+
+    Newer (unpinned) Starlette wraps included routers (e.g. ``_IncludedRouter``)
+    as ``app.routes`` entries with no top-level ``.path`` and no descendable
+    ``.routes`` — so neither ``r.path`` nor a naive recursion finds the mounted
+    paths. Union two surfaces: FastAPI's OpenAPI schema (the stable public list of
+    what's mounted) and a defensive flatten of the route table (skipping
+    path-less entries, descending nested routers). Whichever the installed version
+    exposes, the path is found."""
+    paths: set[str] = set(app.openapi().get("paths", {}).keys())
+
+    def _walk(routes) -> None:
+        for r in routes:
+            p = getattr(r, "path", None)
+            if isinstance(p, str):
+                paths.add(p)
+            sub = getattr(r, "routes", None) or getattr(getattr(r, "router", None), "routes", None)
+            if sub:
+                _walk(sub)
+
+    _walk(app.routes)
+    return paths
+
+
 # ── Language detection tests ──────────────────────────────────────────
 
 
@@ -143,7 +169,7 @@ def test_stream_endpoint_exists():
     """POST /draft/stream should be registered."""
     from app.main import app
 
-    routes = [r.path for r in app.routes]
+    routes = _registered_paths(app)
     assert "/draft/stream" in routes
 
 
@@ -190,7 +216,7 @@ def test_history_route_exists():
     """GET /history should be registered."""
     from app.main import app
 
-    routes = [r.path for r in app.routes]
+    routes = _registered_paths(app)
     assert "/history" in routes
 
 
