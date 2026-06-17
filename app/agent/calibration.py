@@ -143,11 +143,18 @@ def fit_from_database(
 ) -> Calibrator | None:
     """Fit from decided queue rows: feature = the row's needs-reply score,
     label from the same truth-mapping the precision harness uses (deserved a
-    reply = 1, didn't = 0; ambiguous rows are excluded)."""
+    reply = 1, didn't = 0; ambiguous rows are excluded).
+
+    b271: the label includes the gold "replied anywhere" signal — a row whose
+    inbound the user actually replied to (``reply_pairs.inbound_message_ids``,
+    incl. replies sent outside YouOS) is positive, overriding the in-app status
+    proxy. Without it the calibrator trained almost entirely on in-YouOS sends
+    and learned a falsely-pessimistic map (raw 0.6 → P≈0.04), so reply-worthy
+    mail was surfaced instead of drafted — driving recall to ~0.31."""
     from contextlib import closing
 
     from app.agent.store import _connect
-    from app.evaluation.real_mail_eval import _truth_label
+    from app.evaluation.real_mail_eval import _replied_inbound_ids, _truth_label
 
     where = "date(created_at) >= date('now', ?)"
     params: list[Any] = [f"-{int(days)} days"]
@@ -156,14 +163,16 @@ def fit_from_database(
         params.append(account)
     with closing(_connect(database_url)) as conn:
         rows = conn.execute(
-            f"SELECT needs_reply_score, status, dismissal_reason "
+            f"SELECT needs_reply_score, status, dismissal_reason, message_id "
             f"FROM agent_pending_drafts WHERE {where}",
             params,
         ).fetchall()
+        replied_ids = _replied_inbound_ids(conn)
 
     samples: list[tuple[float, int]] = []
     for r in rows:
-        truth = _truth_label(r["status"], r["dismissal_reason"])
+        replied = bool(r["message_id"]) and str(r["message_id"]) in replied_ids
+        truth = _truth_label(r["status"], r["dismissal_reason"], replied)
         if truth is None or r["needs_reply_score"] is None:
             continue
         samples.append((float(r["needs_reply_score"]), 1 if truth == "pos" else 0))
