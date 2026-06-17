@@ -228,8 +228,29 @@ def build_record(
     return {"messages": messages}
 
 
+# DPO contrast band on the (model draft → your reply) edit distance. Below LO the
+# two are near-identical (no preference signal); above HI they're near-orthogonal
+# (different content — a mis-match or a from-scratch reply, i.e. noise, not "I
+# preferred this phrasing"). The middle is genuine voice/intent contrast.
+DPO_MIN_CONTRAST = 0.20
+DPO_MAX_CONTRAST = 0.85
+
+
 def export_dpo(args: argparse.Namespace) -> None:
-    """Export DPO preference pairs: chosen (rating >= 4) vs rejected (rating <= 2)."""
+    """Export DPO preference pairs that hold the inbound FIXED: for one message,
+    ``chosen`` = the reply you actually sent, ``rejected`` = the model's own draft
+    for that same message.
+
+    b275: the previous version paired a high-rated reply with an UNRELATED
+    low-rated reply matched only by inbound *length* — a different prompt on each
+    side, so the "preference" was meaningless (a likely cause of the prior
+    DPO-for-voice regression, see the dpo-negative-result memory). A real DPO pair
+    contrasts two candidate replies to the *same* prompt; that already lives in
+    the non-organic ``feedback_pairs`` (``generated_draft`` vs ``edited_reply`` for
+    one ``inbound_text``). Filter to a usable edit-distance band so near-identical
+    pairs (no signal) and near-orthogonal ones (noise) are dropped, and reuse the
+    same poison/sanitize guards as the SFT path.
+    """
     db_path = Path(args.db)
     if not db_path.exists():
         print(f"Database not found at {db_path}")
@@ -238,70 +259,64 @@ def export_dpo(args: argparse.Namespace) -> None:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        # b153: never let attacker-influenced, self-labeled content drive the
-        # 'chosen' preference gradient. Exclude auto-captured / organic rows from
-        # the chosen tier so only genuinely human-rated replies are preferred.
-        # Column-guarded so older DBs that predate these columns still export.
         cols = {r[1] for r in conn.execute("PRAGMA table_info(feedback_pairs)")}
-        chosen_extra = ""
-        if "feedback_note" in cols:
-            chosen_extra += " AND COALESCE(feedback_note, '') NOT LIKE 'auto-captured%'"
-        if "organic" in cols:
-            chosen_extra += " AND COALESCE(organic, 0) = 0"
-        chosen_rows = conn.execute(
-            "SELECT inbound_text, edited_reply, rating FROM feedback_pairs "
-            "WHERE rating >= 4 AND LENGTH(edited_reply) >= 15" + chosen_extra
-        ).fetchall()
-        rejected_rows = conn.execute(
-            "SELECT inbound_text, edited_reply, rating FROM feedback_pairs WHERE rating <= 2 AND LENGTH(edited_reply) >= 15"
+        if "generated_draft" not in cols or "organic" not in cols:
+            print("feedback_pairs lacks generated_draft/organic — cannot build same-inbound DPO pairs.")
+            return
+        has_ed = "edit_distance_pct" in cols
+        rows = conn.execute(
+            "SELECT inbound_text, generated_draft, edited_reply, "
+            + ("edit_distance_pct" if has_ed else "NULL AS edit_distance_pct")
+            + " FROM feedback_pairs "
+            "WHERE COALESCE(organic, 0) = 0 "
+            "AND generated_draft IS NOT NULL AND LENGTH(generated_draft) >= 15 "
+            "AND edited_reply IS NOT NULL AND LENGTH(edited_reply) >= 15"
         ).fetchall()
     finally:
         conn.close()
 
-    if not chosen_rows or not rejected_rows:
-        print(f"Not enough DPO pairs: {len(chosen_rows)} chosen, {len(rejected_rows)} rejected")
-        return
+    # System message matches how the model is actually prompted in production, so
+    # the DPO gradient is applied in the same context (skipped with --no-persona).
+    system = ""
+    if not getattr(args, "no_persona", False):
+        configs_dir = Path(getattr(args, "configs_dir", CONFIGS_DIR))
+        system = _build_system_message(_load_persona(configs_dir), _load_prompts(configs_dir))
 
     pairs: list[dict] = []
-    used_rejected: set[int] = set()
-
-    for chosen in chosen_rows:
-        c_len = len(chosen["inbound_text"] or "")
-        if c_len == 0:
+    for r in rows:
+        inbound = r["inbound_text"] or ""
+        chosen = r["edited_reply"] or ""
+        rejected = r["generated_draft"] or ""
+        if not inbound or chosen.strip() == rejected.strip():
             continue
-        # b153: never train on a poisoned chosen example.
-        if is_poisoned_text(chosen["inbound_text"]) or is_poisoned_text(chosen["edited_reply"]):
+        ed = r["edit_distance_pct"]
+        if ed is not None and not (DPO_MIN_CONTRAST <= ed <= DPO_MAX_CONTRAST):
             continue
-        for j, rejected in enumerate(rejected_rows):
-            if j in used_rejected:
-                continue
-            r_len = len(rejected["inbound_text"] or "")
-            if r_len == 0:
-                continue
-            if is_poisoned_text(rejected["edited_reply"]):
-                continue
-            # Match by similar inbound length (within 50%)
-            ratio = min(c_len, r_len) / max(c_len, r_len)
-            if ratio >= 0.5:
-                pairs.append(
-                    {
-                        "prompt": sanitize_training_text(chosen["inbound_text"]),
-                        "chosen": sanitize_training_text(chosen["edited_reply"]),
-                        "rejected": sanitize_training_text(rejected["edited_reply"]),
-                    }
-                )
-                used_rejected.add(j)
-                break
+        # b153: never train on poisoned content on either side of the pair.
+        if is_poisoned_text(inbound) or is_poisoned_text(chosen) or is_poisoned_text(rejected):
+            continue
+        rec = {
+            "prompt": sanitize_training_text(inbound),
+            "chosen": sanitize_training_text(chosen),
+            "rejected": sanitize_training_text(rejected),
+        }
+        if system:
+            rec["system"] = system
+        pairs.append(rec)
         if len(pairs) >= MAX_EXPORT_PAIRS:  # bound emitted pairs (disk budget)
             break
 
     if not pairs:
-        print("No DPO pairs could be matched.")
+        print(
+            "No same-inbound DPO pairs yet — need non-organic feedback_pairs "
+            f"(model draft vs your reply) with {DPO_MIN_CONTRAST:.0%}–{DPO_MAX_CONTRAST:.0%} contrast."
+        )
         return
 
     output_path = ROOT_DIR / "data" / "dpo_train.jsonl"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write_jsonl(output_path, pairs)
+    print(f"Exported {len(pairs)} same-inbound DPO pairs -> {output_path}")
 
     print(f"Exported {len(pairs)} DPO pairs to {output_path}")
 
