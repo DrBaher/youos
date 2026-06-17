@@ -7,16 +7,13 @@ implicit training signal for fine-tuning.
 from __future__ import annotations
 
 import argparse
+import json
 import sqlite3
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from app.core.diff import is_meaningfully_different, similarity_ratio
+from app.core.diff import similarity_ratio
 from app.core.settings import get_settings
 from app.db.bootstrap import resolve_sqlite_path
-from app.generation.service import DraftRequest, generate_draft
-
-ROOT_DIR = Path(__file__).resolve().parents[1]
 
 
 def parse_args() -> argparse.Namespace:
@@ -45,20 +42,6 @@ def _get_db_path(db_override: str | None) -> Path:
         return Path(db_override)
     settings = get_settings()
     return resolve_sqlite_path(settings.database_url)
-
-
-def _get_unprocessed_pairs(conn: sqlite3.Connection, since: str) -> list[sqlite3.Row]:
-    return conn.execute(
-        """
-        SELECT id, inbound_text, reply_text, source_type, source_id
-        FROM reply_pairs
-        WHERE auto_feedback_processed = 0
-          AND COALESCE(quality_score, 1.0) > 0
-          AND created_ts >= ?
-        ORDER BY created_ts DESC
-        """,
-        (since,),
-    ).fetchall()
 
 
 def auto_calibrate_threshold(conn: sqlite3.Connection) -> tuple[float, int]:
@@ -103,6 +86,73 @@ def _prior_draft_for_inbound(conn: sqlite3.Connection, inbound_text: str) -> str
     return draft or None
 
 
+def _inbound_message_ids(metadata_json: str | None) -> list[str]:
+    """The inbound message ids a reply answered, from ``reply_pairs.metadata_json``.
+
+    Organic sent-mail ingestion records ``{"inbound_message_ids": ["..."], ...}``
+    — the SPECIFIC inbound turn(s) the user replied to. This is what makes a
+    turn-precise join possible (thread_id alone is too coarse — a thread holds
+    many turns and the agent drafted just one)."""
+    if not metadata_json:
+        return []
+    try:
+        ids = json.loads(metadata_json).get("inbound_message_ids")
+    except (ValueError, TypeError, AttributeError):
+        return []
+    return [str(i) for i in ids if i] if isinstance(ids, list) else []
+
+
+def _agent_drafts_by_message_id(conn: sqlite3.Connection) -> dict[str, str]:
+    """Map of inbound ``message_id`` → the agent's actual stored draft for it
+    (b269 turn-precise join key).
+
+    ``agent_pending_drafts.message_id`` is the inbound the agent drafted a reply
+    to; matching it against a reply's ``inbound_message_ids`` yields a COHERENT
+    ``(inbound, draft, sent-reply)`` triple — the draft and the reply are two
+    answers to the *same* message, so no timestamp guard is needed. Prefers the
+    user's in-app amendment when present, else the draft. Built once per run
+    (cheap) so the capture/relabel loops are plain dict lookups. Empty if the
+    queue table is absent (fixture/legacy schema)."""
+    out: dict[str, str] = {}
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(agent_pending_drafts)").fetchall()}
+    except sqlite3.OperationalError:
+        return out
+    if not cols:
+        return out
+    amended = "amended_draft" if "amended_draft" in cols else "NULL"
+    try:
+        # ASC so a later draft for the same inbound overwrites an earlier one.
+        rows = conn.execute(
+            f"SELECT message_id, draft, {amended} AS amended FROM agent_pending_drafts "
+            "WHERE message_id IS NOT NULL AND draft IS NOT NULL AND draft <> '' "
+            "ORDER BY created_at ASC"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return out
+    for r in rows:
+        mid = r["message_id"] if isinstance(r, sqlite3.Row) else r[0]
+        if not mid:
+            continue
+        amend = (r["amended"] if isinstance(r, sqlite3.Row) else r[2]) or ""
+        draft = (r["draft"] if isinstance(r, sqlite3.Row) else r[1]) or ""
+        chosen = amend.strip() or draft
+        if chosen:
+            out[str(mid)] = chosen
+    return out
+
+
+def _agent_draft_for_reply(
+    metadata_json: str | None, drafts_by_mid: dict[str, str]
+) -> str | None:
+    """The agent's draft for the inbound this reply answered, if any (b269)."""
+    for mid in _inbound_message_ids(metadata_json):
+        draft = drafts_by_mid.get(mid)
+        if draft:
+            return draft
+    return None
+
+
 def _capture_organic_pairs(conn: sqlite3.Connection, *, dry_run: bool = False) -> int:
     """Capture sent replies with inbound context.
 
@@ -140,15 +190,22 @@ def _capture_organic_pairs(conn: sqlite3.Connection, *, dry_run: bool = False) -
         _re.IGNORECASE,
     )
 
+    # b269: minimal/legacy reply_pairs schemas (and most fixtures) may lack
+    # metadata_json — reference it only when present.
+    md_expr = "rp.metadata_json" if "metadata_json" in rp_cols else "NULL"
     rows = conn.execute(
-        """
-        SELECT rp.id, rp.inbound_text, rp.reply_text FROM reply_pairs rp
+        f"""
+        SELECT rp.id, rp.inbound_text, rp.reply_text, {md_expr} AS metadata_json
+        FROM reply_pairs rp
         WHERE rp.auto_feedback_processed = 0
           AND COALESCE(rp.quality_score, 1.0) > 0
           AND rp.id NOT IN (SELECT DISTINCT reply_pair_id FROM feedback_pairs WHERE reply_pair_id IS NOT NULL)
           AND LENGTH(rp.reply_text) >= 10
         """
     ).fetchall()
+
+    # b269: turn-precise map of inbound message_id → the agent's actual draft.
+    drafts_by_mid = _agent_drafts_by_message_id(conn)
 
     count = 0
     for row in rows:
@@ -158,8 +215,13 @@ def _capture_organic_pairs(conn: sqlite3.Connection, *, dry_run: bool = False) -
         if _ACK_PATTERN.match(reply):
             continue
 
-        # b185: prefer a genuine comparison when the agent had drafted this one.
-        prior_draft = _prior_draft_for_inbound(conn, inbound)
+        # b269: prefer the turn-precise message_id join (the agent's actual stored
+        # draft for the exact inbound this reply answered) over the brittle
+        # inbound_text equality — the latter matched ~1% of rows. Fall back to the
+        # inbound_text lookup for replies with no message-id metadata.
+        prior_draft = _agent_draft_for_reply(
+            row["metadata_json"], drafts_by_mid
+        ) or _prior_draft_for_inbound(conn, inbound)
         is_real = bool(prior_draft) and prior_draft.strip() != reply
 
         if dry_run:
@@ -216,6 +278,54 @@ def _capture_organic_pairs(conn: sqlite3.Connection, *, dry_run: bool = False) -
     return count
 
 
+def _relabel_mislabeled_organic_pairs(conn: sqlite3.Connection, *, dry_run: bool = False) -> int:
+    """Rescue feedback_pairs recorded organic that DO have a real agent draft for
+    the same inbound (b269 message_id join).
+
+    A reply ingested before the agent drafted its inbound is captured organic (no
+    draft existed yet). When the agent later drafts that same inbound (it triages
+    after the user already replied — common, since the user replies on mobile),
+    that ``(draft, sent-reply)`` is a genuine edit pair. This pass finds such rows,
+    recomputes the REAL edit distance, and flips them to ``organic=0`` so they
+    re-enter learning. Mostly a forward safety net — pairs the capture pass already
+    matched are already ``organic=0``, so this is typically near-zero. Idempotent;
+    only touches ``organic=1`` rows whose draft genuinely differs from the sent
+    reply. Minimal/fixture schemas (no metadata_json / no queue) cleanly no-op."""
+    conn.row_factory = sqlite3.Row
+    rp_cols = {row[1] for row in conn.execute("PRAGMA table_info(reply_pairs)").fetchall()}
+    if "metadata_json" not in rp_cols:
+        return 0
+    drafts_by_mid = _agent_drafts_by_message_id(conn)
+    if not drafts_by_mid:
+        return 0
+    rows = conn.execute(
+        """
+        SELECT fp.id, fp.edited_reply, rp.metadata_json
+        FROM feedback_pairs fp
+        JOIN reply_pairs rp ON rp.id = fp.reply_pair_id
+        WHERE fp.organic = 1 AND rp.metadata_json IS NOT NULL
+        """
+    ).fetchall()
+    relabeled = 0
+    for r in rows:
+        reply = (r["edited_reply"] or "").strip()
+        if not reply:
+            continue
+        draft = _agent_draft_for_reply(r["metadata_json"], drafts_by_mid)
+        if not draft or draft.strip() == reply:
+            continue  # no real draft, or verbatim — correctly organic, leave it
+        real_ed = round(1.0 - similarity_ratio(draft, reply), 4)
+        if not dry_run:
+            conn.execute(
+                "UPDATE feedback_pairs SET organic = 0, generated_draft = ?, "
+                "edit_distance_pct = ?, feedback_note = ?, used_in_finetune = 0 "
+                "WHERE id = ?",
+                (draft, real_ed, "relabeled real draft-vs-sent (b269 message-id join)", r["id"]),
+            )
+        relabeled += 1
+    return relabeled
+
+
 def extract_auto_feedback(
     *,
     days: int = 1,
@@ -227,24 +337,27 @@ def extract_auto_feedback(
     configs_dir: Path | None = None,
     organic: bool = True,
 ) -> dict:
-    """Main extraction logic. Returns summary dict."""
+    """Capture draft-vs-sent feedback pairs. Returns summary dict.
+
+    b269: this no longer regenerates a draft per reply pair via the local LLM
+    (~144s each, ~88% of the nightly). The agent's *actual* draft is recovered by
+    a turn-precise join on the inbound ``message_id`` (``agent_pending_drafts`` ↔
+    ``reply_pairs.inbound_message_ids``) — both the genuine learning signal and a
+    backfill that relabels pairs the old inbound_text join had mislabeled organic.
+    ``threshold``/``database_url``/``configs_dir`` are kept
+    for signature compatibility; the corpus size is still logged."""
     if db_path is None:
         db_path = _get_db_path(None)
 
     if database_url is None:
         database_url = f"sqlite:///{db_path}"
-    if configs_dir is None:
-        configs_dir = ROOT_DIR / "configs"
-
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        # Auto-calibrate threshold based on corpus size
         if auto_threshold:
-            threshold, corpus_count = auto_calibrate_threshold(conn)
-            print(f"Auto-threshold: {threshold} (corpus: {corpus_count} pairs)")
+            _, corpus_count = auto_calibrate_threshold(conn)
+            print(f"Corpus: {corpus_count} reply pairs")
         # Check if auto_feedback_processed column exists
         cols = [row[1] for row in conn.execute("PRAGMA table_info(reply_pairs)").fetchall()]
         if "quality_score" not in cols:
@@ -254,98 +367,51 @@ def extract_auto_feedback(
             cols.append("quality_score")
         if "auto_feedback_processed" not in cols:
             print("Error: auto_feedback_processed column missing. Run bootstrap_db.py first.")
-            return {"captured": 0, "total": 0, "skipped": 0, "errors": 0}
+            return {"captured": 0, "total": 0, "skipped": 0, "errors": 0, "organic": 0, "relabeled": 0}
+        # Self-heal the organic flag up front so the real-pair before/after counts
+        # below work on a DB that predates it (also done in _capture_organic_pairs).
+        fp_cols = {row[1] for row in conn.execute("PRAGMA table_info(feedback_pairs)").fetchall()}
+        if "organic" not in fp_cols:
+            conn.execute("ALTER TABLE feedback_pairs ADD COLUMN organic BOOLEAN DEFAULT 0")
 
-        pairs = _get_unprocessed_pairs(conn, since)
-        total = len(pairs)
+        total = conn.execute(
+            "SELECT COUNT(*) FROM reply_pairs "
+            "WHERE auto_feedback_processed = 0 AND COALESCE(quality_score, 1.0) > 0"
+        ).fetchone()[0]
+        print(f"Found {total} unprocessed reply pairs")
+
+        # Single capture pass (thread_id-aware): emits real pairs (organic=0) when
+        # the agent actually drafted the thread, organic backfill otherwise. No
+        # LLM regeneration.
+        real_before = conn.execute("SELECT COUNT(*) FROM feedback_pairs WHERE organic = 0").fetchone()[0]
         captured = 0
-        skipped = 0
-        errors = 0
-
-        print(f"Found {total} unprocessed reply pairs from last {days} day(s)")
-
-        for pair in pairs:
-            pair_id = pair["id"]
-            inbound = pair["inbound_text"]
-            actual_reply = pair["reply_text"]
-
-            # Generate a draft via YouOS
-            try:
-                response = generate_draft(
-                    DraftRequest(inbound_message=inbound),
-                    database_url=database_url,
-                    configs_dir=configs_dir,
-                )
-                generated_draft = response.draft
-            except Exception as exc:
-                print(f"  [skip] pair {pair_id}: draft generation failed: {exc}")
-                errors += 1
-                continue
-
-            # Check if meaningfully different
-            if not is_meaningfully_different(generated_draft, actual_reply, threshold):
-                if dry_run:
-                    print(f"  [skip] pair {pair_id}: too similar (YouOS already nails it)")
-                skipped += 1
-                # Still mark as processed
-                if not dry_run:
-                    conn.execute(
-                        "UPDATE reply_pairs SET auto_feedback_processed = 1 WHERE id = ?",
-                        (pair_id,),
-                    )
-                continue
-
-            # b185: this is a GENUINE draft-vs-sent comparison — YouOS produced
-            # `generated_draft`, the user actually sent `actual_reply`, and they
-            # differ. Compute and persist the REAL edit distance via
-            # similarity_ratio so this row counts toward the learning signal
-            # (organic=0, edit_distance_pct populated, draft <> reply). Without
-            # this the row was inserted with a NULL distance and the b185
-            # honesty filter excluded it — the real signal was being thrown away.
-            real_ed = round(1.0 - similarity_ratio(generated_draft, actual_reply), 4)
-            if dry_run:
-                print(f"  [capture] pair {pair_id}: edit_distance={real_ed}")
-                print(f"    inbound: {inbound[:100]}...")
-                print(f"    draft:   {generated_draft[:100]}...")
-                print(f"    actual:  {actual_reply[:100]}...")
-            else:
-                conn.execute(
-                    """
-                    INSERT INTO feedback_pairs
-                        (reply_pair_id, inbound_text, generated_draft, edited_reply, feedback_note, edit_distance_pct, rating, used_in_finetune, organic)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
-                    """,
-                    (pair_id, inbound, generated_draft, actual_reply, "auto-captured from sent email", real_ed, 4, 0),
-                )
-                conn.execute(
-                    "UPDATE reply_pairs SET auto_feedback_processed = 1 WHERE id = ?",
-                    (pair_id,),
-                )
-
-            captured += 1
-
-        # Organic pair capture
-        organic_count = 0
         if organic:
-            organic_count = _capture_organic_pairs(conn, dry_run=dry_run)
-            if organic_count:
-                action_label = "Would capture" if dry_run else "Captured"
-                print(f"{action_label} {organic_count} organic pairs (no YouOS draft)")
+            captured = _capture_organic_pairs(conn, dry_run=dry_run)
+        real_after = conn.execute("SELECT COUNT(*) FROM feedback_pairs WHERE organic = 0").fetchone()[0]
+        real_captured = real_after - real_before
+
+        # Backfill: rescue pairs the old inbound_text join left mislabeled organic.
+        relabeled = _relabel_mislabeled_organic_pairs(conn, dry_run=dry_run)
 
         if not dry_run:
             conn.commit()
 
+        action = "Would capture" if dry_run else "Captured"
+        print(
+            f"{action} {captured} pairs ({real_captured} real draft-vs-sent, "
+            f"{captured - real_captured} organic); relabeled {relabeled} mislabeled-organic"
+        )
+        return {
+            "captured": captured,
+            "real": real_captured,
+            "organic": captured - real_captured,
+            "relabeled": relabeled,
+            "total": total,
+            "skipped": 0,
+            "errors": 0,
+        }
     finally:
         conn.close()
-
-    action = "Would capture" if dry_run else "Captured"
-    print(f"\n{action} {captured} new feedback pairs from {total} reply pairs")
-    if skipped:
-        print(f"  Skipped {skipped} near-identical pairs")
-    if errors:
-        print(f"  Errors: {errors} pairs failed draft generation")
-
-    return {"captured": captured, "total": total, "skipped": skipped, "errors": errors, "organic": organic_count}
 
 
 def main() -> None:
