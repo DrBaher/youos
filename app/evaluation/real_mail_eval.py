@@ -9,19 +9,27 @@ How a decided row becomes a label:
 * What the agent *predicted* is its **tier**: ``draft`` = "this needs a reply, I
   drafted it" (predicted positive); ``surface`` = "borderline, I surfaced it for
   review but didn't draft" (predicted negative / abstain).
-* What was *true* is the user's verdict:
-    - ``sent`` / ``amended`` → the draft was used → the message **deserved** a
-      reply (truth positive).
-    - dismissed ``noise`` / ``wrong_sender`` → the agent shouldn't have engaged
-      (truth negative — these are the false positives we care about).
+* What was *true* — in precedence order:
+    - **Gold (b270):** the user actually sent a reply to this inbound, captured
+      from real sent mail via ``reply_pairs.inbound_message_ids`` REGARDLESS of
+      channel (mobile, web, in-person follow-up) → it **deserved** a reply (truth
+      positive). This overrides the YouOS-status proxy below, which only sees the
+      few replies sent *inside* the app and so badly undercounts true positives.
+    - ``sent`` / ``amended`` → the draft was used → deserved a reply (positive).
+    - dismissed ``noise`` / ``wrong_sender`` (and not replied) → the agent
+      shouldn't have engaged (truth negative — the false positives we care about).
     - dismissed ``wrong_content`` → it *did* deserve a reply, the draft was just
       wrong (truth positive for the needs-reply decision; draft quality is a
       separate axis covered by the quality gate).
-    - dismissed ``already_handled`` / ``other`` / no reason, or still ``pending``
-      → can't label the *needs-reply* decision confidently → **excluded**.
+    - dismissed ``already_handled`` / ``other`` / no reason, or still ``pending``,
+      with no reply → can't label confidently → **excluded**.
 
 So: TP = drafted & deserved; FP = drafted & shouldn't-have; FN = surfaced &
-deserved (should have drafted); TN = surfaced & shouldn't-have.
+deserved (should have drafted); TN = surfaced & shouldn't-have. Before b270 the
+gold signal was absent, so almost every real reply went uncounted: precision read
+artificially low (~0.04 on baheros) and recall a meaningless 1.0 (FN=0 by
+construction). With it: precision ~0.20, recall ~0.31 — and the FN count finally
+exposes mail the agent only surfaced but the user actually answered.
 
 Read-only over ``agent_pending_drafts``. ``record_snapshot`` appends one row to
 ``triage_precision_history`` so the false-positive rate is trackable over time.
@@ -29,6 +37,7 @@ Read-only over ``agent_pending_drafts``. ``record_snapshot`` appends one row to
 
 from __future__ import annotations
 
+import json
 from contextlib import closing
 from typing import Any
 
@@ -36,9 +45,47 @@ _POSITIVE_DISMISSALS = frozenset({"wrong_content"})
 _NEGATIVE_DISMISSALS = frozenset({"noise", "wrong_sender"})
 
 
-def _truth_label(status: str | None, dismissal_reason: str | None) -> str | None:
+def _replied_inbound_ids(conn: Any) -> set[str]:
+    """The set of inbound message ids the user ACTUALLY replied to (b270 join).
+
+    ``reply_pairs.metadata_json`` records ``inbound_message_ids`` — the inbound(s)
+    a sent reply answered, captured from real sent mail regardless of channel
+    (mobile, web, in-person follow-up). This is the gold ground truth for "this
+    inbound deserved a reply" — far better than the YouOS ``status`` proxy, which
+    only sees the handful of replies sent *inside* the app. Empty if the table or
+    column is absent (older instance) → the metric falls back to status only."""
+    ids: set[str] = set()
+    try:
+        rows = conn.execute(
+            "SELECT metadata_json FROM reply_pairs WHERE metadata_json IS NOT NULL"
+        ).fetchall()
+    except Exception:
+        return ids
+    for r in rows:
+        raw = r["metadata_json"] if not isinstance(r, (tuple, list)) else r[0]
+        if not raw:
+            continue
+        try:
+            mids = json.loads(raw).get("inbound_message_ids")
+        except (ValueError, TypeError, AttributeError):
+            continue
+        if isinstance(mids, list):
+            ids.update(str(m) for m in mids if m)
+    return ids
+
+
+def _truth_label(
+    status: str | None, dismissal_reason: str | None, replied: bool = False
+) -> str | None:
     """Map a decided row to ``"pos"`` (deserved a reply), ``"neg"`` (didn't), or
-    ``None`` (can't tell — excluded from the metric)."""
+    ``None`` (can't tell — excluded from the metric).
+
+    ``replied`` is the gold signal: the user actually sent a reply to this inbound
+    (anywhere, including outside YouOS). It overrides the status proxy — a
+    surfaced or even noise-dismissed item the user genuinely answered DID deserve
+    a reply (whether they used our draft is a separate, draft-quality axis)."""
+    if replied:
+        return "pos"
     if status in ("sent", "amended"):
         return "pos"
     if status == "dismissed":
@@ -72,16 +119,18 @@ def evaluate_real_mail(
 
     with closing(_connect(database_url)) as conn:
         rows = conn.execute(
-            f"SELECT tier, status, dismissal_reason, sender_email "
+            f"SELECT tier, status, dismissal_reason, sender_email, message_id "
             f"FROM agent_pending_drafts WHERE {where}",
             params,
         ).fetchall()
+        replied_ids = _replied_inbound_ids(conn)
 
     tp = fp = fn = tn = excluded = 0
     fp_by_reason: dict[str, int] = {}
     fp_senders: dict[str, int] = {}
     for r in rows:
-        truth = _truth_label(r["status"], r["dismissal_reason"])
+        replied = bool(r["message_id"]) and str(r["message_id"]) in replied_ids
+        truth = _truth_label(r["status"], r["dismissal_reason"], replied)
         if truth is None:
             excluded += 1
             continue
