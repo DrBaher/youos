@@ -70,6 +70,35 @@ def test_automation_domain_hard_skips_github():
     assert any("automation" in r for r in v.reasons)
 
 
+def test_google_system_mailboxes_hard_skip():
+    """Google's machine local-parts (Gemini notes, Drive shares, calendar
+    notifications) hard-skip — a baheros queue review found the agent drafting
+    replies to them. They live at ``@google.com`` so the automation-domain list
+    (which can't blanket a human-tended domain) misses them."""
+    for email in (
+        "gemini-notes@google.com",
+        "drive-shares-dm-noreply@google.com",
+        "calendar-notification@google.com",
+        "docs-noreply@google.com",
+    ):
+        v = classify(_msg(sender=f"Google <{email}>", sender_email=email))
+        assert not v.needs_reply, email
+        assert any("google system mailbox" in r for r in v.reasons), email
+
+
+def test_real_human_at_google_not_skipped():
+    """A real person at ``@google.com`` must NOT be caught by the system-mailbox
+    rule (it matches only machine local-parts)."""
+    v = classify(
+        _msg(
+            sender="Jane Eng <jane@google.com>",
+            sender_email="jane@google.com",
+            body="Hi Baher, can you confirm the demo time on Thursday?",
+        )
+    )
+    assert not any("google system mailbox" in r for r in v.reasons)
+
+
 def test_service_subject_pattern_hard_skips_repo_tag():
     """``[Org/Repo]`` subject prefixes (GitHub/GitLab convention) hard-skip
     even from non-automation senders. Same family of CI/notification mail."""
@@ -195,8 +224,11 @@ def test_workspace_noreply_gets_a_penalty():
     assert any("noreply" in r for r in v.reasons), v.reasons
 
 
-def test_calendar_notification_caught_by_substring_match():
-    """`calendar-notification@google.com` — same: 'notification' substring."""
+def test_calendar_notification_hard_skipped_as_google_system_mailbox():
+    """`calendar-notification@google.com` is now hard-skipped by the Google
+    system-mailbox rule (was only a soft 'operational mailbox' penalty, which a
+    strong body signal could override). Strict improvement — this is machine
+    mail that must never get a draft."""
     v = classify(
         _msg(
             sender="Google Calendar <calendar-notification@google.com>",
@@ -204,7 +236,8 @@ def test_calendar_notification_caught_by_substring_match():
             body="You have no events scheduled today.",
         )
     )
-    assert any("operational mailbox" in r for r in v.reasons)
+    assert not v.needs_reply
+    assert any("google system mailbox" in r for r in v.reasons)
 
 
 def test_fireflies_meeting_bot_hard_skipped_by_domain():
