@@ -67,6 +67,17 @@ def test_truth_label_mapping():
     assert _truth_label("pending", None) is None
 
 
+def test_truth_label_replied_is_gold_and_overrides_status():
+    """b270: an actual reply means it deserved a reply, whatever YouOS recorded —
+    overrides pending/excluded AND a noise dismissal."""
+    assert _truth_label("pending", None, replied=True) == "pos"
+    assert _truth_label("dismissed", "already_handled", replied=True) == "pos"
+    assert _truth_label("dismissed", "noise", replied=True) == "pos"
+    # Without a reply, the status proxy still applies.
+    assert _truth_label("pending", None, replied=False) is None
+    assert _truth_label("dismissed", "noise", replied=False) == "neg"
+
+
 # --- evaluate_real_mail ----------------------------------------------------
 
 
@@ -95,6 +106,36 @@ def test_confusion_matrix_and_metrics(seeded_db):
     assert r["precision"] == 0.6
     assert r["recall"] == 0.75
     assert r["fp_by_reason"] == {"noise": 1, "wrong_sender": 1}
+
+
+def test_reply_signal_relabels_drafted_and_surfaced(seeded_db):
+    """b270: the user's actual replies (reply_pairs.inbound_message_ids) become
+    the gold truth. A drafted inbound they replied to → TP even if pending; a
+    surfaced inbound they replied to → FN (a miss the old metric couldn't see)."""
+    import json as _json
+    import sqlite3 as _s
+
+    database_url, insert = seeded_db
+    insert("draft", "pending")        # m1 — will be replied to → TP
+    insert("surface", "pending")      # m2 — will be replied to → FN
+    insert("draft", "dismissed", "noise")  # m3 — not replied → FP
+
+    conn = _s.connect(database_url.removeprefix("sqlite:///"))
+    conn.execute(
+        "CREATE TABLE reply_pairs (id INTEGER PRIMARY KEY, metadata_json TEXT)"
+    )
+    # The user actually replied to m1 (drafted) and m2 (surfaced) — not m3.
+    for mids in (["m1"], ["m2"]):
+        conn.execute(
+            "INSERT INTO reply_pairs (metadata_json) VALUES (?)",
+            (_json.dumps({"inbound_message_ids": mids}),),
+        )
+    conn.commit()
+    conn.close()
+
+    r = evaluate_real_mail(database_url, days=365)
+    assert r["confusion"] == {"tp": 1, "fp": 1, "fn": 1, "tn": 0}
+    assert r["excluded"] == 0  # the two pending rows are now labelable via replies
 
 
 def test_metrics_none_when_no_labelable_rows(seeded_db):
