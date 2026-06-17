@@ -204,6 +204,9 @@ These are advanced flows. The agent (you) should generally not initiate them —
 - **Save as training pair** (`/save_as_feedback_pair`): the user has a better version of the agent's draft. Take their reply text and POST it. The next nightly LoRA retrain consumes the row.
 - **Adjust standing instructions** (`/api/config/set` with `agent.standing_instructions`): user is going OOO or wants different tone for a week. Write to the flag. Tell the user: "Set. Next sweep will use this in every draft prompt."
 - **Set a threshold** (`/api/config/set` with `agent.threshold`): user is getting too many false positives (or missing real mail). 0.6 default; up to ~0.75 for stricter, down to 0.5 for looser. Encourage feedback-driven tuning (dismissals + `noise` reason) over manual threshold tweaks.
+- **Adjust the draft-abstain floor** (`/api/config/set` with `generation.abstain.min_quality`): on the autonomous sweep a draft scoring below this quality floor is withheld and the email is surfaced for review with *no* draft. 0.5 default. Lower it (e.g. 0.25) when the user reports threads surfaced with no draft that they'd have replied to — it offers more mediocre-but-editable drafts (higher recall) while still withholding empty/degenerate (~0.1) ones. Raise it to be more conservative. Interactive `/draft` always drafts regardless; this never affects the never-send path.
+
+> **Advanced (YAML / infra):** `snapshots.keep_daily` (default 30) bounds retained daily DB snapshots under `var/snapshots/daily/`. On a tight disk, lower it (e.g. 10) — the nightly's `prune_snapshots` enforces it. Not a `/settings` toggle; set in `youos_config.yaml` or via the config file directly.
 
 ---
 
