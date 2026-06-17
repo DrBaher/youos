@@ -25,7 +25,13 @@ classifiers = [
   "Topic :: Office/Business",
 ]
 dependencies = [
-  "fastapi>=0.115,<1.0",
+  # Web framework pinned with tight upper bounds (was `fastapi<1.0`, starlette
+  # unlisted): an unpinned minor bump broke CI on 2026-06-17 — newer Starlette
+  # puts `_IncludedRouter` wrappers (no `.path`) in `app.routes`. `starlette` is
+  # listed explicitly because fastapi pulls it transitively and it was the actual
+  # drift. Bump these deliberately, not via silent resolution.
+  "fastapi>=0.115,<0.137",
+  "starlette>=0.37,<1.2",
   "uvicorn[standard]>=0.30,<1.0",
   "pydantic>=2.8,<3.0",
   "pydantic-settings>=2.4,<3.0",
