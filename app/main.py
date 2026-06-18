@@ -13,6 +13,8 @@ from app.api.agent_routes import router as agent_router
 from app.api.facts_routes import router as facts_router
 from app.api.feedback_routes import _BOOKMARKLET_ROUTER as bookmarklet_router
 from app.api.feedback_routes import router as feedback_router
+from app.api.gmail_push_routes import PUSH_PATH as GMAIL_PUSH_PATH
+from app.api.gmail_push_routes import router as gmail_push_router
 from app.api.history_routes import router as history_router
 from app.api.review_queue_routes import router as review_queue_router
 from app.api.routes import router
@@ -93,7 +95,10 @@ class PinAuthMiddleware(BaseHTTPMiddleware):
        extension installs that haven't opted in yet).
     """
 
-    SKIP_PREFIXES = ("/login", "/static")
+    # /api/gmail/push is the Pub/Sub webhook (b282): public by necessity (Pub/Sub
+    # can't send a PIN/cookie), so it's exempt from PIN auth and does its OWN
+    # constant-time shared-secret check, inert unless agent.gmail_push.* is set.
+    SKIP_PREFIXES = ("/login", "/static", GMAIL_PUSH_PATH)
 
     def __init__(self, app, config: dict | None = None, *, config_provider=None):
         super().__init__(app)
@@ -392,6 +397,7 @@ def create_app() -> FastAPI:
     app.include_router(stream_router)
     app.include_router(history_router)
     app.include_router(facts_router)
+    app.include_router(gmail_push_router)
     app.include_router(agent_router)
 
     # Shared front-end assets (design system: youos.css + youos.js). The auth
