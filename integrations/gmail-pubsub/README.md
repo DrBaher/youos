@@ -50,21 +50,17 @@ gcloud pubsub subscriptions create youos-gmail-sub \
   --ack-deadline=30
 ```
 
-## 4. Register the Gmail watch (per account)
-This tells Gmail to publish to your topic. It **expires after 7 days** — re-run it
-on a schedule (cron / a `youos` wrapper). Easiest one-off is the
-[OAuth Playground](https://developers.google.com/oauthplayground) (scope
-`gmail.readonly` or `gmail.metadata`) or `gcloud`'s access token:
+## 4. Register the Gmail watch (per account) — and it auto-renews
+This tells Gmail to publish to your topic. Register it once via YouOS (uses your
+existing gog auth, no separate OAuth):
 ```sh
-ACCESS_TOKEN=...   # an OAuth token for the mailbox, gmail.metadata scope
-curl -s -X POST "https://gmail.googleapis.com/gmail/v1/users/me/watch" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" -H "Content-Type: application/json" \
-  -d '{"topicName":"projects/<PROJECT>/topics/youos-gmail","labelIds":["INBOX"]}'
-# → {"historyId":"…","expiration":"…(ms epoch, ~7 days)"}
+youos gmail-watch start --topic projects/<PROJECT>/topics/youos-gmail
+youos gmail-watch status        # shows the stored watch + expiry
 ```
-
-> Renewal automation (re-`watch` daily) and a `youos gmail-watch` CLI are a
-> planned follow-up — for now, re-run step 4 weekly, or wrap it in cron.
+A Gmail watch **expires after 7 days**. The **nightly auto-renews it** (b283:
+`step_gmail_watch_renew` runs `gog gmail watch renew` for each account whenever
+`agent.gmail_push.enabled` is on) — so once you've run `start`, it stays alive
+with no further action. Refresh manually any time with `youos gmail-watch renew`.
 
 ## 5. Verify
 - Unauthorised hits are rejected (good): a `POST /api/gmail/push` with a wrong/no
