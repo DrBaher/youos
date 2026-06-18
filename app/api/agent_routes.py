@@ -112,6 +112,23 @@ def list_agent_pending(
     return {"count": len(rows), "limit": limit, "offset": offset, "has_more": len(rows) == limit, "rows": rows}
 
 
+@router.get("/api/agent/pending/by_thread/{thread_id}")
+def get_agent_pending_by_thread(thread_id: str, request: Request) -> dict:
+    """The latest YouOS row for a Gmail thread, by the thread's Gmail id (b280).
+
+    The Gmail Add-on opens a thread and knows its Gmail thread id, not YouOS's
+    row id — this is its entry point. The returned row carries the draft,
+    calibrated confidence, reasons, status, and ``id`` (to drive amend /
+    regenerate / dismiss). 404 when YouOS has nothing queued for the thread.
+    Declared before the ``{row_id}`` route; the extra path segment already means
+    they can't collide, but ordering keeps it unambiguous.
+    """
+    row = store.get_by_thread(_db_url(request), thread_id)
+    if not row:
+        raise HTTPException(404, "no YouOS row for this thread")
+    return row
+
+
 @router.get("/api/agent/pending/{row_id}")
 def get_agent_pending(row_id: int, request: Request) -> dict:
     """Fetch a single pending row by id.
