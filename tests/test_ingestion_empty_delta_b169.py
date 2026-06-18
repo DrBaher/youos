@@ -160,6 +160,22 @@ def test_ingest_sent_only_window_is_no_new_rows(tmp_path: Path):
     assert result.status != "failed"
 
 
+def test_ingest_zero_threads_found_is_no_new_rows(tmp_path: Path):
+    """b279: a query that returns ZERO threads (no new sent mail in the window)
+    is an empty delta -> success, not 'failed'. Pre-fix, an idle Gmail account
+    the user simply didn't send from failed the whole nightly ('Gmail ingestion
+    failed', pipeline status 'partial'). A genuine load error still fails (below).
+    """
+    db_path = tmp_path / "youos.db"
+    result = ingest_gmail_threads(
+        _write_threads(tmp_path, []),  # zero threads from the source
+        db_path=db_path,
+        user_emails=("me@example.com",),
+    )
+    assert result.status == "no_new_rows"
+    assert result.status != "failed"
+
+
 def test_ingest_all_malformed_is_failed(tmp_path: Path):
     """Genuine breakage (every payload malformed) still fails -- not papered over."""
     db_path = tmp_path / "youos.db"

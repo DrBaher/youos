@@ -281,22 +281,29 @@ def ingest_gmail_threads(
         counts.fetched_threads = load_result.fetched_threads
 
         if not thread_payloads:
-            detail = f"No Gmail threads were found from {import_detail}.\n\n{SUPPORTED_IMPORT_FORMAT}"
+            # b279: a live query that returns ZERO threads means "no new sent
+            # mail in this window" — an empty delta, which is a SUCCESS, not a
+            # failure. Marking it "failed" made an idle day's nightly report
+            # "Gmail ingestion failed" and held the whole pipeline at "partial"
+            # (e.g. a Gmail account the user simply didn't send from). Use the
+            # same ``no_new_rows`` status the post-processing empty-delta path
+            # already uses; a genuine load/auth/subprocess error still RAISES and
+            # is caught above as ``failed``. The supported-format help is only
+            # useful for diagnosing a real input problem, so it's dropped here.
+            detail = f"No new Gmail threads to ingest from {import_detail}."
             finish_ingest_run(
                 connection,
                 run_id=ingestion_run_id,
-                status="failed",
+                status="no_new_rows",
                 counts=IngestRunCounts(
                     discovered=counts.discovered_threads,
                     fetched=counts.fetched_threads,
                 ),
-                error_summary="No Gmail threads were found",
-                error_detail=detail,
             )
             connection.commit()
             return IngestionResult(
                 source_type="gmail_thread",
-                status="failed",
+                status="no_new_rows",
                 detail=detail,
                 run_id=ingestion_run_id,
             )
