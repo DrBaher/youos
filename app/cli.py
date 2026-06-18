@@ -1403,5 +1403,45 @@ def token_revoke(
         raise typer.Exit(code=1)
 
 
+@app.command("gmail-watch")
+def gmail_watch(
+    action: str = typer.Argument(..., help="start | status | renew | stop"),
+    account: str = typer.Option(None, "--account", "-a", help="Account email (default: all configured)"),
+    topic: str = typer.Option(None, "--topic", help="Pub/Sub topic for 'start' (projects/<proj>/topics/<topic>)"),
+):
+    """Manage the Gmail watch behind real-time push (b283).
+
+    'start' (one-time, needs --topic) registers the watch; the nightly auto-renews
+    it before the 7-day expiry. 'status' shows the stored state/expiry, 'renew'
+    refreshes now, 'stop' disables. See integrations/gmail-pubsub/README.md.
+    """
+    from app.core.config import get_ingestion_accounts
+    from app.ingestion import gmail_watch as gw
+
+    actions = {"start": None, "status": gw.watch_status, "renew": gw.renew_watch, "stop": gw.stop_watch}
+    if action not in actions:
+        print(f"Unknown action {action!r} — use: start | status | renew | stop")
+        raise typer.Exit(code=1)
+    if action == "start" and not topic:
+        print("start requires --topic projects/<project>/topics/<topic>")
+        raise typer.Exit(code=1)
+
+    accounts = [account] if account else list(get_ingestion_accounts())
+    if not accounts:
+        print("No accounts configured.")
+        raise typer.Exit(code=1)
+
+    failures = 0
+    for acct in accounts:
+        try:
+            res = gw.start_watch(acct, topic=topic) if action == "start" else actions[action](acct)
+            print(f"{acct}: {res or 'ok'}")
+        except Exception as exc:
+            failures += 1
+            print(f"{acct}: ERROR {exc}")
+    if failures:
+        raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
     app()

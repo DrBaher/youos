@@ -116,6 +116,39 @@ def step_ingest_gmail(verbose: bool = False) -> bool:
     return success
 
 
+def step_gmail_watch_renew(verbose: bool = False) -> str:
+    """Renew the Gmail watch so real-time push (b282) survives its 7-day expiry.
+
+    Gated on ``agent.gmail_push.enabled``. Best-effort per account — a renew
+    failure (no watch started yet, gog auth, etc.) is logged, never fails the run.
+    The one-time ``gog gmail watch start --topic …`` is the user's setup step
+    (see integrations/gmail-pubsub/README.md); this just keeps it alive (b283)."""
+    from app.core.config import load_config
+
+    cfg = load_config() or {}
+    agent = (cfg.get("agent") or {}) if isinstance(cfg, dict) else {}
+    gp = (agent.get("gmail_push") or {}) if isinstance(agent, dict) else {}
+    if not (isinstance(gp, dict) and gp.get("enabled")):
+        return "skipped (gmail_push disabled)"
+
+    from app.ingestion.gmail_watch import renew_watch
+
+    renewed = 0
+    failed: list[str] = []
+    for account in ACCOUNTS:
+        try:
+            res = renew_watch(account)
+            renewed += 1
+            if verbose:
+                print(f"  [OK] watch renewed for {account}: {res.get('expiration') or res}")
+        except Exception as exc:
+            failed.append(account)
+            print(f"  [WARN] watch renew failed for {account}: {exc}")
+    if failed:
+        return f"renewed {renewed}/{len(ACCOUNTS)} (failed: {', '.join(failed)})"
+    return f"renewed {renewed}/{len(ACCOUNTS)}"
+
+
 def step_analyze_persona(verbose: bool = False, dry_run: bool = False) -> bool:
     """Run persona analysis and merge results into persona.yaml."""
     # Decide whether to run --full or --recent-days
@@ -1302,6 +1335,17 @@ def main() -> None:
         steps["ingestion"] = False
         errors.append(f"Gmail ingestion error: {exc}")
     _record_duration("ingestion", _t)
+
+    # 1a. Gmail watch renewal (b283): keep real-time push (b282) alive past its
+    # 7-day expiry. Observability-style — a renew failure never fails the run.
+    _t = time.monotonic()
+    try:
+        results["gmail_watch"] = step_gmail_watch_renew(verbose=verbose)
+        steps["gmail_watch"] = True
+    except Exception as exc:
+        results["gmail_watch"] = f"error: {exc}"
+        steps["gmail_watch"] = True
+    _record_duration("gmail_watch", _t)
 
     # 1b. Benchmark auto-refresh
     _t = time.monotonic()
