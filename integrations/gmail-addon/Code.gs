@@ -163,6 +163,63 @@ function _notify(text) {
     .setNotification(CardService.newNotification().setText(text)).build();
 }
 
+// --- Compose: insert YouOS's draft into the reply you're writing -----------
+
+/**
+ * Runs when you open the YouOS action while composing a reply. Looks up YouOS's
+ * draft for the thread and offers to insert it into the compose body. Requires
+ * draftAccess: METADATA (for e.gmail.threadId) + the compose scope.
+ */
+function onGmailCompose(e) {
+  if (!_baseUrl() || !_token()) { return _settingsCard(); }
+  var threadId = e && e.gmail && e.gmail.threadId; // populated on a reply
+  var row = null;
+  if (threadId) {
+    try {
+      var res = _api('get', '/api/agent/pending/by_thread/' + encodeURIComponent(threadId));
+      if (res.code === 200) { row = JSON.parse(res.body); }
+    } catch (err) { /* fall through to the empty card */ }
+  }
+
+  var section = CardService.newCardSection();
+  if (row && row.draft) {
+    section.addWidget(CardService.newTextParagraph().setText(_esc(row.draft)));
+    section.addWidget(CardService.newTextButton().setText('Insert into reply')
+      .setOnClickAction(CardService.newAction().setFunctionName('insertYouosDraft')
+        .setParameters({ threadId: String(threadId) })));
+  } else {
+    section.addWidget(CardService.newTextParagraph()
+      .setText('No YouOS draft for this thread yet.'));
+  }
+  return CardService.newCardBuilder()
+    .setHeader(CardService.newCardHeader().setTitle('YouOS').setSubtitle('Insert draft'))
+    .addSection(section).build();
+}
+
+/**
+ * Inserts the draft into the current compose body. Re-fetches by threadId
+ * (rather than passing the body as an action parameter, which is size-bounded),
+ * converts newlines to <br>, and inserts at the cursor. Returns a no-op update
+ * if the draft can't be loaded, so the compose action never errors out.
+ */
+function insertYouosDraft(e) {
+  var threadId = e.commonEventObject.parameters.threadId;
+  var html = '';
+  try {
+    var res = _api('get', '/api/agent/pending/by_thread/' + encodeURIComponent(threadId));
+    if (res.code === 200) {
+      var draft = JSON.parse(res.body).draft || '';
+      html = _esc(draft).replace(/\n/g, '<br>');
+    }
+  } catch (err) { /* leave html empty → no-op insert */ }
+
+  var update = CardService.newUpdateDraftBodyAction()
+    .addUpdateContent(html, CardService.ContentType.MUTABLE_HTML)
+    .setUpdateType(CardService.UpdateDraftBodyType.IN_PLACE_INSERT);
+  return CardService.newUpdateDraftActionResponseBuilder()
+    .setUpdateDraftBodyAction(update).build();
+}
+
 function _infoCard(title, body) {
   return CardService.newCardBuilder()
     .setHeader(CardService.newCardHeader().setTitle('YouOS').setSubtitle(title))
