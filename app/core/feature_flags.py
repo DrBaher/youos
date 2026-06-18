@@ -294,6 +294,29 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "help": "Optional shared secret sent as the X-YouOS-Secret header so your receiver can verify the push is from YouOS.",
     },
     {
+        "key": "agent.gmail_push.enabled",
+        "label": "Gmail real-time push (Pub/Sub)",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "Accept Gmail watch→Pub/Sub notifications at /api/gmail/push and fire "
+            "an immediate triage sweep (vs the ~15-min poll). Requires the token "
+            "below AND Google Cloud setup — see integrations/gmail-pubsub/README.md. "
+            "Inert until both this and the token are set."
+        ),
+    },
+    {
+        "key": "agent.gmail_push.token",
+        "label": "Gmail push shared secret",
+        "type": "text",
+        "default": "",
+        "help": (
+            "Shared secret the Pub/Sub push subscription must send as ?token=… on "
+            "the webhook URL (the endpoint is public, so this authenticates it). "
+            "Use a long random value; compared constant-time."
+        ),
+    },
+    {
         "key": "agent.notify_min_interval_minutes",
         "label": "Min minutes between webhook pushes",
         "type": "int",
