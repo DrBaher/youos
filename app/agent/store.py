@@ -181,6 +181,24 @@ def get(database_url: str, row_id: int) -> dict[str, Any] | None:
     return _row_to_dict(row) if row else None
 
 
+def get_by_thread(database_url: str, thread_id: str) -> dict[str, Any] | None:
+    """The most recent YouOS row for a Gmail thread, by the thread's Gmail id.
+
+    Entry point for the Gmail Add-on (b280), which knows the open thread's id but
+    not YouOS's row id. Returns the latest row regardless of status so the panel
+    can render drafted / sent / dismissed state; None when YouOS has nothing for
+    the thread."""
+    if not thread_id:
+        return None
+    with closing(_connect(database_url)) as conn:
+        row = conn.execute(
+            "SELECT * FROM agent_pending_drafts WHERE thread_id = ? "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            (thread_id,),
+        ).fetchone()
+    return _row_to_dict(row) if row else None
+
+
 def _slots_to_json(slots) -> str | None:
     """Serialize [(start_dt, end_dt), ...] as JSON [[start_iso, end_iso], ...]."""
     if not slots:

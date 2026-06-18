@@ -65,6 +65,24 @@ def test_list_pending_returns_newest_first_and_rehydrates_json(db_url):
     assert rows[0]["cold_outreach"] is False
 
 
+def test_get_by_thread_returns_latest_for_thread(db_url):
+    """b280: the Gmail Add-on looks up YouOS's row by the open thread's Gmail id.
+    Returns the most recent row for the thread (id-tiebreak when same second),
+    None for an unknown thread."""
+    from app.agent import store
+
+    store.upsert_pending(db_url, **{**_DEFAULTS, "message_id": "ma", "thread_id": "tA"})
+    store.upsert_pending(db_url, **{**_DEFAULTS, "message_id": "mb", "thread_id": "tA"})  # newer, same thread
+    store.upsert_pending(db_url, **{**_DEFAULTS, "message_id": "mc", "thread_id": "tB"})
+
+    a = store.get_by_thread(db_url, "tA")
+    assert a is not None and a["thread_id"] == "tA"
+    assert a["message_id"] == "mb"  # the most recent row for the thread
+    assert store.get_by_thread(db_url, "tB")["message_id"] == "mc"
+    assert store.get_by_thread(db_url, "no-such-thread") is None
+    assert store.get_by_thread(db_url, "") is None
+
+
 def test_list_pending_filters_by_tier(db_url):
     from app.agent import store
 
