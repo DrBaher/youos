@@ -1,9 +1,13 @@
 # YouOS Gmail Add-on
 
-Puts YouOS's review experience **inside Gmail**: open a conversation and a
-sidebar card shows YouOS's draft for that thread, its calibrated confidence, and
-the reasons — with **Regenerate** and **Dismiss** actions, and a note when the
-draft is already waiting in your Gmail Drafts.
+Puts YouOS's review experience **inside Gmail**:
+
+- **Reading a thread** — a sidebar card shows YouOS's draft for that thread, its
+  calibrated confidence, and the reasons, with **Regenerate** and **Dismiss**
+  actions (and a note when the draft is already in your Gmail Drafts).
+- **Writing a reply** — open the YouOS action while composing and **insert
+  YouOS's draft straight into the reply box** (the compose trigger), so you start
+  from your own words instead of a blank compose window.
 
 ```
 Gmail (web/mobile)  ──►  Apps Script add-on  ──►  Tailscale Funnel (HTTPS)  ──►  your local YouOS
@@ -75,8 +79,14 @@ appear, with Regenerate / Dismiss.
 
 ## What it uses (server side)
 - `GET /api/agent/pending/by_thread/{threadId}` — the add-on's entry point (added
-  in b280): YouOS's latest row for the open Gmail thread.
+  in b280): YouOS's latest row for the open Gmail thread. Both the read card and
+  the compose-insert use it.
 - `POST /api/agent/pending/{id}/regenerate` · `POST /api/agent/pending/{id}/dismiss`
+
+Scopes: `addons.execute`, `addons.current.message.metadata`,
+`addons.current.action.compose` (the compose-insert, b281), `script.external_request`.
+No broad Gmail read/modify scope — the add-on uses `e.gmail.threadId` and inserts
+into the draft you're already editing.
 
 ## Security checklist
 - **PIN set before Funnel** (step 1) — otherwise the API is open to the internet.
