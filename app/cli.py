@@ -866,6 +866,54 @@ def digests_collect(run_id: int = typer.Argument(..., help="Pending digest id (f
     typer.echo(f"collected id={run_id}")
 
 
+# --- The Wire — newsletter digest -------------------------------------------
+wire_app = typer.Typer(
+    name="wire", no_args_is_help=True,
+    help="The Wire: comprehensive newsletter digest (collect → themed HTML → send + archive).",
+)
+app.add_typer(wire_app, name="wire")
+
+
+@wire_app.command("run")
+def wire_run(
+    preview: bool = typer.Option(False, "--preview", help="Build + print the HTML only; no send/archive/edition bump"),
+    days: int = typer.Option(None, "--days", help="Override the collection window for this run (e.g. 7 for a backfill)"),
+    force: bool = typer.Option(False, "--force", help="Manual rebuild: bypass the once-per-day claim + dedup (re-includes already-digested mail)"),
+):
+    """Run The Wire once. A real run (default) is gated on agent.wire.enabled +
+    the send frontier; ``--preview`` is read-only and works even when off.
+    ``--force`` sends a fresh edition even if one already went today."""
+    from app.agent.wire_digest import run_wire
+
+    res = run_wire(get_settings().database_url, dry_run=preview, days_back=days, force=force)
+    status = res.get("status")
+    typer.echo(f"[{status}] The Wire #{res.get('edition','?')} → {res.get('to','?')}  "
+               f"({res.get('count',0)} newsletters, {res.get('stories',0)} stories"
+               f"{', archived ' + str(res['archived']) if res.get('archived') is not None else ''})")
+    if res.get("detail"):
+        typer.echo(f"  {res['detail']}")
+    if preview and res.get("html"):
+        import tempfile
+        path = tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, prefix="the-wire-preview-")
+        path.write(res["html"])
+        path.close()
+        typer.echo(f"  HTML preview written to {path.name}")
+
+
+@wire_app.command("status")
+def wire_status():
+    """Show the Wire's enabled/schedule state + the next edition number."""
+    from app.agent.wire_digest import load_wire_spec, next_edition, read_edition_state
+
+    spec = load_wire_spec()
+    state = read_edition_state()
+    when = "weekdays" if spec.weekdays_only else "daily"
+    typer.echo(f"enabled={spec.enabled}  schedule={when} {spec.hour:02d}:{spec.minute:02d}  "
+               f"days_back={spec.days_back}  model={spec.summary_model}")
+    typer.echo(f"lastEdition={state.get('lastEdition')}  next=#{next_edition()}  "
+               f"history={len(state.get('history', []))} issues")
+
+
 @app.command()
 def serve():
     """Start the YouOS web server."""

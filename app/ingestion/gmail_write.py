@@ -358,28 +358,36 @@ def send_email(
     to: str,
     subject: str,
     body: str,
+    body_html: str | None = None,
     backend: str | None = None,
 ) -> GmailSendResult:
     """Compose and send a NEW email (not a reply or forward) — an OUTBOUND send,
     used by the digest task to deliver a summary. Crosses the never-send
     boundary, so callers MUST gate it behind the send frontier
     (``agent.send.enabled`` + outbound kill-switch). Only the ``gog`` backend
-    has a verified shape today."""
+    has a verified shape today.
+
+    ``body_html`` (b285) sends a rich HTML alternative alongside the plain
+    ``body`` (used by the Wire newsletter digest). The HTML is streamed via
+    ``--body-html-file -`` (stdin) so a large digest never hits an argv limit."""
     from app.core.config import get_ingestion_google_backend
 
     name = (backend or get_ingestion_google_backend()).strip().lower()
     if name == "gog":
-        return _gog_send_email(account=account, to=to, subject=subject, body=body)
+        return _gog_send_email(account=account, to=to, subject=subject, body=body, body_html=body_html)
     raise NotImplementedError(
         f"send_email is only implemented for the gog backend (got {name!r})"
     )
 
 
-def _gog_send_email(*, account: str, to: str, subject: str, body: str) -> GmailSendResult:
+def _gog_send_email(*, account: str, to: str, subject: str, body: str,
+                    body_html: str | None = None) -> GmailSendResult:
     """Verified ``gog gmail send --to --subject --body`` invocation (gog 0.17.0).
 
     Shape (confirmed via ``gog gmail send --help``):
         gog gmail send --to <addr> --subject <s> --body <b> --account <email> --json --no-input
+    With ``body_html`` an HTML alternative is added via ``--body-html-file -``
+    (HTML on stdin, verified flag) so a large digest avoids the argv limit.
     On success the Google API returns the sent Message resource ``{"id": ...}``.
     """
     cmd: list[str] = [
@@ -390,9 +398,13 @@ def _gog_send_email(*, account: str, to: str, subject: str, body: str) -> GmailS
         "--account", account,
         "--json", "--no-input",
     ]
+    stdin_text: str | None = None
+    if body_html is not None:
+        cmd += ["--body-html-file", "-"]  # verified flag: HTML body via stdin
+        stdin_text = body_html
     try:
         require_account_argv(cmd)
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, input=stdin_text)
     except FileNotFoundError as exc:
         raise GmailWriteError("gog CLI not on PATH — install via Homebrew or set up the native backend") from exc
     except subprocess.TimeoutExpired as exc:
