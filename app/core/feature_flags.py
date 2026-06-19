@@ -503,6 +503,22 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.wire.enabled",
+        "label": "The Wire (newsletter digest → one HTML email)",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "Master switch for The Wire: once a day (default weekdays 19:00) it "
+            "fetches the day's newsletters across accounts, extracts every story "
+            "with the cloud model, groups them into themed sections, and sends "
+            "ONE rich HTML digest — then archives the sources (except an "
+            "allow-list). OFF by default; a real send also requires "
+            "agent.send.enabled + the outbound kill-switch off. Tune under "
+            "agent.wire in youos_config.yaml (hour, weekdays_only, days_back, "
+            "summary_model, skip/promo/archive lists)."
+        ),
+    },
+    {
         "key": "agent.extract_facts.enabled",
         "label": "Harvest facts from drafted mail",
         "type": "bool",
@@ -588,6 +604,7 @@ SEND_FRONTIER_FLAGS: frozenset[str] = frozenset({
     "agent.auto_send.mode",
     "agent.actions.allow_forward",
     "agent.digests.enabled",
+    "agent.wire.enabled",
 })
 
 
