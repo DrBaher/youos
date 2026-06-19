@@ -452,6 +452,19 @@ async def _run_tick(app) -> int:
         except Exception as exc:
             logger.info("digest tasks step errored: %s", exc)
 
+        # The Wire — newsletter digest (collect bodies → themed HTML → send +
+        # archive). One issue spans all accounts, so it runs ONCE per tick (not
+        # per account); no-op unless agent.wire.enabled + due + not yet today.
+        try:
+            from app.agent.wire_digest import run_due_wire
+            from app.core.settings import get_settings
+
+            await asyncio.get_event_loop().run_in_executor(
+                None, partial(run_due_wire, get_settings().database_url)
+            )
+        except Exception as exc:
+            logger.info("wire digest step errored: %s", exc)
+
         if total_persisted > 0 and cfg["notify_macos"]:
             s = "s" if total_persisted != 1 else ""
             _notify_macos(
