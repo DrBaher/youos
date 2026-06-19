@@ -69,6 +69,7 @@ _CATCH_UP_HOURS = 3
 
 
 _VALID_SUMMARY_MODELS = ("local", "cloud")
+_VALID_LAYOUTS = ("text", "html")
 
 # Weekday names → Python's datetime.weekday() index (Monday=0 … Sunday=6).
 _WEEKDAYS = {
@@ -121,6 +122,7 @@ class DigestSpec:
     then_archive: bool = False
     max_messages: int = _MAX_MESSAGES
     summary_model: str = "local"   # 'local' (warm model, no egress) | 'cloud' (Claude)
+    layout: str = "text"           # 'text' (plain) | 'html' (Wire-style grouped cards)
     enabled: bool = True
 
 
@@ -167,6 +169,9 @@ def validate_digest(raw: Any) -> tuple[bool, str]:
     sm = str(raw.get("summary_model") or "local").strip().lower()
     if sm not in _VALID_SUMMARY_MODELS:
         return False, f"summary_model must be one of {list(_VALID_SUMMARY_MODELS)}"
+    lay = str(raw.get("layout") or "text").strip().lower()
+    if lay not in _VALID_LAYOUTS:
+        return False, f"layout must be one of {list(_VALID_LAYOUTS)}"
     destn = str(raw.get("destination") or "agent").strip().lower()
     if destn not in _VALID_DESTINATIONS:
         return False, f"destination must be one of {list(_VALID_DESTINATIONS)}"
@@ -197,6 +202,7 @@ def _normalize_digest(raw: Any) -> DigestSpec | None:
         then_archive=bool(raw.get("then_archive", False)),
         max_messages=int(raw.get("max_messages", _MAX_MESSAGES)),
         summary_model=str(raw.get("summary_model") or "local").strip().lower(),
+        layout=str(raw.get("layout") or "text").strip().lower(),
         enabled=bool(raw.get("enabled", True)),
     )
 
@@ -472,6 +478,36 @@ def build_digest_body(items: list[dict[str, str]], *, model: str = "local",
         except Exception as exc:
             logger.info("digest summarization (%s) failed, using plain list: %s", model, exc)
     return f"{header}{worth_attention}\n\n{listing}"
+
+
+def build_digest_html(items: list[dict[str, str]], *, name: str, model: str = "local",
+                      prompt: str = "", complete_fn=None, now: datetime | None = None) -> str:
+    """Render the digest as Wire-style grouped HTML cards (used when a digest sets
+    ``layout: html``). The model groups the items into labelled section cards; a
+    deterministic sender-grouped fallback keeps it clean if the model is off or
+    its output fails validation. Read-only metadata (from/subject/date) only."""
+    from app.agent import digest_html
+
+    now = now or datetime.now(_user_tz())
+    scored = _digest_urgency(items)
+    urgent = [it for (it, s) in scored if s >= _DIGEST_URGENT_THRESHOLD]
+
+    fn = complete_fn if complete_fn is not None else _summary_fn(model)
+    instruction = (prompt or "").strip() or (
+        f"Summarize this '{name}' digest of automated notifications for a developer."
+    )
+    sections = digest_html.build_sections(items, instruction=instruction, complete_fn=fn)
+
+    if urgent:
+        names = "".join(
+            f'      <li>{digest_html.esc(it["from"])} — {digest_html.esc(it["subject"])}</li>'
+            for it in urgent
+        )
+        sections = (f'    <div class="card"><h2>⚠️ Worth attention</h2>\n      <ul>\n{names}\n'
+                    f"      </ul>\n    </div>\n{sections}")
+
+    subtitle = f"{now.strftime('%A, %B %d, %Y')} • {len(items)} item(s)"
+    return digest_html.render(title=f"🛠 {name}", subtitle=subtitle, sections_html=sections)
 
 
 # --- NL → Gmail query (author the "which emails" part in plain English) ---------
@@ -785,9 +821,20 @@ def run_digest(database_url: str, account: str, spec: DigestSpec, *,
         return {"status": "ready", "name": spec.name, "period": period, "run_id": run_id,
                 "count": len(items), "body": body}
 
-    # destination == "inbox": send the email.
+    # destination == "inbox": send the email. layout='html' renders the Wire-style
+    # grouped cards (plain `body` stays as the multipart text alternative).
+    body_html = None
+    if spec.layout == "html":
+        try:
+            body_html = build_digest_html(items, name=spec.name, model=spec.summary_model,
+                                          prompt=spec.prompt)
+        except Exception as exc:
+            logger.info("digest html render failed (%s); sending plain text", exc)
+    send_kwargs = {"account": account, "to": to, "subject": subject, "body": body}
+    if body_html is not None:
+        send_kwargs["body_html"] = body_html
     try:
-        res = gmail_write.send_email(account=account, to=to, subject=subject, body=body)
+        res = gmail_write.send_email(**send_kwargs)
     except Exception as exc:
         _update_run(database_url, run_id, "error", message_count=len(items), detail=f"send failed: {exc}")
         return {"status": "error", "name": spec.name, "period": period, "detail": str(exc)}
