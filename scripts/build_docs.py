@@ -38,6 +38,13 @@ except ImportError:
 # Order = rendered order on the index page. Each entry: (filename, title, blurb).
 DOCS: list[tuple[str, str, str]] = [
     (
+        "THE_WIRE.md",
+        "The Wire — newsletter digest setup",
+        "Turn the day's newsletters across your accounts into one Gmail-safe HTML "
+        "email — every story extracted, deduped across sources, grouped by theme — "
+        "then archive the originals. Preview, configure, gate, and schedule it.",
+    ),
+    (
         "AGENT_OPERATIONS.md",
         "Agent operations playbook",
         "Runtime contract for LLM-driven orchestrators operating YouOS — decision "
