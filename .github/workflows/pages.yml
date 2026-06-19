@@ -1,7 +1,7 @@
 name: Deploy landing page to GitHub Pages
 
 # Publishes the YouOS landing page (site/) to GitHub Pages at
-# https://youos.you.com. The artifact is assembled from site/ plus the
+# https://youos.drbaher.com. The artifact is assembled from site/ plus the
 # real screenshots/ assets, so there's a single source of truth for images.
 
 on:

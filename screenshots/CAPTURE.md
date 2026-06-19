@@ -1,6 +1,6 @@
 # Capturing the YouOS screenshots
 
-The landing page (`site/index.html`, served at youos.you.com — `pages.yml`
+The landing page (`site/index.html`, served at youos.drbaher.com — `pages.yml`
 bundles this `screenshots/` folder into the deploy) shows a **2×2 grid** of four
 screenshots, each with a light and a dark variant:
 
