@@ -209,6 +209,30 @@ def test_run_blocks_when_send_frontier_closed(monkeypatch):
     assert res["status"] == "blocked" and not sent
 
 
+def test_force_bypasses_dedup_and_daily_claim(monkeypatch):
+    _cfg(monkeypatch, wire_enabled=True)
+    monkeypatch.setattr("app.db.bootstrap.ensure_agent_schema", lambda *a, **k: True)
+    # _period_done would say True (already ran today) — force must ignore it.
+    monkeypatch.setattr("app.agent.digest_tasks._period_done", lambda *a, **k: True)
+    monkeypatch.setattr("app.agent.digest_tasks.reap_stale_digest_runs", lambda *a, **k: 0)
+    # _undigested would drop everything (all already digested) — force must skip it.
+    monkeypatch.setattr("app.agent.digest_tasks._undigested", lambda *a, **k: [])
+    monkeypatch.setattr("app.agent.digest_tasks._claim_period", lambda *a, **k: 1)
+    monkeypatch.setattr("app.agent.digest_tasks._record_digested", lambda *a, **k: None)
+    monkeypatch.setattr("app.agent.digest_tasks._update_run", lambda *a, **k: None)
+    items = [{"id": "1", "account": "me@x.com", "from": "Brew", "subject": "AI", "body": "x", "promo": False}]
+    monkeypatch.setattr(w, "collect_wire", lambda spec, accts: (items, list(items)))
+    monkeypatch.setattr(w, "build_wire_html", lambda *a, **k: ("<html></html>", 1))
+    monkeypatch.setattr(w, "_archive", lambda *a, **k: 1)
+    monkeypatch.setattr(w, "_bump_edition", lambda *a, **k: None)
+
+    class _R:
+        message_id = "m1"
+    monkeypatch.setattr("app.ingestion.gmail_write.send_email", lambda **k: _R())
+    res = w.run_wire("sqlite:///x", now=datetime.datetime(2026, 6, 19, 19, 0), force=True)
+    assert res["status"] == "sent" and res["count"] == 1   # included despite dedup/claim
+
+
 def test_run_kill_switch_blocks(monkeypatch):
     _cfg(monkeypatch, wire_enabled=True, send_enabled=True, kill=True)
     monkeypatch.setattr("app.db.bootstrap.ensure_agent_schema", lambda *a, **k: True)
@@ -219,6 +243,42 @@ def test_run_kill_switch_blocks(monkeypatch):
     monkeypatch.setattr(w, "collect_wire", lambda spec, accts: (items, items))
     res = w.run_wire("sqlite:///x", now=datetime.datetime(2026, 6, 19, 19, 0))
     assert res["status"] == "blocked" and "kill" in res["detail"]
+
+
+# --- pagination -------------------------------------------------------------
+
+
+def test_list_account_paginates_past_one_page(monkeypatch):
+    # Gmail caps a page at 500; _list_account must follow nextPageToken until the
+    # window is exhausted (or the cap is hit) instead of truncating at one page.
+    import json as _json
+
+    pages = {
+        None: {"messages": [{"id": f"a{i}", "from": "Brew", "subject": "x"} for i in range(500)],
+               "nextPageToken": "P2"},
+        "P2": {"messages": [{"id": f"b{i}", "from": "Brew", "subject": "x"} for i in range(120)]},
+    }
+
+    def fake_run(cmd, timeout):
+        tok = cmd[cmd.index("--page") + 1] if "--page" in cmd else None
+        return _json.dumps(pages[tok])
+
+    monkeypatch.setattr(w, "_run", fake_run)
+    spec = w.WireSpec(max_emails=1000)
+    out = w._list_account("me@x.com", spec)
+    assert len(out) == 620                      # both pages, not capped at 500
+
+
+def test_list_account_respects_max_cap(monkeypatch):
+    import json as _json
+
+    def fake_run(cmd, timeout):
+        return _json.dumps({"messages": [{"id": f"a{i}", "from": "B", "subject": "x"}
+                                         for i in range(500)], "nextPageToken": "more"})
+
+    monkeypatch.setattr(w, "_run", fake_run)
+    out = w._list_account("me@x.com", w.WireSpec(max_emails=300))
+    assert len(out) == 300                      # stops at the cap despite more pages
 
 
 # --- archive exclusions -----------------------------------------------------

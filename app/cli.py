@@ -878,12 +878,14 @@ app.add_typer(wire_app, name="wire")
 def wire_run(
     preview: bool = typer.Option(False, "--preview", help="Build + print the HTML only; no send/archive/edition bump"),
     days: int = typer.Option(None, "--days", help="Override the collection window for this run (e.g. 7 for a backfill)"),
+    force: bool = typer.Option(False, "--force", help="Manual rebuild: bypass the once-per-day claim + dedup (re-includes already-digested mail)"),
 ):
     """Run The Wire once. A real run (default) is gated on agent.wire.enabled +
-    the send frontier; ``--preview`` is read-only and works even when off."""
+    the send frontier; ``--preview`` is read-only and works even when off.
+    ``--force`` sends a fresh edition even if one already went today."""
     from app.agent.wire_digest import run_wire
 
-    res = run_wire(get_settings().database_url, dry_run=preview, days_back=days)
+    res = run_wire(get_settings().database_url, dry_run=preview, days_back=days, force=force)
     status = res.get("status")
     typer.echo(f"[{status}] The Wire #{res.get('edition','?')} → {res.get('to','?')}  "
                f"({res.get('count',0)} newsletters, {res.get('stories',0)} stories"
