@@ -285,13 +285,14 @@ def test_list_account_respects_max_cap(monkeypatch):
 
 
 def test_archive_excludes_allowlisted_sender(monkeypatch):
-    spec = w.WireSpec()
+    # archive_exclusions is config-driven (empty by default); set it explicitly.
+    spec = w.WireSpec(archive_exclusions=("keep-me.example", "vip newsletter"))
     calls = []
     monkeypatch.setattr("app.ingestion.gmail_write.modify_message_labels",
                         lambda **k: calls.append(k["message_id"]))
     manifest = [
-        {"id": "keep", "account": "me@x.com", "from": "Benedict Evans <ben@***REMOVED***>", "subject": "x"},
+        {"id": "keep", "account": "me@x.com", "from": "VIP Newsletter <hi@keep-me.example>", "subject": "x"},
         {"id": "arch", "account": "me@x.com", "from": "Morning Brew <x@brew.com>", "subject": "y"},
     ]
     archived = w._archive(manifest, spec)
-    assert archived == 1 and calls == ["arch"]   # ***REMOVED*** never archived
+    assert archived == 1 and calls == ["arch"]   # allow-listed sender never archived

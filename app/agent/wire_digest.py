@@ -54,27 +54,21 @@ _DEFAULT_HOUR = 19
 _READ_TIMEOUT = 30
 _LIST_TIMEOUT = 60
 
-# Work accounts only contribute categorized newsletters/updates (no personal
-# correspondence is pulled into the digest).
-_WORK_ACCOUNTS = ("baher@work.example",)
-
-# Senders never worth a digest entry — transactional, shipping, billing, work
-# tooling, event spam, and the digest's own address (avoid self-ingest).
+# Generic, universal noise senders — transactional/SaaS/automation that no
+# newsletter digest wants. Deliberately NOT personal: extend with your own
+# vendors via ``agent.wire.skip_from`` (which REPLACES this default). Work
+# accounts that should contribute only categorized newsletters go in
+# ``agent.wire.work_accounts`` (default: none).
 _SKIP_FROM = (
     "calendar-notification@google.com", "paypal", "stripe",
     "no-reply@accounts.google.com", "shipment-tracking@amazon",
     "drive-shares-dm-noreply@google.com", "comments-noreply@docs.google.com",
-    "uber@uber.com", "***REMOVED***", "***REMOVED***", "***REMOVED***", "improvmx.com",
-    "emailmeter.com", "***REMOVED***", "noreply@campaign.eventbrite.com",
-    "noreply@e.economist.com", "nytimes@e.newyorktimes.com",
-    "subscriptions@message.bloomberg.com", "support@fly.io", "noreply@fly.io",
-    "deploy@vercel.com", "hello@emailmeter.com", "support@improvmx.com",
-    "***REMOVED***", "***REMOVED***", "eventbrite.com",
-    "***REMOVED***", "***REMOVED***",
-    "noreply@google.com", "notify@google.com", "***REMOVED***",
+    "noreply@campaign.eventbrite.com", "eventbrite.com",
+    "support@fly.io", "noreply@fly.io", "deploy@vercel.com",
+    "noreply@google.com", "notify@google.com", "notifications@github.com",
     "fireflies.ai", "notion.so", "slack.com", "asana.com",
     "monday.com", "clickup.com", "jira", "confluence",
-    "zoom.us", "calendly.com", "loom.com", "notifications@github.com",
+    "zoom.us", "calendly.com", "loom.com",
 )
 
 _SKIP_SUBJECT = (
@@ -105,7 +99,8 @@ _PROMO_FROM = (
 )
 
 # Senders whose mail is NEVER archived after a digest (stays in the inbox).
-_ARCHIVE_EXCLUSIONS = ("***REMOVED***", "***REMOVED***", "***REMOVED***")
+# Empty by default — set yours via ``agent.wire.archive_exclusions``.
+_ARCHIVE_EXCLUSIONS: tuple[str, ...] = ()
 
 # Reused ledger identity (shares agent_digest_runs / agent_digest_items tables).
 _WIRE_NAME = "Wire"
@@ -124,6 +119,8 @@ class WireSpec:
     max_emails: int = _DEFAULT_MAX_EMAILS
     max_body_lines: int = _DEFAULT_MAX_BODY_LINES
     summary_model: str = "cloud"     # 'cloud' (Claude) | 'local' (warm model)
+    seed_edition: int = 0            # starting edition when no state file exists yet
+    work_accounts: tuple[str, ...] = ()  # contribute categorized newsletters only
     skip_from: tuple[str, ...] = field(default_factory=lambda: _SKIP_FROM)
     skip_subject: tuple[str, ...] = field(default_factory=lambda: _SKIP_SUBJECT)
     promo_from: tuple[str, ...] = field(default_factory=lambda: _PROMO_FROM)
@@ -166,6 +163,8 @@ def load_wire_spec() -> WireSpec:
         max_emails=max(1, _int("max_emails", _DEFAULT_MAX_EMAILS)),
         max_body_lines=max(10, _int("max_body_lines", _DEFAULT_MAX_BODY_LINES)),
         summary_model=str(w.get("summary_model") or "cloud").strip().lower(),
+        seed_edition=max(0, _int("seed_edition", 0)),
+        work_accounts=_list("work_accounts", ()),
         skip_from=_list("skip_from", _SKIP_FROM),
         skip_subject=_list("skip_subject", _SKIP_SUBJECT),
         promo_from=_list("promo_from", _PROMO_FROM),
@@ -174,11 +173,9 @@ def load_wire_spec() -> WireSpec:
 
 
 # --- edition tracking -------------------------------------------------------
-# Stored per-instance at var/wire_edition.json (mirrors the OpenClaw
-# edition-tracker.json shape). Seeded from the OpenClaw tracker's lastEdition so
-# the YouOS sequence continues seamlessly (the user asked to continue from #68).
-
-_OPENCLAW_TRACKER = "***REMOVED***"
+# Stored per-instance at var/wire_edition.json. The first issue starts at
+# ``agent.wire.seed_edition + 1`` (default → #1); set seed_edition to continue an
+# existing sequence (e.g. migrating from another tool).
 
 
 def _edition_path():
@@ -188,17 +185,13 @@ def _edition_path():
 
 
 def _seed_last_edition() -> int:
-    """Best-effort read of the OpenClaw tracker's lastEdition for continuity."""
-    try:
-        with open(_OPENCLAW_TRACKER, encoding="utf-8") as f:
-            return int(json.load(f).get("lastEdition", 0))
-    except Exception:
-        return 0
+    """The configured starting point (0 → first issue is #1)."""
+    return load_wire_spec().seed_edition
 
 
 def read_edition_state() -> dict[str, Any]:
-    """Current edition state ``{lastEdition, history}``. Seeds from the OpenClaw
-    tracker the first time so YouOS continues the same numbering."""
+    """Current edition state ``{lastEdition, history}``. Seeds from
+    ``agent.wire.seed_edition`` the first time (before any issue is sent)."""
     path = _edition_path()
     try:
         with open(path, encoding="utf-8") as f:
@@ -259,7 +252,7 @@ _PAGE_SIZE = 500
 
 
 def _list_account(account: str, spec: WireSpec) -> list[dict[str, str]]:
-    if account in _WORK_ACCOUNTS:
+    if account.lower() in {a.lower() for a in spec.work_accounts}:
         query = f"in:inbox (category:promotions OR category:updates) newer_than:{spec.days_back}d"
     else:
         query = f"in:inbox newer_than:{spec.days_back}d"
