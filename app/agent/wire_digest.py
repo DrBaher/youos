@@ -46,7 +46,9 @@ logger = logging.getLogger(__name__)
 # --- defaults (ported from the OpenClaw collect.py; config can override) -----
 
 _DEFAULT_DAYS_BACK = 2
-_DEFAULT_MAX_EMAILS = 150
+# High enough that a normal day is never truncated; pagination + this cap let a
+# multi-day backfill cover a full inbox (a single Gmail page is only 500).
+_DEFAULT_MAX_EMAILS = 600
 _DEFAULT_MAX_BODY_LINES = 150
 _DEFAULT_HOUR = 19
 _READ_TIMEOUT = 30
@@ -249,34 +251,53 @@ def _run(cmd: list[str], timeout: int) -> str:
     return r.stdout or ""
 
 
+# Gmail's API returns at most 500 results per page, so a multi-day window needs
+# pagination (--page <nextPageToken>) — a single call silently truncated a busy
+# week to 500/account. We drop --results-only so the envelope's nextPageToken is
+# visible, and keep paging until exhausted or the max_emails cap is hit.
+_PAGE_SIZE = 500
+
+
 def _list_account(account: str, spec: WireSpec) -> list[dict[str, str]]:
     if account in _WORK_ACCOUNTS:
         query = f"in:inbox (category:promotions OR category:updates) newer_than:{spec.days_back}d"
     else:
         query = f"in:inbox newer_than:{spec.days_back}d"
-    cmd = ["gog", "gmail", "messages", "search", "--account", account,
-           "--max", str(spec.max_emails), "--json", "--results-only", "--no-input",
-           "--", query]
-    try:
-        raw = _run(cmd, _LIST_TIMEOUT)
-    except RuntimeError as exc:
-        logger.info("wire list failed for %s: %s", account, exc)
-        return []
-    try:
-        data = json.loads(raw or "[]")
-    except json.JSONDecodeError:
-        return []
-    msgs = data if isinstance(data, list) else (data.get("messages") or data.get("results") or data.get("threads") or [])
-    out = []
-    for m in msgs:
-        mid = m.get("id") or m.get("messageId")
-        if not mid:
-            continue
-        out.append({
-            "id": str(mid), "account": account,
-            "from": str(m.get("from") or m.get("sender") or ""),
-            "subject": str(m.get("subject") or "(no subject)"),
-        })
+    out: list[dict[str, str]] = []
+    page: str | None = None
+    pages = 0
+    while len(out) < spec.max_emails and pages < 50:  # 50-page backstop (25k msgs)
+        cmd = ["gog", "gmail", "messages", "search", "--account", account,
+               "--max", str(_PAGE_SIZE), "--json", "--no-input"]
+        if page:
+            cmd += ["--page", page]
+        cmd += ["--", query]
+        try:
+            raw = _run(cmd, _LIST_TIMEOUT)
+        except RuntimeError as exc:
+            logger.info("wire list failed for %s (page %d): %s", account, pages, exc)
+            break
+        try:
+            data = json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            break
+        msgs = data.get("messages") or data.get("results") or data.get("threads") or [] \
+            if isinstance(data, dict) else data
+        for m in msgs:
+            mid = m.get("id") or m.get("messageId")
+            if not mid:
+                continue
+            out.append({
+                "id": str(mid), "account": account,
+                "from": str(m.get("from") or m.get("sender") or ""),
+                "subject": str(m.get("subject") or "(no subject)"),
+            })
+            if len(out) >= spec.max_emails:
+                break
+        pages += 1
+        page = data.get("nextPageToken") if isinstance(data, dict) else None
+        if not page or not msgs:
+            break
     return out
 
 
@@ -648,14 +669,17 @@ def is_due(spec: WireSpec, now: datetime) -> bool:
 
 
 def run_wire(database_url: str, *, now: datetime | None = None, dry_run: bool = False,
-             days_back: int | None = None) -> dict[str, Any]:
+             days_back: int | None = None, force: bool = False) -> dict[str, Any]:
     """Collect → summarize → (gated) send HTML → archive → bump edition.
 
     ``dry_run`` builds + returns the HTML WITHOUT claiming the period, sending,
     archiving, or bumping the edition (a safe preview, works even when the master
     switch is off). ``days_back`` overrides the configured collection window for
     this run only (e.g. a one-time 7-day backfill); the daily cadence is
-    unchanged."""
+    unchanged. ``force`` is for an explicit MANUAL rebuild: it bypasses the
+    once-per-day claim (using a per-edition period key) and the per-message
+    dedup, so it re-includes newsletters an earlier edition already covered. The
+    send frontier gates still apply."""
     from app.agent.digest_tasks import (
         _claim_period,
         _period_done,
@@ -699,8 +723,10 @@ def run_wire(database_url: str, *, now: datetime | None = None, dry_run: bool = 
     if not gates["enabled"]:
         return {"status": "disabled", "name": _WIRE_NAME}
 
-    period = _period_key("daily", now_local)
-    if _period_done(database_url, _WIRE_NAME, _WIRE_ACCOUNT, period):
+    # A manual rebuild uses a per-edition period key (so it never collides with
+    # the daily claim) and skips the "already done today" short-circuit.
+    period = f"manual-e{edition}" if force else _period_key("daily", now_local)
+    if not force and _period_done(database_url, _WIRE_NAME, _WIRE_ACCOUNT, period):
         return {"status": "skipped_done", "name": _WIRE_NAME, "period": period}
     try:
         reap_stale_digest_runs(database_url)
@@ -713,7 +739,8 @@ def run_wire(database_url: str, *, now: datetime | None = None, dry_run: bool = 
         return {"status": "empty", "name": _WIRE_NAME, "period": period, "edition": edition}
 
     # Per-message dedup so a 2-day window doesn't re-digest yesterday's items.
-    fresh = _undigested(database_url, _WIRE_NAME, _WIRE_ACCOUNT, items)
+    # A forced rebuild deliberately includes everything in the window.
+    fresh = items if force else _undigested(database_url, _WIRE_NAME, _WIRE_ACCOUNT, items)
     if not fresh:
         return {"status": "empty", "name": _WIRE_NAME, "period": period, "edition": edition}
     fresh_ids = {it["id"] for it in fresh}
