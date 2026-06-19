@@ -10,7 +10,7 @@ fatal() {
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR" || fatal "cannot cd to repo dir: $REPO_DIR"
 
-export YOUOS_DATA_DIR="${YOUOS_DATA_DIR:-~/YouOS-Instances/baheros}"
+export YOUOS_DATA_DIR="${YOUOS_DATA_DIR:-$HOME/YouOS-Instances/baheros}"
 if [[ -z "${YOUOS_DATA_DIR}" ]]; then
   fatal "YOUOS_DATA_DIR is empty"
 fi

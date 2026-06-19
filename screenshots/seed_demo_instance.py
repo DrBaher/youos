@@ -5,19 +5,23 @@ import shutil
 import json
 from pathlib import Path
 
+# Repo root, resolved relative to this script (screenshots/seed_demo_instance.py)
+# so it works from any checkout — no hardcoded home path.
+ROOT = Path(__file__).resolve().parents[1]
+
 DEMO = Path("/tmp/youos_demo")
 if DEMO.exists():
     shutil.rmtree(DEMO)
 (DEMO / "var").mkdir(parents=True)
 (DEMO / "configs").mkdir(parents=True)
 (DEMO / "docs").mkdir(parents=True)
-shutil.copy("~/YouOS/docs/schema.sql", DEMO / "docs" / "schema.sql")
+shutil.copy(ROOT / "docs" / "schema.sql", DEMO / "docs" / "schema.sql")
 
 os.environ["YOUOS_DATA_DIR"] = str(DEMO)
 
 # --- config: synthetic identity, local model, no PIN ---
 import yaml  # noqa: E402
-repo_cfg = yaml.safe_load(Path("~/YouOS/youos_config.yaml").read_text())
+repo_cfg = yaml.safe_load((ROOT / "youos_config.yaml").read_text())
 repo_cfg.setdefault("user", {})
 repo_cfg["user"].update({
     "name": "Alex",
@@ -35,7 +39,7 @@ repo_cfg["server"]["pin"] = ""
 repo_cfg.setdefault("model", {})["server"] = {"enabled": True, "port": 8099}
 # copy persona/retrieval/prompts configs so generation has its knobs
 for f in ("persona.yaml", "retrieval.yaml", "prompts.yaml", "autoresearch.yaml"):
-    src = Path("~/YouOS/configs") / f
+    src = ROOT / "configs" / f
     if src.exists():
         shutil.copy(src, DEMO / "configs" / f)
 Path(DEMO / "youos_config.yaml").write_text(yaml.safe_dump(repo_cfg, sort_keys=False))
