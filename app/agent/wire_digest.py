@@ -393,8 +393,13 @@ def _content_dump(items: list[dict[str, str]]) -> str:
     return "\n".join(parts)
 
 
-def _wire_prompt(items: list[dict[str, str]], edition: int) -> str:
+def _wire_prompt(items: list[dict[str, str]], edition: int, *, top_stories: bool = True) -> str:
     sections = "\n".join(f"- {s}" for s in _WIRE_SECTIONS)
+    top_rule = (
+        "1. <div class=\"card\"><h2>Top Stories</h2><ol> — exactly 3 concise <li> of the biggest items.\n2."
+        if top_stories else
+        "1. Do NOT emit a Top Stories card (this is one batch of a larger issue).\n2."
+    )
     return f"""You are compiling "The Wire", a comprehensive daily newsletter digest, edition #{edition}.
 
 Below is the raw content of {len(items)} newsletter/promotional emails (deduplicated by id). \
@@ -409,8 +414,7 @@ OUTPUT: ONLY the inner HTML section cards — no <html>, <head>, <body>, no surr
 NO placeholder/filler text.
 
 REQUIRED ORDER:
-1. <div class="card"><h2>Top Stories</h2><ol> — exactly 3 concise <li> of the day's biggest items.
-2. Themed sections, ONLY the non-empty ones, in this order:
+{top_rule} Themed sections, ONLY the non-empty ones, in this order:
 {sections}
    • 💸 Fundraising & Deals is MANDATORY even with 1–2 deals: list EVERY funding round, \
 acquisition, IPO, investment. Format each: <strong>Company</strong> — $Amount, round, lead \
@@ -429,6 +433,78 @@ RULES:
 CONTENT:
 {_content_dump(items)}
 """
+
+
+# Above this many newsletters a single summarization prompt risks the model
+# call's timeout (a full week can be 130+), so collection is summarized in
+# batches and the section cards merged. Tuned so each batch (~daily volume)
+# comfortably finishes inside the completion timeout.
+_CHUNK_SIZE = 40
+
+_SECTION_RE = re.compile(r"<h2>(.*?)</h2>\s*<(ul|ol)>(.*?)</(?:ul|ol)>", re.S | re.I)
+_LI_RE = re.compile(r"<li\b.*?</li>", re.S | re.I)
+
+
+def _extract_sections(sections_html: str) -> dict[str, list[str]]:
+    """Parse ``<h2>title</h2><ul|ol>…</ul|ol>`` cards into {title: [<li>…]}."""
+    out: dict[str, list[str]] = {}
+    for m in _SECTION_RE.finditer(sections_html):
+        title = re.sub(r"\s+", " ", m.group(1)).strip()
+        out.setdefault(title, []).extend(_LI_RE.findall(m.group(3)))
+    return out
+
+
+def _ordered_titles(found: set[str]) -> list[str]:
+    """Canonical section order: themed sections first (in the fixed order),
+    then any model-invented extras, with Promotions always last."""
+    promo = [t for t in found if "promotion" in t.lower()]
+    ordered = [t for t in _WIRE_SECTIONS if t in found]
+    extras = [t for t in found if t not in _WIRE_SECTIONS and t not in promo]
+    return ordered + extras + promo
+
+
+def _merge_section_cards(chunk_outputs: list[str]) -> str:
+    """Merge per-batch section HTML into one set of cards, deduping identical
+    <li> items (same promo/story repeated across batches)."""
+    merged: dict[str, list[str]] = {}
+    seen: set[str] = set()
+    for raw in chunk_outputs:
+        for title, lis in _extract_sections(raw).items():
+            if title.lower().startswith("top stories"):
+                continue  # batches don't emit Top Stories; synthesized separately
+            for li in lis:
+                key = re.sub(r"<[^>]+>", "", li).strip().lower()[:160]
+                if key and key in seen:
+                    continue
+                seen.add(key)
+                merged.setdefault(title, []).append(li)
+    cards = []
+    for title in _ordered_titles(set(merged)):
+        body = "\n".join(f"      {li}" for li in merged[title])
+        cards.append(f'    <div class="card"><h2>{title}</h2>\n      <ul>\n{body}\n      </ul>\n    </div>')
+    return "\n".join(cards)
+
+
+def _synthesize_top_stories(merged_sections: str, complete_fn) -> str:
+    """A small final pass: pick 3 Top Stories from the merged headlines. Cheap
+    (headlines only). Returns the Top Stories card, or '' on any failure."""
+    heads = [re.sub(r"<[^>]+>", "", h).strip()
+             for h in re.findall(r"<strong>(.*?)</strong>", merged_sections, re.S)]
+    heads = [h for h in heads if h][:80]
+    if not heads:
+        return ""
+    prompt = (
+        "From these newsletter headlines, pick the 3 most significant. Output ONLY "
+        '<div class="card"><h2>Top Stories</h2><ol><li>…</li><li>…</li><li>…</li></ol></div> '
+        "— each <li> one concise sentence, no markdown, no extra text.\n\n"
+        + "\n".join(f"- {h}" for h in heads)
+    )
+    try:
+        out = _strip_code_fence(complete_fn(prompt))
+        ok, _ = _validate_sections(out)
+        return out if ok and "top stories" in out.lower() else ""
+    except Exception:
+        return ""
 
 
 def _strip_code_fence(text: str) -> str:
@@ -471,6 +547,32 @@ def _fallback_sections(items: list[dict[str, str]]) -> str:
     )
 
 
+def _summarize_chunked(items: list[dict[str, str]], edition: int, complete_fn) -> str:
+    """Summarize a high-volume issue in batches and merge the section cards, so
+    a heavy day (or a multi-day backfill) doesn't blow the model-call timeout and
+    silently degrade to the flat fallback. Returns merged section HTML (with a
+    synthesized Top Stories card on top), or '' if every batch failed."""
+    chunks = [items[i:i + _CHUNK_SIZE] for i in range(0, len(items), _CHUNK_SIZE)]
+    outputs: list[str] = []
+    for n, chunk in enumerate(chunks, 1):
+        try:
+            raw = _strip_code_fence(complete_fn(_wire_prompt(chunk, edition, top_stories=False)))
+            ok, why = _validate_sections(raw)
+            if ok:
+                outputs.append(raw)
+            else:
+                logger.info("wire batch %d/%d rejected (%s); skipped", n, len(chunks), why)
+        except Exception as exc:
+            logger.info("wire batch %d/%d failed (%s); skipped", n, len(chunks), exc)
+    if not outputs:
+        return ""
+    merged = _merge_section_cards(outputs)
+    if not merged:
+        return ""
+    top = _synthesize_top_stories(merged, complete_fn)
+    return f"{top}\n{merged}" if top else merged
+
+
 def build_wire_html(items: list[dict[str, str]], edition: int, *, model: str = "cloud",
                     complete_fn=None, now: datetime | None = None) -> tuple[str, int]:
     """Build the full Wire HTML for ``items``. Returns ``(html, story_count)``.
@@ -488,15 +590,18 @@ def build_wire_html(items: list[dict[str, str]], edition: int, *, model: str = "
         complete_fn = select_completion(model, max_tokens=8000, temperature=0.3)
 
     if complete_fn is not None:
-        try:
-            raw = _strip_code_fence(complete_fn(_wire_prompt(items, edition)))
-            ok, why = _validate_sections(raw)
-            if ok:
-                sections = raw
-            else:
-                logger.info("wire model output rejected (%s); using fallback render", why)
-        except Exception as exc:
-            logger.info("wire summarization failed (%s); using fallback render", exc)
+        if len(items) > _CHUNK_SIZE:
+            sections = _summarize_chunked(items, edition, complete_fn)
+        else:
+            try:
+                raw = _strip_code_fence(complete_fn(_wire_prompt(items, edition)))
+                ok, why = _validate_sections(raw)
+                if ok:
+                    sections = raw
+                else:
+                    logger.info("wire model output rejected (%s); using fallback render", why)
+            except Exception as exc:
+                logger.info("wire summarization failed (%s); using fallback render", exc)
 
     if not sections:
         sections = _fallback_sections(items)

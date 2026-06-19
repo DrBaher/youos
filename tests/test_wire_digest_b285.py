@@ -110,6 +110,40 @@ def test_build_fallback_when_model_unavailable(monkeypatch):
     assert "Story one" in html and stories == 1
 
 
+def test_merge_section_cards_dedupes_and_orders():
+    batch_a = ('<div class="card"><h2>🤖 AI & Tech</h2><ul>'
+               "<li>GPT-5 shipped</li><li>dup item</li></ul></div>"
+               '<div class="card"><h2>🛍️ Promotions</h2><ul><li>Nespresso sale</li></ul></div>')
+    batch_b = ('<div class="card"><h2>💸 Fundraising & Deals</h2><ul><li>Acme raised $5M</li></ul></div>'
+               '<div class="card"><h2>🤖 AI & Tech</h2><ul><li>dup item</li><li>Claude update</li></ul></div>')
+    merged = w._merge_section_cards([batch_a, batch_b])
+    # AI & Tech comes before Fundraising (canonical order), Promotions is last,
+    # and the duplicated <li> appears once.
+    assert merged.index("AI &amp; Tech" if "AI &amp;" in merged else "AI & Tech") < merged.index("Fundraising")
+    assert merged.index("Fundraising") < merged.index("Promotions")
+    assert merged.count("dup item") == 1
+
+
+def test_chunked_path_used_for_high_volume(monkeypatch):
+    # >_CHUNK_SIZE items must take the chunked path: each batch summarized, merged.
+    calls = []
+
+    def fake(prompt):
+        calls.append(prompt)
+        if "pick the 3 most significant" in prompt:   # Top Stories synthesis pass
+            return '<div class="card"><h2>Top Stories</h2><ol><li>Big one</li></ol></div>'
+        return ('<div class="card"><h2>🤖 AI & Tech</h2><ul>'
+                '<li><strong>Story from batch</strong> covers GPT progress.</li></ul></div>')
+
+    items = [{"id": str(i), "from": "Brew", "subject": f"S{i}", "body": "GPT", "promo": False}
+             for i in range(w._CHUNK_SIZE + 5)]
+    html, stories = w.build_wire_html(items, 80, complete_fn=fake,
+                                      now=datetime.datetime(2026, 6, 19, 19, 0))
+    assert len(calls) >= 2 + 1                 # ≥2 batches + 1 Top Stories pass
+    assert "Top Stories" in html and "Story from batch" in html
+    assert "Newsletters" not in html          # not the flat fallback
+
+
 # --- edition tracking -------------------------------------------------------
 
 
