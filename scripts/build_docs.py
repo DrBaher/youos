@@ -90,7 +90,7 @@ TEMPLATE = """<!DOCTYPE html>
 <meta property="og:title" content="{title} — YouOS">
 <meta property="og:description" content="{description}">
 <meta property="og:type" content="article">
-<link rel="canonical" href="https://youos.you.com/docs/{href}">
+<link rel="canonical" href="https://youos.drbaher.com/docs/{href}">
 {alt_md_link}<link rel="icon" type="image/svg+xml" href="/youos-mark.svg">
 <style>
   :root {{
@@ -281,16 +281,16 @@ def render() -> None:
         "drafts replies, queues for review; exposes REST + OpenAPI for orchestrators "
         "(Hermes / OpenClaw / Telegram bot).\n\n"
         "## For LLM agents operating YouOS\n\n"
-        "- [Agent operations playbook](https://youos.you.com/docs/AGENT_OPERATIONS.md): "
+        "- [Agent operations playbook](https://youos.drbaher.com/docs/AGENT_OPERATIONS.md): "
         "decision tree, idempotency, error handling, paraphrasing, trust boundaries, "
         "worked conversation. Start here.\n"
-        "- [Integrations](https://youos.you.com/docs/INTEGRATIONS.md): "
+        "- [Integrations](https://youos.drbaher.com/docs/INTEGRATIONS.md): "
         "architecture, setup, endpoint reference, security model, reference Telegram bot.\n"
         "- OpenAPI spec: every YouOS instance serves it at `GET /openapi.json`.\n\n"
         "## For humans setting up\n\n"
-        "- [Remote access (Tailscale, phone, multi-account)](https://youos.you.com/docs/REMOTE_ACCESS.md)\n"
-        "- [CLI command reference](https://youos.you.com/docs/USAGE.md)\n"
-        "- [Architecture](https://youos.you.com/docs/ARCHITECTURE.md)\n\n"
+        "- [Remote access (Tailscale, phone, multi-account)](https://youos.drbaher.com/docs/REMOTE_ACCESS.md)\n"
+        "- [CLI command reference](https://youos.drbaher.com/docs/USAGE.md)\n"
+        "- [Architecture](https://youos.drbaher.com/docs/ARCHITECTURE.md)\n\n"
         "## Source\n\n"
         "- Repo: https://github.com/DrBaher/youos\n"
     )
@@ -300,15 +300,15 @@ def render() -> None:
     robots_txt = (
         "User-agent: *\n"
         "Allow: /\n"
-        "Sitemap: https://youos.you.com/sitemap.xml\n"
+        "Sitemap: https://youos.drbaher.com/sitemap.xml\n"
     )
     (out_root / "robots.txt").write_text(robots_txt, encoding="utf-8")
 
     # Minimal sitemap (the index page + each doc).
     urls = [
-        "https://youos.you.com/",
-        "https://youos.you.com/docs/",
-        *[f"https://youos.you.com/docs/{href}" for _, _, href in index_items],
+        "https://youos.drbaher.com/",
+        "https://youos.drbaher.com/docs/",
+        *[f"https://youos.drbaher.com/docs/{href}" for _, _, href in index_items],
     ]
     sitemap = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'

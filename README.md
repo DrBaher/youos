@@ -38,7 +38,7 @@ Gmail (sent mail)          Your feedback
 
 ![YouOS demo](screenshots/demo.gif)
 
-> 🌐 [youos.you.com](https://youos.you.com/)
+> 🌐 [youos.drbaher.com](https://youos.drbaher.com/)
 
 ## What it does
 
