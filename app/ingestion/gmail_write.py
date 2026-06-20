@@ -558,8 +558,12 @@ def _gog_create_event(
     except json.JSONDecodeError as exc:
         raise GmailWriteError(f"gog calendar create returned non-JSON stdout: {result.stdout[:200]!r}") from exc
 
-    # A dry-run returns the intended request envelope, not a real event id.
-    event_id = str(payload.get("id") or "")
+    # A real create wraps the Event resource under "event" (verified against gog
+    # 0.22.0 live output): {"event": {"id", "hangoutLink", "htmlLink", ...}}. A
+    # --dry-run instead returns {"dry_run": true, "op": ..., "request": {...}}
+    # with no event — so unwrap when present, else fall back to the top level.
+    event = payload.get("event") if isinstance(payload, dict) and isinstance(payload.get("event"), dict) else payload
+    event_id = str(event.get("id") or "")
     if not event_id and not dry_run:
         raise GmailWriteError(f"gog calendar create returned no event id; payload={payload!r}")
 
@@ -569,8 +573,8 @@ def _gog_create_event(
     )
     return CalendarEventResult(
         event_id=event_id,
-        meet_link=_meet_link_from_event(payload),
-        html_link=str(payload.get("htmlLink") or ""),
+        meet_link=_meet_link_from_event(event),
+        html_link=str(event.get("htmlLink") or ""),
         raw_response=payload,
     )
 
