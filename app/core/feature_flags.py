@@ -574,6 +574,20 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.calendar.auto_confirm.model",
+        "label": "Model for meeting-confirmation detection",
+        "type": "text",
+        "default": "cloud",
+        "help": (
+            "Which model decides whether a reply confirmed a proposed slot. "
+            "'cloud' (default) uses Claude — much better recall on terse "
+            "acceptances ('perfect', a thumbs-up, 'invite to follow') but sends "
+            "the reply text off-device; 'local' keeps it on-device (no egress) "
+            "at lower recall. Only runs when auto_confirm is on; an unavailable "
+            "cloud model falls back to local."
+        ),
+    },
+    {
         "key": "agent.calendar.daily_event_cap",
         "label": "Max calendar events created per day",
         "type": "int",

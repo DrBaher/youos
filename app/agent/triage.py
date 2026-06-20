@@ -432,6 +432,9 @@ def _calendar_config() -> dict[str, Any]:
         # event is created later, gated, on approval. Independent of "enabled"
         # so the queue can fill even if slot-proposal in drafts is off.
         "auto_confirm": bool(auto_confirm.get("enabled", False)) if isinstance(auto_confirm, dict) else False,
+        # Which model decides if a reply confirmed a slot (b282 follow-up):
+        # 'cloud' (Claude, better recall, off-device) or 'local' (on-device).
+        "auto_confirm_model": str(auto_confirm.get("model", "cloud")) if isinstance(auto_confirm, dict) else "cloud",
         "tz": str(tz),
         "business_days": _i("business_days", 5),
         "work_start_hour": _i("work_start_hour", 9),
@@ -496,6 +499,7 @@ def _maybe_detect_confirmation(
     msg,
     *,
     account_emails: list[str] | None = None,
+    model: str = "cloud",
 ) -> bool:
     """If this inbound is a reply on a thread where we proposed open slots and it
     confirms one of them, queue a calendar event for the user's approval (b282).
@@ -527,6 +531,7 @@ def _maybe_detect_confirmation(
             body=msg.body,
             proposed_slots=slots,
             account_emails=set(account_emails or []),
+            model=model,
         )
         if result is None:
             return False
@@ -1302,7 +1307,8 @@ def _run_sweep(
         # queue a calendar event for approval. Detection-only; never creates.
         if cal_cfg.get("auto_confirm"):
             if _maybe_detect_confirmation(
-                database_url, account, msg, account_emails=_account_emails
+                database_url, account, msg, account_emails=_account_emails,
+                model=cal_cfg.get("auto_confirm_model", "cloud"),
             ):
                 events_queued += 1
 

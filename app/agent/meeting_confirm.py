@@ -24,7 +24,10 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 _BODY_SNIPPET_CHARS = 600
-_MAX_TOKENS = 8
+# Token budget by tier: the on-device LoRA answers tersely; a cloud reasoning
+# model needs room to think before committing on its FINAL: line.
+_MAX_TOKENS_LOCAL = 16
+_MAX_TOKENS_CLOUD = 256
 
 
 @dataclass
@@ -41,26 +44,42 @@ class ConfirmationResult:
     reasons: list[str]
 
 
+def _coerce_index(token: str, n_slots: int) -> int | None:
+    """A 1-based slot token → 0-based index in range, or None."""
+    if not token or not token.isdigit():
+        return None
+    n = int(token)
+    return n - 1 if 1 <= n <= n_slots else None
+
+
 def _parse_choice(out: str, n_slots: int) -> int | None:
     """Map the model's answer to a 0-based slot index, or None (no acceptance).
 
-    The prompt asks for the 1-based slot number or NONE; we tolerate a leading
-    word and only accept a number in range. Anything else is None (no event)."""
-    t = (out or "").strip().lower()
-    if not t or t.startswith("none"):
+    Two answer styles, both safe:
+
+    * **Reasoning models** (e.g. Claude) think out loud, then commit on a
+      ``FINAL: <n>|NONE`` line — the prompt asks for it. We read THAT line, so a
+      model that reconsiders ("NONE — wait, 👍 is acceptance, so 1") lands on its
+      conclusion, not its first cautious token.
+    * **Terse models** (the on-device LoRA) answer with just the number/NONE — we
+      anchor on the LEADING token.
+
+    Either way we never mine a digit out of free prose (a stray number in an
+    explanation must not become a wrong event)."""
+    t = (out or "").strip()
+    if not t:
         return None
-    # Anchor on a LEADING number (optionally after "slot/option/number/#"). We
-    # deliberately do NOT search the whole string: a model that ignores the
-    # "answer with only the number" instruction and explains itself ("the person
-    # did NOT confirm, so 1 would be wrong") must not have a stray digit mined
-    # out as a confirmation — that would create a wrong event. Prose ⇒ None.
-    m = re.match(r"(?:slot|option|number|no\.?)?\s*#?\s*(\d+)\b", t)
-    if not m:
+    # Prefer an explicit FINAL: commitment anywhere in the output.
+    fin = re.search(r"final\s*:\s*(none|\d+)", t, flags=re.IGNORECASE)
+    if fin:
+        tok = fin.group(1).lower()
+        return None if tok == "none" else _coerce_index(tok, n_slots)
+    low = t.lower()
+    if low.startswith("none"):
         return None
-    n = int(m.group(1))
-    if 1 <= n <= n_slots:
-        return n - 1
-    return None
+    # Terse path: a leading number (optionally after slot/option/number/#).
+    m = re.match(r"(?:slot|option|number|no\.?)?\s*#?\s*(\d+)\b", low)
+    return _coerce_index(m.group(1), n_slots) if m else None
 
 
 def _strip_re(subject: str | None) -> str:
@@ -85,6 +104,22 @@ def _format_slot(start_iso: str, end_iso: str) -> str:
     return f"{s:%a %b %d, %-I:%M}–{e:%-I:%M %p}"
 
 
+def _resolve_complete_fn(model: str):
+    """Pick the completion fn for the configured tier (with a tier-appropriate
+    token budget), falling back to local if a requested ``cloud`` model is
+    unavailable — so recall never silently drops to zero in a headless/cron run
+    with no Claude auth. Returns None only when nothing is available."""
+    from app.core.completion import select_completion
+
+    tier = (model or "cloud").strip().lower()
+    budget = _MAX_TOKENS_CLOUD if tier == "cloud" else _MAX_TOKENS_LOCAL
+    fn = select_completion(tier, max_tokens=budget, temperature=0.0)
+    if fn is None and tier != "local":
+        # Requested tier (e.g. cloud) unavailable → degrade to the on-device model.
+        fn = select_completion("local", max_tokens=_MAX_TOKENS_LOCAL, temperature=0.0)
+    return fn
+
+
 def detect_confirmation(
     *,
     subject: str | None,
@@ -94,39 +129,42 @@ def detect_confirmation(
     proposed_slots: list,
     account_emails: set[str] | None = None,
     complete_fn=None,
-    max_tokens: int = _MAX_TOKENS,
+    model: str = "cloud",
 ) -> ConfirmationResult | None:
-    """Ask the warm model whether the reply confirms one of ``proposed_slots``.
+    """Ask a model whether the reply confirms one of ``proposed_slots``.
 
     ``proposed_slots`` is ``[[start_iso, end_iso], ...]`` (as persisted by b265).
     Returns a :class:`ConfirmationResult` for an unambiguous single-slot
-    acceptance, else ``None``. ``complete_fn`` is injectable for tests; by
-    default it routes to the warm local model server at temperature 0."""
+    acceptance, else ``None``. ``complete_fn`` is injectable for tests; otherwise
+    ``model`` selects the tier — ``'cloud'`` (Claude, stronger recall on terse
+    acceptances; sends the reply text off-device) or ``'local'`` (on-device,
+    no egress). An unavailable ``cloud`` tier degrades to ``local``."""
     slots = [s for s in (proposed_slots or []) if isinstance(s, (list, tuple)) and len(s) == 2]
     if not slots:
         return None
 
     if complete_fn is None:
-        from app.core import model_server
-
-        if not model_server.is_enabled():
+        complete_fn = _resolve_complete_fn(model)
+        if complete_fn is None:
             return None
 
-        def complete_fn(p: str) -> str:
-            return model_server.complete(p, max_tokens=max_tokens, temperature=0.0)
-
     snippet = " ".join((body or "").split())[:_BODY_SNIPPET_CHARS]
+    n = len(slots)
     listing = "\n".join(
         f"{i + 1}. {_format_slot(s[0], s[1])}" for i, s in enumerate(slots)
     )
     prompt = (
-        "I earlier offered someone these meeting times:\n"
+        f"I proposed {n} meeting time(s) to someone:\n"
         f"{listing}\n\n"
-        "Here is their reply. Decide whether they clearly CONFIRMED exactly one "
-        "of those exact times (e.g. 'Tuesday 2pm works', 'let's do the first "
-        "one', 'see you then'). If they did, answer with that slot's NUMBER. If "
-        "they proposed a different time, declined, were vague, or asked a "
-        "question, answer NONE. Answer with only the number or NONE.\n\n"
+        "Did their reply AGREE to meet at one of these proposed times? When only "
+        "one time was proposed, any clear acceptance counts — including a short "
+        "one like 'perfect', 'great', 'confirmed', 'yes', 'works for me', 'see "
+        "you then', 'add me', a thumbs-up, or saying they'll send/accept a "
+        "calendar invite. Answer NONE only if they asked for a DIFFERENT time, "
+        "declined, made it conditional, asked a question, or did not commit to a "
+        "specific time.\n"
+        "End your answer with a line exactly like 'FINAL: <slot number>' or "
+        "'FINAL: NONE'.\n\n"
         f"From: {sender or sender_email or '(unknown)'}\n"
         f"Reply: {snippet}\n\n"
         "Answer:"

@@ -108,6 +108,7 @@ def test_detector_excludes_self_from_attendees():
 
 
 def test_parse_choice_bounds_and_words():
+    # terse path (on-device model)
     assert _parse_choice("1", 2) == 0
     assert _parse_choice("slot 2", 2) == 1
     assert _parse_choice("#2", 2) == 1
@@ -119,11 +120,65 @@ def test_parse_choice_bounds_and_words():
     # the leading-anchor guards against a model that explains instead of obeying.
     assert _parse_choice("the person did not confirm, so 1 would be wrong", 2) is None
     assert _parse_choice("None — they asked for slot 2 to move", 2) is None
+    # reasoning path: a model that thinks out loud then commits on FINAL: — we
+    # read its conclusion, not its first cautious token.
+    assert _parse_choice("NONE — wait, a thumbs-up is acceptance.\nFINAL: 1", 2) == 0
+    assert _parse_choice("They asked to move it.\nFINAL: NONE", 2) is None
+    assert _parse_choice("FINAL: 2", 3) == 1
+    assert _parse_choice("FINAL: 9", 3) is None  # out of range even via FINAL
 
 
 def test_strip_re_prefixes():
     assert _strip_re("Re: Re: Fwd: Hello") == "Hello"
     assert _strip_re("") == "Meeting"
+
+
+def test_detector_model_routing_uses_selected_tier(monkeypatch):
+    from app.agent import meeting_confirm
+
+    seen = {}
+
+    def fake_select(tier, **kw):
+        seen["tier"] = tier
+        return lambda p: "1"
+
+    monkeypatch.setattr("app.core.completion.select_completion", fake_select)
+    slots = [["2030-01-01T14:00:00-05:00", "2030-01-01T14:30:00-05:00"]]
+    r = meeting_confirm.detect_confirmation(
+        subject="x", sender="A", sender_email="a@b.com", body="works",
+        proposed_slots=slots, model="cloud",
+    )
+    assert r is not None and seen["tier"] == "cloud"
+
+
+def test_detector_cloud_unavailable_falls_back_to_local(monkeypatch):
+    from app.agent import meeting_confirm
+
+    calls = []
+
+    def fake_select(tier, **kw):
+        calls.append(tier)
+        return None if tier == "cloud" else (lambda p: "1")
+
+    monkeypatch.setattr("app.core.completion.select_completion", fake_select)
+    slots = [["2030-01-01T14:00:00-05:00", "2030-01-01T14:30:00-05:00"]]
+    r = meeting_confirm.detect_confirmation(
+        subject="x", sender="A", sender_email="a@b.com", body="works",
+        proposed_slots=slots, model="cloud",
+    )
+    assert r is not None              # fell back, still detected
+    assert calls == ["cloud", "local"]
+
+
+def test_detector_returns_none_when_no_model_available(monkeypatch):
+    from app.agent import meeting_confirm
+
+    monkeypatch.setattr("app.core.completion.select_completion", lambda *a, **k: None)
+    slots = [["2030-01-01T14:00:00-05:00", "2030-01-01T14:30:00-05:00"]]
+    assert meeting_confirm.detect_confirmation(
+        subject="x", sender="A", sender_email="a@b.com", body="works",
+        proposed_slots=slots, model="local",
+    ) is None
 
 
 # --- gating matrix (the safety core) ----------------------------------------
