@@ -368,8 +368,10 @@ def test_gog_create_event_builds_verified_command(monkeypatch):
 
     class _Result:
         returncode = 0
-        stdout = ('{"id": "evt_9", "hangoutLink": "https://meet.google.com/x-y-z",'
-                  ' "htmlLink": "https://cal/evt_9"}')
+        # REAL gog 0.22.0 shape: the Event resource is wrapped under "event"
+        # (verified against live output — a flat {"id":...} would be wrong).
+        stdout = ('{"event": {"id": "evt_9", "hangoutLink": "https://meet.google.com/x-y-z",'
+                  ' "htmlLink": "https://cal/evt_9"}}')
         stderr = ""
 
     monkeypatch.setattr("app.ingestion.gmail_write.subprocess.run",
@@ -409,6 +411,45 @@ def test_gog_create_event_dry_run_passes_flag(monkeypatch):
         end_iso="2030-01-01T15:30:00Z", dry_run=True,
     )
     assert "--dry-run" in captured["cmd"]
+
+
+def test_gog_create_event_unwraps_event_envelope_and_meet_from_conf(monkeypatch):
+    """gog wraps the Event under "event" and the Meet URL may only be in
+    conferenceData.entryPoints — the create path must read both (the live shape
+    that the flat-mock tests originally missed)."""
+    class _Result:
+        returncode = 0
+        stdout = ('{"event": {"id": "evt_x", "htmlLink": "https://cal/evt_x",'
+                  ' "conferenceData": {"entryPoints": ['
+                  '{"entryPointType": "more", "uri": "https://meet.google.com/s"},'
+                  '{"entryPointType": "video", "uri": "https://meet.google.com/real"}]}}}')
+        stderr = ""
+
+    monkeypatch.setattr("app.ingestion.gmail_write.subprocess.run", lambda cmd, **kw: _Result())
+    monkeypatch.setattr("app.core.config.get_ingestion_google_backend", lambda: "gog")
+    res = gmail_write.create_calendar_event(
+        account="me@x.com", title="S", start_iso="2030-01-01T15:00:00Z", end_iso="2030-01-01T15:30:00Z",
+    )
+    assert res.event_id == "evt_x"
+    assert res.meet_link == "https://meet.google.com/real"
+    assert res.html_link == "https://cal/evt_x"
+
+
+def test_gog_create_event_dry_run_tolerates_request_envelope(monkeypatch):
+    """A --dry-run returns {"dry_run": true, "request": {...}} with no event —
+    that must not raise (no id is expected in dry-run)."""
+    class _Result:
+        returncode = 0
+        stdout = '{"dry_run": true, "op": "calendar.create", "request": {}}'
+        stderr = ""
+
+    monkeypatch.setattr("app.ingestion.gmail_write.subprocess.run", lambda cmd, **kw: _Result())
+    monkeypatch.setattr("app.core.config.get_ingestion_google_backend", lambda: "gog")
+    res = gmail_write.create_calendar_event(
+        account="me@x.com", title="S", start_iso="2030-01-01T15:00:00Z",
+        end_iso="2030-01-01T15:30:00Z", dry_run=True,
+    )
+    assert res.event_id == "" and res.meet_link == ""
 
 
 def test_meet_link_falls_back_to_entry_points():
