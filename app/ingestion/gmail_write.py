@@ -155,6 +155,19 @@ class GmailForwardResult:
     raw_response: dict[str, Any]
 
 
+@dataclass
+class CalendarEventResult:
+    """Outcome of a successful calendar-event creation. ``event_id`` is Google's
+    id for the new event; ``meet_link`` is the Google Meet URL (empty if Meet
+    creation was not requested or the API returned none yet); ``html_link`` opens
+    the event in Google Calendar; ``raw_response`` is the backend's full payload."""
+
+    event_id: str
+    meet_link: str
+    html_link: str
+    raw_response: dict[str, Any]
+
+
 def create_draft(
     *,
     account: str,
@@ -422,6 +435,144 @@ def _gog_send_email(*, account: str, to: str, subject: str, body: str,
     sent_id = str(payload.get("id") or payload.get("messageId") or "")
     logger.info("sent new email to %s for account=%s", to, account)
     return GmailSendResult(message_id=sent_id, raw_response=payload)
+
+
+def create_calendar_event(
+    *,
+    account: str,
+    title: str,
+    start_iso: str,
+    end_iso: str,
+    timezone: str | None = None,
+    attendees: list[str] | None = None,
+    description: str | None = None,
+    with_meet: bool = True,
+    send_updates: str = "all",
+    dry_run: bool = False,
+    backend: str | None = None,
+) -> CalendarEventResult:
+    """Create a Google Calendar event — an OUTBOUND action.
+
+    With ``send_updates='all'`` Google emails calendar invites to ``attendees``,
+    so this crosses the never-send boundary; with ``'none'`` it only writes the
+    event to the user's own calendar (a reversible mutation). Either way callers
+    MUST gate it behind the send frontier (``agent.send.enabled`` + outbound
+    kill-switch) plus the dedicated ``agent.calendar.create_events.enabled``
+    opt-in — exactly as ``send_draft``/``forward_message`` are gated. It performs
+    no gating itself. ``dry_run`` passes the backend's own no-change flag so the
+    call exercises the real CLI path without creating anything. Only the ``gog``
+    backend has a verified shape today."""
+    from app.core.config import get_ingestion_google_backend
+
+    name = (backend or get_ingestion_google_backend()).strip().lower()
+    if name == "gog":
+        return _gog_create_event(
+            account=account, title=title, start_iso=start_iso, end_iso=end_iso,
+            timezone=timezone, attendees=attendees, description=description,
+            with_meet=with_meet, send_updates=send_updates, dry_run=dry_run,
+        )
+    raise NotImplementedError(
+        f"create_calendar_event is only implemented for the gog backend (got {name!r})"
+    )
+
+
+def _meet_link_from_event(payload: dict[str, Any]) -> str:
+    """Pull the Google Meet URL from a created-event resource. Prefers the
+    top-level ``hangoutLink``; falls back to the first video entry point under
+    ``conferenceData.entryPoints`` (verified shapes, gog 0.22.0)."""
+    link = payload.get("hangoutLink")
+    if isinstance(link, str) and link:
+        return link
+    conf = payload.get("conferenceData") if isinstance(payload, dict) else None
+    eps = (conf or {}).get("entryPoints") if isinstance(conf, dict) else None
+    for ep in eps or []:
+        if isinstance(ep, dict) and ep.get("entryPointType") == "video":
+            uri = ep.get("uri")
+            if isinstance(uri, str) and uri:
+                return uri
+    return ""
+
+
+def _gog_create_event(
+    *,
+    account: str,
+    title: str,
+    start_iso: str,
+    end_iso: str,
+    timezone: str | None,
+    attendees: list[str] | None,
+    description: str | None,
+    with_meet: bool,
+    send_updates: str,
+    dry_run: bool,
+) -> CalendarEventResult:
+    """Verified ``gog calendar create primary --summary --from --to`` invocation
+    (gog 0.22.0).
+
+    Shape (confirmed via ``gog calendar create --help`` + a ``--dry-run`` probe):
+        gog calendar create primary --summary <s> --from <rfc3339> --to <rfc3339>
+            [--start-timezone <tz> --end-timezone <tz>] [--attendees a,b]
+            [--description <d>] [--with-meet] --send-updates <all|none|...>
+            --account <email> --json --no-input
+    ``--send-updates`` controls whether invite emails go out (``all`` = invite the
+    attendees, ``none`` = self-only block). On success Google returns the Event
+    resource: ``{"id": ..., "hangoutLink": ..., "htmlLink": ..., ...}``. A
+    ``--dry-run`` prints the intended request (``{"dry_run": true, ...}``) and
+    exits 0 without creating anything."""
+    cmd: list[str] = [
+        "gog", "calendar", "create", "primary",
+        "--summary", title,
+        "--from", start_iso,
+        "--to", end_iso,
+    ]
+    if timezone:
+        cmd += ["--start-timezone", timezone, "--end-timezone", timezone]
+    if attendees:
+        cmd += ["--attendees", ",".join(attendees)]
+    if description:
+        cmd += ["--description", description]
+    if with_meet:
+        cmd.append("--with-meet")
+    cmd += [
+        "--send-updates", send_updates,
+        "--account", account,
+        "--json", "--no-input",
+    ]
+    if dry_run:
+        cmd.append("--dry-run")
+
+    try:
+        require_account_argv(cmd)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except FileNotFoundError as exc:
+        raise GmailWriteError("gog CLI not on PATH — install via Homebrew or set up the native backend") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise GmailWriteError("gog calendar create timed out (30s)") from exc
+
+    if result.returncode != 0:
+        stderr = _clean_stderr(result.stderr)
+        raise GmailWriteError(f"gog calendar create returned exit {result.returncode}: {stderr or 'no stderr'}")
+
+    try:
+        payload = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise GmailWriteError(f"gog calendar create returned non-JSON stdout: {result.stdout[:200]!r}") from exc
+
+    # A dry-run returns the intended request envelope, not a real event id.
+    event_id = str(payload.get("id") or "")
+    if not event_id and not dry_run:
+        raise GmailWriteError(f"gog calendar create returned no event id; payload={payload!r}")
+
+    logger.info(
+        "created calendar event for account=%s (attendees=%d, send_updates=%s, dry_run=%s)",
+        account, len(attendees or []), send_updates, dry_run,
+    )
+    return CalendarEventResult(
+        event_id=event_id,
+        meet_link=_meet_link_from_event(payload),
+        html_link=str(payload.get("htmlLink") or ""),
+        raw_response=payload,
+    )
 
 
 # --- gog backend -----------------------------------------------------------

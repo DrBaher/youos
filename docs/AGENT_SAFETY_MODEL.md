@@ -31,6 +31,7 @@ performs **no gating itself** — every caller must gate). The complete set:
 | `send_draft` | send an existing Gmail draft | **outbound** | the send frontier (below) |
 | `forward_message` | forward an inbound message | **outbound, irreversible** | send frontier + `allow_forward` |
 | `send_email` | compose + send a new email | **outbound** | send frontier (digest `inbox` dest) |
+| `create_calendar_event` | create a Google Calendar event (Meet link + invites) | **outbound** when it has attendees (`--send-updates=all` emails invites); else mutation | send frontier + `agent.calendar.create_events.enabled` (`app/agent/calendar_events.py`) |
 | `modify_message_labels` | add/remove labels (archive/star/read/important) | mutation | the action framework |
 | `ensure_label` | create a user label | mutation | the action framework |
 
@@ -79,6 +80,23 @@ A real `forward` requires **all of**: `actions.enabled` AND not `dry_run` AND
 `allow_forward` AND `send.enabled` AND kill-switch off (five independent gates).
 Any closed gate records `blocked` and sends nothing.
 
+### Calendar event creation — `app/agent/calendar_events.py`
+| flag | default | effect |
+|---|---|---|
+| `agent.calendar.auto_confirm.enabled` | **false** | detect a counterparty accepting a proposed slot → queue an event for approval (detection-only; creates nothing) |
+| `agent.calendar.create_events.enabled` | **false** | allow an **approved** event to be created (Meet link + invites) |
+| `agent.calendar.daily_event_cap` | 5 | max events created/day (0 disables) |
+
+The flow is **detect → queue → human approve → create**. Detection
+(`meeting_confirm`) only writes a `pending` row to `agent_pending_events`; the
+event is created only when the user approves it. Creating an event with
+attendees emails calendar invites, so `apply_pending_event` requires **all of**:
+kill-switch off AND `send.enabled` AND `calendar.create_events.enabled` AND
+under the daily cap. A closed gate records the reason and **leaves the row
+`pending`** (so opening the gate and re-approving works); it never consumes the
+row. `create_events.enabled` is in `SEND_FRONTIER_FLAGS` (network-locked — set it
+with `youos config set`, never over the API).
+
 ### Digest tasks — `app/agent/digest_tasks.py`
 | flag | default | effect |
 |---|---|---|
@@ -103,6 +121,7 @@ can't act twice:
 | path | claim mechanism |
 |---|---|
 | draft send | `store.begin_send` conditional `UPDATE … WHERE send_state IN (…)` |
+| calendar event create | `event_store.claim_event_create` conditional `UPDATE … WHERE status='pending'` (+ partial UNIQUE `idx_agent_pending_events_slot_claim` blocks duplicate live slots at queue time) |
 | push to Gmail | `store.begin_push` conditional UPDATE (`gmail_draft_id IS NULL`) |
 | forward | partial UNIQUE index `idx_agent_actions_forward_claim` + INSERT-claims-before-send |
 | label/archive/star | `_has_status` dedup (incl. `undone`/`undoing`) before apply |

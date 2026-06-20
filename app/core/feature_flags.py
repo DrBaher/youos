@@ -546,6 +546,44 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.calendar.create_events.enabled",
+        "label": "Create calendar events (with Meet links + invites)",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "Let the agent create a Google Calendar event (with a Google Meet "
+            "link) when you APPROVE a confirmed meeting in the review queue. With "
+            "invites it emails the attendees, so it crosses the never-send "
+            "frontier: even with this on, nothing is created unless "
+            "agent.send.enabled is true and the outbound kill-switch is off. "
+            "Network-locked — set it with `youos config set`, not over the API. "
+            "Off by default."
+        ),
+    },
+    {
+        "key": "agent.calendar.auto_confirm.enabled",
+        "label": "Auto-detect meeting confirmations into the queue",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "When someone replies accepting one of the open slots the agent "
+            "proposed, detect which slot they chose and queue a calendar-event "
+            "for your one-tap approval. Detection only writes to the pending-"
+            "events queue — it never creates an event; approving does. Off by "
+            "default."
+        ),
+    },
+    {
+        "key": "agent.calendar.daily_event_cap",
+        "label": "Max calendar events created per day",
+        "type": "int",
+        "default": 5,
+        "help": (
+            "Blast-radius cap: the agent will not create more than this many "
+            "calendar events in a day (UTC). 0 disables event creation entirely."
+        ),
+    },
+    {
         "key": "agent.vip_senders",
         "label": "VIP senders (prioritized)",
         "type": "text",
@@ -605,6 +643,7 @@ SEND_FRONTIER_FLAGS: frozenset[str] = frozenset({
     "agent.actions.allow_forward",
     "agent.digests.enabled",
     "agent.wire.enabled",
+    "agent.calendar.create_events.enabled",
 })
 
 
