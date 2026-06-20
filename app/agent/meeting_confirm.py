@@ -77,6 +77,12 @@ def _parse_choice(out: str, n_slots: int) -> int | None:
     low = t.lower()
     if low.startswith("none"):
         return None
+    # A hedged/conditional answer is NOT a confirmation, even if it leads with a
+    # number ("2, but only if my flight lands", "1 tentatively", "3?"). The terse
+    # on-device model can emit these without a FINAL line, and the leading-number
+    # anchor below would otherwise mine the digit into a wrong event.
+    if re.search(r"\b(but|if|unless|maybe|perhaps|might|tentativ|depend|possibl|provid)", low) or "?" in low:
+        return None
     # Terse path: a leading number (optionally after slot/option/number/#).
     m = re.match(r"(?:slot|option|number|no\.?)?\s*#?\s*(\d+)\b", low)
     return _coerce_index(m.group(1), n_slots) if m else None

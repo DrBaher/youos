@@ -40,3 +40,4 @@ configs/persona_analysis.json
 # Personal instance dirs + scratch prompt logs (keep out of the public repo)
 instances/
 round*_prompt.txt
+integrations/gmail-addon/.clasp.json

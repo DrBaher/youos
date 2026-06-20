@@ -19,7 +19,11 @@ function _props() { return PropertiesService.getUserProperties(); }
 function _baseUrl() { return (_props().getProperty(PROP_URL) || '').replace(/\/+$/, ''); }
 function _token() { return _props().getProperty(PROP_TOKEN) || ''; }
 
-/** Call the YouOS REST API with the token header. Returns {code, body}. */
+/** Call the YouOS REST API with the token header. Returns {code, body}.
+ * muteHttpExceptions only suppresses HTTP error STATUS; a transport failure
+ * (Funnel down, DNS, TLS, timeout) still THROWS — catch it and return code 0 so
+ * every caller's ``res.code !== 200`` path handles it gracefully instead of
+ * surfacing a raw Apps Script error. */
 function _api(method, path, payload) {
   var opts = {
     method: method,
@@ -28,8 +32,12 @@ function _api(method, path, payload) {
     contentType: 'application/json'
   };
   if (payload) { opts.payload = JSON.stringify(payload); }
-  var resp = UrlFetchApp.fetch(_baseUrl() + path, opts);
-  return { code: resp.getResponseCode(), body: resp.getContentText() };
+  try {
+    var resp = UrlFetchApp.fetch(_baseUrl() + path, opts);
+    return { code: resp.getResponseCode(), body: resp.getContentText() };
+  } catch (err) {
+    return { code: 0, body: String(err) };
+  }
 }
 
 function _esc(s) {
@@ -545,9 +553,13 @@ function actSaveEdit(e) {
 function actPush(e) {
   var rowId = e.commonEventObject.parameters.rowId;
   // Honor in-card edits: if the editable draft field was changed, save it before
-  // pushing so what you see is what lands in Gmail Drafts.
+  // pushing so what you see is what lands in Gmail Drafts. If the save fails
+  // (e.g. too long / 4xx), bail rather than silently push the stale draft.
   var edited = _formVal(e, 'edited').trim();
-  if (edited) { _api('post', '/api/agent/pending/' + rowId + '/amend', { amended_draft: edited }); }
+  if (edited) {
+    var amendRes = _api('post', '/api/agent/pending/' + rowId + '/amend', { amended_draft: edited });
+    if (amendRes.code !== 200) { return _notify('Couldn’t save your edits (' + amendRes.code + ') — not pushed'); }
+  }
   var res = _api('post', '/api/agent/pending/' + rowId + '/push_to_gmail', {});
   if (res.code !== 200) { return _notify('Push failed (' + res.code + ')'); }
   var data = JSON.parse(res.body);
@@ -645,10 +657,12 @@ function actApproveEvent(e) {
   }
   if (res.code !== 200) { return _notify('Create failed (' + res.code + ')'); }
   var data = JSON.parse(res.body);
+  // Guard a missing event payload so _eventCard(null) can't throw.
+  var card = data.event ? _eventCard(data.event) : _infoCard('Event created', 'Done.');
   return CardService.newActionResponseBuilder()
     .setNotification(CardService.newNotification().setText(
       data.meet_link ? 'Event created — Meet link ready' : 'Calendar event created'))
-    .setNavigation(_navAfter(e, _eventCard(data.event)))
+    .setNavigation(_navAfter(e, card))
     .build();
 }
 
@@ -746,7 +760,8 @@ function insertYouosDraft(e) {
   try {
     var res = _api('get', '/api/agent/pending/by_thread/' + encodeURIComponent(threadId));
     if (res.code === 200) {
-      var draft = JSON.parse(res.body).draft || '';
+      var d = JSON.parse(res.body);
+      var draft = d.amended_draft || d.draft || '';  // prefer your edits/regen
       html = _esc(draft).replace(/\n/g, '<br>');
     }
   } catch (err) { /* leave html empty → no-op insert */ }

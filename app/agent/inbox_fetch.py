@@ -226,27 +226,32 @@ def fetch_unread(
     limit: int = 50,
     backend: str | None = None,
     include_read: bool = False,
+    include_read_window: str | None = None,
     own_emails: set[str] | None = None,
 ) -> list[InboxMessage]:
     """Fetch inbox threads and return the latest message in each.
 
     By default fetches only *unread* mail within ``window`` (a Gmail
     ``newer_than:`` token like ``"3d"``/``"7d"``). With ``include_read=True`` it
-    fetches the WHOLE inbox regardless of read state or age — "every unanswered
-    email" — and skips any thread whose latest message is your own (``own_emails``):
-    if you sent the last message you've already answered it, so it's not awaiting
-    a reply from you. ``limit`` caps threads pulled; ``backend`` overrides the
-    configured ``ingestion.google_backend`` (mainly for tests).
+    fetches read+unread inbox mail and skips any thread whose latest message is
+    your own (``own_emails``): if you sent the last message you've already
+    answered it, so it's not awaiting a reply from you. ``include_read_window``
+    bounds that scan to a (generous) ``newer_than:`` ceiling so a large/old inbox
+    can't make every sweep fetch hundreds of threads; ``None`` = no ceiling.
+    ``limit`` caps threads pulled; ``backend`` overrides the configured backend.
 
     Returns the *latest* message per thread — the one you'd naturally reply to.
     """
     from app.ingestion.adapters import get_google_source
 
     source = get_google_source(backend)
-    # include_read: drop ``is:unread`` AND the age window so the sweep sees every
-    # still-in-inbox thread, not just freshly-arrived unread ones. Bounded by
-    # ``limit`` + the daily draft cap downstream.
-    query = "in:inbox" if include_read else f"in:inbox is:unread newer_than:{window}"
+    # include_read: drop ``is:unread`` so the sweep sees still-in-inbox read mail,
+    # bounded by an optional age ceiling (``include_read_window``) + ``limit`` +
+    # the daily draft cap downstream.
+    if include_read:
+        query = "in:inbox" + (f" newer_than:{include_read_window}" if include_read_window else "")
+    else:
+        query = f"in:inbox is:unread newer_than:{window}"
     threads = source.search_threads(account=account, query=query, max_threads=limit) or []
     _own = {e.lower() for e in (own_emails or set()) if e}
 

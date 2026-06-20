@@ -524,6 +524,16 @@ def _maybe_detect_confirmation(
         slots = _json.loads(row.get("proposed_slots_json") or "null")
         if not slots:
             return False
+        # Already handled this thread? An event row in ANY state (pending /
+        # creating / created / dismissed / error) means we've queued one — don't
+        # re-detect. This prevents (a) a duplicate event + duplicate invites if a
+        # created-but-errored event is re-confirmed, (b) re-surfacing a dismissed
+        # confirmation every sweep, and (c) re-invoking the (off-device) model on
+        # every sweep for a thread that stays in the inbox. Re-detection for a
+        # genuinely new meeting in the same thread is rare; the user can act in
+        # the calendar/UI for that edge case.
+        if event_store.get_event_by_thread(database_url, msg.thread_id):
+            return False
         result = detect_confirmation(
             subject=msg.subject,
             sender=msg.sender or msg.sender_email or None,
@@ -1171,9 +1181,10 @@ def _run_sweep(
     _include_read = bool(_get_flag("agent.triage.include_read"))
     _own_emails = {account.lower(), *(e.lower() for e in _get_user_emails() if e)}
     _fetch_limit = max(limit, 200) if _include_read else limit
+    _ir_window = str(_get_flag("agent.triage.include_read_window") or "90d") if _include_read else None
     messages = fetch_unread(
         account, window=window, limit=_fetch_limit, backend=backend,
-        include_read=_include_read, own_emails=_own_emails,
+        include_read=_include_read, include_read_window=_ir_window, own_emails=_own_emails,
     )
 
     # Build the sweep's SenderHistory ONCE and share it across mailbox routing,
@@ -1310,6 +1321,17 @@ def _run_sweep(
     cap_hit_count = 0
     # b282: count of calendar events queued for approval this sweep (auto-confirm).
     events_queued = 0
+    # Reap any event rows stranded in 'creating' by a crashed prior run (once per
+    # sweep) so a stuck claim can't permanently block its thread. Failure-isolated.
+    if cal_cfg.get("auto_confirm") and database_url:
+        try:
+            from app.agent import event_store as _es
+
+            _reaped = _es.reap_stale_creating(database_url)
+            if _reaped:
+                logger.info("auto-confirm: reaped %d stale 'creating' event row(s)", _reaped)
+        except Exception as exc:
+            logger.info("event reaper skipped: %s", exc)
     # b232: lead-form outreach. (msg, verdict, rule, contact, rendered draft)
     # tuples persisted as NEW-outbound draft rows addressed to the prospect.
     outreach_rows: list[tuple[InboxMessage, NeedsReplyVerdict, dict, dict, str]] = []

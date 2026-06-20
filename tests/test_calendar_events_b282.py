@@ -133,6 +133,36 @@ def test_strip_re_prefixes():
     assert _strip_re("") == "Meeting"
 
 
+def test_parse_choice_rejects_conditional_terse_answers():
+    # A hedged answer leading with a number must NOT confirm (no FINAL line).
+    assert _parse_choice("2, but only if my flight lands on time", 3) is None
+    assert _parse_choice("1 tentatively", 2) is None
+    assert _parse_choice("3?", 3) is None
+    assert _parse_choice("1 unless something comes up", 2) is None
+    # A clean terse number still confirms.
+    assert _parse_choice("2", 3) == 1
+    # A FINAL line still wins even with hedging prose before it.
+    assert _parse_choice("hmm, maybe... FINAL: 1", 2) == 0
+
+
+def test_reap_stale_creating(db):
+    url, rid = db
+    # claim it → 'creating', then backdate updated_at so the reaper frees it.
+    assert event_store.claim_event_create(url, rid) == "claimed"
+    import sqlite3
+
+    from app.db.bootstrap import resolve_sqlite_path
+    conn = sqlite3.connect(resolve_sqlite_path(url))
+    conn.execute("UPDATE agent_pending_events SET updated_at = datetime('now','-30 minutes') WHERE id=?", (rid,))
+    conn.commit()
+    conn.close()
+    assert event_store.reap_stale_creating(url) == 1
+    assert event_store.get_pending_event(url, rid)["status"] == "pending"
+    # a freshly-claimed row is NOT reaped.
+    event_store.claim_event_create(url, rid)
+    assert event_store.reap_stale_creating(url) == 0
+
+
 def test_detector_model_routing_uses_selected_tier(monkeypatch):
     from app.agent import meeting_confirm
 
@@ -386,13 +416,44 @@ def test_gog_create_event_builds_verified_command(monkeypatch):
     assert res.meet_link == "https://meet.google.com/x-y-z"
     cmd = captured["cmd"]
     assert cmd[:4] == ["gog", "calendar", "create", "primary"]
-    assert "--summary" in cmd and "Sync" in cmd
+    # Attacker-influenced strings use the =-form (option-injection guard).
+    assert "--summary=Sync" in cmd
     assert "--with-meet" in cmd
-    assert "--attendees" in cmd and "a@b.com,c@d.com" in cmd
+    assert "--attendees=a@b.com,c@d.com" in cmd
     assert cmd[cmd.index("--send-updates") + 1] == "all"
-    assert "--start-timezone" in cmd and "America/New_York" in cmd
+    assert "--start-timezone=America/New_York" in cmd
     assert "--json" in cmd and "--no-input" in cmd
     assert "--dry-run" not in cmd
+
+
+def test_gog_create_event_leading_dash_subject_not_a_flag(monkeypatch):
+    """A '--'-leading subject (attacker-controlled) must ride as a =-joined value,
+    never a parsed flag."""
+    captured = {}
+
+    class _R:
+        returncode = 0
+        stdout = '{"event": {"id": "e"}}'
+        stderr = ""
+
+    monkeypatch.setattr("app.ingestion.gmail_write.subprocess.run", lambda cmd, **kw: captured.update(cmd=cmd) or _R())
+    monkeypatch.setattr("app.core.config.get_ingestion_google_backend", lambda: "gog")
+    gmail_write.create_calendar_event(
+        account="me@x.com", title="--send-updates=all sneaky", start_iso="2030-01-01T15:00:00Z",
+        end_iso="2030-01-01T15:30:00Z", send_updates="none",
+    )
+    assert "--summary=--send-updates=all sneaky" in captured["cmd"]
+    # the only standalone --send-updates token is the real one, value 'none'
+    assert captured["cmd"][captured["cmd"].index("--send-updates") + 1] == "none"
+
+
+def test_create_event_rejects_bad_send_updates(monkeypatch):
+    monkeypatch.setattr("app.core.config.get_ingestion_google_backend", lambda: "gog")
+    with pytest.raises(gmail_write.GmailWriteError):
+        gmail_write.create_calendar_event(
+            account="me@x.com", title="x", start_iso="2030-01-01T15:00:00Z",
+            end_iso="2030-01-01T15:30:00Z", send_updates="everyone",
+        )
 
 
 def test_gog_create_event_dry_run_passes_flag(monkeypatch):
@@ -604,6 +665,49 @@ def test_maybe_detect_confirmation_queues_from_thread_slots(tmp_path, monkeypatc
     # Idempotent: same detection on a second sweep won't double-queue the slot.
     assert triage._maybe_detect_confirmation(url, "me@x.com", msg, account_emails=["me@x.com"]) is False
     assert len(event_store.list_pending_events(url)) == 1
+
+
+def test_detect_short_circuits_when_event_exists_even_dismissed(tmp_path, monkeypatch):
+    """If the thread already has an event in ANY state (incl. dismissed), the
+    detector must NOT call the model again (no repeated off-device egress) and
+    must NOT re-queue — prevents duplicate events + re-surfacing a declined one."""
+    from types import SimpleNamespace
+
+    from app.agent import event_store, meeting_confirm, store, triage
+    from app.db.bootstrap import (
+        _migrate_agent_pending_drafts,
+        _migrate_agent_pending_events,
+    )
+
+    path = tmp_path / "t.db"
+    conn = sqlite3.connect(path)
+    _migrate_agent_pending_drafts(conn)
+    _migrate_agent_pending_events(conn)
+    conn.commit()
+    conn.close()
+    url = f"sqlite:///{path}"
+    rid = store.upsert_pending(
+        url, message_id="orig", thread_id="t1", account="me@x.com",
+        sender="Al", sender_email="al@b.com", subject="sync", body="meet?",
+        received_at="2030-01-01T09:00:00Z", needs_reply_score=0.9, reasons=[],
+        cold_outreach=False, tier="draft", draft="d", draft_model="m",
+        draft_repairs=[], standing_instructions_snapshot=None,
+    )
+    store.set_proposed_slots(url, rid, [
+        (__import__("datetime").datetime.fromisoformat("2030-01-02T14:00:00-05:00"),
+         __import__("datetime").datetime.fromisoformat("2030-01-02T14:30:00-05:00"))])
+    # Pre-existing DISMISSED event for the thread.
+    ev = event_store.queue_pending_event(url, account="me@x.com", thread_id="t1",
+        title="x", start_iso="2030-01-02T14:00:00-05:00", end_iso="2030-01-02T14:30:00-05:00")
+    event_store.dismiss_event(url, ev)
+
+    monkeypatch.setattr(meeting_confirm, "detect_confirmation",
+                        lambda **kw: pytest.fail("model must not run when an event already exists"))
+    msg = SimpleNamespace(thread_id="t1", message_id="reply", subject="Re: sync",
+                          sender="Al", sender_email="al@b.com", body="works")
+    assert triage._maybe_detect_confirmation(url, "me@x.com", msg, account_emails=["me@x.com"]) is False
+    # still exactly one (dismissed) event — nothing re-queued
+    assert len(event_store.list_pending_events(url, status="dismissed")) == 1
 
 
 def test_maybe_detect_confirmation_no_slots_is_noop(tmp_path, monkeypatch):
