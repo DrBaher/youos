@@ -496,6 +496,15 @@ def test_api_approve_missing_is_404(api):
     assert client.post("/api/agent/events/99999/approve").status_code == 404
 
 
+def test_api_event_by_thread(api):
+    client, _, rid = api
+    r = client.get("/api/agent/events/by_thread/t1")
+    assert r.status_code == 200
+    assert r.json()["event"]["id"] == rid
+    # unknown thread → 404 (the add-on renders no event card)
+    assert client.get("/api/agent/events/by_thread/nope").status_code == 404
+
+
 # --- triage wiring ----------------------------------------------------------
 
 

@@ -94,6 +94,22 @@ def get_pending_event(database_url: str, row_id: int) -> dict[str, Any] | None:
     return _row_to_dict(row) if row else None
 
 
+def get_event_by_thread(database_url: str, thread_id: str) -> dict[str, Any] | None:
+    """The most recent event for a Gmail thread, any status — the Gmail add-on's
+    entry point (it knows the open thread's id, not the event row id). Returns
+    None when YouOS has no event for the thread; the latest regardless of status
+    so the card can render pending / created (with Meet link) / dismissed."""
+    if not thread_id:
+        return None
+    with closing(_connect(database_url)) as conn:
+        row = conn.execute(
+            "SELECT * FROM agent_pending_events WHERE thread_id = ? "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            (thread_id,),
+        ).fetchone()
+    return _row_to_dict(row) if row else None
+
+
 def claim_event_create(database_url: str, row_id: int) -> str:
     """Atomically claim a pending event for creation. The conditional UPDATE
     ``pending`` → ``creating`` is the cross-process serialization point, so two

@@ -295,6 +295,16 @@
     .controls-panel .muted-hint { color: var(--muted-2); font-weight: 400; font-size: 0.82rem; }
   </style>
 
+  <!-- Meeting confirmations (b282): when someone accepts a slot YouOS proposed,
+       the event is queued here for one-tap approval. Hidden when empty. Sits
+       above drafts because it's time-sensitive and a single tap resolves it. -->
+  <section id="eventsSection" style="display:none;margin:0 0 16px">
+    <h2 style="font-size:1rem;margin:0 0 8px;display:flex;align-items:center;gap:8px">
+      📅 Meeting confirmations <span class="yos-badge" id="eventsCount">0</span>
+    </h2>
+    <div id="eventsList"></div>
+  </section>
+
   <!-- Queue-first: the drafts you review are the primary content, shown
        immediately under the header (controls collapsed above; standing
        instructions + health below). -->
@@ -539,6 +549,93 @@
       </div>`;
   }
 
+  // --- Meeting confirmations (b282) ----------------------------------------
+  // A confirmed-meeting card: title, the agreed time, who gets invited, and why
+  // YouOS thinks it was confirmed. Approve creates the Google Calendar event
+  // (+ Meet link + invites) — gated server-side; a shut gate returns a 403 we
+  // surface inline. Dismiss drops it.
+  // Render the slot's WALL-CLOCK time as proposed (the meeting's own tz, carried
+  // in the ISO offset) — NOT converted to the viewer's browser tz, so the header
+  // matches the proposed time and the server's reason text.
+  function fmtEventTime(startIso, endIso) {
+    try {
+      const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(startIso));
+      const me = /T(\d{2}):(\d{2})/.exec(String(endIso));
+      if (!m) throw 0;
+      const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+      const day = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+      const to12 = (H, M) => { const h = Number(H); const ap = h >= 12 ? 'PM' : 'AM'; return `${((h + 11) % 12) + 1}:${M} ${ap}`; };
+      const end = me ? to12(me[1], me[2]) : '';
+      return `${day}, ${to12(m[4], m[5])}${end ? '–' + end : ''}`;
+    } catch (e) { return `${startIso} – ${endIso}`; }
+  }
+
+  function renderEvent(ev) {
+    const when = fmtEventTime(ev.start_iso, ev.end_iso);
+    const who = (ev.attendees || []).map(esc).join(', ') || 'no attendees (self-only)';
+    const reasons = (ev.reasons || []).join('; ');
+    const conf = (ev.confidence != null) ? `<span class="yos-badge">conf ${Number(ev.confidence).toFixed(2)}</span>` : '';
+    return `
+      <div class="card compact" data-event-id="${ev.id}">
+        <div class="head-main">
+          <div class="head-subject">${esc(ev.title || 'Meeting')} — ${esc(when)}</div>
+          <div class="head-meta">${conf} <span class="head-from">invite: ${who}</span></div>
+          ${reasons ? `<div class="draft-preview">${esc(reasons)}</div>` : ''}
+          <div class="event-status" data-status-for="${ev.id}" style="color:var(--muted-2);font-size:0.82rem;margin-top:4px"></div>
+        </div>
+        <div class="quick-actions">
+          <button class="btn ok"     data-action="event-approve" data-event-id="${ev.id}" title="Create the Google Calendar event with a Meet link and send invites to the attendees.">Approve &amp; create event</button>
+          <button class="btn danger" data-action="event-dismiss" data-event-id="${ev.id}" title="Don't create this event.">Dismiss</button>
+        </div>
+      </div>`;
+  }
+
+  async function loadEvents() {
+    const section = $('eventsSection'), list = $('eventsList'), count = $('eventsCount');
+    if (!section) return;
+    let events = [];
+    try {
+      const r = await fetch('/api/agent/events/pending').then(r => r.json());
+      events = r.events || [];
+    } catch (e) { return; }
+    if (!events.length) { section.style.display = 'none'; list.innerHTML = ''; return; }
+    section.style.display = '';
+    count.textContent = String(events.length);
+    list.innerHTML = events.map(renderEvent).join('');
+  }
+
+  async function eventAction(id, action) {
+    const card = document.querySelector(`[data-event-id="${id}"]`);
+    const statusEl = card && card.querySelector(`.event-status[data-status-for="${id}"]`);
+    const url = `/api/agent/events/${id}/${action === 'event-approve' ? 'approve' : 'dismiss'}`;
+    if (statusEl) statusEl.textContent = action === 'event-approve' ? 'Creating event…' : 'Dismissing…';
+    let r;
+    try {
+      r = await fetch(url, { method: 'POST' });
+    } catch (e) { if (statusEl) statusEl.textContent = 'Failed: ' + e; return; }
+    if (!r.ok) {
+      // 403 = a shut gate (send frontier / create_events flag). Surface the
+      // server's exact reason so the user knows which flag to open.
+      let detail = '';
+      try { detail = (await r.json()).detail || ''; } catch (e) { detail = await r.text(); }
+      if (statusEl) statusEl.textContent = (r.status === 403 ? '🔒 ' : '⚠ ') + (detail || 'action failed');
+      return;
+    }
+    if (action === 'event-dismiss') { card.remove(); status.textContent = 'Event dismissed.'; return; }
+    const j = await r.json().catch(() => ({}));
+    const link = j.meet_link || (j.event && j.event.meet_link);
+    const cal = j.html_link || (j.event && j.event.html_link);
+    if (statusEl) {
+      statusEl.innerHTML = '✅ Event created.' +
+        (link ? ` <a href="${esc(link)}" target="_blank" rel="noopener">Meet link</a>` : '') +
+        (cal ? ` · <a href="${esc(cal)}" target="_blank" rel="noopener">open in Calendar</a>` : '');
+    }
+    // Lock the card's actions now that it's created.
+    const qa = card && card.querySelector('.quick-actions');
+    if (qa) qa.remove();
+    status.textContent = 'Calendar event created.';
+  }
+
   async function fetchPending() {
     const url = new URL('/api/agent/pending', window.location.origin);
     if (acct.value) url.searchParams.set('account', acct.value);
@@ -546,6 +643,8 @@
     lastRows.drafts  = (r.rows || []).filter(x => x.tier === 'draft');
     lastRows.surface = (r.rows || []).filter(x => x.tier === 'surface');
     applyClientFilter();
+    // b282: refresh the meeting-confirmations queue alongside the drafts.
+    try { await loadEvents(); } catch (e) {}
     // ε: keep the activity panel in sync after every refresh + after triage runs.
     if (typeof loadActivity === 'function') { try { await loadActivity(); } catch (e) {} }
     // b42: refresh the agent-health card too — sweep totals + dismissal aggregate change.
@@ -768,6 +867,12 @@
     if (t.id === 'refreshBtn') { fetchPending(); return; }
     if (t.id === 'rescreenBtn') { rescreenQueue(); return; }
     const action = t.getAttribute('data-action');
+    // Meeting-confirmation actions (b282) — keyed by data-event-id, distinct
+    // from the draft rows' data-id.
+    const eventId = t.getAttribute('data-event-id');
+    if ((action === 'event-approve' || action === 'event-dismiss') && eventId) {
+      eventAction(eventId, action); return;
+    }
     const id = t.getAttribute('data-id');
     if (action === 'toggle' && id) { toggleCard(id); return; }
     if (action && id) { rowAction(id, action); }

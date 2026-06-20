@@ -276,6 +276,18 @@ def list_agent_events(
     return {"events": rows, "count": len(rows)}
 
 
+@router.get("/api/agent/events/by_thread/{thread_id}")
+def get_agent_event_by_thread(thread_id: str, request: Request) -> dict:
+    """The latest calendar event for a Gmail thread — the Gmail add-on's entry
+    point (it has the thread id, not the row id). 404 when none exists."""
+    from app.agent import event_store
+
+    row = event_store.get_event_by_thread(_db_url(request), thread_id)
+    if not row:
+        raise HTTPException(404, "no event for this thread")
+    return {"event": row}
+
+
 @router.get("/api/agent/events/{row_id}")
 def get_agent_event(row_id: int, request: Request) -> dict:
     from app.agent import event_store
