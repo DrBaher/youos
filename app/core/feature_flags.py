@@ -598,6 +598,20 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.triage.include_read",
+        "label": "Draft unanswered read mail too (not just unread)",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "By default the sweep only drafts UNREAD inbox mail. With this on it "
+            "scans the WHOLE inbox regardless of read state or age and drafts "
+            "every thread you haven't replied to yet (skips ones where your "
+            "message is the latest). Catches mail you read but never answered. "
+            "Costs more model time and can surface drafts for mail you "
+            "deliberately left; the daily draft cap still bounds it. Never sends."
+        ),
+    },
+    {
         "key": "agent.vip_senders",
         "label": "VIP senders (prioritized)",
         "type": "text",
