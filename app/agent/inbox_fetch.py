@@ -240,7 +240,6 @@ def fetch_unread(
 
     Returns the *latest* message per thread — the one you'd naturally reply to.
     """
-    from app.core.sender import extract_email
     from app.ingestion.adapters import get_google_source
 
     source = get_google_source(backend)
@@ -262,47 +261,68 @@ def fetch_unread(
             # guard: a malformed message drops just that thread (continue), it
             # never aborts the sweep. The parse helpers also degrade internally;
             # this is the belt-and-suspenders boundary.
-            messages = thread.get("messages", []) or [thread]
-            msg = messages[-1]                                # latest = the unread one
-            payload = msg.get("payload", {}) or {}
-            sender = _decode_mime_words(_header(payload, "From"))
+            msg_obj = _inbox_message_from_thread(thread, account=account, thread_id=thread_id)
             # Unanswered filter (include_read only): if YOU sent the latest message
             # the thread is answered — you're awaiting THEM, not the reverse — so
             # skip it. An unread thread is never your own sent mail, so this is a
             # no-op in the default path.
-            if include_read and _own and (extract_email(sender) or "").lower() in _own:
+            if include_read and _own and (msg_obj.sender_email or "").lower() in _own:
                 continue
-            # Prior turns (everything before the latest) so generation can draft
-            # with conversation context. Keep the last 4 to bound the prompt;
-            # truncate each body to ~200 chars (matches the regex-thread budget).
-            thread_history: list[dict[str, str]] = []
-            for prev in messages[:-1][-4:]:
-                prev_payload = prev.get("payload", {}) or {}
-                prev_text = _extract_text(prev_payload)
-                if not prev_text:
-                    continue
-                thread_history.append({
-                    "sender": _decode_mime_words(_header(prev_payload, "From") or "")[:80],
-                    "text": prev_text[:200],
-                })
-            results.append(
-                InboxMessage(
-                    message_id=msg.get("id") or msg.get("messageId") or thread_id,
-                    thread_id=thread_id,
-                    account=account,
-                    sender=sender,
-                    sender_email=extract_email(sender),
-                    subject=_decode_mime_words(_header(payload, "Subject")) or "(no subject)",
-                    body=_extract_text(payload),
-                    headers=_all_headers(payload),
-                    received_at=_header(payload, "Date") or None,
-                    has_attachment=_has_attachment(payload),
-                    thread_history=thread_history,
-                )
-            )
+            results.append(msg_obj)
         except Exception:
             # A fetch OR parse failure on one thread shouldn't kill the whole
             # sweep — skip it and keep going.
             logger.warning("inbox fetch: skipping thread %s (fetch/parse failed)", thread_id, exc_info=True)
             continue
     return results
+
+
+def _inbox_message_from_thread(thread: dict, *, account: str, thread_id: str) -> InboxMessage:
+    """Parse a fetched thread payload into the latest-message ``InboxMessage``
+    (the one you'd reply to) + up to 4 prior turns as context. Shared by the
+    sweep (``fetch_unread``) and the on-demand single-thread fetch."""
+    from app.core.sender import extract_email
+
+    messages = thread.get("messages", []) or [thread]
+    msg = messages[-1]
+    payload = msg.get("payload", {}) or {}
+    sender = _decode_mime_words(_header(payload, "From"))
+    thread_history: list[dict[str, str]] = []
+    for prev in messages[:-1][-4:]:
+        prev_payload = prev.get("payload", {}) or {}
+        prev_text = _extract_text(prev_payload)
+        if not prev_text:
+            continue
+        thread_history.append({
+            "sender": _decode_mime_words(_header(prev_payload, "From") or "")[:80],
+            "text": prev_text[:200],
+        })
+    return InboxMessage(
+        message_id=msg.get("id") or msg.get("messageId") or thread_id,
+        thread_id=thread_id,
+        account=account,
+        sender=sender,
+        sender_email=extract_email(sender),
+        subject=_decode_mime_words(_header(payload, "Subject")) or "(no subject)",
+        body=_extract_text(payload),
+        headers=_all_headers(payload),
+        received_at=_header(payload, "Date") or None,
+        has_attachment=_has_attachment(payload),
+        thread_history=thread_history,
+    )
+
+
+def fetch_thread(account: str, thread_id: str, *, backend: str | None = None) -> InboxMessage | None:
+    """Fetch ONE thread by id and return its latest-message ``InboxMessage`` (or
+    None if it can't be fetched/parsed). Used for on-demand drafting of a thread
+    the sweep never queued (read / hard-skipped / brand-new)."""
+    from app.ingestion.adapters import get_google_source
+
+    if not thread_id:
+        return None
+    try:
+        thread = get_google_source(backend).get_thread(account=account, thread_id=thread_id)
+        return _inbox_message_from_thread(thread, account=account, thread_id=thread_id)
+    except Exception:
+        logger.warning("fetch_thread: could not fetch/parse thread %s", thread_id, exc_info=True)
+        return None

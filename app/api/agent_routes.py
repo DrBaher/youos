@@ -235,6 +235,100 @@ def regenerate(row_id: int, body: RegenerateBody, request: Request) -> dict:
     }
 
 
+class DraftForThreadBody(BaseModel):
+    """Draft a reply for a Gmail thread on demand — even one the sweep never
+    queued (read / hard-skipped / brand-new). ``instruction`` optionally steers
+    it ('shorter; propose Thursday'); ``account`` selects the mailbox."""
+
+    thread_id: str = Field(..., min_length=1)
+    account: str | None = Field(default=None)
+    instruction: str | None = Field(default=None, max_length=4_000)
+
+
+@router.post("/api/agent/draft_for_thread")
+def draft_for_thread(body: DraftForThreadBody, request: Request) -> dict:
+    """Generate (or regenerate) an in-voice draft for ``thread_id`` and return
+    the pending row, so the Gmail add-on can draft a thread that isn't in the
+    queue. Never sends. If a row already exists for the thread it's re-drafted
+    in place (un-dismissed first if needed); otherwise the thread's latest
+    inbound is fetched and a new draft row is created."""
+    db_url = _db_url(request)
+    settings = request.app.state.settings
+
+    from app.generation.service import DraftRequest, generate_draft
+
+    existing = store.get_by_thread(db_url, body.thread_id)
+    # Resolve the mailbox: explicit > the existing row's account > first user email.
+    account = body.account or (existing or {}).get("account") or None
+    if not account:
+        from app.core.config import get_user_emails
+
+        emails = get_user_emails()
+        account = emails[0] if emails else None
+    if not account:
+        raise HTTPException(400, "no account configured")
+    # Source the inbound to reply to: the stored row's body if we have one, else
+    # fetch the thread's latest message live.
+    inbound = (existing or {}).get("body") if existing else None
+    sender = (existing or {}).get("sender") or (existing or {}).get("sender_email")
+    subject = (existing or {}).get("subject")
+    msg = None
+    if not (inbound and inbound.strip()):
+        from app.agent.inbox_fetch import fetch_thread
+
+        msg = fetch_thread(account, body.thread_id)
+        if not msg or not (msg.body or "").strip():
+            raise HTTPException(404, "could not fetch a message to draft from for this thread")
+        inbound, sender, subject = msg.body, (msg.sender or msg.sender_email), msg.subject
+
+    try:
+        resp = generate_draft(
+            DraftRequest(
+                inbound_message=inbound, sender=sender, subject=subject,
+                account_email=account, thread_id=body.thread_id,
+                standing_instructions=(body.instruction or None),
+            ),
+            database_url=settings.database_url, configs_dir=settings.configs_dir,
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"drafting failed: {exc}") from exc
+    new_draft = resp.draft or ""
+    if not new_draft.strip():
+        raise HTTPException(502, "drafting produced an empty reply")
+
+    if existing:
+        if existing.get("status") == "dismissed":
+            store.restore(db_url, int(existing["id"]))
+        store.mark_amended(db_url, int(existing["id"]), amended_draft=new_draft, amended_by="machine")
+        if existing.get("tier") == "surface":
+            store.promote_to_draft(db_url, int(existing["id"]))
+        return {"ok": True, "row": store.get(db_url, int(existing["id"])), "created": False}
+
+    row_id = store.upsert_pending(
+        db_url,
+        message_id=(msg.message_id if msg else body.thread_id),
+        thread_id=body.thread_id, account=account,
+        sender=sender, sender_email=(msg.sender_email if msg else None),
+        subject=subject, body=inbound, received_at=(msg.received_at if msg else None),
+        needs_reply_score=1.0, reasons=["drafted on demand from Gmail"],
+        cold_outreach=False, tier="draft", draft=new_draft,
+        draft_model=resp.model_used, draft_repairs=[],
+        standing_instructions_snapshot=(body.instruction or None),
+    )
+    if row_id is None:  # a row for this message_id already existed (race) — reuse it
+        row = store.get_by_thread(db_url, body.thread_id)
+        return {"ok": True, "row": row, "created": False}
+    return {"ok": True, "row": store.get(db_url, row_id), "created": True}
+
+
+@router.post("/api/agent/pending/{row_id}/restore")
+def restore_pending(row_id: int, request: Request) -> dict:
+    """Un-dismiss a row (dismissed → pending) — the add-on's Undo."""
+    if not store.restore(_db_url(request), row_id):
+        raise HTTPException(404, "no dismissed row to restore")
+    return {"ok": True, "row": store.get(_db_url(request), row_id)}
+
+
 class DismissBody(BaseModel):
     """Optional dismissal reason — categorical so we can aggregate.
 

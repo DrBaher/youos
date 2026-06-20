@@ -1224,3 +1224,68 @@ def test_regenerate_promotes_surfaced_row_to_draft(authed_client, monkeypatch):
     row = r.json()["row"]
     assert row["tier"] == "draft"                       # promoted
     assert (row["amended_draft"] or "") == "Drafted on request."
+
+
+# --- draft_for_thread (on-demand) + restore (undo) — b282 add-on polish ---
+
+def test_restore_store_helper(tmp_path):
+    import sqlite3
+
+    from app.agent import store
+    from app.db.bootstrap import _migrate_agent_pending_drafts, resolve_sqlite_path
+    db = f"sqlite:///{tmp_path}/r.db"
+    conn = sqlite3.connect(resolve_sqlite_path(db))
+    _migrate_agent_pending_drafts(conn)
+    conn.execute(
+        "INSERT INTO agent_pending_drafts (id, message_id, thread_id, account, needs_reply_score, "
+        "reasons_json, cold_outreach, tier, status) VALUES (1,'m','t','me@x.com',0.9,'[]',0,'draft','dismissed')"
+    )
+    conn.commit()
+    conn.close()
+    assert store.restore(db, 1) is True
+    assert store.get(db, 1)["status"] == "pending"
+    assert store.restore(db, 1) is False  # not dismissed anymore → no-op
+
+
+def test_draft_for_thread_existing_surface_row(authed_client, monkeypatch):
+    from types import SimpleNamespace
+
+    import app.generation.service as svc
+    monkeypatch.setattr(svc, "generate_draft",
+                        lambda req, **kw: SimpleNamespace(draft="On-demand reply.", model_used="stub"))
+    # t-2 is the surfaced fixture row.
+    r = authed_client.post("/api/agent/draft_for_thread", json={"thread_id": "t-2"})
+    assert r.status_code == 200, r.text
+    row = r.json()["row"]
+    assert row["tier"] == "draft" and (row["amended_draft"] or "") == "On-demand reply."
+    assert r.json()["created"] is False
+
+
+def test_draft_for_thread_no_row_creates_one(authed_client, monkeypatch):
+    from types import SimpleNamespace
+
+    import app.agent.inbox_fetch as inbox
+    import app.generation.service as svc
+    monkeypatch.setattr(svc, "generate_draft",
+                        lambda req, **kw: SimpleNamespace(draft="Fresh draft.", model_used="stub"))
+    monkeypatch.setattr(inbox, "fetch_thread", lambda account, thread_id, **kw: inbox.InboxMessage(
+        message_id="newmsg", thread_id=thread_id, account=account,
+        sender="Zoe <zoe@x.com>", sender_email="zoe@x.com", subject="Hi", body="Can you help?",
+    ))
+    r = authed_client.post("/api/agent/draft_for_thread",
+                           json={"thread_id": "t-brand-new", "account": "you@example.com"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["created"] is True
+    assert body["row"]["tier"] == "draft" and body["row"]["draft"] == "Fresh draft."
+    assert body["row"]["thread_id"] == "t-brand-new"
+
+
+def test_restore_endpoint_undismisses(authed_client):
+    rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
+    rid = rows[0]["id"]
+    authed_client.post(f"/api/agent/pending/{rid}/dismiss", json={"reason": "noise"})
+    assert authed_client.get(f"/api/agent/pending/{rid}").json()["status"] == "dismissed"
+    r = authed_client.post(f"/api/agent/pending/{rid}/restore")
+    assert r.status_code == 200
+    assert r.json()["row"]["status"] == "pending"

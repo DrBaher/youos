@@ -308,6 +308,14 @@ def promote_to_draft(database_url: str, row_id: int) -> bool:
         return cur.rowcount > 0
 
 
+def restore(database_url: str, row_id: int) -> bool:
+    """Un-dismiss a row (dismissed → pending) — the add-on's Undo. Only a
+    dismissed row is restored; returns False otherwise (404)."""
+    return _update_status(
+        database_url, row_id, status="pending", require_status=("dismissed",),
+    )
+
+
 def mark_sent(
     database_url: str,
     row_id: int,
