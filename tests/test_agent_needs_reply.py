@@ -637,11 +637,25 @@ def _to(*emails):
     return ", ".join(f"X <{e}>" for e in emails)
 
 
-def test_group_thread_5plus_recipients_surfaces_not_drafts():
-    # You're in To, but alongside 4+ others → group thread → surface, not draft.
+def test_in_to_among_many_still_drafts():
+    # Policy: the group/Cc demotion applies ONLY when you're not addressed
+    # directly. You're in To (even alongside 4+ others) → it's for you → draft.
     v = classify(_msg(
         body="Could you confirm the plan? please review.",
         headers={"to": _to("baher@work.example", "a@x.com", "b@x.com", "c@x.com", "d@x.com")},
+    ), account_emails=ME_ORG)
+    assert v.needs_reply is True
+    assert not any("group thread" in r for r in v.reasons)
+
+
+def test_group_thread_demotes_only_when_not_in_to():
+    # You're NOT in To (Cc-only) on a 5+ thread → a To recipient owns it → demote.
+    v = classify(_msg(
+        body="Could you confirm the plan? please review.",
+        headers={
+            "to": _to("a@x.com", "b@x.com", "c@x.com", "d@x.com", "e@x.com"),
+            "cc": _to("baher@work.example"),
+        },
     ), account_emails=ME_ORG)
     assert v.needs_reply is False
     assert v.surface_for_review is True

@@ -521,22 +521,18 @@ def classify(
         _to = _header_emails(msg.headers.get("to"))
         _cc = _header_emails(msg.headers.get("cc"))
         _total = len(((_to | _cc) - _mine)) + 1  # other recipients + the user
-        # "A teammate likely owns the reply" only when someone OTHER than you is
-        # DIRECTLY addressed (in To). If you're the sole To recipient the mail is
-        # for you no matter how many are Cc'd — being directly addressed overrides
-        # the Cc count (user policy: "if it addresses me, draft, even with 100 in
-        # Cc"). When you're not in To at all (Cc-only / alias / bcc) a large thread
-        # still demotes, since a To recipient is the designated responder.
-        if _to & _mine:
-            _others_in_to = len(_to - _mine)
-            if _others_in_to + 1 >= GROUP_THREAD_MIN_RECIPIENTS:
-                group_demote = True
-                reasons.append(
-                    f"group thread ({_others_in_to + 1} direct recipients) — a teammate likely owns the reply"
-                )
-        elif (_to or _cc) and _total >= GROUP_THREAD_MIN_RECIPIENTS:
+        # The group-thread demotion applies ONLY when you are NOT addressed
+        # directly. If you're in To — the sole recipient or one of many — the mail
+        # is for you, so draft it regardless of how many others are in To/Cc (user
+        # policy: "the Cc rule applies only when I'm not addressed directly"). When
+        # you're not in To at all (Cc-only / alias / bcc) a large thread demotes —
+        # a To recipient is the designated responder.
+        if not (_to & _mine) and (_to or _cc) and _total >= GROUP_THREAD_MIN_RECIPIENTS:
             group_demote = True
-            reasons.append(f"group thread ({_total} recipients) — a teammate likely owns the reply")
+            reasons.append(
+                f"group thread ({_total} recipients) — you're not a direct (To) recipient, "
+                "a teammate likely owns the reply"
+            )
 
     # Soft penalty for `noreply@` / `donotreply@` — was a hard skip, but
     # transactional notifications (demo-form alerts, password resets) come
