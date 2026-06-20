@@ -1289,3 +1289,20 @@ def test_restore_endpoint_undismisses(authed_client):
     r = authed_client.post(f"/api/agent/pending/{rid}/restore")
     assert r.status_code == 200
     assert r.json()["row"]["status"] == "pending"
+
+
+def test_regenerate_does_not_promote_dismissed_surface_row(authed_client, monkeypatch):
+    """Hardening: a dismissed surface row must not be flipped to tier='draft' by
+    regenerate (mark_amended no-ops on dismissed, so promote must be gated too)."""
+    from types import SimpleNamespace
+
+    import app.generation.service as svc
+    monkeypatch.setattr(svc, "generate_draft",
+                        lambda req, **kw: SimpleNamespace(draft="x", model_used="stub"))
+    rows = authed_client.get("/api/agent/pending?tier=surface").json()["rows"]
+    rid = rows[0]["id"]
+    authed_client.post(f"/api/agent/pending/{rid}/dismiss", json={"reason": "noise"})
+    authed_client.post(f"/api/agent/pending/{rid}/regenerate", json={})
+    row = authed_client.get(f"/api/agent/pending/{rid}").json()
+    assert row["status"] == "dismissed"   # untouched
+    assert row["tier"] == "surface"        # NOT promoted

@@ -464,6 +464,11 @@ def create_calendar_event(
     backend has a verified shape today."""
     from app.core.config import get_ingestion_google_backend
 
+    # Whitelist send_updates at the boundary — it decides whether invite emails go
+    # out, so an unexpected value must never be forwarded to gog unchecked.
+    if send_updates not in ("all", "none", "externalOnly"):
+        raise GmailWriteError(f"invalid send_updates {send_updates!r} (expected all|none|externalOnly)")
+
     name = (backend or get_ingestion_google_backend()).strip().lower()
     if name == "gog":
         return _gog_create_event(
@@ -519,18 +524,24 @@ def _gog_create_event(
     resource: ``{"id": ..., "hangoutLink": ..., "htmlLink": ..., ...}``. A
     ``--dry-run`` prints the intended request (``{"dry_run": true, ...}``) and
     exits 0 without creating anything."""
+    # ``--flag=value`` form for every attacker-influenced string (the title comes
+    # from the counterparty's reply SUBJECT, attendees from their address): a
+    # value beginning with '-' is parsed by gog as a flag in the space-separated
+    # form ("expected string value but got --x") — at best a denial-of-create, so
+    # =-join makes the value unambiguous. ISO times / send_updates / account are
+    # internally controlled but kept consistent.
     cmd: list[str] = [
         "gog", "calendar", "create", "primary",
-        "--summary", title,
-        "--from", start_iso,
-        "--to", end_iso,
+        f"--summary={title}",
+        f"--from={start_iso}",
+        f"--to={end_iso}",
     ]
     if timezone:
-        cmd += ["--start-timezone", timezone, "--end-timezone", timezone]
+        cmd += [f"--start-timezone={timezone}", f"--end-timezone={timezone}"]
     if attendees:
-        cmd += ["--attendees", ",".join(attendees)]
+        cmd += [f"--attendees={','.join(attendees)}"]
     if description:
-        cmd += ["--description", description]
+        cmd += [f"--description={description}"]
     if with_meet:
         cmd.append("--with-meet")
     cmd += [

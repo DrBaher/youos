@@ -222,6 +222,22 @@ def dismiss_event(database_url: str, row_id: int, *, note: str | None = None) ->
         return cur.rowcount > 0
 
 
+def reap_stale_creating(database_url: str, *, older_than_minutes: int = 10) -> int:
+    """Free any event rows stranded in 'creating' by a crashed run (claimed but
+    the process died before finalize/abort) back to 'pending' so they can be
+    approved again. Safe — a truly-created event is 'created', not 'creating'.
+    Returns the number reaped. Mirrors store.reap_stale_sending."""
+    with closing(_connect(database_url)) as conn:
+        cur = conn.execute(
+            "UPDATE agent_pending_events SET status = 'pending', updated_at = CURRENT_TIMESTAMP "
+            "WHERE status = 'creating' "
+            "AND (julianday('now') - julianday(updated_at)) * 24 * 60 >= ?",
+            (older_than_minutes,),
+        )
+        conn.commit()
+        return cur.rowcount
+
+
 def count_events_created_today(database_url: str, *, account: str | None = None) -> int:
     """Events actually created today (UTC) — for the daily-cap gate."""
     sql = (

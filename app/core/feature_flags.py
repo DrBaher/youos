@@ -612,6 +612,18 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.triage.include_read_window",
+        "label": "Age ceiling for the read-mail scan",
+        "type": "text",
+        "default": "90d",
+        "help": (
+            "When agent.triage.include_read is on, bound the whole-inbox scan to "
+            "this Gmail newer_than: window (e.g. '90d', '180d') so a large/old "
+            "inbox doesn't make every sweep fetch hundreds of threads. Empty = no "
+            "ceiling (scan all inbox mail regardless of age)."
+        ),
+    },
+    {
         "key": "agent.triage.include_read",
         "label": "Draft unanswered read mail too (not just unread)",
         "type": "bool",
