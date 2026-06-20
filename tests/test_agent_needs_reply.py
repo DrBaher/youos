@@ -670,6 +670,33 @@ def test_direct_small_thread_still_drafts():
     assert not any("group thread" in r or "team thread" in r for r in v.reasons)
 
 
+def test_sole_to_recipient_drafts_despite_many_cc():
+    # The reported case: you are the SOLE To recipient; the others are all Cc.
+    # Being directly addressed overrides the Cc count — must draft, not surface.
+    v = classify(_msg(
+        body="Hi Baher, thank you so much for the follow-up. Could you confirm?",
+        headers={
+            "to": _to("baher@work.example"),
+            "cc": _to("a@x.com", "b@x.com", "c@x.com", "d@x.com"),
+        },
+    ), account_emails=ME_ORG)
+    assert v.needs_reply is True
+    assert not any("group thread" in r for r in v.reasons)
+
+
+def test_cc_only_large_thread_still_demotes():
+    # You're not in To at all (Cc-only) on a big thread → a To recipient owns it,
+    # so the group demotion still applies.
+    v = classify(_msg(
+        body="Could you confirm the plan? please review.",
+        headers={
+            "to": _to("boss@work.example", "a@x.com", "b@x.com", "c@x.com"),
+            "cc": _to("baher@work.example"),
+        },
+    ), account_emails=ME_ORG)
+    assert any("group thread" in r for r in v.reasons)
+
+
 def test_public_domain_not_treated_as_colleague():
     # A gmail.com recipient must NOT count as a colleague (you uses gmail).
     v = classify(_msg(
