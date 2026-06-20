@@ -3,8 +3,17 @@
 Puts YouOS's review experience **inside Gmail**:
 
 - **Reading a thread** — a sidebar card shows YouOS's draft for that thread, its
-  calibrated confidence, and the reasons, with **Regenerate** and **Dismiss**
-  actions (and a note when the draft is already in your Gmail Drafts).
+  calibrated confidence, and the reasons, with near-parity actions to the
+  dedicated `/triage` UI:
+  - **Push to Gmail Drafts** — create the real draft on the thread, ready to send.
+  - **Refine with a prompt** — type a steer ("shorter; decline politely; propose
+    Thursday") and **Regenerate** re-drafts in your voice.
+  - **Dismiss with feedback** — pick a categorical reason (noise / wrong sender /
+    wrong content / already handled / other) + an optional note (the same signal
+    the UI captures for tuning).
+  - **Mark sent manually** — close a row you handled yourself.
+  (Inline draft *editing* stays in the dedicated UI / the compose-insert action
+  below — editing long text in a sidebar card is clunky.)
 - **Writing a reply** — open the YouOS action while composing and **insert
   YouOS's draft straight into the reply box** (the compose trigger), so you start
   from your own words instead of a blank compose window.
@@ -81,7 +90,10 @@ appear, with Regenerate / Dismiss.
 - `GET /api/agent/pending/by_thread/{threadId}` — the add-on's entry point (added
   in b280): YouOS's latest row for the open Gmail thread. Both the read card and
   the compose-insert use it.
-- `POST /api/agent/pending/{id}/regenerate` · `POST /api/agent/pending/{id}/dismiss`
+- `POST /api/agent/pending/{id}/regenerate` (free-form `instruction` = the
+  "refine with a prompt" box) · `POST /api/agent/pending/{id}/dismiss`
+  (`reason` + `note`) · `POST /api/agent/pending/{id}/push_to_gmail` ·
+  `POST /api/agent/pending/{id}/mark_sent`
 - `GET /api/agent/events/by_thread/{threadId}` — a confirmed-meeting card (b282):
   when someone accepts a slot YouOS proposed, the sidebar shows the time +
   attendees with **Approve & create** (creates the Google Calendar event with a

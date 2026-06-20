@@ -170,65 +170,135 @@ function _eventCard(ev) {
     .addSection(section).build();
 }
 
+// Categorical dismissal reasons — must mirror app/agent/store.py DISMISSAL_REASONS.
+var DISMISS_REASONS = [
+  ['noise', 'Noise — shouldn’t have drafted'],
+  ['wrong_sender', 'Wrong sender'],
+  ['wrong_content', 'Wrong content / missed the point'],
+  ['already_handled', 'Already handled outside YouOS'],
+  ['other', 'Other']
+];
+
+/** Read a single form-input string value from an action event (or ''). */
+function _formVal(e, key) {
+  var inputs = (e && e.commonEventObject && e.commonEventObject.formInputs) || {};
+  return (inputs[key] && inputs[key].stringInputs && inputs[key].stringInputs.value[0]) || '';
+}
+
 function _draftCard(row) {
   var conf = (row.calibrated_score != null) ? row.calibrated_score : row.needs_reply_score;
   var subtitle = (row.tier === 'draft' ? 'Drafted' : 'Surfaced') +
     (conf != null ? ' · ' + Math.round(conf * 100) + '% likely to deserve a reply' : '') +
     ' · ' + (row.status || 'pending');
 
-  var section = CardService.newCardSection();
+  var builder = CardService.newCardBuilder()
+    .setHeader(CardService.newCardHeader().setTitle('YouOS draft').setSubtitle(subtitle));
+
+  // Section 1 — the draft + why + Gmail-draft status.
+  var draftSection = CardService.newCardSection();
   if (row.draft) {
-    section.addWidget(CardService.newTextParagraph().setText(_esc(row.draft)));
+    draftSection.addWidget(CardService.newTextParagraph().setText(_esc(row.draft)));
   } else {
-    section.addWidget(CardService.newTextParagraph().setText('<i>Surfaced for review — no draft generated.</i>'));
+    draftSection.addWidget(CardService.newTextParagraph().setText('<i>Surfaced for review — no draft generated.</i>'));
   }
   var reasons = (row.reasons || []).slice(0, 4).join(' · ');
   if (reasons) {
-    section.addWidget(CardService.newDecoratedText()
+    draftSection.addWidget(CardService.newDecoratedText()
       .setText('<font color="#5f6368">' + _esc(reasons) + '</font>').setWrapText(true));
   }
   if (row.gmail_draft_id) {
-    section.addWidget(CardService.newDecoratedText()
-      .setText('<font color="#1a73e8">This draft is in your Gmail Drafts, ready to send.</font>')
-      .setWrapText(true));
+    draftSection.addWidget(CardService.newDecoratedText()
+      .setText('<font color="#1a73e8">In your Gmail Drafts, ready to send.</font>').setWrapText(true));
+  }
+  builder.addSection(draftSection);
+
+  var actionable = (row.status === 'pending' || row.status === 'amended');
+  if (actionable) {
+    var rid = String(row.id);
+
+    // Section 2 — primary actions: push the draft to Gmail, or mark sent.
+    var actSection = CardService.newCardSection();
+    if (row.draft) {
+      actSection.addWidget(CardService.newTextButton().setText('Push to Gmail Drafts')
+        .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+        .setOnClickAction(CardService.newAction().setFunctionName('actPush').setParameters({ rowId: rid })));
+    }
+    actSection.addWidget(CardService.newTextButton().setText('Mark sent manually')
+      .setOnClickAction(CardService.newAction().setFunctionName('actMarkSent').setParameters({ rowId: rid })));
+    builder.addSection(actSection);
+
+    // Section 3 — refine with a prompt (re-draft in your voice, steered).
+    var refineSection = CardService.newCardSection().setHeader('Refine with a prompt');
+    refineSection.addWidget(CardService.newTextInput().setFieldName('instruction')
+      .setTitle('Instruction').setHint('e.g. shorter; decline politely; propose Thursday').setMultiline(true));
+    refineSection.addWidget(CardService.newTextButton().setText('Regenerate')
+      .setOnClickAction(CardService.newAction().setFunctionName('actRegenerate').setParameters({ rowId: rid })));
+    builder.addSection(refineSection);
+
+    // Section 4 — dismiss with categorical feedback + optional note.
+    var dismissSection = CardService.newCardSection().setHeader('Dismiss with feedback');
+    var reasonInput = CardService.newSelectionInput()
+      .setType(CardService.SelectionInputType.DROPDOWN).setFieldName('reason').setTitle('Reason');
+    for (var i = 0; i < DISMISS_REASONS.length; i++) {
+      reasonInput.addItem(DISMISS_REASONS[i][1], DISMISS_REASONS[i][0], i === 0);
+    }
+    dismissSection.addWidget(reasonInput);
+    dismissSection.addWidget(CardService.newTextInput().setFieldName('note')
+      .setTitle('Note (optional)').setHint('free-text, e.g. why this was wrong'));
+    dismissSection.addWidget(CardService.newTextButton().setText('Dismiss')
+      .setOnClickAction(CardService.newAction().setFunctionName('actDismiss').setParameters({ rowId: rid })));
+    builder.addSection(dismissSection);
   }
 
-  var buttons = CardService.newButtonSet();
-  if (row.status === 'pending' || row.status === 'amended') {
-    buttons.addButton(CardService.newTextButton().setText('Regenerate')
-      .setOnClickAction(CardService.newAction().setFunctionName('actRegenerate')
-        .setParameters({ rowId: String(row.id) })));
-    buttons.addButton(CardService.newTextButton().setText('Dismiss')
-      .setOnClickAction(CardService.newAction().setFunctionName('actDismiss')
-        .setParameters({ rowId: String(row.id) })));
-  }
-  section.addWidget(buttons);
-
-  return CardService.newCardBuilder()
-    .setHeader(CardService.newCardHeader().setTitle('YouOS draft').setSubtitle(subtitle))
-    .addSection(section).build();
+  return builder.build();
 }
 
 // --- Actions ---------------------------------------------------------------
 
 function actRegenerate(e) {
   var rowId = e.commonEventObject.parameters.rowId;
-  var res = _api('post', '/api/agent/pending/' + rowId + '/regenerate', {});
+  var instruction = _formVal(e, 'instruction').trim();
+  var payload = instruction ? { instruction: instruction } : {};
+  var res = _api('post', '/api/agent/pending/' + rowId + '/regenerate', payload);
   if (res.code !== 200) { return _notify('Regenerate failed (' + res.code + ')'); }
   var data = JSON.parse(res.body);
   return CardService.newActionResponseBuilder()
-    .setNotification(CardService.newNotification().setText('Regenerated'))
+    .setNotification(CardService.newNotification().setText(instruction ? 'Re-drafted from your prompt' : 'Regenerated'))
     .setNavigation(CardService.newNavigation().updateCard(_draftCard(data.row)))
     .build();
 }
 
+function actPush(e) {
+  var rowId = e.commonEventObject.parameters.rowId;
+  var res = _api('post', '/api/agent/pending/' + rowId + '/push_to_gmail', {});
+  if (res.code !== 200) { return _notify('Push failed (' + res.code + ')'); }
+  var data = JSON.parse(res.body);
+  var msg = data.pushed_already ? 'Already in Gmail Drafts' : 'Pushed to Gmail Drafts';
+  return CardService.newActionResponseBuilder()
+    .setNotification(CardService.newNotification().setText(msg))
+    .setNavigation(CardService.newNavigation().updateCard(_draftCard(data.row))).build();
+}
+
+function actMarkSent(e) {
+  var rowId = e.commonEventObject.parameters.rowId;
+  var res = _api('post', '/api/agent/pending/' + rowId + '/mark_sent', {});
+  if (res.code !== 200) { return _notify('Mark-sent failed (' + res.code + ')'); }
+  return CardService.newActionResponseBuilder()
+    .setNotification(CardService.newNotification().setText('Marked sent'))
+    .setNavigation(CardService.newNavigation().updateCard(
+      _infoCard('Marked sent', 'Closed this row — you sent it yourself.'))).build();
+}
+
 function actDismiss(e) {
   var rowId = e.commonEventObject.parameters.rowId;
-  var res = _api('post', '/api/agent/pending/' + rowId + '/dismiss',
-    { reason: 'noise', note: 'dismissed from the Gmail add-on' });
+  var reason = _formVal(e, 'reason') || 'noise';
+  var note = _formVal(e, 'note').trim();
+  var payload = { reason: reason };
+  if (note) { payload.note = note; }
+  var res = _api('post', '/api/agent/pending/' + rowId + '/dismiss', payload);
   if (res.code !== 200) { return _notify('Dismiss failed (' + res.code + ')'); }
   return CardService.newActionResponseBuilder()
-    .setNotification(CardService.newNotification().setText('Dismissed'))
+    .setNotification(CardService.newNotification().setText('Dismissed (' + reason + ')'))
     .setNavigation(CardService.newNavigation().updateCard(
       _infoCard('Dismissed', 'YouOS won’t resurface this thread.')))
     .build();
