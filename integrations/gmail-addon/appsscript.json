@@ -16,7 +16,8 @@
         "runFunction": "onHomepage"
       },
       "universalActions": [
-        { "label": "YouOS settings", "runFunction": "onHomepage" }
+        { "label": "Open YouOS queue", "runFunction": "onHomepage" },
+        { "label": "YouOS settings", "runFunction": "openSettings" }
       ]
     },
     "gmail": {

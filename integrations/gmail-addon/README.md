@@ -7,8 +7,19 @@ Puts YouOS's review experience **inside Gmail** — operate the whole queue with
   review** (Push / Dismiss), **Meeting confirmations** (Approve / Dismiss), **Needs
   review** (Draft it / Dismiss), and **Follow-ups** (owed / awaiting). Every action
   works by id — no need to open the email — and the card refreshes in place. Top-N
-  per section with a "+N more" note; a **Refresh** button re-pulls. This is the
-  in-Gmail equivalent of the `/triage` web page (which stays available for desktop).
+  per section, **Prev/Next paged**; a **Refresh** button re-pulls (with a
+  last-updated time). Urgent threads sort first with a 🔴 marker; dismiss prompts
+  for a reason (with one-tap **Undo**); **inbox-zero** shows a clean empty state.
+  This is the in-Gmail equivalent of the `/triage` web page (which stays available
+  for desktop).
+- **On-demand drafting** — on a thread YouOS hasn't queued (read / hard-skipped /
+  brand-new), both the reading card and the compose card offer **"Draft a reply"**
+  (optionally steered by a prompt) — it generates in your voice on the spot
+  (`/api/agent/draft_for_thread`), so you're never stuck at "no draft".
+- **Inline editing** — the contextual draft is an editable field; **Save edits**
+  or **Push** (which saves your edits first).
+- **Settings** has a **Test connection** button, and error cards offer a one-tap
+  **Open Settings**.
 
 - **Reading a thread** — a sidebar card shows YouOS's draft for that thread, its
   calibrated confidence, and the reasons, with near-parity actions to the
