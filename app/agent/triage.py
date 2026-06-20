@@ -1756,6 +1756,18 @@ def _run_sweep(
     except Exception as exc:
         logger.warning("auto-send step failed: %s", exc)
 
+    # Status labels: reflect the queue (drafted / invite-pending) into Gmail
+    # labels so the inbox list shows it. Gated, reversible, failure-isolated.
+    try:
+        from app.core.feature_flags import get_flag as _get_flag
+
+        if _get_flag("agent.labels.status_sync"):
+            from app.agent.status_labels import sync_status_labels
+
+            sync_status_labels(database_url, account)
+    except Exception as exc:
+        logger.warning("status-label sync failed: %s", exc)
+
     return {
         "messages": messages,
         "drafts": drafts,
