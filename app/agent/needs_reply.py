@@ -521,7 +521,20 @@ def classify(
         _to = _header_emails(msg.headers.get("to"))
         _cc = _header_emails(msg.headers.get("cc"))
         _total = len(((_to | _cc) - _mine)) + 1  # other recipients + the user
-        if (_to or _cc) and _total >= GROUP_THREAD_MIN_RECIPIENTS:
+        # "A teammate likely owns the reply" only when someone OTHER than you is
+        # DIRECTLY addressed (in To). If you're the sole To recipient the mail is
+        # for you no matter how many are Cc'd — being directly addressed overrides
+        # the Cc count (user policy: "if it addresses me, draft, even with 100 in
+        # Cc"). When you're not in To at all (Cc-only / alias / bcc) a large thread
+        # still demotes, since a To recipient is the designated responder.
+        if _to & _mine:
+            _others_in_to = len(_to - _mine)
+            if _others_in_to + 1 >= GROUP_THREAD_MIN_RECIPIENTS:
+                group_demote = True
+                reasons.append(
+                    f"group thread ({_others_in_to + 1} direct recipients) — a teammate likely owns the reply"
+                )
+        elif (_to or _cc) and _total >= GROUP_THREAD_MIN_RECIPIENTS:
             group_demote = True
             reasons.append(f"group thread ({_total} recipients) — a teammate likely owns the reply")
 
