@@ -1160,8 +1160,21 @@ def _run_sweep(
     except Exception as exc:
         logger.warning("gmail-label sync failed: %s", exc)
 
-    # 1) Fetch unread inbox threads.
-    messages = fetch_unread(account, window=window, limit=limit, backend=backend)
+    # 1) Fetch inbox threads to triage. Default: unread within the window. With
+    # agent.triage.include_read on (user opt-in): the whole inbox regardless of
+    # read state/age, minus threads you already answered (your message is latest)
+    # — so already-read-but-unanswered mail gets drafted too. The daily draft cap
+    # still bounds how many we actually generate.
+    from app.core.config import get_user_emails as _get_user_emails
+    from app.core.feature_flags import get_flag as _get_flag
+
+    _include_read = bool(_get_flag("agent.triage.include_read"))
+    _own_emails = {account.lower(), *(e.lower() for e in _get_user_emails() if e)}
+    _fetch_limit = max(limit, 200) if _include_read else limit
+    messages = fetch_unread(
+        account, window=window, limit=_fetch_limit, backend=backend,
+        include_read=_include_read, own_emails=_own_emails,
+    )
 
     # Build the sweep's SenderHistory ONCE and share it across mailbox routing,
     # forward routing, and scoring (b260): each used to build its own instance,

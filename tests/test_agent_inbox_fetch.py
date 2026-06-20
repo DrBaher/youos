@@ -336,3 +336,71 @@ def test_thread_history_prior_turn_from_rfc2047_decoded(monkeypatch):
     m = fetch_unread("me@x.com")[0]
     assert m.thread_history[0]["sender"] == "élénore <eleanor@x.com>"
     assert "=?" not in m.thread_history[0]["sender"]
+
+
+# --- include_read (proactive: draft read+unanswered inbox mail) --------------
+
+class _MultiSource:
+    """Fake source over a {thread_id: thread} map that records the query."""
+    def __init__(self, threads):
+        self._threads = threads
+        self.last_query = None
+
+    def search_threads(self, *, account, query, max_threads):
+        self.last_query = query
+        return [{"id": tid} for tid in self._threads]
+
+    def get_thread(self, *, account, thread_id):
+        return self._threads[thread_id]
+
+
+def _install_multi(monkeypatch, src):
+    monkeypatch.setattr("app.ingestion.adapters.get_google_source", lambda backend=None: src)
+
+
+def test_default_query_is_unread(monkeypatch):
+    src = _MultiSource({"t1": {"id": "t1", "messages": [
+        {"id": "m1", "payload": _payload(frm="Alice <alice@x.com>", subject="Q", text="hi?")}]}})
+    _install_multi(monkeypatch, src)
+    fetch_unread("you@x.com", window="7d")
+    assert "is:unread" in src.last_query and "newer_than:7d" in src.last_query
+
+
+def test_include_read_query_drops_unread_and_window(monkeypatch):
+    src = _MultiSource({"t1": {"id": "t1", "messages": [
+        {"id": "m1", "payload": _payload(frm="Alice <alice@x.com>", subject="Q", text="hi?")}]}})
+    _install_multi(monkeypatch, src)
+    fetch_unread("you@x.com", include_read=True, own_emails={"you@x.com"})
+    assert src.last_query == "in:inbox"
+
+
+def test_include_read_skips_threads_you_answered_last(monkeypatch):
+    threads = {
+        # answered: YOUR message is the latest → skip
+        "answered": {"id": "answered", "messages": [
+            {"id": "a1", "payload": _payload(frm="Bob <bob@x.com>", subject="Plan", text="thoughts?")},
+            {"id": "a2", "payload": _payload(frm="You <you@x.com>", subject="Re: Plan", text="here you go")},
+        ]},
+        # unanswered: THEIR message is the latest → keep + draft
+        "open": {"id": "open", "messages": [
+            {"id": "o1", "payload": _payload(frm="You <you@x.com>", subject="Ask", text="can you?")},
+            {"id": "o2", "payload": _payload(frm="Carol <carol@x.com>", subject="Re: Ask", text="one question?")},
+        ]},
+    }
+    src = _MultiSource(threads)
+    _install_multi(monkeypatch, src)
+    msgs = fetch_unread("you@x.com", include_read=True, own_emails={"you@x.com"})
+    ids = {m.thread_id for m in msgs}
+    assert ids == {"open"}                      # answered thread filtered out
+    assert msgs[0].sender_email == "carol@x.com"
+
+
+def test_include_read_off_does_not_filter_self(monkeypatch):
+    # In the default (unread) path the self-skip is a no-op: an unread thread is
+    # never your own sent mail, and we must not start dropping rows there.
+    threads = {"t1": {"id": "t1", "messages": [
+        {"id": "m1", "payload": _payload(frm="You <you@x.com>", subject="x", text="self note")}]}}
+    src = _MultiSource(threads)
+    _install_multi(monkeypatch, src)
+    msgs = fetch_unread("you@x.com", own_emails={"you@x.com"})  # include_read defaults False
+    assert len(msgs) == 1

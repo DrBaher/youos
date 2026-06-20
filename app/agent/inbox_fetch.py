@@ -225,23 +225,31 @@ def fetch_unread(
     window: str = "7d",
     limit: int = 50,
     backend: str | None = None,
+    include_read: bool = False,
+    own_emails: set[str] | None = None,
 ) -> list[InboxMessage]:
-    """Fetch unread inbox threads and return the latest message in each.
+    """Fetch inbox threads and return the latest message in each.
 
-    ``window`` is a Gmail ``newer_than:`` token (``"3d"``, ``"7d"``, ``"24h"``).
-    ``limit`` caps the number of threads pulled. ``backend`` overrides the
+    By default fetches only *unread* mail within ``window`` (a Gmail
+    ``newer_than:`` token like ``"3d"``/``"7d"``). With ``include_read=True`` it
+    fetches the WHOLE inbox regardless of read state or age — "every unanswered
+    email" — and skips any thread whose latest message is your own (``own_emails``):
+    if you sent the last message you've already answered it, so it's not awaiting
+    a reply from you. ``limit`` caps threads pulled; ``backend`` overrides the
     configured ``ingestion.google_backend`` (mainly for tests).
 
-    Returns the *latest* message per thread — that's the one the user just
-    received and would naturally reply to. Earlier messages in the same
-    thread (already-read replies of yours, prior exchanges) are skipped.
+    Returns the *latest* message per thread — the one you'd naturally reply to.
     """
     from app.core.sender import extract_email
     from app.ingestion.adapters import get_google_source
 
     source = get_google_source(backend)
-    query = f"in:inbox is:unread newer_than:{window}"
+    # include_read: drop ``is:unread`` AND the age window so the sweep sees every
+    # still-in-inbox thread, not just freshly-arrived unread ones. Bounded by
+    # ``limit`` + the daily draft cap downstream.
+    query = "in:inbox" if include_read else f"in:inbox is:unread newer_than:{window}"
     threads = source.search_threads(account=account, query=query, max_threads=limit) or []
+    _own = {e.lower() for e in (own_emails or set()) if e}
 
     results: list[InboxMessage] = []
     for t in threads[:limit]:
@@ -258,6 +266,12 @@ def fetch_unread(
             msg = messages[-1]                                # latest = the unread one
             payload = msg.get("payload", {}) or {}
             sender = _decode_mime_words(_header(payload, "From"))
+            # Unanswered filter (include_read only): if YOU sent the latest message
+            # the thread is answered — you're awaiting THEM, not the reverse — so
+            # skip it. An unread thread is never your own sent mail, so this is a
+            # no-op in the default path.
+            if include_read and _own and (extract_email(sender) or "").lower() in _own:
+                continue
             # Prior turns (everything before the latest) so generation can draft
             # with conversation context. Keep the last 4 to bound the prompt;
             # truncate each body to ~200 chars (matches the regex-thread budget).
