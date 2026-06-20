@@ -39,7 +39,12 @@ function _esc(s) {
 
 // --- Settings / homepage ---------------------------------------------------
 
-function onHomepage() { return _settingsCard(); }
+// Homepage trigger: clicked from anywhere in Gmail (no thread open) → the YouOS
+// dashboard (the in-Gmail queue). Falls back to Settings until configured.
+function onHomepage(e) {
+  if (!_baseUrl() || !_token()) { return _settingsCard(); }
+  return _dashboardCard(_dashAccount());
+}
 
 function _settingsCard() {
   var section = CardService.newCardSection()
@@ -54,6 +59,10 @@ function _settingsCard() {
       .setHint(_token() ? 'saved — leave blank to keep' : 'paste token'))
     .addWidget(CardService.newTextButton().setText('Save')
       .setOnClickAction(CardService.newAction().setFunctionName('saveSettings')));
+  if (_baseUrl() && _token()) {
+    section.addWidget(CardService.newTextButton().setText('← Back to queue')
+      .setOnClickAction(CardService.newAction().setFunctionName('actRefreshDash').setParameters({ account: '' })));
+  }
   return CardService.newCardBuilder()
     .setHeader(CardService.newCardHeader().setTitle('YouOS').setSubtitle('Settings'))
     .addSection(section).build();
@@ -72,6 +81,129 @@ function saveSettings(e) {
     .setNotification(CardService.newNotification().setText('Saved'))
     .setNavigation(CardService.newNavigation().updateCard(_settingsCard()))
     .build();
+}
+
+// --- Dashboard (the in-Gmail queue; homepage trigger) ----------------------
+
+var PROP_DASH_ACCT = 'YOUOS_DASH_ACCOUNT';
+var DASH_CAP = 6;  // items shown per section before "+N more"
+
+function _dashAccount() { return _props().getProperty(PROP_DASH_ACCT) || ''; }
+
+function _apiJson(path) {
+  try { var r = _api('get', path); if (r.code === 200) { return JSON.parse(r.body); } } catch (err) {}
+  return null;
+}
+
+function _accounts() {
+  var d = _apiJson('/api/agent/accounts');
+  return (d && d.accounts) || [];
+}
+
+function _btn(text, fn, params) {
+  return CardService.newTextButton().setText(text)
+    .setOnClickAction(CardService.newAction().setFunctionName(fn).setParameters(params));
+}
+
+function _dashRow(section, title, sub, buttons) {
+  section.addWidget(CardService.newDecoratedText()
+    .setText(_esc(title)).setBottomLabel(_esc(sub)).setWrapText(true));
+  if (buttons) { section.addWidget(buttons); }
+}
+
+function _dashboardCard(account) {
+  var accounts = _accounts();
+  if (!account && accounts.length) { account = accounts[0]; }
+  var acctQ = account ? ('&account=' + encodeURIComponent(account)) : '';
+
+  var pend = _apiJson('/api/agent/pending?limit=100' + acctQ) || {};
+  var rows = pend.rows || [];
+  var drafts = rows.filter(function (r) { return r.tier === 'draft'; });
+  var surface = rows.filter(function (r) { return r.tier === 'surface'; });
+  var events = ((_apiJson('/api/agent/events/pending') || {}).events || [])
+    .filter(function (ev) { return !account || ev.account === account; });
+  var fu = _apiJson('/api/agent/followups' + (account ? ('?account=' + encodeURIComponent(account)) : '')) || {};
+
+  var builder = CardService.newCardBuilder()
+    .setHeader(CardService.newCardHeader().setTitle('YouOS').setSubtitle(account || 'default account'));
+
+  // Account switcher (when >1 mailbox) + a cheap Refresh.
+  var top = CardService.newCardSection();
+  if (accounts.length > 1) {
+    var picker = CardService.newSelectionInput()
+      .setType(CardService.SelectionInputType.DROPDOWN).setFieldName('dash_account').setTitle('Account')
+      .setOnChangeAction(CardService.newAction().setFunctionName('actSetDashAccount'));
+    for (var i = 0; i < accounts.length; i++) { picker.addItem(accounts[i], accounts[i], accounts[i] === account); }
+    top.addWidget(picker);
+  }
+  top.addWidget(_btn('↻ Refresh', 'actRefreshDash', { account: account || '' }));
+  builder.addSection(top);
+
+  // Drafts to review → Push / Dismiss.
+  var ds = CardService.newCardSection().setHeader('📝 Drafts to review (' + drafts.length + ')');
+  if (!drafts.length) { ds.addWidget(CardService.newTextParagraph().setText('<i>None.</i>')); }
+  drafts.slice(0, DASH_CAP).forEach(function (r) {
+    var bs = CardService.newButtonSet();
+    bs.addButton(_btn('Push', 'actPush', { rowId: String(r.id), source: 'dashboard', account: account || '' }));
+    bs.addButton(_btn('Dismiss', 'actDismiss', { rowId: String(r.id), source: 'dashboard', account: account || '' }));
+    _dashRow(ds, r.subject || '(no subject)', 'from ' + (r.sender || '?'), bs);
+  });
+  if (drafts.length > DASH_CAP) { ds.addWidget(CardService.newTextParagraph().setText('… +' + (drafts.length - DASH_CAP) + ' more')); }
+  builder.addSection(ds);
+
+  // Meeting confirmations → Approve / Dismiss.
+  var msec = CardService.newCardSection().setHeader('📅 Meeting confirmations (' + events.length + ')');
+  if (!events.length) { msec.addWidget(CardService.newTextParagraph().setText('<i>None.</i>')); }
+  events.slice(0, DASH_CAP).forEach(function (ev) {
+    var bs = CardService.newButtonSet();
+    bs.addButton(_btn('Approve', 'actApproveEvent', { eventId: String(ev.id), source: 'dashboard', account: account || '' }));
+    bs.addButton(_btn('Dismiss', 'actDismissEvent', { eventId: String(ev.id), source: 'dashboard', account: account || '' }));
+    _dashRow(msec, ev.title || 'Meeting', _fmtEventTime(ev.start_iso, ev.end_iso), bs);
+  });
+  builder.addSection(msec);
+
+  // Needs review (surfaced, not drafted) → Draft it / Dismiss.
+  var ns = CardService.newCardSection().setHeader('🔎 Needs review (' + surface.length + ')');
+  if (!surface.length) { ns.addWidget(CardService.newTextParagraph().setText('<i>None.</i>')); }
+  surface.slice(0, DASH_CAP).forEach(function (r) {
+    var bs = CardService.newButtonSet();
+    bs.addButton(_btn('Draft it', 'actRegenerate', { rowId: String(r.id), source: 'dashboard', account: account || '' }));
+    bs.addButton(_btn('Dismiss', 'actDismiss', { rowId: String(r.id), source: 'dashboard', account: account || '' }));
+    _dashRow(ns, r.subject || '(no subject)', 'from ' + (r.sender || '?'), bs);
+  });
+  if (surface.length > DASH_CAP) { ns.addWidget(CardService.newTextParagraph().setText('… +' + (surface.length - DASH_CAP) + ' more')); }
+  builder.addSection(ns);
+
+  // Follow-ups (read-only — open the thread to act).
+  var owed = fu.owed || [], awaiting = fu.awaiting || [];
+  var fs = CardService.newCardSection()
+    .setHeader('⏰ Follow-ups (' + (fu.owed_count != null ? fu.owed_count : owed.length) +
+               ' owed · ' + (fu.awaiting_count != null ? fu.awaiting_count : awaiting.length) + ' awaiting)');
+  owed.slice(0, 3).forEach(function (r) { _dashRow(fs, r.subject || '(no subject)', 'owed ' + r.age_days + 'd · ' + (r.sender || ''), null); });
+  awaiting.slice(0, 3).forEach(function (r) { _dashRow(fs, r.subject || '(no subject)', 'awaiting reply ' + r.age_days + 'd · ' + (r.sender || ''), null); });
+  if (!owed.length && !awaiting.length) { fs.addWidget(CardService.newTextParagraph().setText('<i>None.</i>')); }
+  builder.addSection(fs);
+
+  builder.addSection(CardService.newCardSection().addWidget(_btn('⚙ Settings', 'actOpenSettings', {})));
+  return builder.build();
+}
+
+function actSetDashAccount(e) {
+  var v = _formVal(e, 'dash_account');
+  if (v) { _props().setProperty(PROP_DASH_ACCT, v); }
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().updateCard(_dashboardCard(v || _dashAccount()))).build();
+}
+
+function actRefreshDash(e) {
+  var account = ((e.commonEventObject || {}).parameters || {}).account || _dashAccount();
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().updateCard(_dashboardCard(account))).build();
+}
+
+function actOpenSettings(e) {
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().updateCard(_settingsCard())).build();
 }
 
 // --- Contextual: a Gmail message is open -----------------------------------
@@ -277,7 +409,7 @@ function actRegenerate(e) {
   var data = JSON.parse(res.body);
   return CardService.newActionResponseBuilder()
     .setNotification(CardService.newNotification().setText(instruction ? 'Re-drafted from your prompt' : 'Regenerated'))
-    .setNavigation(CardService.newNavigation().updateCard(_draftCard(data.row)))
+    .setNavigation(_navAfter(e, _draftCard(data.row)))
     .build();
 }
 
@@ -289,7 +421,7 @@ function actPush(e) {
   var msg = data.pushed_already ? 'Already in Gmail Drafts' : 'Pushed to Gmail Drafts';
   return CardService.newActionResponseBuilder()
     .setNotification(CardService.newNotification().setText(msg))
-    .setNavigation(CardService.newNavigation().updateCard(_draftCard(data.row))).build();
+    .setNavigation(_navAfter(e, _draftCard(data.row))).build();
 }
 
 function actMarkSent(e) {
@@ -298,8 +430,7 @@ function actMarkSent(e) {
   if (res.code !== 200) { return _notify('Mark-sent failed (' + res.code + ')'); }
   return CardService.newActionResponseBuilder()
     .setNotification(CardService.newNotification().setText('Marked sent'))
-    .setNavigation(CardService.newNavigation().updateCard(
-      _infoCard('Marked sent', 'Closed this row — you sent it yourself.'))).build();
+    .setNavigation(_navAfter(e, _infoCard('Marked sent', 'Closed this row — you sent it yourself.'))).build();
 }
 
 function actDismiss(e) {
@@ -312,8 +443,7 @@ function actDismiss(e) {
   if (res.code !== 200) { return _notify('Dismiss failed (' + res.code + ')'); }
   return CardService.newActionResponseBuilder()
     .setNotification(CardService.newNotification().setText('Dismissed (' + reason + ')'))
-    .setNavigation(CardService.newNavigation().updateCard(
-      _infoCard('Dismissed', 'YouOS won’t resurface this thread.')))
+    .setNavigation(_navAfter(e, _infoCard('Dismissed', 'YouOS won’t resurface this thread.')))
     .build();
 }
 
@@ -334,7 +464,7 @@ function actApproveEvent(e) {
   return CardService.newActionResponseBuilder()
     .setNotification(CardService.newNotification().setText(
       data.meet_link ? 'Event created — Meet link ready' : 'Calendar event created'))
-    .setNavigation(CardService.newNavigation().updateCard(_eventCard(data.event)))
+    .setNavigation(_navAfter(e, _eventCard(data.event)))
     .build();
 }
 
@@ -345,9 +475,16 @@ function actDismissEvent(e) {
   if (res.code !== 200) { return _notify('Dismiss failed (' + res.code + ')'); }
   return CardService.newActionResponseBuilder()
     .setNotification(CardService.newNotification().setText('Event dismissed'))
-    .setNavigation(CardService.newNavigation().updateCard(
-      _infoCard('Dismissed', 'YouOS won’t create this event.')))
+    .setNavigation(_navAfter(e, _infoCard('Dismissed', 'YouOS won’t create this event.')))
     .build();
+}
+
+// After an action, go back to where it was invoked from: the dashboard (when a
+// dashboard row triggered it) or the per-thread card otherwise.
+function _navAfter(e, perThreadCard) {
+  var p = (e.commonEventObject && e.commonEventObject.parameters) || {};
+  var target = (p.source === 'dashboard') ? _dashboardCard(p.account || _dashAccount()) : perThreadCard;
+  return CardService.newNavigation().updateCard(target);
 }
 
 function _notify(text) {

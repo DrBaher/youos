@@ -1,6 +1,14 @@
 # YouOS Gmail Add-on
 
-Puts YouOS's review experience **inside Gmail**:
+Puts YouOS's review experience **inside Gmail** — operate the whole queue without leaving your inbox:
+
+- **The dashboard** — click the YouOS icon from anywhere (no thread open) and the
+  homepage card shows your whole queue, scoped by an account switcher: **Drafts to
+  review** (Push / Dismiss), **Meeting confirmations** (Approve / Dismiss), **Needs
+  review** (Draft it / Dismiss), and **Follow-ups** (owed / awaiting). Every action
+  works by id — no need to open the email — and the card refreshes in place. Top-N
+  per section with a "+N more" note; a **Refresh** button re-pulls. This is the
+  in-Gmail equivalent of the `/triage` web page (which stays available for desktop).
 
 - **Reading a thread** — a sidebar card shows YouOS's draft for that thread, its
   calibrated confidence, and the reasons, with near-parity actions to the
