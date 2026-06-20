@@ -598,6 +598,19 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         ),
     },
     {
+        "key": "agent.labels.status_sync",
+        "label": "Tag inbox threads with YouOS status labels",
+        "type": "bool",
+        "default": False,
+        "help": (
+            "Reflect YouOS's queue into Gmail labels so the inbox LIST shows "
+            "which threads have a draft (YouOS/Drafted) or a calendar invite "
+            "awaiting approval (YouOS/Invite-Pending) — a colored chip per "
+            "thread, on web + mobile (add-ons can't draw list icons). Only "
+            "touches those YouOS-owned labels; reversible. Off by default."
+        ),
+    },
+    {
         "key": "agent.triage.include_read",
         "label": "Draft unanswered read mail too (not just unread)",
         "type": "bool",
