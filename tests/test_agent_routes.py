@@ -1186,3 +1186,41 @@ def test_capture_outcomes_endpoint(authed_client, monkeypatch):
     body = r.json()
     assert body["paired"] >= 1
     assert body["avg_edit_distance"] is not None
+
+
+# --- surface → draft promotion on explicit regenerate (b282 add-on "Draft it") ---
+
+def test_promote_to_draft_store_helper(tmp_path):
+    import sqlite3
+
+    from app.agent import store
+    from app.db.bootstrap import _migrate_agent_pending_drafts, resolve_sqlite_path
+    db = f"sqlite:///{tmp_path}/p.db"
+    conn = sqlite3.connect(resolve_sqlite_path(db))
+    _migrate_agent_pending_drafts(conn)
+    conn.execute(
+        "INSERT INTO agent_pending_drafts (id, message_id, thread_id, account, needs_reply_score, "
+        "reasons_json, cold_outreach, tier, status) VALUES (1,'m','t','me@x.com',0.9,'[]',0,'surface','pending')"
+    )
+    conn.commit()
+    conn.close()
+    assert store.promote_to_draft(db, 1) is True
+    assert store.get(db, 1)["tier"] == "draft"
+    assert store.promote_to_draft(db, 1) is False  # already a draft → no-op
+
+
+def test_regenerate_promotes_surfaced_row_to_draft(authed_client, monkeypatch):
+    from types import SimpleNamespace
+
+    import app.generation.service as svc
+    # Stub the generation pipeline so the test doesn't need a model.
+    monkeypatch.setattr(svc, "generate_draft",
+                        lambda req, **kw: SimpleNamespace(draft="Drafted on request.", model_used="stub"))
+    # The surface-tier fixture row.
+    rows = authed_client.get("/api/agent/pending?tier=surface").json()["rows"]
+    rid = rows[0]["id"]
+    r = authed_client.post(f"/api/agent/pending/{rid}/regenerate", json={"instruction": "draft it"})
+    assert r.status_code == 200
+    row = r.json()["row"]
+    assert row["tier"] == "draft"                       # promoted
+    assert (row["amended_draft"] or "") == "Drafted on request."

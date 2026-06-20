@@ -186,24 +186,30 @@ function _formVal(e, key) {
 }
 
 function _draftCard(row) {
+  // A draft exists if YouOS drafted one OR you generated one here (amended).
+  var draftText = row.amended_draft || row.draft || '';
+  var hasDraft = !!draftText;
   var conf = (row.calibrated_score != null) ? row.calibrated_score : row.needs_reply_score;
-  var subtitle = (row.tier === 'draft' ? 'Drafted' : 'Surfaced') +
+  var subtitle = (hasDraft ? 'Drafted' : 'Surfaced — not drafted') +
     (conf != null ? ' · ' + Math.round(conf * 100) + '% likely to deserve a reply' : '') +
     ' · ' + (row.status || 'pending');
 
   var builder = CardService.newCardBuilder()
-    .setHeader(CardService.newCardHeader().setTitle('YouOS draft').setSubtitle(subtitle));
+    .setHeader(CardService.newCardHeader().setTitle('YouOS').setSubtitle(subtitle));
 
-  // Section 1 — the draft + why + Gmail-draft status.
+  // Section 1 — the draft (if any) + WHY (for surfaced threads, why it wasn't
+  // drafted — the actionable feedback) + Gmail-draft status.
   var draftSection = CardService.newCardSection();
-  if (row.draft) {
-    draftSection.addWidget(CardService.newTextParagraph().setText(_esc(row.draft)));
+  if (hasDraft) {
+    draftSection.addWidget(CardService.newTextParagraph().setText(_esc(draftText)));
   } else {
-    draftSection.addWidget(CardService.newTextParagraph().setText('<i>Surfaced for review — no draft generated.</i>'));
+    draftSection.addWidget(CardService.newTextParagraph()
+      .setText('<i>YouOS surfaced this for review but didn’t draft a reply.</i>'));
   }
   var reasons = (row.reasons || []).slice(0, 4).join(' · ');
   if (reasons) {
     draftSection.addWidget(CardService.newDecoratedText()
+      .setTopLabel(hasDraft ? 'Why' : 'Why it wasn’t drafted')
       .setText('<font color="#5f6368">' + _esc(reasons) + '</font>').setWrapText(true));
   }
   if (row.gmail_draft_id) {
@@ -216,9 +222,9 @@ function _draftCard(row) {
   if (actionable) {
     var rid = String(row.id);
 
-    // Section 2 — primary actions: push the draft to Gmail, or mark sent.
+    // Section 2 — primary actions: push (once a draft exists), or mark sent.
     var actSection = CardService.newCardSection();
-    if (row.draft) {
+    if (hasDraft) {
       actSection.addWidget(CardService.newTextButton().setText('Push to Gmail Drafts')
         .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
         .setOnClickAction(CardService.newAction().setFunctionName('actPush').setParameters({ rowId: rid })));
@@ -227,15 +233,22 @@ function _draftCard(row) {
       .setOnClickAction(CardService.newAction().setFunctionName('actMarkSent').setParameters({ rowId: rid })));
     builder.addSection(actSection);
 
-    // Section 3 — refine with a prompt (re-draft in your voice, steered).
-    var refineSection = CardService.newCardSection().setHeader('Refine with a prompt');
-    refineSection.addWidget(CardService.newTextInput().setFieldName('instruction')
-      .setTitle('Instruction').setHint('e.g. shorter; decline politely; propose Thursday').setMultiline(true));
-    refineSection.addWidget(CardService.newTextButton().setText('Regenerate')
+    // Section 3 — generate / refine. For a surfaced (no-draft) thread this is
+    // "Draft it" (also the strongest feedback: you DID want a reply here); once
+    // a draft exists it becomes "Refine with a prompt".
+    var genSection = CardService.newCardSection().setHeader(hasDraft ? 'Refine with a prompt' : 'Draft a reply');
+    genSection.addWidget(CardService.newTextInput().setFieldName('instruction')
+      .setTitle(hasDraft ? 'Instruction' : 'Optional instruction')
+      .setHint('e.g. shorter; decline politely; propose Thursday').setMultiline(true));
+    genSection.addWidget(CardService.newTextButton()
+      .setText(hasDraft ? 'Regenerate' : 'Draft it')
+      .setTextButtonStyle(hasDraft ? CardService.TextButtonStyle.TEXT : CardService.TextButtonStyle.FILLED)
       .setOnClickAction(CardService.newAction().setFunctionName('actRegenerate').setParameters({ rowId: rid })));
-    builder.addSection(refineSection);
+    builder.addSection(genSection);
 
-    // Section 4 — dismiss with categorical feedback + optional note.
+    // Section 4 — dismiss with categorical feedback + optional note. For a
+    // surfaced thread this is how you confirm "correctly skipped" (noise) or
+    // correct a miss (wrong_*), feeding the needs-reply tuning loop.
     var dismissSection = CardService.newCardSection().setHeader('Dismiss with feedback');
     var reasonInput = CardService.newSelectionInput()
       .setType(CardService.SelectionInputType.DROPDOWN).setFieldName('reason').setTitle('Reason');

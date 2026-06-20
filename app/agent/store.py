@@ -293,6 +293,21 @@ def mark_amended(
     )
 
 
+def promote_to_draft(database_url: str, row_id: int) -> bool:
+    """Promote a surfaced row to a draft (tier 'surface' → 'draft'). Used when the
+    user explicitly asks YouOS to draft a thread it had only surfaced — once
+    drafted, it can be pushed/sent like any draft. No-op (returns False) unless
+    the row is currently surface tier."""
+    with closing(_connect(database_url)) as conn:
+        cur = conn.execute(
+            "UPDATE agent_pending_drafts SET tier = 'draft', updated_at = CURRENT_TIMESTAMP "
+            "WHERE id = ? AND tier = 'surface'",
+            (row_id,),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
 def mark_sent(
     database_url: str,
     row_id: int,

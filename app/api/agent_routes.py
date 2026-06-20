@@ -222,6 +222,10 @@ def regenerate(row_id: int, body: RegenerateBody, request: Request) -> dict:
         # Machine re-draft (not a human edit) — tagged so feedback capture
         # doesn't mine it as a gold correction pair.
         store.mark_amended(db_url, row_id, amended_draft=new_draft, amended_by="machine")
+        # If this was a SURFACED thread (no draft) and we just drafted one on
+        # request, promote it to a draft so it can be pushed/sent like any other.
+        if row.get("tier") == "surface":
+            store.promote_to_draft(db_url, row_id)
     return {
         "ok": True,
         "draft": new_draft,
