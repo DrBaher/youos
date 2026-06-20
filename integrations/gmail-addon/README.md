@@ -7,12 +7,18 @@ Puts YouOS's review experience **inside Gmail**:
   actions (and a note when the draft is already in your Gmail Drafts).
 - **Writing a reply** — open the YouOS action while composing and **insert
   YouOS's draft straight into the reply box** (the compose trigger), so you start
-  from your own words instead of a blank compose window.
+  from your own words instead of a blank compose window. **Web only** — compose
+  add-ons don't run in the Gmail mobile apps (a Google platform limitation).
 
 ```
 Gmail (web/mobile)  ──►  Apps Script add-on  ──►  Tailscale Funnel (HTTPS)  ──►  your local YouOS
         sidebar card        (Google servers)        public URL, PIN+token            REST API
 ```
+
+**Mobile support:** the **reading card** (contextual + homepage triggers) renders
+in the Gmail mobile apps (Android/iOS) just like on the web. The **compose-insert**
+("Insert YouOS draft") is **web only** — Google does not run compose add-ons on
+Gmail mobile.
 
 The add-on runs on Google's servers, so it can't reach a Tailscale-*private*
 instance directly. It calls your YouOS over **Tailscale Funnel** (a public HTTPS
