@@ -604,10 +604,11 @@ KNOWN_FLAGS: list[dict[str, Any]] = [
         "default": False,
         "help": (
             "Reflect YouOS's queue into Gmail labels so the inbox LIST shows "
-            "which threads have a draft (YouOS/Drafted) or a calendar invite "
-            "awaiting approval (YouOS/Invite-Pending) — a colored chip per "
-            "thread, on web + mobile (add-ons can't draw list icons). Only "
-            "touches those YouOS-owned labels; reversible. Off by default."
+            "thread state at a glance (colored chips, web + mobile — add-ons "
+            "can't draw list icons): YouOS/Drafted, YouOS/Invite-Pending, "
+            "YouOS/Follow-up-Owed, YouOS/Awaiting-Reply, YouOS/Urgent, "
+            "YouOS/Needs-Review. Only touches those YouOS-owned labels; "
+            "reversible. Off by default."
         ),
     },
     {
