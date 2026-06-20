@@ -47,12 +47,17 @@ def _parse_choice(out: str, n_slots: int) -> int | None:
     The prompt asks for the 1-based slot number or NONE; we tolerate a leading
     word and only accept a number in range. Anything else is None (no event)."""
     t = (out or "").strip().lower()
-    if not t or "none" in t.split()[0:1] or t.startswith("none"):
+    if not t or t.startswith("none"):
         return None
-    m = re.search(r"\d+", t)
+    # Anchor on a LEADING number (optionally after "slot/option/number/#"). We
+    # deliberately do NOT search the whole string: a model that ignores the
+    # "answer with only the number" instruction and explains itself ("the person
+    # did NOT confirm, so 1 would be wrong") must not have a stray digit mined
+    # out as a confirmation — that would create a wrong event. Prose ⇒ None.
+    m = re.match(r"(?:slot|option|number|no\.?)?\s*#?\s*(\d+)\b", t)
     if not m:
         return None
-    n = int(m.group())
+    n = int(m.group(1))
     if 1 <= n <= n_slots:
         return n - 1
     return None

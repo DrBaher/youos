@@ -110,9 +110,15 @@ def test_detector_excludes_self_from_attendees():
 def test_parse_choice_bounds_and_words():
     assert _parse_choice("1", 2) == 0
     assert _parse_choice("slot 2", 2) == 1
+    assert _parse_choice("#2", 2) == 1
+    assert _parse_choice("option 3", 3) == 2
     assert _parse_choice("5", 2) is None        # out of range
     assert _parse_choice("NONE", 2) is None
     assert _parse_choice("", 2) is None
+    # Prose that merely CONTAINS a digit must not be mined into a confirmation —
+    # the leading-anchor guards against a model that explains instead of obeying.
+    assert _parse_choice("the person did not confirm, so 1 would be wrong", 2) is None
+    assert _parse_choice("None — they asked for slot 2 to move", 2) is None
 
 
 def test_strip_re_prefixes():
