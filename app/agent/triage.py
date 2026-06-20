@@ -424,8 +424,17 @@ def _calendar_config() -> dict[str, Any]:
 
     from app.agent.calendar import parse_preferred_weekdays
 
+    auto_confirm = (cal.get("auto_confirm") or {}) if isinstance(cal, dict) else {}
     return {
         "enabled": bool(cal.get("enabled", False)),
+        # b282: auto-detect a counterparty accepting one of our proposed slots
+        # and queue a calendar event for one-tap approval. Detection-only; the
+        # event is created later, gated, on approval. Independent of "enabled"
+        # so the queue can fill even if slot-proposal in drafts is off.
+        "auto_confirm": bool(auto_confirm.get("enabled", False)) if isinstance(auto_confirm, dict) else False,
+        # Which model decides if a reply confirmed a slot (b282 follow-up):
+        # 'cloud' (Claude, better recall, off-device) or 'local' (on-device).
+        "auto_confirm_model": str(auto_confirm.get("model", "cloud")) if isinstance(auto_confirm, dict) else "cloud",
         "tz": str(tz),
         "business_days": _i("business_days", 5),
         "work_start_hour": _i("work_start_hour", 9),
@@ -482,6 +491,73 @@ def _calendar_slot_note(
         "do not invent any other availability."
     )
     return note, slots
+
+
+def _maybe_detect_confirmation(
+    database_url: str | None,
+    account: str,
+    msg,
+    *,
+    account_emails: list[str] | None = None,
+    model: str = "cloud",
+) -> bool:
+    """If this inbound is a reply on a thread where we proposed open slots and it
+    confirms one of them, queue a calendar event for the user's approval (b282).
+
+    Detection-only: it never creates an event — a hit writes one ``pending`` row
+    to ``agent_pending_events``. Runs regardless of the needs-reply verdict (an
+    acceptance might not itself "need a reply") and is fully failure-isolated:
+    any error returns False and leaves the sweep untouched. Returns True when a
+    new event was queued."""
+    if not database_url or not msg.thread_id:
+        return False
+    try:
+        import json as _json
+
+        from app.agent import event_store
+        from app.agent.meeting_confirm import detect_confirmation
+        from app.agent.store import get_by_thread
+
+        row = get_by_thread(database_url, msg.thread_id)
+        if not row:
+            return False
+        slots = _json.loads(row.get("proposed_slots_json") or "null")
+        if not slots:
+            return False
+        result = detect_confirmation(
+            subject=msg.subject,
+            sender=msg.sender or msg.sender_email or None,
+            sender_email=msg.sender_email,
+            body=msg.body,
+            proposed_slots=slots,
+            account_emails=set(account_emails or []),
+            model=model,
+        )
+        if result is None:
+            return False
+        queued = event_store.queue_pending_event(
+            database_url,
+            account=account,
+            thread_id=msg.thread_id,
+            message_id=msg.message_id,
+            source_draft_id=int(row["id"]) if row.get("id") is not None else None,
+            title=result.title,
+            start_iso=result.start_iso,
+            end_iso=result.end_iso,
+            timezone=_calendar_config().get("tz"),
+            attendees=result.attendees,
+            confidence=result.confidence,
+            reasons=result.reasons,
+        )
+        if queued is not None:
+            logger.info(
+                "meeting confirmation detected on thread %s — queued event row %s",
+                msg.thread_id, queued,
+            )
+            return True
+    except Exception as exc:
+        logger.warning("meeting-confirm detection failed for %s: %s", msg.message_id, exc)
+    return False
 
 
 def refresh_stale_meeting_drafts(database_url: str | None, account: str) -> dict[str, int]:
@@ -1219,11 +1295,23 @@ def _run_sweep(
     _proposed_slots_acc: list = list(pending_proposed_slots(database_url, account)) if database_url else []
     _proposed_by_mid: dict[str, list] = {}
     cap_hit_count = 0
+    # b282: count of calendar events queued for approval this sweep (auto-confirm).
+    events_queued = 0
     # b232: lead-form outreach. (msg, verdict, rule, contact, rendered draft)
     # tuples persisted as NEW-outbound draft rows addressed to the prospect.
     outreach_rows: list[tuple[InboxMessage, NeedsReplyVerdict, dict, dict, str]] = []
     _has_outreach_rules = any(r.get("action") == "outreach_draft" for r in rules)
     for msg, verdict in classified:
+        # Auto-confirm (b282): BEFORE the needs-reply gate — a reply accepting a
+        # slot we proposed may not itself "need a reply", but it should still
+        # queue a calendar event for approval. Detection-only; never creates.
+        if cal_cfg.get("auto_confirm"):
+            if _maybe_detect_confirmation(
+                database_url, account, msg, account_emails=_account_emails,
+                model=cal_cfg.get("auto_confirm_model", "cloud"),
+            ):
+                events_queued += 1
+
         # Outreach rules run BEFORE the needs-reply gate: the matched message is
         # a website lead-form notification (typically automation the gate would
         # skip or only surface), and the draft goes to the PROSPECT parsed from
@@ -1667,6 +1755,7 @@ def _run_sweep(
         "auto_pushed": auto_pushed,
         "auto_sent": auto_sent,
         "mailbox_actions": mailbox_actions,
+        "events_queued": events_queued,
     }
 
 

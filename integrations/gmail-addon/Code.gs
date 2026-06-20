@@ -81,17 +81,93 @@ function onGmailMessage(e) {
   var threadId = e && e.gmail && e.gmail.threadId;
   if (!threadId) { return _infoCard('No thread', 'Open a conversation to see its YouOS draft.'); }
 
+  // A confirmed-meeting card (b282) takes priority when one is queued for this
+  // thread — it's a single-tap "create the event". Shown above the draft card.
+  var cards = [];
+  var evt = _eventForThread(threadId);
+  if (evt) { cards.push(_eventCard(evt)); }
+
   var res;
   try {
     res = _api('get', '/api/agent/pending/by_thread/' + encodeURIComponent(threadId));
   } catch (err) {
+    if (cards.length) { return cards; }
     return _infoCard('Can’t reach YouOS', 'Check the Funnel URL in Settings.\n\n' + _esc(err));
   }
-  if (res.code === 404) { return _infoCard('Nothing queued', 'YouOS has no draft for this thread.'); }
-  if (res.code === 401 || res.code === 403) { return _infoCard('Auth failed', 'Check your API token in Settings.'); }
-  if (res.code !== 200) { return _infoCard('YouOS error ' + res.code, _esc(res.body).slice(0, 300)); }
+  if (res.code === 200) {
+    cards.push(_draftCard(JSON.parse(res.body)));
+  } else if (res.code === 401 || res.code === 403) {
+    if (!cards.length) { return _infoCard('Auth failed', 'Check your API token in Settings.'); }
+  } else if (res.code !== 404 && !cards.length) {
+    return _infoCard('YouOS error ' + res.code, _esc(res.body).slice(0, 300));
+  }
 
-  return _draftCard(JSON.parse(res.body));
+  if (cards.length) { return cards; }
+  return _infoCard('Nothing queued', 'YouOS has no draft for this thread.');
+}
+
+/** Latest queued calendar event for a thread, or null. Never throws. */
+function _eventForThread(threadId) {
+  try {
+    var res = _api('get', '/api/agent/events/by_thread/' + encodeURIComponent(threadId));
+    if (res.code === 200) { return JSON.parse(res.body).event; }
+  } catch (err) { /* ignore — no event card */ }
+  return null;
+}
+
+// Show the slot's WALL-CLOCK time as proposed (the meeting's own tz, carried in
+// the ISO offset) rather than converting to the script's tz — so it matches the
+// time YouOS offered.
+function _fmtEventTime(startIso, endIso) {
+  try {
+    var m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(startIso));
+    var me = /T(\d{2}):(\d{2})/.exec(String(endIso));
+    if (!m) { return startIso + ' – ' + endIso; }
+    var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    var day = Utilities.formatDate(d, Session.getScriptTimeZone(), 'EEE MMM d');
+    function to12(H, M) { var h = Number(H); var ap = h >= 12 ? 'PM' : 'AM'; return (((h + 11) % 12) + 1) + ':' + M + ' ' + ap; }
+    var end = me ? '–' + to12(me[1], me[2]) : '';
+    return day + ', ' + to12(m[4], m[5]) + end;
+  } catch (err) { return startIso + ' – ' + endIso; }
+}
+
+function _eventCard(ev) {
+  var section = CardService.newCardSection();
+  section.addWidget(CardService.newDecoratedText()
+    .setTopLabel('Confirmed meeting').setText(_esc(ev.title || 'Meeting'))
+    .setBottomLabel(_fmtEventTime(ev.start_iso, ev.end_iso)).setWrapText(true));
+  var who = (ev.attendees || []).join(', ') || 'no attendees (self-only)';
+  section.addWidget(CardService.newDecoratedText()
+    .setText('<font color="#5f6368">Invite: ' + _esc(who) + '</font>').setWrapText(true));
+
+  if (ev.status === 'created') {
+    var msg = 'Event created.';
+    if (ev.meet_link) { msg += ' Meet: ' + _esc(ev.meet_link); }
+    section.addWidget(CardService.newDecoratedText()
+      .setText('<font color="#188038">✓ ' + msg + '</font>').setWrapText(true));
+    if (ev.meet_link) {
+      section.addWidget(CardService.newTextButton().setText('Join Meet')
+        .setOpenLink(CardService.newOpenLink().setUrl(ev.meet_link)));
+    }
+  } else if (ev.status === 'pending') {
+    var reasons = (ev.reasons || []).slice(0, 2).join(' · ');
+    if (reasons) {
+      section.addWidget(CardService.newDecoratedText()
+        .setText('<font color="#5f6368">' + _esc(reasons) + '</font>').setWrapText(true));
+    }
+    var buttons = CardService.newButtonSet();
+    buttons.addButton(CardService.newTextButton().setText('Approve & create')
+      .setOnClickAction(CardService.newAction().setFunctionName('actApproveEvent')
+        .setParameters({ eventId: String(ev.id) })));
+    buttons.addButton(CardService.newTextButton().setText('Dismiss')
+      .setOnClickAction(CardService.newAction().setFunctionName('actDismissEvent')
+        .setParameters({ eventId: String(ev.id) })));
+    section.addWidget(buttons);
+  }
+
+  return CardService.newCardBuilder()
+    .setHeader(CardService.newCardHeader().setTitle('YouOS').setSubtitle('Meeting confirmation'))
+    .addSection(section).build();
 }
 
 function _draftCard(row) {
@@ -155,6 +231,39 @@ function actDismiss(e) {
     .setNotification(CardService.newNotification().setText('Dismissed'))
     .setNavigation(CardService.newNavigation().updateCard(
       _infoCard('Dismissed', 'YouOS won’t resurface this thread.')))
+    .build();
+}
+
+function actApproveEvent(e) {
+  var eventId = e.commonEventObject.parameters.eventId;
+  var res = _api('post', '/api/agent/events/' + eventId + '/approve', {});
+  if (res.code === 403) {
+    // A shut gate (send frontier / create_events flag). Surface the reason so
+    // the user knows it's off by default and how to enable it.
+    var reason = '';
+    try { reason = JSON.parse(res.body).detail || ''; } catch (err) { reason = ''; }
+    return CardService.newActionResponseBuilder()
+      .setNotification(CardService.newNotification().setText('Blocked: ' + (reason || 'event creation is disabled')))
+      .build();
+  }
+  if (res.code !== 200) { return _notify('Create failed (' + res.code + ')'); }
+  var data = JSON.parse(res.body);
+  return CardService.newActionResponseBuilder()
+    .setNotification(CardService.newNotification().setText(
+      data.meet_link ? 'Event created — Meet link ready' : 'Calendar event created'))
+    .setNavigation(CardService.newNavigation().updateCard(_eventCard(data.event)))
+    .build();
+}
+
+function actDismissEvent(e) {
+  var eventId = e.commonEventObject.parameters.eventId;
+  var res = _api('post', '/api/agent/events/' + eventId + '/dismiss',
+    { note: 'dismissed from the Gmail add-on' });
+  if (res.code !== 200) { return _notify('Dismiss failed (' + res.code + ')'); }
+  return CardService.newActionResponseBuilder()
+    .setNotification(CardService.newNotification().setText('Event dismissed'))
+    .setNavigation(CardService.newNavigation().updateCard(
+      _infoCard('Dismissed', 'YouOS won’t create this event.')))
     .build();
 }
 

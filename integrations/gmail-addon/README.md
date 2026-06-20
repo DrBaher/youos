@@ -82,6 +82,14 @@ appear, with Regenerate / Dismiss.
   in b280): YouOS's latest row for the open Gmail thread. Both the read card and
   the compose-insert use it.
 - `POST /api/agent/pending/{id}/regenerate` · `POST /api/agent/pending/{id}/dismiss`
+- `GET /api/agent/events/by_thread/{threadId}` — a confirmed-meeting card (b282):
+  when someone accepts a slot YouOS proposed, the sidebar shows the time +
+  attendees with **Approve & create** (creates the Google Calendar event with a
+  Meet link + invites) and **Dismiss**.
+- `POST /api/agent/events/{id}/approve` · `POST /api/agent/events/{id}/dismiss` —
+  approve is gated server-side (send frontier + `agent.calendar.create_events.
+  enabled`); a shut gate returns 403 and the card shows why. No new add-on
+  scopes: event creation happens on your YouOS host, not in the add-on.
 
 Scopes: `addons.execute`, `addons.current.message.metadata`,
 `addons.current.action.compose` (the compose-insert, b281), `script.external_request`.

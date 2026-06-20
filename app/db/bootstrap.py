@@ -59,6 +59,7 @@ def ensure_agent_schema(database_url: str) -> bool:
     _secure_db_dir(db_path)
     try:
         _migrate_agent_pending_drafts(conn)
+        _migrate_agent_pending_events(conn)
         _migrate_agent_audit(conn)
         _migrate_triage_precision_history(conn)
         _migrate_agent_actions(conn)
@@ -101,6 +102,7 @@ def _bootstrap_database_locked(db_path: Path, schema_sql: str) -> Path:
         _migrate_exemplar_cache(connection)
         _migrate_draft_events(connection)
         _migrate_agent_pending_drafts(connection)
+        _migrate_agent_pending_events(connection)
         _migrate_agent_audit(connection)
         _migrate_triage_precision_history(connection)
         _migrate_agent_actions(connection)
@@ -472,6 +474,72 @@ def _migrate_agent_pending_drafts(connection: sqlite3.Connection) -> None:
     # they all collide). NULL for non-meeting drafts.
     if "proposed_slots_json" not in _cols:
         connection.execute("ALTER TABLE agent_pending_drafts ADD COLUMN proposed_slots_json TEXT")
+
+
+def _migrate_agent_pending_events(connection: sqlite3.Connection) -> None:
+    """Queue of calendar events awaiting the user's approval.
+
+    When auto-confirm detects that someone accepted one of the open slots the
+    agent proposed, it queues one row here (status='pending'). Approving it
+    crosses the send frontier — ``calendar_events.apply_pending_event`` creates
+    the real Google Calendar event (with a Meet link + invites) and stamps the
+    row 'created'. Creation is gated + at-most-once: the row-level claim
+    (``store.claim_event_create``) is the cross-process serialization point, and
+    a partial UNIQUE index stops the detector from queueing the same slot twice.
+    """
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS agent_pending_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            account TEXT NOT NULL,
+            thread_id TEXT NOT NULL,
+            message_id TEXT,                     -- the acceptance inbound that triggered detection
+            source_draft_id INTEGER,             -- agent_pending_drafts row that proposed the slot
+
+            -- the proposed event
+            title TEXT NOT NULL,
+            start_iso TEXT NOT NULL,
+            end_iso TEXT NOT NULL,
+            timezone TEXT,
+            attendees_json TEXT NOT NULL DEFAULT '[]',
+            description TEXT,
+
+            -- why we think the meeting was confirmed (transparency)
+            confidence REAL,
+            reasons_json TEXT NOT NULL DEFAULT '[]',
+
+            -- lifecycle: 'pending' (awaiting approval) | 'creating' (claimed) |
+            -- 'created' | 'dismissed' | 'blocked' (a gate was shut) | 'error'
+            status TEXT NOT NULL DEFAULT 'pending',
+            detail TEXT,                         -- block/error reason
+            dismissal_note TEXT,
+
+            -- created-event outcome
+            event_id TEXT,
+            meet_link TEXT,
+            html_link TEXT,
+            created_event_at TEXT,
+
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_pending_events_status "
+        "ON agent_pending_events(status, created_at DESC)"
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_pending_events_thread "
+        "ON agent_pending_events(account, thread_id)"
+    )
+    # Detector idempotency: don't queue two LIVE events for the same slot. Scoped
+    # to non-terminal-failure rows so a dismissed/errored proposal can be
+    # re-queued, but a still-pending or already-created one can't be duplicated.
+    connection.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_pending_events_slot_claim "
+        "ON agent_pending_events(account, thread_id, start_iso) "
+        "WHERE status IN ('pending', 'creating', 'created')"
+    )
 
 
 def _migrate_agent_actions(connection: sqlite3.Connection) -> None:

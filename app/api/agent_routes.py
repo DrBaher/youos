@@ -259,6 +259,92 @@ def dismiss(row_id: int, request: Request, body: DismissBody | None = None) -> d
     return {"ok": True, "row": store.get(_db_url(request), row_id)}
 
 
+# --- calendar-event approval queue ------------------------------------------
+
+
+@router.get("/api/agent/events/pending")
+def list_agent_events(
+    request: Request,
+    status: str = Query("pending", pattern="^(pending|creating|created|dismissed|error)$"),
+    limit: int = Query(50, ge=1, le=200),
+) -> dict:
+    """Calendar events awaiting (or past) the user's approval. The review queue +
+    Gmail add-on poll the default ``pending`` view to offer one-tap approval."""
+    from app.agent import event_store
+
+    rows = event_store.list_pending_events(_db_url(request), status=status, limit=limit)
+    return {"events": rows, "count": len(rows)}
+
+
+@router.get("/api/agent/events/by_thread/{thread_id}")
+def get_agent_event_by_thread(thread_id: str, request: Request) -> dict:
+    """The latest calendar event for a Gmail thread — the Gmail add-on's entry
+    point (it has the thread id, not the row id). 404 when none exists."""
+    from app.agent import event_store
+
+    row = event_store.get_event_by_thread(_db_url(request), thread_id)
+    if not row:
+        raise HTTPException(404, "no event for this thread")
+    return {"event": row}
+
+
+@router.get("/api/agent/events/{row_id}")
+def get_agent_event(row_id: int, request: Request) -> dict:
+    from app.agent import event_store
+
+    row = event_store.get_pending_event(_db_url(request), row_id)
+    if not row:
+        raise HTTPException(404, "pending event not found")
+    return {"event": row}
+
+
+class ApproveEventBody(BaseModel):
+    """Approve a queued calendar event. ``dry_run`` exercises the real CLI with
+    its no-change flag; ``shadow`` records the approval without any calendar
+    call — both leave the row re-approvable."""
+
+    dry_run: bool = Field(default=False)
+    shadow: bool = Field(default=False)
+
+
+@router.post("/api/agent/events/{row_id}/approve")
+def approve_agent_event(row_id: int, request: Request, body: ApproveEventBody | None = None) -> dict:
+    """Approve a queued event → create it (gated by the send frontier +
+    ``agent.calendar.create_events.enabled``). With attendees this emails
+    invites, so a shut gate returns 403 and leaves the row pending."""
+    from app.agent import calendar_events
+
+    dry_run = bool(body.dry_run) if body else False
+    shadow = bool(body.shadow) if body else False
+    outcome = calendar_events.apply_pending_event(
+        _db_url(request), row_id, dry_run=dry_run, shadow=shadow
+    )
+    if not outcome.ok:
+        raise HTTPException(outcome.http_status or 400, outcome.detail or "could not create event")
+    return {
+        "ok": True,
+        "created": outcome.created,
+        "shadow": outcome.shadow,
+        "created_already": outcome.created_already,
+        "event_id": outcome.event_id,
+        "meet_link": outcome.meet_link,
+        "html_link": outcome.html_link,
+        "detail": outcome.detail,
+        "event": outcome.row,
+    }
+
+
+@router.post("/api/agent/events/{row_id}/dismiss")
+def dismiss_agent_event(row_id: int, request: Request, body: DismissBody | None = None) -> dict:
+    """Decline a queued event (the user doesn't want it created)."""
+    from app.agent import event_store
+
+    note = (body.note.strip() if body and body.note else None) or None
+    if not event_store.dismiss_event(_db_url(request), row_id, note=note):
+        raise HTTPException(404, "pending event not found or already created")
+    return {"ok": True, "event": event_store.get_pending_event(_db_url(request), row_id)}
+
+
 class RescreenBody(BaseModel):
     account: str | None = Field(default=None)
     dry_run: bool = Field(default=False)
