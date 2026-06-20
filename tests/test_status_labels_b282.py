@@ -108,12 +108,16 @@ def test_no_double_add_when_already_labelled(db, capture):
     assert not any(lbl == status_labels.DRAFTED_LABEL for _, lbl in calls["add"])
 
 
-def test_surface_and_dismissed_rows_are_not_labelled(db, capture):
+def test_surface_gets_review_not_drafted_and_dismissed_gets_nothing(db, capture):
     calls, _ = capture
     _add_draft(db, mid="ms", tid="t-surface", tier="surface")
     _add_draft(db, mid="md", tid="t-dismissed", status="dismissed")
     status_labels.sync_status_labels(db, "me@x.com")
-    assert not calls["add"]  # neither qualifies
+    added = set(calls["add"])
+    assert ("ms", status_labels.NEEDS_REVIEW_LABEL) in added   # surface → review
+    assert ("ms", status_labels.DRAFTED_LABEL) not in added    # not a draft
+    # the dismissed row qualifies for nothing
+    assert not any(mid == "md" for mid, _ in calls["add"])
 
 
 def test_dismissed_event_not_labelled(db, capture):
@@ -121,3 +125,41 @@ def test_dismissed_event_not_labelled(db, capture):
     _add_event(db, mid="m2", tid="t-invite", status="dismissed")
     status_labels.sync_status_labels(db, "me@x.com")
     assert not any(lbl == status_labels.INVITE_LABEL for _, lbl in calls["add"])
+
+
+def test_needs_review_labels_surface_tier(db, capture):
+    calls, _ = capture
+    _add_draft(db, mid="ms", tid="t-surface", tier="surface")
+    status_labels.sync_status_labels(db, "me@x.com")
+    assert ("ms", status_labels.NEEDS_REVIEW_LABEL) in calls["add"]
+    # surface row must NOT also get the Drafted label
+    assert ("ms", status_labels.DRAFTED_LABEL) not in calls["add"]
+
+
+def test_urgent_label_only_above_threshold(db, capture):
+    calls, _ = capture
+    # urgency below threshold → no Urgent label; at/above → labelled.
+    _exec(db,
+          "INSERT INTO agent_pending_drafts (message_id, thread_id, account, needs_reply_score, "
+          "reasons_json, cold_outreach, tier, status, urgency_score) VALUES (?,?,?,?,?,?,?,?,?)",
+          ("mlow", "t-low", "me@x.com", 0.9, "[]", 0, "draft", "pending", 0.2))
+    _exec(db,
+          "INSERT INTO agent_pending_drafts (message_id, thread_id, account, needs_reply_score, "
+          "reasons_json, cold_outreach, tier, status, urgency_score) VALUES (?,?,?,?,?,?,?,?,?)",
+          ("mhigh", "t-high", "me@x.com", 0.9, "[]", 0, "draft", "pending", 0.7))
+    status_labels.sync_status_labels(db, "me@x.com")
+    urgent = {mid for mid, lbl in calls["add"] if lbl == status_labels.URGENT_LABEL}
+    assert "mhigh" in urgent and "mlow" not in urgent
+
+
+def test_owed_label_for_aged_pending(db, capture, monkeypatch):
+    calls, _ = capture
+    # owed_inbound returns this row's id → it should get the Owed label.
+    _add_draft(db, mid="mo", tid="t-owed")
+    monkeypatch.setattr(
+        "app.agent.followups.owed_inbound",
+        lambda database_url, **kw: [{"id": 1, "thread_id": "t-owed"}],
+    )
+    monkeypatch.setattr("app.agent.followups.awaiting_reply", lambda database_url, **kw: [])
+    status_labels.sync_status_labels(db, "me@x.com")
+    assert any(lbl == status_labels.OWED_LABEL for _, lbl in calls["add"])
