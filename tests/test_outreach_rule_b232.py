@@ -283,3 +283,15 @@ def test_outcome_capture_skips_outreach_rows(monkeypatch, tmp_path):
     )
     s = capture_send_outcomes(url, account="you@example.com", lookback_days=7)
     assert s["scanned"] == 0
+
+
+def test_first_name_skips_initials_and_titles():
+    """Lead-form 'name' fields collect junk first tokens — a lone initial or a
+    title — that render as 'Hi M,' / 'Hi Dr,' in CEO outreach. Prefer the first
+    real name token."""
+    from app.agent.rules import extract_lead_contact
+    assert extract_lead_contact("Namem ibraheem Emailx@y.com", exclude_emails=[])["first_name"] == "Ibraheem"
+    assert extract_lead_contact("Name dr Sarah Lin Email s@l.com", exclude_emails=[])["first_name"] == "Sarah"
+    # Normal single-word + two-word names unchanged.
+    assert extract_lead_contact("Name shakhawat Hussain Email a@b.com", exclude_emails=[])["first_name"] == "Shakhawat"
+    assert extract_lead_contact("Name Anna Email a@b.com", exclude_emails=[])["first_name"] == "Anna"
