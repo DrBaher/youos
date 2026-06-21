@@ -55,7 +55,16 @@
       icon();
     });
     try { window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", icon); } catch (e) {}
-    document.body.appendChild(btn);
+    // Dock the toggle in the page header (next to the nav) so it never floats
+    // over content / tap targets on mobile. Fall back to floating only on pages
+    // without the standard chrome.
+    var host = document.querySelector(".oc-nav") || document.querySelector(".oc-header");
+    if (host) {
+      btn.classList.add("yos-theme-toggle--inline");
+      host.appendChild(btn);
+    } else {
+      document.body.appendChild(btn);
+    }
   }
   YouOS.setupThemeToggle = setupThemeToggle;
 

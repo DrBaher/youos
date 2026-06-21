@@ -76,6 +76,12 @@
   transition: border-color .2s, background .2s;
 }
 .yos-theme-toggle:hover { border-color: var(--teal-dim); }
+/* Inline-in-header variant: not fixed, so it never overlaps content/buttons
+   (the floating version covered card actions on mobile). */
+.yos-theme-toggle--inline {
+  position: static; bottom: auto; right: auto; z-index: auto;
+  width: 32px; height: 32px; box-shadow: none; align-self: center;
+}
 
 /* --- Badges (confidence, length flag, repairs, sender type) -------------- */
 .yos-badge {
