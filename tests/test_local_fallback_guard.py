@@ -44,7 +44,7 @@ def _stub(monkeypatch, *, local_draft_once, fallback="claude", claude="Cloud rep
 
 
 def test_max_inbound_chars_default():
-    assert _max_inbound_chars() == 4000
+    assert _max_inbound_chars() == 6000
 
 
 def test_huge_inbound_is_truncated_before_the_model(monkeypatch):
@@ -155,3 +155,13 @@ def test_generate_subject_honors_strict_local_no_cloud_egress(monkeypatch):
     calls["claude"] = 0
     assert svc.generate_subject("body", "draft", "sqlite:///x", Path("."), fallback_model="ollama") is None
     assert calls["claude"] == 0
+
+
+def test_thread_context_widened_to_six_turns():
+    """Thread context now surfaces up to 6 prior turns (was 4) so the drafter
+    sees more of the conversation (personal remarks, prior commitments)."""
+    from app.generation.service import _format_thread_context
+    hist = [{"sender": f"s{i}", "text": f"msg {i}"} for i in range(8)]
+    out = _format_thread_context("CURRENT MESSAGE", hist)
+    assert out.count("Previous:") == 6
+    assert "[CURRENT MESSAGE]" in out and "CURRENT MESSAGE" in out
