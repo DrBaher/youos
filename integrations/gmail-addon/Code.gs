@@ -214,8 +214,8 @@ function _dashboardCard(account, dOff, sOff) {
     top.addWidget(picker);
   }
   top.addWidget(_btn('↻ Refresh', 'actRefreshDash', { account: account || '' }));
-  var now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'HH:mm');
-  top.addWidget(CardService.newDecoratedText().setText('<font color="#9aa0a6">Updated ' + now + '</font>').setWrapText(true));
+  // Always-fresh on render, so a relative label beats a tz-ambiguous clock time.
+  top.addWidget(CardService.newDecoratedText().setText('<font color="#9aa0a6">Updated just now</font>').setWrapText(true));
   builder.addSection(top);
 
   // Inbox-zero state.
@@ -226,49 +226,60 @@ function _dashboardCard(account, dOff, sOff) {
     return builder.build();
   }
 
-  // Drafts to review → Push / Dismiss (urgent first).
-  var ds = CardService.newCardSection().setHeader('📝 Drafts to review (' + drafts.length + ')');
-  if (!drafts.length) { ds.addWidget(CardService.newTextParagraph().setText('<i>None.</i>')); }
-  drafts.slice(dOff, dOff + DASH_CAP).forEach(function (r) {
-    var bs = CardService.newButtonSet();
-    bs.addButton(_btn('Push', 'actPush', { rowId: String(r.id), source: 'dashboard', account: account || '' }));
-    bs.addButton(_btn('Dismiss', 'actDismissAsk', { rowId: String(r.id), source: 'dashboard', account: account || '' }));
-    _dashRow(ds, _rowTitle(r), 'from ' + (r.sender || '?'), bs);
-  });
-  _pager(ds, account, drafts.length, dOff, sOff, 'd', dOff);
-  builder.addSection(ds);
+  // One-line summary so the totals are visible without scrolling past empty
+  // sections (which we now skip entirely).
+  var nFu = (fu.owed_count != null ? fu.owed_count : owed.length) + (fu.awaiting_count != null ? fu.awaiting_count : awaiting.length);
+  builder.addSection(CardService.newCardSection().addWidget(CardService.newDecoratedText().setWrapText(true)
+    .setText(drafts.length + ' drafts · ' + events.length + ' meetings · ' + surface.length + ' to review · ' + nFu + ' follow-ups')));
+
+  // Drafts to review → Push / Dismiss (urgent first). Sections render only when
+  // non-empty — no "None." filler to scroll past on mobile.
+  if (drafts.length) {
+    var ds = CardService.newCardSection().setHeader('📝 Drafts to review (' + drafts.length + ')');
+    drafts.slice(dOff, dOff + DASH_CAP).forEach(function (r) {
+      var bs = CardService.newButtonSet();
+      bs.addButton(_btn('Push', 'actPush', { rowId: String(r.id), source: 'dashboard', account: account || '' }));
+      bs.addButton(_btn('Dismiss', 'actDismissAsk', { rowId: String(r.id), source: 'dashboard', account: account || '' }));
+      _dashRow(ds, _rowTitle(r), 'from ' + (r.sender || '?'), bs);
+    });
+    _pager(ds, account, drafts.length, dOff, sOff, 'd', dOff);
+    builder.addSection(ds);
+  }
 
   // Meeting confirmations → Approve / Dismiss.
-  var msec = CardService.newCardSection().setHeader('📅 Meeting confirmations (' + events.length + ')');
-  if (!events.length) { msec.addWidget(CardService.newTextParagraph().setText('<i>None.</i>')); }
-  events.slice(0, DASH_CAP).forEach(function (ev) {
-    var bs = CardService.newButtonSet();
-    bs.addButton(_btn('Approve', 'actApproveEvent', { eventId: String(ev.id), source: 'dashboard', account: account || '' }));
-    bs.addButton(_btn('Dismiss', 'actDismissEvent', { eventId: String(ev.id), source: 'dashboard', account: account || '' }));
-    _dashRow(msec, ev.title || 'Meeting', _fmtEventTime(ev.start_iso, ev.end_iso), bs);
-  });
-  builder.addSection(msec);
+  if (events.length) {
+    var msec = CardService.newCardSection().setHeader('📅 Meeting confirmations (' + events.length + ')');
+    events.slice(0, DASH_CAP).forEach(function (ev) {
+      var bs = CardService.newButtonSet();
+      bs.addButton(_btn('Approve', 'actApproveEvent', { eventId: String(ev.id), source: 'dashboard', account: account || '' }));
+      bs.addButton(_btn('Dismiss', 'actDismissEvent', { eventId: String(ev.id), source: 'dashboard', account: account || '' }));
+      _dashRow(msec, ev.title || 'Meeting', _fmtEventTime(ev.start_iso, ev.end_iso), bs);
+    });
+    builder.addSection(msec);
+  }
 
   // Needs review (surfaced, not drafted) → Draft it / Dismiss.
-  var ns = CardService.newCardSection().setHeader('🔎 Needs review (' + surface.length + ')');
-  if (!surface.length) { ns.addWidget(CardService.newTextParagraph().setText('<i>None.</i>')); }
-  surface.slice(sOff, sOff + DASH_CAP).forEach(function (r) {
-    var bs = CardService.newButtonSet();
-    bs.addButton(_btn('Draft it', 'actRegenerate', { rowId: String(r.id), source: 'dashboard', account: account || '' }));
-    bs.addButton(_btn('Dismiss', 'actDismissAsk', { rowId: String(r.id), source: 'dashboard', account: account || '' }));
-    _dashRow(ns, _rowTitle(r), 'from ' + (r.sender || '?'), bs);
-  });
-  _pager(ns, account, surface.length, dOff, sOff, 's', sOff);
-  builder.addSection(ns);
+  if (surface.length) {
+    var ns = CardService.newCardSection().setHeader('🔎 Needs review (' + surface.length + ')');
+    surface.slice(sOff, sOff + DASH_CAP).forEach(function (r) {
+      var bs = CardService.newButtonSet();
+      bs.addButton(_btn('Draft it', 'actRegenerate', { rowId: String(r.id), source: 'dashboard', account: account || '' }));
+      bs.addButton(_btn('Dismiss', 'actDismissAsk', { rowId: String(r.id), source: 'dashboard', account: account || '' }));
+      _dashRow(ns, _rowTitle(r), 'from ' + (r.sender || '?'), bs);
+    });
+    _pager(ns, account, surface.length, dOff, sOff, 's', sOff);
+    builder.addSection(ns);
+  }
 
   // Follow-ups (read-only — open the thread to act).
-  var fs = CardService.newCardSection()
-    .setHeader('⏰ Follow-ups (' + (fu.owed_count != null ? fu.owed_count : owed.length) +
-               ' owed · ' + (fu.awaiting_count != null ? fu.awaiting_count : awaiting.length) + ' awaiting)');
-  owed.slice(0, 3).forEach(function (r) { _dashRow(fs, r.subject || '(no subject)', 'owed ' + r.age_days + 'd · ' + (r.sender || ''), null); });
-  awaiting.slice(0, 3).forEach(function (r) { _dashRow(fs, r.subject || '(no subject)', 'awaiting reply ' + r.age_days + 'd · ' + (r.sender || ''), null); });
-  if (!owed.length && !awaiting.length) { fs.addWidget(CardService.newTextParagraph().setText('<i>None.</i>')); }
-  builder.addSection(fs);
+  if (owed.length || awaiting.length) {
+    var fs = CardService.newCardSection()
+      .setHeader('⏰ Follow-ups (' + (fu.owed_count != null ? fu.owed_count : owed.length) +
+                 ' owed · ' + (fu.awaiting_count != null ? fu.awaiting_count : awaiting.length) + ' awaiting)');
+    owed.slice(0, 3).forEach(function (r) { _dashRow(fs, r.subject || '(no subject)', 'owed ' + r.age_days + 'd · ' + (r.sender || ''), null); });
+    awaiting.slice(0, 3).forEach(function (r) { _dashRow(fs, r.subject || '(no subject)', 'awaiting reply ' + r.age_days + 'd · ' + (r.sender || ''), null); });
+    builder.addSection(fs);
+  }
 
   builder.addSection(CardService.newCardSection().addWidget(_btn('⚙ Settings', 'actOpenSettings', {})));
   return builder.build();
@@ -337,6 +348,8 @@ function _noDraftCard(threadId) {
       .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
       .setOnClickAction(CardService.newAction().setFunctionName('actDraftForThread')
         .setParameters({ threadId: String(threadId) })));
+    section.addWidget(CardService.newDecoratedText().setWrapText(true)
+      .setText('<font color="#9aa0a6">Drafting takes a few seconds — tap once.</font>'));
   }
   return CardService.newCardBuilder()
     .setHeader(CardService.newCardHeader().setTitle('YouOS').setSubtitle('Nothing queued'))
@@ -443,7 +456,8 @@ function _draftCard(row) {
   var conf = (row.calibrated_score != null) ? row.calibrated_score : row.needs_reply_score;
   var subtitle = (hasDraft ? 'Drafted' : 'Surfaced — not drafted') +
     (conf != null ? ' · ' + Math.round(conf * 100) + '% likely to deserve a reply' : '') +
-    ' · ' + (row.status || 'pending');
+    ' · ' + (row.status || 'pending') +
+    (row.account ? ' · ' + row.account : '');  // which mailbox (multi-account clarity)
 
   var actionable = (row.status === 'pending' || row.status === 'amended');
   var rid = String(row.id);
@@ -502,6 +516,8 @@ function _draftCard(row) {
       .setText(hasDraft ? 'Regenerate' : 'Draft it')
       .setTextButtonStyle(hasDraft ? CardService.TextButtonStyle.TEXT : CardService.TextButtonStyle.FILLED)
       .setOnClickAction(CardService.newAction().setFunctionName('actRegenerate').setParameters({ rowId: rid })));
+    genSection.addWidget(CardService.newDecoratedText().setWrapText(true)
+      .setText('<font color="#9aa0a6">Drafting takes a few seconds — tap once.</font>'));
     builder.addSection(genSection);
 
     // Section 4 — dismiss with categorical feedback + optional note. For a
@@ -725,6 +741,8 @@ function onGmailCompose(e) {
       .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
       .setOnClickAction(CardService.newAction().setFunctionName('actComposeDraft')
         .setParameters({ threadId: String(threadId) })));
+    section.addWidget(CardService.newDecoratedText().setWrapText(true)
+      .setText('<font color="#9aa0a6">Drafting takes a few seconds — tap once.</font>'));
   } else {
     section.addWidget(CardService.newTextParagraph().setText('Open a reply to draft with YouOS.'));
   }

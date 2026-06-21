@@ -469,8 +469,11 @@
   function renderDraft(row) {
     const reasons = (row.reasons || []).join(', ') || '(no reasons recorded)';
     const cold = row.cold_outreach ? '<span class="yos-badge yos-badge--warn cold">⚠ cold</span>' : '';
-    const model = row.draft_model ? `<span class="yos-badge yos-badge--ok">${esc(row.draft_model)}</span>` : '';
-    const score = `<span class="yos-badge">score ${Number(row.needs_reply_score).toFixed(2)}</span>`;
+    // Friendly confidence (calibrated when available), not a raw score; no model
+    // name (dev jargon). Urgent threads get a marker (matches the Gmail add-on).
+    const conf = (row.calibrated_score != null) ? row.calibrated_score : row.needs_reply_score;
+    const score = `<span class="yos-badge">${Math.round(Number(conf) * 100)}% likely</span>`;
+    const urgent = (Number(row.urgency_score) || 0) >= 0.5 ? '<span class="yos-badge yos-badge--warn">🔴 urgent</span>' : '';
     const draftText = row.amended_draft || row.draft || '';
     const preview = draftText.replace(/\s+/g, ' ').trim().slice(0, 180);
     const ellipsis = draftText.length > 180 ? '…' : '';
@@ -480,7 +483,7 @@
           <span class="chevron" aria-hidden="true">▸</span>
           <div class="head-main">
             <div class="head-subject">${esc(row.subject || '(no subject)')}</div>
-            <div class="head-meta">${score} ${cold} ${model} <span class="head-from">from ${esc(row.sender || '(unknown)')}</span></div>
+            <div class="head-meta">${urgent} ${score} ${cold} <span class="head-from">from ${esc(row.sender || '(unknown)')}</span></div>
             <div class="draft-preview">${esc(preview)}${ellipsis}</div>
           </div>
         </div>
@@ -519,6 +522,8 @@
   function dismissControls(rowId) {
     return `
       <span class="dismiss-group" style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <button class="btn danger" data-action="dismiss-toggle" data-id="${rowId}">Dismiss…</button>
+        <span class="dismiss-controls" data-controls-for="${rowId}" style="display:none;gap:6px;align-items:center;flex-wrap:wrap">
         <select class="dismiss-reason" data-reason-for="${rowId}" title="Why? Helps the filter learn over time." style="font-size:12px;padding:4px 6px;border-radius:4px;border:1px solid var(--border)"
                 onchange="(function(s){var n=s.parentNode.querySelector('input.dismiss-note[data-note-for=&quot;${rowId}&quot;]');if(n){n.style.display=(s.value==='other')?'inline-block':'none';if(s.value==='other')n.focus();}})(this)">
           <option value="">Why? (optional)</option>
@@ -532,7 +537,8 @@
         <label class="skip-sender-label" style="font-size:11px;color:var(--muted-2);display:inline-flex;align-items:center;gap:3px;cursor:pointer" title="Also add this sender to agent.skip_senders so future sweeps skip them.">
           <input type="checkbox" class="skip-sender-cb" data-skip-for="${rowId}" style="margin:0">also skip sender
         </label>
-        <button class="btn danger" data-action="dismiss" data-id="${rowId}">Dismiss</button>
+        <button class="btn danger" data-action="dismiss" data-id="${rowId}">Confirm</button>
+        </span>
       </span>`;
   }
 
@@ -640,8 +646,11 @@
     const url = new URL('/api/agent/pending', window.location.origin);
     if (acct.value) url.searchParams.set('account', acct.value);
     const r = await fetch(url).then(r => r.json());
-    lastRows.drafts  = (r.rows || []).filter(x => x.tier === 'draft');
-    lastRows.surface = (r.rows || []).filter(x => x.tier === 'surface');
+    // Urgent threads first (matches the Gmail add-on ordering), then by score.
+    const byUrgency = (a, b) => (Number(b.urgency_score) || 0) - (Number(a.urgency_score) || 0)
+      || (Number(b.needs_reply_score) || 0) - (Number(a.needs_reply_score) || 0);
+    lastRows.drafts  = (r.rows || []).filter(x => x.tier === 'draft').sort(byUrgency);
+    lastRows.surface = (r.rows || []).filter(x => x.tier === 'surface').sort(byUrgency);
     applyClientFilter();
     // b282: refresh the meeting-confirmations queue alongside the drafts.
     try { await loadEvents(); } catch (e) {}
@@ -875,6 +884,13 @@
     }
     const id = t.getAttribute('data-id');
     if (action === 'toggle' && id) { toggleCard(id); return; }
+    // Dismiss is a 2-tap reveal: "Dismiss…" shows the reason controls (less
+    // noise per card on mobile); "Confirm" then dismisses.
+    if (action === 'dismiss-toggle' && id) {
+      const ctrls = document.querySelector(`.dismiss-controls[data-controls-for="${id}"]`);
+      if (ctrls) { ctrls.style.display = (ctrls.style.display === 'none' || !ctrls.style.display) ? 'inline-flex' : 'none'; }
+      return;
+    }
     if (action && id) { rowAction(id, action); }
   });
 
