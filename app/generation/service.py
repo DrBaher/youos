@@ -798,7 +798,10 @@ _COURTESY_RULE = (
     "now, but I appreciate the note.\"). Never send curt, blunt, or dismissive "
     "fragments (e.g. \"Not a fit.\", \"No.\", \"No response.\") or anything that "
     "insults or belittles the sender. Achieve this without flattery, filler, or "
-    "over-apologizing — keep your usual direct, concise register."
+    "over-apologizing — keep your usual direct, concise register. "
+    "If the sender opened with personal remarks or well-wishes (\"hope you're "
+    "well\", \"sorry to hear\", \"congrats\"), briefly acknowledge them in one "
+    "line before the main point — don't skip straight to logistics."
 )
 
 # Anti-over-commitment (b277). The local model freely invents firm commitments —
@@ -1377,6 +1380,16 @@ def _repair_draft(
         if decoded != text:
             text = decoded
             repairs.append("decoded_html_entities")
+
+    # Always strip a bare phone line: the model has no business emitting a phone
+    # number in the body (it hallucinated a wrong mobile in a live draft), and the
+    # user's real number is appended via the Gmail signature at push time.
+    from app.core.text_utils import strip_phone_lines
+
+    _no_phone = strip_phone_lines(text)
+    if _no_phone != text.strip():
+        text = _no_phone
+        repairs.append("stripped_phone")
 
     if config.get("enforce_greeting_closing"):
         # b231: the configured persona greeting/closing are English. Prepending

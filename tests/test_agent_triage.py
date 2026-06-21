@@ -1167,3 +1167,19 @@ def test_sender_whitelist_catch_all_star():
     assert w("b@x.com", ["a@x.com"]) is False
     assert w("a@x.com", ["@x.com"]) is True
     assert w("a@x.com", []) is False
+
+
+def test_sender_specific_time_suppresses_slot_offer():
+    """When the sender proposed/held a specific time ('same time and day', 'how
+    about Thursday at 3'), don't dump our own open slots over their request
+    (live bug: Jürgen asked 'same time and day' and the draft proposed new times)."""
+    from app.agent.triage import _calendar_slot_note, _sender_proposed_specific_time
+    assert _sender_proposed_specific_time("How about next week same time and day?")
+    assert _sender_proposed_specific_time("Does 2pm work for you?")
+    assert not _sender_proposed_specific_time("Can we meet sometime next week?")
+    # The note builder bails before any calendar call when a specific time is asked.
+    cfg = {"enabled": True, "tz": "Europe/Vienna", "business_days": 5,
+           "work_start_hour": 9, "work_end_hour": 17, "slot_minutes": 30, "max_slots": 3}
+    note, slots = _calendar_slot_note("me@x.com", cal_cfg=cfg,
+                                      inbound_body="Hey mate, how about next week same time and day?")
+    assert note is None and slots == []
