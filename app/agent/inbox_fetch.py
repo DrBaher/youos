@@ -293,14 +293,18 @@ def _inbox_message_from_thread(thread: dict, *, account: str, thread_id: str) ->
     payload = msg.get("payload", {}) or {}
     sender = _decode_mime_words(_header(payload, "From"))
     thread_history: list[dict[str, str]] = []
-    for prev in messages[:-1][-4:]:
+    # Capture up to 6 prior turns at 500 chars each (was 4 × 200) so the drafter
+    # sees more of the conversation — enough to catch personal remarks, prior
+    # commitments, and what an earlier "same time" refers to. Bounded by the
+    # overall inbound cap (generation.max_inbound_chars) downstream.
+    for prev in messages[:-1][-6:]:
         prev_payload = prev.get("payload", {}) or {}
         prev_text = _extract_text(prev_payload)
         if not prev_text:
             continue
         thread_history.append({
             "sender": _decode_mime_words(_header(prev_payload, "From") or "")[:80],
-            "text": prev_text[:200],
+            "text": prev_text[:500],
         })
     return InboxMessage(
         message_id=msg.get("id") or msg.get("messageId") or thread_id,

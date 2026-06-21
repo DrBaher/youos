@@ -532,8 +532,8 @@ def _format_thread_context(active_inbound: str, history: list[dict[str, str]]) -
     if not history:
         return active_inbound
 
-    parts = ["[THREAD HISTORY — last 2 exchanges]"]
-    for entry in history[:4]:
+    parts = ["[THREAD HISTORY — recent messages, oldest first]"]
+    for entry in history[:6]:
         parts.append(f"Previous: {entry['sender']} wrote: {entry['text']}")
     parts.append("---")
     parts.append("[CURRENT MESSAGE]")
@@ -2371,16 +2371,19 @@ def _persona_routing_enabled() -> bool:
 
 def _max_inbound_chars() -> int:
     """Max characters of inbound text to feed the model (``generation.
-    max_inbound_chars``, default 4000; 0 disables). Bounds prompt size so a
-    huge email can't overflow the local model into a cloud fallback."""
+    max_inbound_chars``, default 6000; 0 disables). Bounds prompt size so a
+    huge email can't overflow the local model into a cloud fallback. Raised from
+    4000 alongside the wider thread-history capture (6 turns × 500 chars) so the
+    widened history doesn't crowd out the current message (the cap trims the
+    tail, where the current message sits)."""
     try:
         from app.core.config import load_config
 
         cfg = load_config() or {}
         gen = cfg.get("generation", {}) if isinstance(cfg, dict) else {}
-        return max(0, int(gen.get("max_inbound_chars", 4000)))
+        return max(0, int(gen.get("max_inbound_chars", 6000)))
     except (TypeError, ValueError, AttributeError):
-        return 4000
+        return 6000
 
 
 # b187: a draft word is ~1.5 tokens for this tokenizer family (English prose,
