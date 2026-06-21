@@ -698,9 +698,9 @@ def lookup_facts(
         conn.row_factory = sqlite3.Row
     facts: list[dict[str, Any]] = []
     try:
-        # 1. User preferences — always include
+        # 1. User preferences + personal circumstances — always include
         rows = conn.execute(
-            "SELECT type, key, fact FROM memory WHERE type = 'user_pref' ORDER BY updated_at DESC"
+            "SELECT type, key, fact FROM memory WHERE type IN ('user_pref', 'personal') ORDER BY updated_at DESC"
         ).fetchall()
         facts.extend({"type": r["type"], "key": r["key"], "fact": r["fact"]} for r in rows)
 
@@ -749,6 +749,8 @@ def _format_facts_context(facts: list[dict[str, Any]]) -> str:
         v = f["fact"]
         if t == "user_pref":
             lines.append(f"- Your preference ({k}): {v}")
+        elif t == "personal":
+            lines.append(f"- About you ({k}): {v}")
         elif t == "contact":
             lines.append(f"- About {k}: {v}")
         elif t == "project":
@@ -801,7 +803,11 @@ _COURTESY_RULE = (
     "over-apologizing — keep your usual direct, concise register. "
     "If the sender opened with personal remarks or well-wishes (\"hope you're "
     "well\", \"sorry to hear\", \"congrats\"), briefly acknowledge them in one "
-    "line before the main point — don't skip straight to logistics."
+    "line before the main point — don't skip straight to logistics. Crucially, "
+    "any personal circumstances in the thread (a sick child, a new baby, travel) "
+    "are YOURS — respond from your own perspective (thank them, give a one-line "
+    "update); never flip a well-wish back onto the sender as if it were about "
+    "their family. Use the [FACTS CONTEXT] 'About you' facts to get this right."
 )
 
 # Anti-over-commitment (b277). The local model freely invents firm commitments —

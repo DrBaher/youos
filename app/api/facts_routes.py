@@ -31,7 +31,7 @@ def _row_to_fact(row: sqlite3.Row) -> dict:
 
 
 class FactBody(BaseModel):
-    type: str  # 'contact' | 'project' | 'user_pref'
+    type: str  # 'contact' | 'project' | 'user_pref' | 'personal'
     key: str   # e.g. 'john@acme.com', 'project_alpha', 'sign_off'
     fact: str  # e.g. 'Prefers Tuesday meetings'
     tags: list[str] = []
@@ -63,7 +63,7 @@ def create_fact(body: FactBody, request: Request) -> dict:
     """Create a new fact (or update if type+key+fact already exists)."""
     if not body.type.strip() or not body.key.strip() or not body.fact.strip():
         raise HTTPException(status_code=400, detail="type, key, and fact are required")
-    valid_types = {"contact", "project", "user_pref"}
+    valid_types = {"contact", "project", "user_pref", "personal"}
     if body.type not in valid_types:
         raise HTTPException(status_code=400, detail=f"type must be one of: {', '.join(sorted(valid_types))}")
 
