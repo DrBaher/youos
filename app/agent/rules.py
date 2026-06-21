@@ -542,6 +542,9 @@ _LEAD_FIELD_RE = re.compile(
     re.DOTALL,
 )
 _ANY_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+# Honorifics to skip when picking a first name from a lead-form "name" field
+# ("dr sarah" → "Sarah", not "Dr"). EN + DE (the live lead corpus).
+_NAME_TITLES = frozenset({"dr", "mr", "mrs", "ms", "miss", "prof", "sir", "eng", "herr", "frau", "mme", "mr.", "dr."})
 
 
 def extract_lead_contact(body: str | None, *, exclude_emails: list[str] | None = None) -> dict[str, str]:
@@ -573,7 +576,16 @@ def extract_lead_contact(body: str | None, *, exclude_emails: list[str] | None =
                 out["email"] = cand
                 break
     if out["name"]:
-        out["first_name"] = out["name"].split()[0].capitalize()
+        # Greet with the first *real* name token. Lead forms collect junk first
+        # tokens — a lone initial ("m ibraheem"), a title ("dr") — that render as
+        # "Hi M," in CEO outreach. Prefer the first alphabetic token of length ≥2;
+        # fall back to the raw first token so normal single-word names are intact.
+        tokens = out["name"].split()
+        pick = next(
+            (t for t in tokens if len(t) >= 2 and t.isalpha() and t.lower().rstrip(".") not in _NAME_TITLES),
+            tokens[0] if tokens else "",
+        )
+        out["first_name"] = pick.capitalize()
     return out
 
 
