@@ -368,6 +368,51 @@ def dismiss(row_id: int, request: Request, body: DismissBody | None = None) -> d
     return {"ok": True, "row": store.get(_db_url(request), row_id)}
 
 
+@router.get("/api/agent/dashboard")
+def agent_dashboard(
+    request: Request,
+    account: str | None = Query(None),
+    limit: int = Query(200, ge=1, le=500),
+) -> dict:
+    """Everything the Gmail add-on dashboard needs in ONE round trip (the panel
+    talks over a Funnel, so 4 sequential calls = a multi-second blank card).
+
+    Resolves the mailbox server-side: the caller passes its active Gmail account;
+    we use it when it's configured, else the first configured mailbox. Returns
+    the resolved account + the configured list so the picker is correct, plus the
+    pending drafts/surface rows, calendar events, and follow-ups for it."""
+    from app.agent.followups import build_followups
+    from app.agent.scheduler import get_agent_config
+    from app.core.config import get_user_emails
+
+    db = _db_url(request)
+    configured = []
+    for a in (get_agent_config().get("accounts") or list(get_user_emails())):
+        a = (a or "").strip()
+        if a and a not in configured:
+            configured.append(a)
+    # Default to the caller's active mailbox when it's one we manage, else the
+    # first configured account (was the bug: always accounts[0]).
+    acct = (account or "").strip() or None
+    if acct and configured and acct not in configured:
+        acct = None
+    if not acct:
+        acct = configured[0] if configured else None
+
+    rows = store.list_pending(db, account=acct, status="pending", limit=limit) if acct else []
+    drafts = [r for r in rows if r.get("tier") == "draft"]
+    surface = [r for r in rows if r.get("tier") == "surface"]
+    from app.agent import event_store
+
+    events = [e for e in event_store.list_pending_events(db, status="pending", limit=limit)
+              if not acct or e.get("account") == acct]
+    followups = build_followups(db, account=acct) if acct else {"owed": [], "awaiting": [], "owed_count": 0, "awaiting_count": 0}
+    return {
+        "account": acct, "accounts": configured,
+        "drafts": drafts, "surface": surface, "events": events, "followups": followups,
+    }
+
+
 # --- calendar-event approval queue ------------------------------------------
 
 
