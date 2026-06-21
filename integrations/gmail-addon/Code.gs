@@ -757,7 +757,11 @@ function onGmailCompose(e) {
     section.addWidget(CardService.newDecoratedText().setWrapText(true)
       .setText('<font color="#9aa0a6">Drafting takes a few seconds — tap once.</font>'));
   } else {
-    section.addWidget(CardService.newTextParagraph().setText('Open a reply to draft with YouOS.'));
+    // No thread context in this compose event (Gmail doesn't always pass it to
+    // the compose action). Point to the reliable surface: the reading card.
+    section.addWidget(CardService.newTextParagraph().setText(
+      'Couldn’t read the thread from the compose window. Open the email and use the ' +
+      '<b>YouOS panel in the right sidebar</b> to draft / insert a reply.'));
   }
   return CardService.newCardBuilder()
     .setHeader(CardService.newCardHeader().setTitle('YouOS').setSubtitle('Insert draft'))
