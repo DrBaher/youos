@@ -84,3 +84,47 @@ def test_decline_nudge_constant_exists():
     assert isinstance(DECLINE_NUDGE, str)
     assert len(DECLINE_NUDGE) > 20
     assert "decline" in DECLINE_NUDGE.lower() or "clarifying" in DECLINE_NUDGE.lower()
+
+
+# --- 2026-06 live-corpus cold classes (investor/M&A, tracking, opt-out) ------
+
+def _v(subject="", body="", sender_email="x@y.com"):
+    from app.core.cold_outreach import detect_cold_outbound
+    return detect_cold_outbound(subject=subject, body=body, sender_email=sender_email)
+
+
+def test_investor_capital_pitch_is_confident():
+    v = _v(subject="Investment Capital Participation",
+           body="I understand you are looking to raise capital for Medicus AI. "
+                "We might be interested in participating in this round. Send me your pitch deck.")
+    assert v.is_cold and v.confident, v.hits
+
+
+def test_german_ma_intro_is_confident():
+    v = _v(subject="Strategisches Interesse - Austausch",
+           body="Ich möchte mich Ihnen kurz vorstellen. Ich verantworte bei TH Global Capital "
+                "den DACH-Markt, eine Investmentbank mit Fokus auf M&A und Kapitalbeschaffung.")
+    assert v.is_cold and v.confident, v.hits
+
+
+def test_sales_engagement_tracking_link_is_confident():
+    v = _v(subject="Customers, talent, capital",
+           body="Every growth-stage founder I talk to is closing the next round. "
+                "https://d5nLkf04.na1.hs-sales-engage.com/Ctc/JA+23284/abc")
+    assert v.is_cold and v.confident, v.hits
+
+
+def test_individual_unsub_savings_pitch_is_confident():
+    v = _v(subject="Reflect meet up",
+           body="I noticed your team runs ChatGPT at full price. We cut AI costs by 30-50%. "
+                'Not for you? Just reply "unsub" and I will never bug you again.')
+    assert v.is_cold and v.confident, v.hits
+
+
+def test_genuine_first_email_is_not_confident():
+    """A real first-contact business email (no investor/tracking/opt-out cues)
+    must NOT be flagged confident-cold — it should still draft."""
+    v = _v(subject="Following up from the conference",
+           body="Hi Baher, great meeting you last week. Could you confirm the timeline "
+                "for the integration so I can brief my team? Thanks!")
+    assert not v.confident, v.hits
