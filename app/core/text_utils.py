@@ -104,6 +104,35 @@ def extract_new_content(text: str) -> str:
     return text
 
 
+_PHONE_LABEL_RE = re.compile(
+    r"^\s*(?:phone|mobile|cell|tel|telephone|telefon|fon|mob|m|t)\s*[:.\-—]?\s*",
+    re.IGNORECASE,
+)
+_PHONE_NUMBER_RE = re.compile(r"^\+?\d[\d\s().\-/]{5,}\d$")
+
+
+def strip_phone_lines(text: str) -> str:
+    """Remove lines that are essentially just a phone number (optionally with a
+    ``Phone:``/``Mobile:``/``m:`` label).
+
+    A generated reply body should never carry a phone number: the model either
+    hallucinated one (live bug: a draft to Jürgen invented a wrong mobile) or
+    duplicated the user's — and the real, correct number is appended via the
+    Gmail signature at push time. Conservative: only drops a line whose entire
+    content (after an optional label) is a phone-shaped token with ≥7 digits, so
+    it can't eat a sentence that merely mentions a number."""
+    if not text:
+        return text
+    out: list[str] = []
+    for line in text.splitlines():
+        candidate = _PHONE_LABEL_RE.sub("", line).strip()
+        digits = sum(c.isdigit() for c in candidate)
+        if candidate and digits >= 7 and _PHONE_NUMBER_RE.match(candidate):
+            continue  # drop the phone line
+        out.append(line)
+    return "\n".join(out).strip()
+
+
 def strip_signature(text: str) -> str:
     """Best-effort removal of a trailing signature/sign-off block.
 

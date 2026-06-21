@@ -355,3 +355,20 @@ def test_multilingual_greeting_detection():
 def test_multilingual_closing_detection():
     for closer in ("Mit freundlichen Grüßen", "Viele Grüße\nBaher", "Cordialement", "Un saludo"):
         assert svc._draft_has_closing(f"Text.\n\n{closer}", "Best,"), closer
+
+
+def test_strip_phone_lines_removes_hallucinated_phone():
+    """A model-emitted phone line is hallucinated or redundant (the real number
+    comes via the appended signature) — strip it, keep the body."""
+    from app.core.text_utils import strip_phone_lines
+    d = ("Hi Jürgen,\n\nFri Jun 26, 2:00–2:30 PM works for me. Let me know.\n\n"
+         "Phone: +43 650 26 49 802")
+    out = strip_phone_lines(d)
+    assert "+43 650" not in out
+    assert "2:00" in out and "works for me" in out
+    # Variants
+    assert strip_phone_lines("Talk soon.\nm: +43 660 9637373") == "Talk soon."
+    assert strip_phone_lines("Call +1 (555) 123-4567") == "Call +1 (555) 123-4567" or "555" not in strip_phone_lines("+1 (555) 123-4567")
+    # Doesn't eat a sentence that merely cites a number / a time range
+    assert "5000 units" in strip_phone_lines("We shipped 5000 units today.")
+    assert "2:00–2:30" in strip_phone_lines("Let's meet 2:00–2:30 PM tomorrow.")

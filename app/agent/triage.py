@@ -455,8 +455,28 @@ def _calendar_config() -> dict[str, Any]:
 _CAL_SLOT_MARKER = "You are free at:"
 
 
+# The sender is proposing/holding a SPECIFIC time, not asking us for options —
+# e.g. "next week same time and day", "how about Thursday at 3", "does 2pm work".
+# When this fires we must NOT dump our own open slots over their request (live
+# bug: Jürgen asked for "same time and day" and the draft proposed new times).
+_SPECIFIC_TIME_RE = re.compile(
+    r"\bsame\s+(?:time|day|slot|hour)\b"
+    r"|\bhow\s+about\b"
+    r"|\bdoes\b[^?.!]{0,40}\bwork\b"
+    r"|\b(?:mon|tues|wednes|thurs|fri|satur|sun)day\b[^?.!]{0,30}\b(?:at|@)\b"
+    r"|\b(?:at|@)\s*\d{1,2}(?::\d{2})?\s*(?:am|pm|o'?clock|h\b)"
+    r"|\bworks?\s+for\s+(?:me|you)\b",
+    re.IGNORECASE,
+)
+
+
+def _sender_proposed_specific_time(body: str | None) -> bool:
+    return bool(body and _SPECIFIC_TIME_RE.search(body[:1200]))
+
+
 def _calendar_slot_note(
-    account: str, *, cal_cfg: dict[str, Any] | None = None, exclude_busy=None
+    account: str, *, cal_cfg: dict[str, Any] | None = None, exclude_busy=None,
+    inbound_body: str | None = None,
 ) -> tuple[str | None, list]:
     """Fresh open-slot instruction for a meeting-request reply + the structured
     slots it chose: ``(note, slots)`` or ``(None, [])``.
@@ -470,6 +490,10 @@ def _calendar_slot_note(
     is off, no slots are currently free, or the lookup fails (b246)."""
     cfg = cal_cfg or _calendar_config()
     if not cfg.get("enabled"):
+        return None, []
+    # The sender proposed/held a specific time ("same time and day", "how about
+    # Thursday at 3") — respond to THAT, don't offer our own slots over it.
+    if _sender_proposed_specific_time(inbound_body):
         return None, []
     try:
         from app.agent.calendar import format_slots, propose_open_slot_intervals
@@ -1492,7 +1516,8 @@ def _run_sweep(
         # this sweep so no two drafts double-book the same time (b265).
         if cal_cfg["enabled"] and _intents and "meeting_request" in _intents:
             note, _slots = _calendar_slot_note(
-                account, cal_cfg=cal_cfg, exclude_busy=_proposed_slots_acc
+                account, cal_cfg=cal_cfg, exclude_busy=_proposed_slots_acc,
+                inbound_body=msg.body,
             )
             if note:
                 effective_instructions = f"{effective_instructions}\n{note}" if effective_instructions else note
