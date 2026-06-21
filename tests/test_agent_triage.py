@@ -1154,3 +1154,16 @@ def test_sweep_lock_is_cross_process(monkeypatch, tmp_path):
     lk = triage._account_lock("acct")
     assert lk.acquire() is True
     lk.release()
+
+
+def test_sender_whitelist_catch_all_star():
+    """A bare '*' (or '@*') whitelist entry matches every sender — the
+    'auto-push everything' config. Exact/@domain entries still work; empty
+    whitelist still matches nothing."""
+    from app.agent.triage import _sender_in_whitelist as w
+    assert w("anyone@anywhere.com", ["*"]) is True
+    assert w("anyone@anywhere.com", ["@*"]) is True
+    assert w("a@x.com", ["a@x.com"]) is True
+    assert w("b@x.com", ["a@x.com"]) is False
+    assert w("a@x.com", ["@x.com"]) is True
+    assert w("a@x.com", []) is False

@@ -658,8 +658,16 @@ def _parse_autopush_whitelist(raw: Any) -> list[str]:
 
 
 def _sender_in_whitelist(sender_email: str | None, whitelist: list[str]) -> bool:
-    """True if the sender matches a whitelist entry (exact email or @domain)."""
-    if not sender_email or not whitelist:
+    """True if the sender matches a whitelist entry (exact email or @domain).
+
+    A bare ``*`` (or ``@*``) entry is a catch-all = every sender, for the
+    "auto-push everything" configuration. The other auto-push gates (confidence/
+    quality floors, the high-stakes / hold / cold-outreach holds) still apply."""
+    if not whitelist:
+        return False
+    if "*" in whitelist or "@*" in whitelist:
+        return True
+    if not sender_email:
         return False
     email = sender_email.lower()
     for entry in whitelist:
