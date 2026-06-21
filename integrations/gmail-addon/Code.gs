@@ -153,8 +153,10 @@ function _btn(text, fn, params) {
 }
 
 function _dashRow(section, title, sub, buttons) {
+  // sub (sender / time / age) as the small caption ABOVE the emphasized title
+  // (subject) — the standard Gmail row idiom, tighter to scan in a narrow panel.
   section.addWidget(CardService.newDecoratedText()
-    .setText(_esc(title)).setBottomLabel(_esc(sub)).setWrapText(true));
+    .setTopLabel(_esc(sub)).setText(_esc(title)).setWrapText(true));
   if (buttons) { section.addWidget(buttons); }
 }
 
@@ -171,6 +173,10 @@ function _rowTitle(r) {
 // Prev/Next pager for a section: re-renders the dashboard with new offsets.
 function _pager(section, account, total, dOff, sOff, which, off) {
   if (total <= DASH_CAP && off === 0) { return; }
+  // Position label so paging isn't disorienting (the whole card re-renders).
+  var from = off + 1, to = Math.min(off + DASH_CAP, total);
+  section.addWidget(CardService.newDecoratedText().setWrapText(true)
+    .setText('<font color="#9aa0a6">Showing ' + from + '–' + to + ' of ' + total + '</font>'));
   var bs = CardService.newButtonSet();
   var prev = Math.max(0, off - DASH_CAP), next = off + DASH_CAP;
   if (off > 0) { bs.addButton(_btn('◂ Prev', 'actRefreshDash', _pageParams(account, dOff, sOff, which, prev))); }
@@ -435,7 +441,10 @@ function _eventCard(ev) {
 }
 
 // Categorical dismissal reasons — must mirror app/agent/store.py DISMISSAL_REASONS.
+// Leading neutral so a quick Dismiss doesn't silently record "noise" and skew
+// the tuning loop; the empty value posts no reason.
 var DISMISS_REASONS = [
+  ['', 'Why? (optional)'],
   ['noise', 'Noise — shouldn’t have drafted'],
   ['wrong_sender', 'Wrong sender'],
   ['wrong_content', 'Wrong content / missed the point'],
@@ -624,14 +633,15 @@ function _dismissReasonCard(rowId, source, account) {
 function actDismiss(e) {
   var p = e.commonEventObject.parameters;
   var rowId = p.rowId;
-  var reason = _formVal(e, 'reason') || 'noise';
+  var reason = _formVal(e, 'reason');  // neutral default → no reason recorded
   var note = _formVal(e, 'note').trim();
-  var payload = { reason: reason };
+  var payload = {};
+  if (reason) { payload.reason = reason; }
   if (note) { payload.note = note; }
   var res = _api('post', '/api/agent/pending/' + rowId + '/dismiss', payload);
   if (res.code !== 200) { return _notify('Dismiss failed (' + res.code + ')'); }
   return CardService.newActionResponseBuilder()
-    .setNotification(CardService.newNotification().setText('Dismissed (' + reason + ')'))
+    .setNotification(CardService.newNotification().setText(reason ? ('Dismissed (' + reason + ')') : 'Dismissed'))
     .setNavigation(CardService.newNavigation().updateCard(_dismissedCard(rowId, p.source, p.account))).build();
 }
 

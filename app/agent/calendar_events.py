@@ -129,6 +129,17 @@ def apply_pending_event(
         return EventOutcome(False, http_status=409, detail="a create for this event is already in progress")
 
     # state == "claimed": we own the create.
+    # Re-assert the daily cap AFTER claiming — the pre-claim check (above) has a
+    # TOCTOU window where two concurrent approvals of DIFFERENT rows could each
+    # see count==cap-1 and both proceed. The per-row claim serializes the same
+    # row; this tightens the cross-row race to near-atomic. Roll the claim back.
+    if cfg["daily_event_cap"] > 0 and \
+            event_store.count_events_created_today(database_url, account=row["account"]) >= cfg["daily_event_cap"]:
+        event_store.abort_event_create(database_url, row_id)
+        return EventOutcome(False, http_status=403,
+                            detail=f"daily calendar-event cap reached ({cfg['daily_event_cap']})",
+                            row=event_store.get_pending_event(database_url, row_id))
+
     if shadow:
         event_store.abort_event_create(database_url, row_id)
         logger.info("SHADOW calendar event for row %s — not actually created", row_id)

@@ -602,13 +602,17 @@ def _gog_get_thread(*, account: str, thread_id: str) -> dict[str, Any]:
         "gmail",
         "thread",
         "get",
-        thread_id,
         "--account",
         account,
         "--json",
         "--results-only",
         "--full",
         "--no-input",
+        # End-of-options before the positional id: a thread_id beginning with '-'
+        # (a real, valid Gmail id char, or a crafted value) must be read as the
+        # id, never parsed as a gog flag. Mirrors the search path's "--" guard.
+        "--",
+        thread_id,
     ]
     payload = _run_gog_json(command)
     if not isinstance(payload, dict):

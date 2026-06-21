@@ -262,14 +262,22 @@ def draft_for_thread(body: DraftForThreadBody, request: Request) -> dict:
 
     existing = store.get_by_thread(db_url, body.thread_id)
     # Resolve the mailbox: explicit > the existing row's account > first user email.
+    from app.agent.scheduler import get_agent_config
+    from app.core.config import get_user_emails
+
     account = body.account or (existing or {}).get("account") or None
     if not account:
-        from app.core.config import get_user_emails
-
         emails = get_user_emails()
         account = emails[0] if emails else None
     if not account:
         raise HTTPException(400, "no account configured")
+    # Validate the account against configured mailboxes — a public (Funnel-
+    # exposed) caller must not drive the ingestion backend with an arbitrary
+    # account string. Allowed = agent.accounts (if set) ∪ user.emails.
+    _allowed = {a.strip().lower() for a in (get_agent_config().get("accounts") or [])} \
+        | {e.strip().lower() for e in get_user_emails()}
+    if _allowed and account.strip().lower() not in _allowed:
+        raise HTTPException(400, f"unknown account {account!r}")
     # Source the inbound to reply to: the stored row's body if we have one, else
     # fetch the thread's latest message live.
     inbound = (existing or {}).get("body") if existing else None

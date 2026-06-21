@@ -259,6 +259,22 @@ def test_default_config_never_creates(tmp_path, monkeypatch):
         config_mod.load_config.cache_clear()
 
 
+def test_daily_cap_rechecked_after_claim(db, monkeypatch):
+    """TOCTOU: the cap is re-asserted AFTER the claim. Simulate the race — the
+    pre-claim count is under the cap, but by post-claim another create landed —
+    and assert no event is created."""
+    url, rid = db
+    monkeypatch.setattr(calendar_events, "_event_config",
+                        lambda: {"enabled": True, "daily_event_cap": 1, "send_enabled": True, "kill_switch": False})
+    counts = iter([0, 1])  # gate-check sees 0; post-claim re-check sees 1
+    monkeypatch.setattr(event_store, "count_events_created_today", lambda *a, **k: next(counts))
+    monkeypatch.setattr(gmail_write, "create_calendar_event", _must_not_create)
+    out = calendar_events.apply_pending_event(url, rid)
+    assert not out.ok and "cap reached" in (out.detail or "")
+    # claim was rolled back → row is back to pending (re-approvable)
+    assert event_store.get_pending_event(url, rid)["status"] == "pending"
+
+
 def test_daily_cap_reached_blocks(db, monkeypatch):
     url, rid = db
     monkeypatch.setattr(calendar_events, "_event_config", lambda: OPEN)
