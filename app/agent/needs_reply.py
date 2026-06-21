@@ -549,18 +549,24 @@ def classify(
                 "a teammate likely owns the reply"
             )
 
-    # Soft penalty for `noreply@` / `donotreply@` — was a hard skip, but
-    # transactional notifications (demo-form alerts, password resets) come
-    # from these too. Penalty rather than skip lets strong positive signals
-    # rescue real leads.
+    # `noreply@` / `donotreply@` — penalty AND a never-draft demote: you can't
+    # reply to a no-reply address, so drafting one is always wasted (live 867-mail
+    # eval: Uber receipts, AWS/Azure billing, dunning notices were drafting because
+    # addressed-to-me + imperative/question bonuses outweighed the -0.20). It still
+    # SURFACES (visibility) and a VIP overrides, like the bulk/group demotions.
+    noreply_demote = False
     if msg.sender and NOREPLY_LOCAL_PAT.search(msg.sender):
         score -= 0.20
-        reasons.append("noreply sender (transactional or marketing)")
+        noreply_demote = True
+        reasons.append("noreply sender (can't reply — surfaced, not drafted)")
 
     # Soft penalty for operational mailbox prefixes (billing/support/info/
-    # notifications/alerts/etc.). Same idea: usually automation, but a
-    # human-tended `support@` can still surface if other signals fire.
-    if msg.sender_email and NON_HUMAN_MAILBOX_PAT.search(msg.sender_email):
+    # notifications/alerts/etc.). Usually automation, but a human-tended
+    # `support@` can still surface if other signals fire — so kept soft EXCEPT
+    # when combined with a transactional template below (billing/receipt
+    # automation), which never drafts.
+    operational = bool(msg.sender_email and NON_HUMAN_MAILBOX_PAT.search(msg.sender_email))
+    if operational:
         score -= 0.20
         reasons.append(f"operational mailbox ({msg.sender_email})")
 
@@ -680,18 +686,23 @@ def classify(
         reasons.append("VIP sender (prioritized)")
 
     score = max(0.0, min(1.0, score))
-    # A group/team thread never auto-drafts (a teammate likely owns the reply) —
-    # it's surfaced for review instead. Bulk/marketing mail never auto-drafts
-    # either (b230). A VIP sender overrides both (the user explicitly
-    # prioritizes them), so their group mail / newsletters still draft.
-    demoted = (group_demote or bulk_demote) and not is_vip
-    if bulk_demote and not is_vip and score >= threshold:
-        reasons.append("bulk/marketing — surfaced, not drafted")
+    # Never-auto-draft tiers (surfaced for review instead; a VIP overrides all):
+    #   - group/team thread — a teammate likely owns the reply
+    #   - bulk/marketing (b230)
+    #   - noreply/donotreply — you literally can't reply to it
+    #   - transactional automation (a billing/receipt/notification template from a
+    #     noreply or operational mailbox) — drafting a reply to a receipt is waste.
+    #     Tied to noreply/operational so a HUMAN asking about an invoice still drafts.
+    transactional_automation = transactional and (noreply_demote or operational)
+    never_draft = group_demote or bulk_demote or noreply_demote or transactional_automation
+    demoted = never_draft and not is_vip
+    if demoted and score >= threshold:
+        reasons.append("automation/bulk/group — surfaced, not drafted")
     needs_reply = score >= threshold and not demoted
     # Surface-for-review tier: didn't pass, but wasn't junk either — score is
-    # in the borderline band (or it's a demoted group/bulk thread). Hard skips
+    # in the borderline band (or it's a demoted never-draft thread). Hard skips
     # return early with score=0.0 and never reach this.
-    surface_for_review = (not needs_reply) and (score >= 0.30 or group_demote or bulk_demote)
+    surface_for_review = (not needs_reply) and (score >= 0.30 or never_draft)
     return NeedsReplyVerdict(
         needs_reply=needs_reply,
         score=score,

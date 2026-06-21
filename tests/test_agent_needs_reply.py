@@ -808,3 +808,71 @@ def test_marketing_footer_below_threshold_still_surfaces():
     )
     assert not v.needs_reply
     assert v.surface_for_review
+
+
+def test_noreply_never_drafts_even_when_addressed_and_actionable():
+    """A noreply sender with strong positive signals (question + imperative +
+    short body) used to clear threshold and DRAFT. You can't reply to noreply →
+    it must surface, never draft. Live 867-mail eval: Uber/AWS/Azure dunning."""
+    v = classify(
+        _msg(
+            sender="Microsoft Azure <azure-noreply@microsoft.com>",
+            sender_email="azure-noreply@microsoft.com",
+            headers={"to": "me@example.com"},
+            subject="Your payment is past due—pay now to continue service?",
+            body="Please update your billing info and pay now. Can you confirm?",
+        ),
+        account_emails=["me@example.com"],
+    )
+    assert not v.needs_reply, v.reasons
+    assert v.surface_for_review
+    assert any("can't reply" in r or "surfaced, not drafted" in r for r in v.reasons), v.reasons
+
+
+def test_transactional_automation_from_operational_mailbox_never_drafts():
+    """A billing/receipt template from an operational mailbox is automation —
+    surface, don't draft (even addressed-to-me with bonuses)."""
+    v = classify(
+        _msg(
+            sender="Amazon Web Services <invoicing@amazonaws.com>",
+            sender_email="invoicing@amazonaws.com",
+            headers={"to": "me@example.com"},
+            subject="Your AWS invoice / billing statement is available",
+            body="Your invoice is ready. Please review your billing statement now.",
+        ),
+        account_emails=["me@example.com"],
+    )
+    assert not v.needs_reply, v.reasons
+
+
+def test_human_with_same_signals_still_drafts():
+    """Guard: a HUMAN (not noreply/operational) with question+imperative still
+    drafts — the never-draft rule is tied to automation senders, not the signals
+    that were demoting the noreply/billing automation above."""
+    v = classify(
+        _msg(
+            sender="Nadine <nadine@medicus.ai>",
+            sender_email="nadine@medicus.ai",
+            headers={"to": "me@example.com"},
+            subject="Quick question",
+            body="Can you confirm the budget before I send it? Thanks!",
+        ),
+        account_emails=["me@example.com"],
+    )
+    assert v.needs_reply, v.reasons
+
+
+def test_vip_noreply_override_still_drafts():
+    """A VIP overrides the noreply demote (consistent with group/bulk)."""
+    v = classify(
+        _msg(
+            sender="Important <vip-noreply@partner.com>",
+            sender_email="vip-noreply@partner.com",
+            headers={"to": "me@example.com"},
+            subject="Action needed?",
+            body="Please review and confirm. Can you reply today?",
+        ),
+        account_emails=["me@example.com"],
+        vip_senders=["vip-noreply@partner.com"],
+    )
+    assert v.needs_reply, v.reasons
