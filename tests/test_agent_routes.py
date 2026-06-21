@@ -1306,3 +1306,13 @@ def test_regenerate_does_not_promote_dismissed_surface_row(authed_client, monkey
     row = authed_client.get(f"/api/agent/pending/{rid}").json()
     assert row["status"] == "dismissed"   # untouched
     assert row["tier"] == "surface"        # NOT promoted
+
+
+def test_draft_for_thread_rejects_unknown_account(authed_client, monkeypatch):
+    """Hardening: a Funnel-exposed caller can't drive ingestion with an arbitrary
+    account — only configured mailboxes are allowed."""
+    monkeypatch.setattr("app.core.config.get_user_emails", lambda *a, **k: ["you@example.com"])
+    r = authed_client.post("/api/agent/draft_for_thread",
+                           json={"thread_id": "t-x", "account": "attacker@evil.com"})
+    assert r.status_code == 400
+    assert "unknown account" in r.text

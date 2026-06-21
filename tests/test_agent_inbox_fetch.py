@@ -404,3 +404,15 @@ def test_include_read_off_does_not_filter_self(monkeypatch):
     _install_multi(monkeypatch, src)
     msgs = fetch_unread("you@x.com", own_emails={"you@x.com"})  # include_read defaults False
     assert len(msgs) == 1
+
+
+def test_gog_get_thread_uses_end_of_options_separator(monkeypatch):
+    """A thread_id starting with '-' must ride after '--', never as a gog flag."""
+    import app.ingestion.gmail_threads as gt
+    captured = {}
+    monkeypatch.setattr(gt, "_run_gog_json", lambda cmd: captured.update(cmd=cmd) or {"id": "x", "messages": []})
+    monkeypatch.setattr(gt, "_normalize_gog_thread_payload", lambda payload, requested_thread_id: {"messages": []})
+    gt._gog_get_thread(account="me@x.com", thread_id="-weird-id")
+    cmd = captured["cmd"]
+    assert cmd[-2:] == ["--", "-weird-id"]              # id after end-of-options
+    assert "-weird-id" not in cmd[:-1]                  # not earlier as a flagish positional
