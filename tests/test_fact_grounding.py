@@ -53,3 +53,34 @@ def test_grounding_rule_absent_for_ordinary_inbound():
         subject="Hello",
     )
     assert "[GROUNDING]" not in prompt
+
+
+def test_personal_facts_always_included_and_framed():
+    """`personal` facts (family, location) are always injected like user_pref and
+    framed as 'About you' so the drafter grounds personal-circumstance replies on
+    them (fixes the 'your daughter' mis-attribution on well-wishes)."""
+    from app.generation.service import _format_facts_context
+    out = _format_facts_context([
+        {"type": "personal", "key": "family", "fact": "You have a 4-year-old daughter and a newborn."},
+        {"type": "user_pref", "key": "sign-off", "fact": "Best, B"},
+    ])
+    assert "- About you (family): You have a 4-year-old daughter and a newborn." in out
+    assert "Your preference (sign-off)" in out
+
+
+def test_lookup_facts_returns_personal(tmp_path):
+    """lookup_facts always returns type='personal' rows (alongside user_pref)."""
+    import sqlite3
+
+    from app.generation.service import lookup_facts
+    db = tmp_path / "m.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE memory (id INTEGER PRIMARY KEY, type TEXT, key TEXT, fact TEXT, "
+        "tags TEXT DEFAULT '[]', updated_at TEXT DEFAULT CURRENT_TIMESTAMP)"
+    )
+    conn.execute("INSERT INTO memory (type,key,fact) VALUES ('personal','home','You live in Vienna 1030.')")
+    conn.commit()
+    conn.row_factory = sqlite3.Row
+    facts = lookup_facts(sender=None, inbound_text="anything", database_url=f"sqlite:///{db}", conn=conn)
+    assert any(f["type"] == "personal" and "Vienna" in f["fact"] for f in facts)
