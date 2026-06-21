@@ -876,3 +876,49 @@ def test_vip_noreply_override_still_drafts():
         vip_senders=["vip-noreply@partner.com"],
     )
     assert v.needs_reply, v.reasons
+
+
+class _FakeHistory:
+    """Stub SenderHistory: a fixed prior-reply count for any sender."""
+    def __init__(self, n): self._n = n
+    def count_for(self, sender_email): return self._n
+
+
+_COLD_PITCH = dict(
+    sender="Zsófia Fazekas <fazekas@kylla.co.uk>",
+    sender_email="fazekas@kylla.co.uk",
+    headers={"to": "me@example.com"},
+    subject="Investment Capital Participation",
+    body="Dear Baher, I understand you are looking to raise capital for Medicus AI. "
+         "We might be interested in participating in this round. Please send me your pitch deck "
+         "and your availability so we can identify if this could be a good fit for our firm.",
+)
+
+
+def test_confident_cold_pitch_first_contact_surfaces_not_drafts():
+    v = classify(_msg(**_COLD_PITCH), account_emails=["me@example.com"])  # history=None → first contact
+    assert not v.needs_reply, v.reasons
+    assert v.surface_for_review
+    assert any("cold pitch" in r for r in v.reasons), v.reasons
+
+
+def test_cold_pitch_from_established_sender_still_drafts():
+    """Prior reply history = an established correspondent → draft even if the
+    message reads pitch-like (the demote is first-contact only)."""
+    v = classify(_msg(**_COLD_PITCH), history=_FakeHistory(4), account_emails=["me@example.com"])
+    assert v.needs_reply, v.reasons
+
+
+def test_genuine_first_contact_without_pitch_signals_still_drafts():
+    v = classify(
+        _msg(
+            sender="Dana Roy <dana@hospital.org>",
+            sender_email="dana@hospital.org",
+            headers={"to": "me@example.com"},
+            subject="Following up from the conference",
+            body="Hi Baher, great meeting you last week. Could you confirm the timeline "
+                 "for the integration so I can brief my team? Thanks!",
+        ),
+        account_emails=["me@example.com"],
+    )
+    assert v.needs_reply, v.reasons

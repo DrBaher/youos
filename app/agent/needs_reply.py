@@ -653,27 +653,32 @@ def classify(
     # `count_for(noreply@wise.com)` returned 6 and the +0.20 boost lifted pure
     # automation past threshold. Suppress when noreply / operational pattern
     # already fired — those prior pairs are corpus noise, not real history.
-    if history is not None and msg.sender_email:
-        prior = history.count_for(msg.sender_email)
-        if prior > 0:
-            is_transactional = bool(
-                transactional or
-                (msg.sender and NOREPLY_LOCAL_PAT.search(msg.sender)) or
-                (msg.sender_email and NON_HUMAN_MAILBOX_PAT.search(msg.sender_email))
-            )
-            if is_transactional:
-                reasons.append(f"prior history ({prior}) — suppressed (sender is automation)")
-            else:
-                score += 0.20
-                reasons.append(f"prior history ({prior} reply pairs)")
+    prior_count = history.count_for(msg.sender_email) if (history is not None and msg.sender_email) else 0
+    if prior_count > 0:
+        is_transactional = bool(
+            transactional or
+            (msg.sender and NOREPLY_LOCAL_PAT.search(msg.sender)) or
+            (msg.sender_email and NON_HUMAN_MAILBOX_PAT.search(msg.sender_email))
+        )
+        if is_transactional:
+            reasons.append(f"prior history ({prior_count}) — suppressed (sender is automation)")
+        else:
+            score += 0.20
+            reasons.append(f"prior history ({prior_count} reply pairs)")
 
+    # Cold outreach: a soft penalty (and a generation decline-nudge) for any
+    # detected pitch. A *confident* cold pitch (investor/M&A vocabulary, a sales-
+    # engagement tracking link, an individual opt-out, etc.) from a FIRST-CONTACT
+    # sender (no prior reply history) never auto-drafts — it surfaces for review,
+    # so the daily queue isn't full of replies to investor/sales blasts. An
+    # established correspondent (prior history) still drafts even if pitch-like.
+    cold_demote = False
     if cold.is_cold:
-        # Cold outreach is *lower* needs-reply priority but still gets a
-        # draft so the user can decline politely. Net effect: a marginal
-        # case (score ~0.55) drops below threshold; a strong case (score
-        # >0.7 from history + question) still surfaces.
         score -= 0.15
         reasons.append(f"cold-outreach (heuristic score {cold.score})")
+        if cold.confident and prior_count == 0:
+            cold_demote = True
+            reasons.append("confident cold pitch, first contact — surfaced, not drafted")
 
     # VIP boost — a strong, late bump so a VIP's real mail clears the threshold
     # and sorts to the top, even if it carried a penalty (operational mailbox,
@@ -693,8 +698,9 @@ def classify(
     #   - transactional automation (a billing/receipt/notification template from a
     #     noreply or operational mailbox) — drafting a reply to a receipt is waste.
     #     Tied to noreply/operational so a HUMAN asking about an invoice still drafts.
+    #   - confident cold pitch from a first-contact sender (see cold_demote above)
     transactional_automation = transactional and (noreply_demote or operational)
-    never_draft = group_demote or bulk_demote or noreply_demote or transactional_automation
+    never_draft = group_demote or bulk_demote or noreply_demote or transactional_automation or cold_demote
     demoted = never_draft and not is_vip
     if demoted and score >= threshold:
         reasons.append("automation/bulk/group — surfaced, not drafted")
