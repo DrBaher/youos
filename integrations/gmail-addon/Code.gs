@@ -49,9 +49,18 @@ function _esc(s) {
 
 // Homepage trigger: clicked from anywhere in Gmail (no thread open) → the YouOS
 // dashboard (the in-Gmail queue). Falls back to Settings until configured.
+// Defaults to the mailbox you're CURRENTLY in (the active Gmail account), not
+// whichever account happens to be first — the server resolves it.
 function onHomepage(e) {
   if (!_baseUrl() || !_token()) { return _settingsCard(); }
-  return _dashboardCard(_dashAccount());
+  return _dashboardCard(_activeEmail(e) || _dashAccount());
+}
+
+// The Gmail account the user is currently in (so the dashboard defaults to it).
+function _activeEmail(e) {
+  var fromEvent = e && e.commonEventObject && e.commonEventObject.userInfo && e.commonEventObject.userInfo.email;
+  if (fromEvent) { return fromEvent; }
+  try { return Session.getActiveUser().getEmail() || ''; } catch (err) { return ''; }
 }
 
 // Universal-action entry point for "YouOS settings" (onHomepage now opens the
@@ -142,11 +151,6 @@ function _apiJson(path) {
   return null;
 }
 
-function _accounts() {
-  var d = _apiJson('/api/agent/accounts');
-  return (d && d.accounts) || [];
-}
-
 function _btn(text, fn, params) {
   return CardService.newTextButton().setText(text)
     .setOnClickAction(CardService.newAction().setFunctionName(fn).setParameters(params));
@@ -194,17 +198,16 @@ function _pageParams(account, dOff, sOff, which, off) {
 function _dashboardCard(account, dOff, sOff) {
   dOff = Number(dOff) || 0;
   sOff = Number(sOff) || 0;
-  var accounts = _accounts();
-  if (!account && accounts.length) { account = accounts[0]; }
-  var acctQ = account ? ('&account=' + encodeURIComponent(account)) : '';
-
-  var pend = _apiJson('/api/agent/pending?limit=200' + acctQ) || {};
-  var rows = pend.rows || [];
-  var drafts = rows.filter(function (r) { return r.tier === 'draft'; }).sort(_byUrgency);
-  var surface = rows.filter(function (r) { return r.tier === 'surface'; }).sort(_byUrgency);
-  var events = ((_apiJson('/api/agent/events/pending') || {}).events || [])
-    .filter(function (ev) { return !account || ev.account === account; });
-  var fu = _apiJson('/api/agent/followups' + (account ? ('?account=' + encodeURIComponent(account)) : '')) || {};
+  // ONE combined round trip (the panel talks over a Funnel — 4 sequential calls
+  // was the multi-second blank-card delay). The server also resolves the account
+  // (active mailbox if managed, else first configured) — fixes the wrong default.
+  var d = _apiJson('/api/agent/dashboard?limit=200' + (account ? '&account=' + encodeURIComponent(account) : '')) || {};
+  var accounts = d.accounts || [];
+  account = d.account || account || (accounts.length ? accounts[0] : '');
+  var drafts = (d.drafts || []).sort(_byUrgency);
+  var surface = (d.surface || []).sort(_byUrgency);
+  var events = d.events || [];
+  var fu = d.followups || {};
   var owed = fu.owed || [], awaiting = fu.awaiting || [];
 
   var builder = CardService.newCardBuilder()

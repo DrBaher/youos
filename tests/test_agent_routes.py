@@ -1316,3 +1316,21 @@ def test_draft_for_thread_rejects_unknown_account(authed_client, monkeypatch):
                            json={"thread_id": "t-x", "account": "attacker@evil.com"})
     assert r.status_code == 400
     assert "unknown account" in r.text
+
+
+def test_agent_dashboard_combined_endpoint(authed_client):
+    r = authed_client.get("/api/agent/dashboard?account=you@example.com")
+    assert r.status_code == 200
+    d = r.json()
+    assert d["account"] == "you@example.com"
+    assert {row["subject"] for row in d["drafts"]} >= {"Q3 pricing?"}
+    assert any(row["tier"] == "surface" for row in d["surface"]) or d["surface"] == []
+    assert "owed" in d["followups"] and "accounts" in d
+
+
+def test_agent_dashboard_falls_back_to_configured_account(authed_client, monkeypatch):
+    # An active mailbox we don't manage → resolve to the first configured one.
+    monkeypatch.setattr("app.core.config.get_user_emails", lambda *a, **k: ["you@example.com"])
+    r = authed_client.get("/api/agent/dashboard?account=stranger@elsewhere.com")
+    assert r.status_code == 200
+    assert r.json()["account"] == "you@example.com"
