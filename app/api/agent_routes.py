@@ -260,6 +260,10 @@ def draft_for_thread(body: DraftForThreadBody, request: Request) -> dict:
 
     from app.generation.service import DraftRequest, generate_draft
 
+    # The add-on may pass the legacy "thread-f:<decimal>" permalink id (when a
+    # draft is open) — normalize to the API hex id so the lookup matches AND the
+    # live gog thread fetch below gets an id it understands.
+    body.thread_id = store.normalize_thread_id(body.thread_id)
     existing = store.get_by_thread(db_url, body.thread_id)
     # Resolve the mailbox: explicit > the existing row's account > first user email.
     from app.agent.scheduler import get_agent_config
