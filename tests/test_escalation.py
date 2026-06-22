@@ -96,3 +96,17 @@ def test_high_stakes_block_can_be_disabled():
     assert isinstance(d, ActionDecision)
     assert d.action == "auto_act"
     assert d.stakes == "high"
+
+
+def test_confidential_disclaimer_footer_not_high_stakes():
+    """A pure-scheduling reply carrying a corporate confidentiality DISCLAIMER
+    footer must NOT be high-stakes — "confidential" was disclaimer-dominated and
+    held legit drafts (live: an M42 meeting reply). Genuine money/legal still is."""
+    from app.agent.escalation import assess_stakes
+    sched = ("Happy to meet Monday or Tuesday next week, send me an invite.\n"
+             "Very best, Lawrence\nThis email and any attachments are confidential "
+             "and may be privileged.")
+    assert assess_stakes("RE: intro", sched) == "low"
+    # Real money/legal unaffected.
+    assert assess_stakes("Re: deal", "Please sign the contract and wire the payment.") == "high"
+    assert assess_stakes("Invoice", "Your invoice is overdue.") == "high"
