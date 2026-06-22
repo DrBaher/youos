@@ -505,8 +505,15 @@ function _draftCard(row) {
       .setText('<font color="#5f6368">' + _esc(reasons) + '</font>').setWrapText(true));
   }
   if (row.gmail_draft_id) {
+    // Outreach drafts are a NEW email TO the prospect (not a reply on this
+    // notification thread), so say where to actually find it — otherwise it
+    // looks "missing" next to the thread you're viewing.
+    var draftMsg = row.outreach
+      ? 'Outreach draft to <b>' + _esc(row.sender_email || 'the prospect') + '</b> is in your Gmail Drafts — '
+        + 'a standalone email (not a reply on this thread). Find it in Drafts (search “' + _esc(row.subject || 'the subject') + '”).'
+      : 'In your Gmail Drafts, ready to send.';
     draftSection.addWidget(CardService.newDecoratedText()
-      .setText('<font color="#1a73e8">In your Gmail Drafts, ready to send.</font>').setWrapText(true));
+      .setText('<font color="#1a73e8">' + draftMsg + '</font>').setWrapText(true));
   }
   builder.addSection(draftSection);
 
