@@ -367,9 +367,24 @@ def dismiss(row_id: int, request: Request, body: DismissBody | None = None) -> d
             f"unknown dismissal reason: {reason!r} "
             f"(allowed: {', '.join(store.DISMISSAL_REASONS)})",
         )
-    if not store.mark_dismissed(_db_url(request), row_id, reason=reason, note=note):
+    db_url = _db_url(request)
+    row = store.get(db_url, row_id)
+    if not store.mark_dismissed(db_url, row_id, reason=reason, note=note):
         raise HTTPException(404, "pending row not found")
-    return {"ok": True, "row": store.get(_db_url(request), row_id)}
+    # If the draft was already pushed to Gmail, dismissing it should also remove
+    # the Gmail draft — a dismissed (cold/wrong) draft shouldn't linger in Drafts.
+    # Best-effort: a delete failure doesn't fail the dismissal.
+    gmail_draft_removed = False
+    gmail_draft_id = (row or {}).get("gmail_draft_id")
+    if gmail_draft_id:
+        try:
+            from app.ingestion import gmail_write
+
+            gmail_write.delete_draft(account=row["account"], draft_id=gmail_draft_id)
+            gmail_draft_removed = True
+        except Exception as exc:  # noqa: BLE001 — dismissal still succeeds
+            logger.warning("dismiss: could not delete Gmail draft %s: %s", gmail_draft_id, exc)
+    return {"ok": True, "row": store.get(db_url, row_id), "gmail_draft_removed": gmail_draft_removed}
 
 
 @router.get("/api/agent/dashboard")

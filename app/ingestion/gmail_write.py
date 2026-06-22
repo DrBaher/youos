@@ -253,6 +253,31 @@ def send_draft(
     )
 
 
+def delete_draft(*, account: str, draft_id: str, backend: str | None = None) -> bool:
+    """Permanently delete a Gmail draft by id (gog backend only).
+
+    Used when the user DISMISSES a draft that was already pushed to Gmail — a
+    cold/wrong draft shouldn't linger in the Drafts folder. NOTE: gog deletes
+    permanently (not Trash). Returns True on success; raises GmailWriteError on
+    failure so the caller can decide (the dismiss flow treats it best-effort)."""
+    from app.core.config import get_ingestion_google_backend
+
+    name = (backend or get_ingestion_google_backend()).strip().lower()
+    if name != "gog":
+        raise GmailWriteError(f"draft delete only supported on the gog backend (configured: {name!r})")
+    cmd = ["gog", "gmail", "drafts", "delete", draft_id, "--account", account, "--force", "--no-input"]
+    try:
+        require_account_argv(cmd)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except FileNotFoundError as exc:
+        raise GmailWriteError("gog CLI not on PATH") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise GmailWriteError("gog gmail drafts delete timed out (30s)") from exc
+    if result.returncode != 0:
+        raise GmailWriteError(f"gog drafts delete returned exit {result.returncode}: {_clean_stderr(result.stderr) or 'no stderr'}")
+    return True
+
+
 def _gog_send_draft(*, account: str, draft_id: str, dry_run: bool) -> GmailSendResult:
     """Verified ``gog gmail drafts send <draftId>`` invocation (gog 0.17.0).
 

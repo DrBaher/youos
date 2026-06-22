@@ -1334,3 +1334,34 @@ def test_agent_dashboard_falls_back_to_configured_account(authed_client, monkeyp
     r = authed_client.get("/api/agent/dashboard?account=stranger@elsewhere.com")
     assert r.status_code == 200
     assert r.json()["account"] == "you@example.com"
+
+
+def test_dismiss_removes_pushed_gmail_draft(authed_client, monkeypatch):
+    """Dismissing a draft that was pushed to Gmail also deletes the Gmail draft
+    (a cold/wrong draft shouldn't linger) and reports gmail_draft_removed."""
+    import os
+
+    from app.agent import store
+    db_url = os.environ["YOUOS_DATABASE_URL"]
+    rid = next(r["id"] for r in authed_client.get("/api/agent/pending").json()["rows"] if r["tier"] == "draft")
+    store.finalize_push(db_url, rid, gmail_draft_id="r-abc123")  # simulate pushed
+
+    calls = {}
+    monkeypatch.setattr("app.ingestion.gmail_write.delete_draft",
+                        lambda **k: calls.update(k) or True)
+    r = authed_client.post(f"/api/agent/pending/{rid}/dismiss", json={"reason": "noise"})
+    assert r.status_code == 200
+    assert r.json()["gmail_draft_removed"] is True
+    assert calls.get("draft_id") == "r-abc123"
+    assert r.json()["row"]["status"] == "dismissed"
+
+
+def test_dismiss_without_pushed_draft_no_delete(authed_client, monkeypatch):
+    """A never-pushed draft dismissal doesn't attempt a Gmail delete."""
+    called = {"n": 0}
+    monkeypatch.setattr("app.ingestion.gmail_write.delete_draft",
+                        lambda **k: called.__setitem__("n", called["n"] + 1) or True)
+    rid = next(r["id"] for r in authed_client.get("/api/agent/pending").json()["rows"] if r["tier"] == "draft")
+    r = authed_client.post(f"/api/agent/pending/{rid}/dismiss", json={"reason": "noise"})
+    assert r.status_code == 200 and r.json()["gmail_draft_removed"] is False
+    assert called["n"] == 0
