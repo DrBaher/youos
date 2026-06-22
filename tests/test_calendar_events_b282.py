@@ -754,3 +754,66 @@ def test_maybe_detect_confirmation_no_slots_is_noop(tmp_path, monkeypatch):
                           sender="Al", sender_email="al@b.com", body="ok")
     assert triage._maybe_detect_confirmation(url, "me@x.com", msg) is False
     assert event_store.list_pending_events(url) == []
+
+
+# --- self-scheduled detection (the user's OWN reply confirms a meeting) -------
+
+def test_detect_self_scheduled_specific_time():
+    from app.agent.meeting_confirm import detect_self_scheduled
+    r = detect_self_scheduled(
+        subject="RE: M42 intro",
+        body="Let's lock Tuesday June 24 at 3pm Vienna. I'll send the invite.",
+        recipients=["lpetalidis@m42.ae"], account_emails={"baher@medicus.ai"},
+        now_iso="Mon, 22 Jun 2026", tz="Europe/Vienna",
+        complete_fn=lambda p: "FINAL: 2026-06-24T15:00:00+02:00",
+    )
+    assert r is not None
+    assert r.start_iso.startswith("2026-06-24T15:00")
+    assert r.end_iso.startswith("2026-06-24T15:30")   # default 30-min
+    assert r.attendees == ["lpetalidis@m42.ae"]
+    assert r.confidence == 0.7
+
+
+def test_detect_self_scheduled_vague_returns_none():
+    from app.agent.meeting_confirm import detect_self_scheduled
+    r = detect_self_scheduled(
+        subject="x", body="Monday or Tuesday PM next week works.", recipients=["x@y.com"],
+        account_emails={"me@x.com"}, now_iso="2026-06-22", tz="Europe/Vienna",
+        complete_fn=lambda p: "FINAL: NONE",
+    )
+    assert r is None
+
+
+def test_detect_self_scheduled_requires_attendee():
+    """No recipient = nobody to invite → None, and the model is never called."""
+    from app.agent.meeting_confirm import detect_self_scheduled
+    called = {"n": 0}
+    def _fn(p):
+        called["n"] += 1
+        return "FINAL: 2026-06-24T15:00:00+02:00"
+    r = detect_self_scheduled(
+        subject="x", body="Tuesday 3pm", recipients=[], account_emails=set(),
+        now_iso="2026-06-22", tz="Europe/Vienna", complete_fn=_fn,
+    )
+    assert r is None and called["n"] == 0
+
+
+def test_detect_self_scheduled_naive_datetime_localized_to_tz():
+    """A model datetime without an offset is anchored to the configured tz."""
+    from app.agent.meeting_confirm import detect_self_scheduled
+    r = detect_self_scheduled(
+        subject="x", body="Tuesday 3pm", recipients=["x@y.com"], account_emails=set(),
+        now_iso="2026-06-22", tz="Europe/Vienna",
+        complete_fn=lambda p: "FINAL: 2026-06-24T15:00:00",   # naive
+    )
+    assert r is not None and ("+02:00" in r.start_iso or "+01:00" in r.start_iso)
+
+
+def test_detect_self_scheduled_excludes_self_from_attendees():
+    from app.agent.meeting_confirm import detect_self_scheduled
+    r = detect_self_scheduled(
+        subject="x", body="Tuesday 3pm", recipients=["me@x.com", "them@y.com"],
+        account_emails={"me@x.com"}, now_iso="2026-06-22", tz="UTC",
+        complete_fn=lambda p: "FINAL: 2026-06-24T15:00:00+00:00",
+    )
+    assert r is not None and r.attendees == ["them@y.com"]

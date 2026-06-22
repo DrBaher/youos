@@ -435,6 +435,10 @@ def _calendar_config() -> dict[str, Any]:
         # Which model decides if a reply confirmed a slot (b282 follow-up):
         # 'cloud' (Claude, better recall, off-device) or 'local' (on-device).
         "auto_confirm_model": str(auto_confirm.get("model", "cloud")) if isinstance(auto_confirm, dict) else "cloud",
+        # Also detect when the USER's OWN sent reply confirms/proposes a specific
+        # meeting time (not just the counterparty accepting our proposal) and
+        # queue the invite for approval. Defaults on when auto_confirm is on.
+        "confirm_from_self": bool(auto_confirm.get("from_self", True)) if isinstance(auto_confirm, dict) else True,
         "tz": str(tz),
         "business_days": _i("business_days", 5),
         "work_start_hour": _i("work_start_hour", 9),
@@ -591,6 +595,56 @@ def _maybe_detect_confirmation(
             return True
     except Exception as exc:
         logger.warning("meeting-confirm detection failed for %s: %s", msg.message_id, exc)
+    return False
+
+
+def _maybe_detect_self_scheduled(
+    database_url: str | None,
+    account: str,
+    msg,
+    *,
+    account_emails: list[str] | None = None,
+    model: str = "cloud",
+    tz: str = "UTC",
+) -> bool:
+    """If THIS message is one the user SENT and it confirms/proposes a specific
+    meeting time, queue a calendar event (invite) for approval — the other
+    direction from `_maybe_detect_confirmation`. Catches a meeting the user
+    arranged themselves (incl. a manual Gmail reply). Detection-only, gated,
+    failure-isolated. Returns True when a new event was queued."""
+    if not database_url or not msg.thread_id:
+        return False
+    try:
+        from app.agent import event_store
+        from app.agent.meeting_confirm import detect_self_scheduled
+        from app.core.text_utils import extract_new_content
+
+        # Don't re-detect a thread we've already queued an event for (any state).
+        if event_store.get_event_by_thread(database_url, msg.thread_id):
+            return False
+        recipients = re.findall(r"[\w.+-]+@[\w.-]+\.\w+",
+                                f"{msg.headers.get('to', '')} {msg.headers.get('cc', '')}")
+        result = detect_self_scheduled(
+            subject=msg.subject,
+            body=extract_new_content(msg.body),
+            recipients=recipients,
+            account_emails={e.lower() for e in (account_emails or [])},
+            now_iso=msg.received_at,
+            tz=tz,
+            model=model,
+        )
+        if result is None:
+            return False
+        queued = event_store.queue_pending_event(
+            database_url, account=account, thread_id=msg.thread_id, message_id=msg.message_id,
+            title=result.title, start_iso=result.start_iso, end_iso=result.end_iso,
+            timezone=tz, attendees=result.attendees, confidence=result.confidence, reasons=result.reasons,
+        )
+        if queued is not None:
+            logger.info("self-scheduled meeting detected on thread %s — queued event row %s", msg.thread_id, queued)
+            return True
+    except Exception as exc:
+        logger.warning("self-scheduled detection failed for %s: %s", msg.message_id, exc)
     return False
 
 
@@ -1382,6 +1436,15 @@ def _run_sweep(
                 model=cal_cfg.get("auto_confirm_model", "cloud"),
             ):
                 events_queued += 1
+            # The user's OWN sent reply confirming a meeting (incl. a manual Gmail
+            # reply) → queue the invite too. Only on self-sent messages.
+            elif cal_cfg.get("confirm_from_self") and msg.sender_email and \
+                    msg.sender_email.lower() in {e.lower() for e in _account_emails}:
+                if _maybe_detect_self_scheduled(
+                    database_url, account, msg, account_emails=_account_emails,
+                    model=cal_cfg.get("auto_confirm_model", "cloud"), tz=cal_cfg.get("tz", "UTC"),
+                ):
+                    events_queued += 1
 
         # Outreach rules run BEFORE the needs-reply gate: the matched message is
         # a website lead-form notification (typically automation the gate would
