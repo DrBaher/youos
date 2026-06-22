@@ -648,6 +648,77 @@ def _maybe_detect_self_scheduled(
     return False
 
 
+def _latest_self_message(thread: dict, *, account: str, thread_id: str, own: set[str]):
+    """The user's most-recent SENT message in a thread, as an InboxMessage (or
+    None if the user never sent in it). Truncates the thread at that message so
+    the shared parser treats it as the 'latest' + captures the prior turns."""
+    from app.agent.inbox_fetch import _inbox_message_from_thread
+    from app.core.sender import extract_email
+
+    msgs = thread.get("messages") or []
+    def _from(m):
+        for h in ((m.get("payload") or {}).get("headers") or []):
+            if (h.get("name") or "").lower() == "from":
+                return h.get("value") or ""
+        return ""
+    idx = None
+    for i, m in enumerate(msgs):
+        if (extract_email(_from(m)) or "").lower() in own:
+            idx = i
+    if idx is None:
+        return None
+    return _inbox_message_from_thread({**thread, "messages": msgs[: idx + 1]}, account=account, thread_id=thread_id)
+
+
+def scan_sent_for_self_scheduled(
+    database_url: str | None,
+    account: str,
+    *,
+    account_emails: list[str] | None = None,
+    model: str = "cloud",
+    tz: str = "UTC",
+    window_days: int = 2,
+    max_threads: int = 15,
+) -> int:
+    """Scan recently-SENT threads for a meeting the USER confirmed in their own
+    reply and queue invites for approval. Needed because ``fetch_unread`` skips
+    any thread whose latest message is the user's — so a self-confirmed meeting
+    never reaches the inbound sweep loop. Bounded (window + cap) and fully
+    failure-isolated. Returns the number of events queued."""
+    if not database_url:
+        return 0
+    own = {e.lower() for e in (account_emails or [])}
+    queued = 0
+    try:
+        from app.agent import event_store
+        from app.ingestion.adapters import get_google_source
+
+        source = get_google_source()
+        threads = source.search_threads(
+            account=account, query=f"in:sent newer_than:{window_days}d", max_threads=max_threads
+        ) or []
+    except Exception as exc:
+        logger.warning("self-scheduled sent-scan: thread search failed: %s", exc)
+        return 0
+
+    for t in threads:
+        tid = t.get("id") or t.get("threadId") or t.get("thread_id")
+        if not tid or event_store.get_event_by_thread(database_url, tid):
+            continue  # already queued/handled this thread
+        try:
+            thread = source.get_thread(account=account, thread_id=tid)
+            msg = _latest_self_message(thread, account=account, thread_id=tid, own=own)
+        except Exception:
+            continue
+        if msg is None:
+            continue
+        if _maybe_detect_self_scheduled(
+            database_url, account, msg, account_emails=account_emails, model=model, tz=tz
+        ):
+            queued += 1
+    return queued
+
+
 def refresh_stale_meeting_drafts(database_url: str | None, account: str) -> dict[str, int]:
     """Re-draft queued meeting replies whose proposed slots went stale (b264).
 
@@ -1436,15 +1507,9 @@ def _run_sweep(
                 model=cal_cfg.get("auto_confirm_model", "cloud"),
             ):
                 events_queued += 1
-            # The user's OWN sent reply confirming a meeting (incl. a manual Gmail
-            # reply) → queue the invite too. Only on self-sent messages.
-            elif cal_cfg.get("confirm_from_self") and msg.sender_email and \
-                    msg.sender_email.lower() in {e.lower() for e in _account_emails}:
-                if _maybe_detect_self_scheduled(
-                    database_url, account, msg, account_emails=_account_emails,
-                    model=cal_cfg.get("auto_confirm_model", "cloud"), tz=cal_cfg.get("tz", "UTC"),
-                ):
-                    events_queued += 1
+        # NB: self-confirmed meetings (the user's OWN sent reply) are handled by
+        # the SENT-mail scan after this loop — fetch_unread drops any thread whose
+        # latest message is the user's, so they never reach this inbound loop.
 
         # Outreach rules run BEFORE the needs-reply gate: the matched message is
         # a website lead-form notification (typically automation the gate would
@@ -1856,6 +1921,18 @@ def _run_sweep(
         )
     except Exception as exc:
         logger.warning("auto-promote skip_senders failed: %s", exc)
+
+    # Self-confirmed meetings: scan recently-SENT threads for a meeting the user
+    # confirmed in their own reply (fetch_unread drops those, so the inbound loop
+    # can't see them) and queue invites for approval. Gated; failure-isolated.
+    if cal_cfg.get("auto_confirm") and cal_cfg.get("confirm_from_self"):
+        try:
+            events_queued += scan_sent_for_self_scheduled(
+                database_url, account, account_emails=_account_emails,
+                model=cal_cfg.get("auto_confirm_model", "cloud"), tz=cal_cfg.get("tz", "UTC"),
+            )
+        except Exception as exc:
+            logger.warning("self-scheduled sent-scan failed: %s", exc)
 
     # Tiered auto-push: opt-in, dry-run by default, whitelist-gated. Stays
     # inside the never-send boundary (writes Gmail Drafts only). Failure-isolated.
