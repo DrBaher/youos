@@ -65,3 +65,13 @@ def test_lowercase_capitalized():
 
 def test_single_char():
     assert first_name_from_display_name("A") == "A"
+
+
+def test_first_name_handles_last_comma_first():
+    """Outlook 'Last, First' → the given name is after the comma (live bug:
+    'Feichtner, Franz' greeted 'Hi Feichtner'). 'First Last, Suffix' unaffected."""
+    from app.core.sender import first_name_from_display_name as f
+    assert f("Feichtner, Franz") == "Franz"
+    assert f("Rickert, Dale") == "Dale"
+    assert f("Franz Feichtner, PhD") == "Franz"   # suffix, not surname-first
+    assert f("Sarah Mitchell") == "Sarah"          # no comma unaffected

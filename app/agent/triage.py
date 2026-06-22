@@ -478,6 +478,29 @@ def _sender_proposed_specific_time(body: str | None) -> bool:
     return bool(body and _SPECIFIC_TIME_RE.search(body[:1200]))
 
 
+# An actual REQUEST to schedule — distinct from merely mentioning a meeting. The
+# intent classifier fires "meeting_request" on the bare word "meeting" (e.g. "as
+# presented in the consortium meeting"), which made drafts propose open slots
+# unprompted on mail that wasn't asking to meet. Require explicit scheduling
+# language before we offer times.
+_REQUEST_TO_MEET_RE = re.compile(
+    r"\b(?:can|could|shall|would|may)\s+we\b[^?.!]{0,40}\b(?:meet|chat|talk|sync|connect|catch[\s-]?up|call|jump|hop|grab)\b"
+    r"|\blet'?s\s+(?:meet|chat|sync|connect|catch[\s-]?up|set\s*up|find\s+(?:a\s+)?time|schedule|hop|jump|grab)\b"
+    r"|\b(?:are|will|would)\s+you\s+(?:be\s+)?(?:free|available|around)\b"
+    r"|\byour\s+availability\b|\bwhen\s+(?:are\s+you|works|would\s+work|suits)\b"
+    r"|\bfind\s+(?:a\s+|some\s+)?time\b|\bset\s*up\s+a\s+(?:call|meeting|chat|sync)\b"
+    r"|\bschedule\s+a\s+(?:call|meeting|chat|sync|time)\b|\bbook\s+a\s+(?:call|meeting|slot|time)\b"
+    r"|\b(?:do\s+you\s+have|got)\s+time\s+(?:to|for)\b|\bhop\s+on\s+a\s+(?:call|quick\s+call)\b"
+    r"|\bhappy\s+to\s+(?:meet|chat|call|jump|hop|connect)\b|\b(?:free|available)\s+(?:to|for)\s+(?:a\s+)?(?:call|chat|meeting|sync)\b"
+    r"|\bpropose\s+(?:a\s+|some\s+)?times?\b|\bsend\s+(?:me\s+)?(?:your|some)\s+(?:availability|times?|slots?)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_request_to_meet(body: str | None) -> bool:
+    return bool(body and _REQUEST_TO_MEET_RE.search(body[:1500]))
+
+
 def _calendar_slot_note(
     account: str, *, cal_cfg: dict[str, Any] | None = None, exclude_busy=None,
     inbound_body: str | None = None,
@@ -498,6 +521,12 @@ def _calendar_slot_note(
     # The sender proposed/held a specific time ("same time and day", "how about
     # Thursday at 3") — respond to THAT, don't offer our own slots over it.
     if _sender_proposed_specific_time(inbound_body):
+        return None, []
+    # Only offer slots when the inbound is ACTUALLY asking to schedule — not just
+    # mentioning a meeting (the loose intent classifier fires on "consortium
+    # meeting"). When inbound_body is None (stale-refresh path) the meeting was
+    # already identified earlier, so this gate doesn't apply.
+    if inbound_body is not None and not _is_request_to_meet(inbound_body):
         return None, []
     try:
         from app.agent.calendar import format_slots, propose_open_slot_intervals

@@ -68,8 +68,10 @@ def test_personal_facts_always_included_and_framed():
     assert "Your preference (sign-off)" in out
 
 
-def test_lookup_facts_returns_personal(tmp_path):
-    """lookup_facts always returns type='personal' rows (alongside user_pref)."""
+def test_lookup_facts_personal_only_on_personal_topic(tmp_path):
+    """`personal` facts surface ONLY when the inbound raises a personal topic —
+    not on unrelated business mail (which made the model volunteer them, e.g.
+    "Newborn at home" on a cost-report email)."""
     import sqlite3
 
     from app.generation.service import lookup_facts
@@ -82,5 +84,11 @@ def test_lookup_facts_returns_personal(tmp_path):
     conn.execute("INSERT INTO memory (type,key,fact) VALUES ('personal','home','You live in Vienna 1030.')")
     conn.commit()
     conn.row_factory = sqlite3.Row
-    facts = lookup_facts(sender=None, inbound_text="anything", database_url=f"sqlite:///{db}", conn=conn)
-    assert any(f["type"] == "personal" and "Vienna" in f["fact"] for f in facts)
+
+    def _personal(text):
+        return any(f["type"] == "personal" for f in lookup_facts(
+            sender=None, inbound_text=text, database_url=f"sqlite:///{db}", conn=conn))
+
+    assert not _personal("Please update your cost reporting xls by 10 July.")  # business → excluded
+    assert _personal("Hope you're well! How's the family?")                    # personal → included
+    assert _personal("Sorry to hear, hope she gets better soon.")

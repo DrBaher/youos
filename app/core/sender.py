@@ -50,6 +50,17 @@ def first_name_from_display_name(display_name: str | None) -> str | None:
     if not name:
         return None
 
+    # "Last, First" (Outlook directory format) → the given name is AFTER the
+    # comma. Distinguish from "First Last, Suffix" (e.g. "Franz Feichtner, PhD"):
+    # a single token before the comma = surname-first, so take the part after.
+    if "," in name:
+        before, _, after = name.partition(",")
+        before, after = before.strip(), after.strip()
+        if before and after and len(before.split()) == 1:
+            name = after            # "Feichtner, Franz" → "Franz"
+        else:
+            name = before or name   # "Franz Feichtner, PhD" → "Franz Feichtner"
+
     # Take first word as first name
     first = name.split()[0]
     # Remove any trailing punctuation
