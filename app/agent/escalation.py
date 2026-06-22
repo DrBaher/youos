@@ -27,12 +27,17 @@ from dataclasses import dataclass, field
 # Money / legal / commitment language. A match means a human should decide,
 # even on a high-quality draft. Word-boundaried so "contractor" doesn't trip
 # "contract" and "legalese" doesn't trip "legal".
+# NOTE: "confidential" was REMOVED (2026-06-22) — it's dominated by boilerplate
+# email-disclaimer footers ("This email is confidential and may be privileged…")
+# present on most corporate mail, so it held plenty of pure-scheduling replies
+# (a meeting reply from M42 with a confidentiality footer). Genuine money/legal
+# is still caught by the 20+ actionable terms below.
 _HIGH_STAKES_PAT = re.compile(
     r"\b("
     r"contract|agreement|nda|non-disclosure|invoice|payment|pay|wire|"
     r"transfer|refund|deposit|salary|compensation|equity|offer letter|"
     r"lawsuit|legal|attorney|lawyer|counsel|liability|litigation|"
-    r"terminate|termination|resign|settlement|confidential|"
+    r"terminate|termination|resign|settlement|"
     r"purchase order|deadline|overdue|past due|penalty|breach"
     r")\b",
     re.IGNORECASE,
