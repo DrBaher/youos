@@ -101,11 +101,16 @@ def get_event_by_thread(database_url: str, thread_id: str) -> dict[str, Any] | N
     so the card can render pending / created (with Meet link) / dismissed."""
     if not thread_id:
         return None
+    from app.agent.store import normalize_thread_id
+
+    norm = normalize_thread_id(thread_id)
+    ids = [thread_id] if norm == thread_id else [thread_id, norm]
+    placeholders = ",".join("?" * len(ids))
     with closing(_connect(database_url)) as conn:
         row = conn.execute(
-            "SELECT * FROM agent_pending_events WHERE thread_id = ? "
+            f"SELECT * FROM agent_pending_events WHERE thread_id IN ({placeholders}) "
             "ORDER BY created_at DESC, id DESC LIMIT 1",
-            (thread_id,),
+            ids,
         ).fetchone()
     return _row_to_dict(row) if row else None
 

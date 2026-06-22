@@ -429,3 +429,24 @@ def test_amend_refuses_to_resurrect_a_dismissed_row(db_url):
     rid2 = store.upsert_pending(db_url, **{**_DEFAULTS, "message_id": "m-amendable"})
     assert store.mark_amended(db_url, rid2, amended_draft="ok edit", amended_by="user") is True
     assert store.get(db_url, rid2)["status"] == "amended"
+
+
+def test_normalize_thread_id_permalink_to_hex():
+    """Gmail's add-on hands a legacy 'thread-f:<decimal>' permalink id (when a
+    draft is open) instead of the API hex id — normalize it so by-thread lookups
+    match (live bug: a pushed draft showed 'no draft')."""
+    from app.agent.store import normalize_thread_id
+    assert normalize_thread_id("thread-f:1868693884786093199") == "19eeef2ffc9eac8f"
+    assert normalize_thread_id("thread-a:1868693884786093199") == "19eeef2ffc9eac8f"
+    assert normalize_thread_id("19eeef2ffc9eac8f") == "19eeef2ffc9eac8f"   # hex unchanged
+    assert normalize_thread_id(None) is None
+
+
+def test_get_by_thread_matches_permalink_id(db_url):
+    """get_by_thread finds a row when queried with the legacy 'thread-f:' permalink
+    id (what the add-on sends when a draft is open) — the live "no draft" bug."""
+    from app.agent import store
+
+    store.upsert_pending(db_url, **{**_DEFAULTS, "message_id": "m1", "thread_id": "19eeef2ffc9eac8f"})
+    assert store.get_by_thread(db_url, "thread-f:1868693884786093199")["thread_id"] == "19eeef2ffc9eac8f"
+    assert store.get_by_thread(db_url, "19eeef2ffc9eac8f") is not None

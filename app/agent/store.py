@@ -9,6 +9,7 @@ re-draft the same inbound.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -181,20 +182,40 @@ def get(database_url: str, row_id: int) -> dict[str, Any] | None:
     return _row_to_dict(row) if row else None
 
 
+_THREAD_PERMALINK_RE = re.compile(r"^thread-[far]:(\d+)$")
+
+
+def normalize_thread_id(thread_id: str | None) -> str | None:
+    """Normalize a Gmail thread id to the API hex form YouOS stores.
+
+    Gmail's add-on event sometimes hands the LEGACY permalink id
+    ``thread-f:<decimal>`` (seen when a draft is open in the thread) instead of
+    the API hex id — e.g. ``thread-f:1868693884786093199`` ↔ ``19eeef2ffc9eac8f``.
+    A by-thread lookup with the permalink form then 404s and the panel wrongly
+    shows "no draft". Convert ``thread-[f|a|r]:<decimal>`` → hex; no-op otherwise."""
+    if not thread_id:
+        return thread_id
+    m = _THREAD_PERMALINK_RE.match(thread_id)
+    return format(int(m.group(1)), "x") if m else thread_id
+
+
 def get_by_thread(database_url: str, thread_id: str) -> dict[str, Any] | None:
     """The most recent YouOS row for a Gmail thread, by the thread's Gmail id.
 
     Entry point for the Gmail Add-on (b280), which knows the open thread's id but
     not YouOS's row id. Returns the latest row regardless of status so the panel
     can render drafted / sent / dismissed state; None when YouOS has nothing for
-    the thread."""
+    the thread. Accepts the legacy ``thread-f:`` permalink id too (normalized)."""
     if not thread_id:
         return None
+    norm = normalize_thread_id(thread_id)
+    ids = [thread_id] if norm == thread_id else [thread_id, norm]
+    placeholders = ",".join("?" * len(ids))
     with closing(_connect(database_url)) as conn:
         row = conn.execute(
-            "SELECT * FROM agent_pending_drafts WHERE thread_id = ? "
+            f"SELECT * FROM agent_pending_drafts WHERE thread_id IN ({placeholders}) "
             "ORDER BY created_at DESC, id DESC LIMIT 1",
-            (thread_id,),
+            ids,
         ).fetchone()
     return _row_to_dict(row) if row else None
 
