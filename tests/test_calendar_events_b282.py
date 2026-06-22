@@ -817,3 +817,40 @@ def test_detect_self_scheduled_excludes_self_from_attendees():
         complete_fn=lambda p: "FINAL: 2026-06-24T15:00:00+00:00",
     )
     assert r is not None and r.attendees == ["them@y.com"]
+
+
+def test_detect_self_scheduled_no_signal_skips_model():
+    """No clock time / scheduling word → return None WITHOUT calling the model."""
+    from app.agent.meeting_confirm import detect_self_scheduled
+    called = {"n": 0}
+    def _fn(p):
+        called["n"] += 1
+        return "FINAL: 2026-06-24T15:00:00+02:00"
+    r = detect_self_scheduled(
+        subject="Re: docs", body="Thanks, received the files. Talk soon.",
+        recipients=["x@y.com"], account_emails=set(), now_iso="2026-06-22", tz="UTC", complete_fn=_fn,
+    )
+    assert r is None and called["n"] == 0
+
+
+def test_scan_sent_for_self_scheduled_iterates_and_dedups(monkeypatch, db):
+    """The sent-scan walks sent threads, skips those already having an event, and
+    queues via the detector for the rest."""
+    from app.agent import event_store, triage
+    url, _ = db
+    fake_threads = [{"id": "t1"}, {"id": "t2"}, {"id": "t3"}]
+
+    class _Src:
+        def search_threads(self, **k): return fake_threads
+        def get_thread(self, **k): return {"messages": []}
+
+    monkeypatch.setattr("app.ingestion.adapters.get_google_source", lambda *a, **k: _Src())
+    # t2 already has an event → must be skipped (no detection attempted)
+    monkeypatch.setattr(event_store, "get_event_by_thread", lambda u, tid: {"id": 1} if tid == "t2" else None)
+    monkeypatch.setattr(triage, "_latest_self_message", lambda thread, **k: object())
+    seen = []
+    monkeypatch.setattr(triage, "_maybe_detect_self_scheduled",
+                        lambda u, acct, msg, **k: seen.append(k) or True)
+    n = triage.scan_sent_for_self_scheduled(url, "me@x.com", account_emails=["me@x.com"])
+    assert n == 2          # t1 + t3 (t2 deduped)
+    assert len(seen) == 2

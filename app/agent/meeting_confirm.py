@@ -34,6 +34,16 @@ _MAX_TOKENS_SELF_LOCAL = 64
 _MAX_TOKENS_SELF_CLOUD = 256
 _ISO_DT_RE = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\s*[+-]\d{2}:?\d{2})?")
 _DEFAULT_MEETING_MINUTES = 30
+# Cheap pre-filter for self-scheduled detection: a sent message worth asking the
+# model about must contain a clock time OR scheduling vocabulary. Skips the
+# model (cost + false positives) on the 90% of sent mail that isn't arranging a
+# meeting. Requires an explicit time signal so "see you at the conference"
+# (no clock time) doesn't even reach the model.
+_MEETING_SIGNAL_RE = re.compile(
+    r"\b\d{1,2}\s*(?::\d{2})?\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\b|"
+    r"\b(?:meet|meeting|call|invite|calendar|schedul|appointment|catch[\s-]?up)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -273,6 +283,10 @@ def detect_self_scheduled(
             return None
 
     snippet = " ".join((body or "").split())[:_BODY_SNIPPET_CHARS]
+    # Cheap gate: no clock time / scheduling word → not a meeting confirmation;
+    # don't spend a model call (and can't extract a time anyway).
+    if not _MEETING_SIGNAL_RE.search(snippet):
+        return None
     prompt = (
         f"Today is {now_iso or '(unknown)'}. The user's timezone is {tz}.\n"
         "Below is a message the USER just sent. Does it CONFIRM or PROPOSE a "
