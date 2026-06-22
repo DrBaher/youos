@@ -677,6 +677,20 @@ def _extract_content_words(text: str) -> list[str]:
     return [w for w in words if w not in _MEMORY_STOPWORDS]
 
 
+# Personal-topic gate for ``personal`` facts: only surface the user's family/
+# location facts when the inbound actually raises something personal (a
+# well-wish, asking after the family, a life event) — so they ground a reply
+# when relevant but are never volunteered on unrelated business mail.
+_PERSONAL_TOPIC_RE = re.compile(
+    r"\b(family|wife|husband|spouse|partner|kid|kids|child|children|son|daughter|"
+    r"baby|newborn|pregnan|maternity|paternity|sick|ill|unwell|recover|"
+    r"feel better|get better|hospital|vacation|holiday|weekend|wedding|congrat|"
+    r"how are you|take care)\b|hope you(?:'re| are)?\s+(?:well|doing|keeping)|"
+    r"hope all is well|sorry to hear",
+    re.IGNORECASE,
+)
+
+
 def lookup_facts(
     *,
     sender: str | None,
@@ -698,11 +712,22 @@ def lookup_facts(
         conn.row_factory = sqlite3.Row
     facts: list[dict[str, Any]] = []
     try:
-        # 1. User preferences + personal circumstances — always include
+        # 1. User preferences — always include.
         rows = conn.execute(
-            "SELECT type, key, fact FROM memory WHERE type IN ('user_pref', 'personal') ORDER BY updated_at DESC"
+            "SELECT type, key, fact FROM memory WHERE type = 'user_pref' ORDER BY updated_at DESC"
         ).fetchall()
         facts.extend({"type": r["type"], "key": r["key"], "fact": r["fact"]} for r in rows)
+
+        # 1b. Personal circumstances (family, location) — ONLY when the inbound
+        # raises a personal topic. Always-injecting made the model VOLUNTEER them
+        # unprompted ("Newborn at home — will need to prioritize" on a cost-report
+        # email). They're for grounding a reply WHEN the sender brings something
+        # up (a well-wish, asking after the family), not facts to insert proactively.
+        if _PERSONAL_TOPIC_RE.search(inbound_text or ""):
+            prows = conn.execute(
+                "SELECT type, key, fact FROM memory WHERE type = 'personal' ORDER BY updated_at DESC"
+            ).fetchall()
+            facts.extend({"type": r["type"], "key": r["key"], "fact": r["fact"]} for r in prows)
 
         # 2. Contact facts for sender email
         if sender:

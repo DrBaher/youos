@@ -1197,3 +1197,19 @@ def test_auto_push_high_stakes_assessed_on_new_content_only(monkeypatch):
     assert assess_stakes("Re: intro", body) == "high"  # full body trips it
     # extract_new_content (no 50-char fallback) judges the short new reply alone.
     assert assess_stakes("Re: intro", extract_new_content(body)) == "low"
+
+
+def test_slot_proposer_requires_actual_meeting_request():
+    """Don't offer open slots just because the word 'meeting' appears (the intent
+    classifier fires on 'consortium meeting'). Live bug: a cost-report email got
+    unprompted meeting slots."""
+    from app.agent.triage import _calendar_slot_note, _is_request_to_meet
+    assert not _is_request_to_meet(
+        "As presented in the consortium meeting, please update your cost reporting xls by 10 July.")
+    assert _is_request_to_meet("Can we meet next week? Let me know your availability.")
+    cfg = {"enabled": True, "tz": "Europe/Vienna", "business_days": 5,
+           "work_start_hour": 9, "work_end_hour": 17, "slot_minutes": 30, "max_slots": 3}
+    # A mere mention of a meeting → no slot note injected.
+    note, slots = _calendar_slot_note("me@x.com", cal_cfg=cfg,
+                                      inbound_body="As discussed in the consortium meeting, send the cost sheets.")
+    assert note is None and slots == []
