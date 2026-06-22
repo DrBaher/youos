@@ -1183,3 +1183,17 @@ def test_sender_specific_time_suppresses_slot_offer():
     note, slots = _calendar_slot_note("me@x.com", cal_cfg=cfg,
                                       inbound_body="Hey mate, how about next week same time and day?")
     assert note is None and slots == []
+
+
+def test_auto_push_high_stakes_assessed_on_new_content_only(monkeypatch):
+    """A benign reply on a thread whose quoted tail/signature mentions money/legal
+    must not be held as high-stakes — assess only the quote-stripped new message."""
+    from app.agent.escalation import assess_stakes
+    from app.core.text_utils import extract_new_content
+    body = ("Happy to meet Monday or Tuesday afternoon.\n\n"
+            "On Mon, Jun 9, 2026 at 9:18 AM Alex Smith <alex@x.com> wrote:\n"
+            "> Per the attached agreement, the contract payment is due. "
+            "Handelsgericht Wien, FN 458726y")
+    assert assess_stakes("Re: intro", body) == "high"  # full body trips it
+    # extract_new_content (no 50-char fallback) judges the short new reply alone.
+    assert assess_stakes("Re: intro", extract_new_content(body)) == "low"
