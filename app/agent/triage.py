@@ -739,6 +739,7 @@ def _maybe_auto_push(
 
     from app.agent.push import push_pending_row
     from app.agent.store import count_pushed_today
+    from app.core.text_utils import extract_new_content
 
     remaining: int = max(0, cap - count_pushed_today(database_url, account=account))
 
@@ -765,9 +766,12 @@ def _maybe_auto_push(
             )
             continue
         # High-stakes mail (money / legal / firm commitments) is held for human
-        # review even when it would otherwise auto-push — the escalation policy
-        # never lets these through without a person deciding.
-        if assess_stakes(d.message.subject, d.message.body) == "high":
+        # review even when it would otherwise auto-push. Assess only the NEW
+        # message (extract_new_content — no 50-char fallback, so even a short
+        # reply is judged on its own text): a benign scheduling reply was being
+        # held because the quoted thread tail / Medicus legal footer
+        # ("Handelsgericht … FN", an earlier "agreement") tripped money/legal.
+        if assess_stakes(d.message.subject, extract_new_content(d.message.body)) == "high":
             logger.info("auto-push: row %s held — high-stakes content", row_id)
             continue
         sender_email = d.message.sender_email
