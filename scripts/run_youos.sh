@@ -31,6 +31,15 @@ HOST="${YOUOS_HOST:-127.0.0.1}"
 PORT="${YOUOS_PORT:-8765}"
 APP_MODULE="${YOUOS_APP_MODULE:-app.main:app}"
 
+# Boot banner → launchd.stderr.log. Makes a (re)start auditable: the SHA is the
+# code now serving and config_mtime shows whether the latest youos_config.yaml
+# was picked up. A restart that silently no-ops (old process keeps answering
+# health checks) leaves NO fresh banner — that's the tell. ``$$`` is this shell's
+# PID, which `exec` below hands to uvicorn, so it's the live server PID.
+_GIT_SHA="$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+_CFG_MTIME="$(stat -f '%Sm' "$YOUOS_DATA_DIR/youos_config.yaml" 2>/dev/null || echo n/a)"
+echo "[youos boot] pid=$$ sha=$_GIT_SHA port=$PORT config_mtime=\"$_CFG_MTIME\" at $(date '+%Y-%m-%d %H:%M:%S')" >&2
+
 # --limit-concurrency bounds total in-flight requests so a flood of the
 # expensive draft endpoints can't exhaust the shared sync threadpool and freeze
 # the single-worker server (generous ceiling for a single-user instance).
