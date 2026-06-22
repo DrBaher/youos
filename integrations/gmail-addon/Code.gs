@@ -523,7 +523,13 @@ function _draftCard(row) {
     actSection.addWidget(CardService.newTextButton().setText('Mark sent manually')
       .setOnClickAction(CardService.newAction().setFunctionName('actMarkSent').setParameters({ rowId: rid })));
     builder.addSection(actSection);
+  }
 
+  // Refine + Dismiss-with-feedback are available for ANY non-dismissed row —
+  // including an already-pushed ('sent') draft — so a pushed cold-outreach draft
+  // can be re-drafted with a prompt or dismissed (which also removes the Gmail
+  // draft + feeds the tuning loop). Push/Save/Mark-sent stay actionable-only.
+  if (row.status !== 'dismissed') {
     // Section 3 — generate / refine. For a surfaced (no-draft) thread this is
     // "Draft it" (also the strongest feedback: you DID want a reply here); once
     // a draft exists it becomes "Refine with a prompt".
@@ -650,8 +656,11 @@ function actDismiss(e) {
   if (note) { payload.note = note; }
   var res = _api('post', '/api/agent/pending/' + rowId + '/dismiss', payload);
   if (res.code !== 200) { return _notify('Dismiss failed (' + res.code + ')'); }
+  var removed = false;
+  try { removed = JSON.parse(res.body).gmail_draft_removed === true; } catch (e) {}
+  var msg = (reason ? ('Dismissed (' + reason + ')') : 'Dismissed') + (removed ? ' · removed the Gmail draft' : '');
   return CardService.newActionResponseBuilder()
-    .setNotification(CardService.newNotification().setText(reason ? ('Dismissed (' + reason + ')') : 'Dismissed'))
+    .setNotification(CardService.newNotification().setText(msg))
     .setNavigation(CardService.newNavigation().updateCard(_dismissedCard(rowId, p.source, p.account))).build();
 }
 
