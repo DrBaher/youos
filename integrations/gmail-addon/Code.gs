@@ -326,9 +326,10 @@ function onGmailMessage(e) {
   var evt = _eventForThread(threadId);
   if (evt) { cards.push(_eventCard(evt)); }
 
-  var res;
+  var res, lookupCode = 0;
   try {
     res = _api('get', '/api/agent/pending/by_thread/' + encodeURIComponent(threadId));
+    lookupCode = res.code;
   } catch (err) {
     if (cards.length) { return cards; }
     return _errorCard('Can’t reach YouOS', 'Check the Funnel URL in Settings.\n\n' + _esc(err));
@@ -342,14 +343,20 @@ function onGmailMessage(e) {
   }
 
   if (cards.length) { return cards; }
-  return _noDraftCard(threadId);
+  return _noDraftCard(threadId, lookupCode);
 }
 
 // Contextual card when YouOS has nothing queued for the open thread: offer to
 // draft a reply on demand (with an optional steer).
-function _noDraftCard(threadId) {
+function _noDraftCard(threadId, lookupCode) {
   var section = CardService.newCardSection()
     .addWidget(CardService.newTextParagraph().setText('YouOS has no draft for this thread yet.'));
+  // Diagnostic: the exact thread id this panel queried + the lookup result, so a
+  // "no draft" that should have matched is debuggable (a draft pushed to Gmail
+  // but the panel can't find it = the queried id differs from the stored one).
+  section.addWidget(CardService.newDecoratedText().setWrapText(true)
+    .setText('<font color="#9aa0a6">thread ' + _esc(String(threadId || '?')) +
+             ' · lookup HTTP ' + (lookupCode || '?') + '</font>'));
   if (threadId) {
     section.addWidget(CardService.newTextInput().setFieldName('instruction')
       .setTitle('Optional instruction').setHint('e.g. propose Thursday; decline politely').setMultiline(true));
