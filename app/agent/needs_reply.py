@@ -92,6 +92,23 @@ CALENDAR_SUBJECT_PAT = re.compile(
     re.IGNORECASE,
 )
 
+# Calendar invites whose SUBJECT is the bare event title (no "Invitation:"
+# prefix) — Outlook/Teams/Exchange invites, which the subject pattern misses, so
+# they were getting (nonsensical) email drafts. These carry an unmistakable
+# meeting-invite body block: an iTIP/iCal payload, or a Teams/Zoom/Google-Meet
+# join block. All markers are strongly invite-specific (a casual "let's hop on a
+# call" has none of them), so a body match → hard skip (handled in the calendar
+# UI, never an email reply).
+CALENDAR_BODY_PAT = re.compile(
+    r"BEGIN:VCALENDAR|^METHOD:REQUEST"
+    r"|microsoft\s+teams[\s-]+(?:meeting|besprechung)"
+    r"|teams\.microsoft\.com/(?:l/meetup-join|meet/)"
+    r"|zoom\.us/j/\d{6,}"
+    r"|meet\.google\.com/[a-z]{3,}-[a-z]{3,}-[a-z]{3,}"
+    r"|\bbesprechungs-?id\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+
 # Transactional template indicator. Matched in *either* subject or body —
 # fires when a message reads as a confirmation/receipt template (booking
 # confirmations, order receipts, appointment confirmations, etc.). Soft
@@ -480,6 +497,10 @@ def classify(
     _cclass = (msg.headers.get("content-class") or "").lower()
     if "text/calendar" in _ctype or "calendarmessage" in _cclass:
         return NeedsReplyVerdict(False, 0.0, ["calendar message (text/calendar / iTIP)"])
+    # Bare-subject invites (Outlook/Teams/Exchange): detect the meeting-invite
+    # body block (iCal / Teams / Zoom / Meet) the subject pattern can't see.
+    if msg.body and CALENDAR_BODY_PAT.search(msg.body[:2000]):
+        return NeedsReplyVerdict(False, 0.0, ["calendar invite (meeting body — accept/decline in the calendar, no email reply)"])
     if not msg.body.strip():
         return NeedsReplyVerdict(False, 0.0, ["empty body"])
 
