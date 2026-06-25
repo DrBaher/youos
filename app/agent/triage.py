@@ -492,7 +492,15 @@ _REQUEST_TO_MEET_RE = re.compile(
     r"|\bschedule\s+a\s+(?:call|meeting|chat|sync|time)\b|\bbook\s+a\s+(?:call|meeting|slot|time)\b"
     r"|\b(?:do\s+you\s+have|got)\s+time\s+(?:to|for)\b|\bhop\s+on\s+a\s+(?:call|quick\s+call)\b"
     r"|\bhappy\s+to\s+(?:meet|chat|call|jump|hop|connect)\b|\b(?:free|available)\s+(?:to|for)\s+(?:a\s+)?(?:call|chat|meeting|sync)\b"
-    r"|\bpropose\s+(?:a\s+|some\s+)?times?\b|\bsend\s+(?:me\s+)?(?:your|some)\s+(?:availability|times?|slots?)\b",
+    r"|\bpropose\s+(?:a\s+|some\s+)?times?\b|\bsend\s+(?:me\s+)?(?:your|some)\s+(?:availability|times?|slots?)\b"
+    # Negotiation phrasing where the SENDER offers their availability and asks
+    # yours ("I'm available 10-12 … what time works best for you?") — here we
+    # MUST offer your calendar-free slots so the draft doesn't blindly agree to a
+    # time you're busy in (live Silvia bug).
+    r"|\bwhat\s+(?:time|times)\s+(?:works?|suits?|is\s+best|would\s+(?:work|suit))\b"
+    r"|\bwhat\s+works\s+(?:for\s+you|best|for\s+me)\b|\bwhich\s+(?:time|slot)\s+(?:works?|suits?)\b"
+    r"|\blet\s+me\s+know\b[^?.!]{0,30}\b(?:works?|time|availab|slot|suits?)\b"
+    r"|\b(?:i'?m|i\s+am)\s+(?:available|free)\b[^?.!]{0,80}\bwhat\b",
     re.IGNORECASE,
 )
 
@@ -545,7 +553,10 @@ def _calendar_slot_note(
     note = (
         f"The sender is asking to meet. {_CAL_SLOT_MARKER} {format_slots(slots)}. "
         f"Offer 2–3 of these specific times (times are in {cfg['tz']}); "
-        "do not invent any other availability."
+        "do not invent any other availability. If the sender PROPOSED a specific "
+        "time, agree to it ONLY if it falls within the free times above; if it "
+        "conflicts, say so briefly and propose one of the free times instead — "
+        "never confirm a time that isn't in the list above."
     )
     return note, slots
 

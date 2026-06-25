@@ -1213,3 +1213,15 @@ def test_slot_proposer_requires_actual_meeting_request():
     note, slots = _calendar_slot_note("me@x.com", cal_cfg=cfg,
                                       inbound_body="As discussed in the consortium meeting, send the cost sheets.")
     assert note is None and slots == []
+
+
+def test_slot_proposer_fires_on_availability_negotiation():
+    """When the sender offers their availability and asks yours ("I'm free 10-12,
+    what time works best for you?"), offer your calendar-free slots so the draft
+    doesn't blindly agree to a time you're busy in (live Silvia bug). Mentions of
+    a meeting (Franz) and "same time" (Jürgen) still don't trigger it."""
+    from app.agent.triage import _is_request_to_meet
+    assert _is_request_to_meet("I am available from 10-12 tomorrow. What time works best for you?")
+    assert _is_request_to_meet("Let me know what works for your schedule.")
+    assert not _is_request_to_meet("As presented in the consortium meeting, send the cost sheets.")
+    assert not _is_request_to_meet("Thanks for the update, looks good.")

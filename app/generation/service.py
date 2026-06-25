@@ -832,7 +832,11 @@ _COURTESY_RULE = (
     "any personal circumstances in the thread (a sick child, a new baby, travel) "
     "are YOURS — respond from your own perspective (thank them, give a one-line "
     "update); never flip a well-wish back onto the sender as if it were about "
-    "their family. Use the [FACTS CONTEXT] 'About you' facts to get this right."
+    "their family. Use the [FACTS CONTEXT] 'About you' facts to get this right. "
+    "Check the thread for what you ALREADY did: if an earlier message of yours "
+    "already sent, shared, or completed what the sender is asking about (e.g. you "
+    "replied 'here it is' or attached it), acknowledge it's already done — do NOT "
+    "re-promise to do it again ('I'll send it')."
 )
 
 # Anti-over-commitment (b277). The local model freely invents firm commitments —
