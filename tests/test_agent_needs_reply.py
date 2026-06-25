@@ -922,3 +922,36 @@ def test_genuine_first_contact_without_pitch_signals_still_drafts():
         account_emails=["me@example.com"],
     )
     assert v.needs_reply, v.reasons
+
+
+def test_bare_subject_teams_invite_hard_skipped():
+    """Outlook/Teams invites carry the event title as the bare subject (no
+    'Invitation:' prefix), so the subject pattern misses them — detect the
+    meeting-invite body block instead (live bug: 'MVP Call' got a draft)."""
+    v = classify(_msg(
+        subject="MVP Call",
+        body="Microsoft Teams-Besprechung\nTeilnehmen: https://teams.microsoft.com/meet/390226928\n"
+             "Besprechungs-ID: 390 226 928 168\nPasscode: 27223697",
+    ))
+    assert not v.needs_reply
+    assert any("calendar invite" in r for r in v.reasons), v.reasons
+
+
+def test_zoom_and_meet_and_ical_invites_skipped():
+    for body in [
+        "Join Zoom Meeting\nhttps://us02web.zoom.us/j/8412345678\nMeeting ID: 841 234 5678",
+        "You're invited.\nhttps://meet.google.com/abc-defg-hij\nWhen: Tue Jun 30",
+        "BEGIN:VCALENDAR\nMETHOD:REQUEST\nBEGIN:VEVENT\nSUMMARY:Sync",
+    ]:
+        v = classify(_msg(subject="Team sync", body=body))
+        assert not v.needs_reply, body
+
+
+def test_email_mentioning_a_call_still_drafts():
+    """A normal email that merely MENTIONS a call (no meeting-invite block) must
+    still draft — don't over-skip."""
+    v = classify(_msg(
+        subject="Q3 pricing?",
+        body="Hi Baher, can you confirm the Q3 pricing? Happy to hop on a call if easier.",
+    ))
+    assert v.needs_reply, v.reasons
