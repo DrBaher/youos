@@ -169,6 +169,14 @@ _SYSTEM_PROMPT_SUFFIX_VARIANTS: list[str] = [
     "Be direct and concise: lead with the answer, skip pleasantries, and don't restate the question.",
     # variant_c: skimmable structure
     "Keep replies skimmable: short paragraphs, and bullet points for any multi-item answer. State the key point first.",
+    # variant_d (b…): warm AND brief — targets the golden warmth + brevity
+    # failures together (personal-warmth was too long AND missed warmth keywords).
+    "Be warm and personable but brief: acknowledge the person in one short line, "
+    "then get to the point in a few sentences. No filler, no over-explaining.",
+    # variant_e: keyword-faithful + tight — echo the sender's own key terms and
+    # keep it short (lifts keyword-hit without inflating length).
+    "Answer using the sender's own key terms and specifics; keep it tight — a few "
+    "sentences at most — and lead with the substantive point.",
 ]
 
 
