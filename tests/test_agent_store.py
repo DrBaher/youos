@@ -277,13 +277,20 @@ def test_list_recent_sweeps_filters_by_account(db_url):
 
 def _log(db_url, **overrides):
     """Test helper — log a sweep with sensible defaults, override what matters."""
+    from datetime import datetime, timezone
+
     from app.agent import store
 
+    # Use a CURRENT timestamp, not a hardcoded date: sweep_aggregate() filters to
+    # the last 30 days, so a fixed past date (was "2026-05-28") silently ages out
+    # of the window and turns these into time-bombs that fail once the clock
+    # passes that date + 30d.
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     defaults = dict(
         account="a@x.com", trigger="manual", window="3d", threshold=0.6,
         fetched=0, kept=0, surfaced=0, persisted=0, errors=[],
         standing_instructions_snapshot=None,
-        started_at="2026-05-28T10:00:00Z", finished_at="2026-05-28T10:00:01Z",
+        started_at=now, finished_at=now,
         duration_ms=1000,
     )
     defaults.update(overrides)
