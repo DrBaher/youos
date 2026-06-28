@@ -447,8 +447,40 @@ def run_training(args: argparse.Namespace) -> str:
     if valid_path.exists() and valid_count > 0:
         cmd.extend(["--val-batches", "1"])
 
+    # Free Metal memory for training. The warm model server holds the ~3GB base
+    # in GPU memory and mlx_lm loads it AGAIN to train — together they overran
+    # Metal memory on the Mac mini (Jun-28 nightly: "[METAL] Command buffer
+    # execution failed: Insufficient Memory", finetune exit 1). Pause the server
+    # for the duration of training, then bring it back (it re-spawns detached via
+    # start_new_session, so it outlives this short-lived subprocess and stays warm
+    # for the morning sweep). Best-effort: never let server mgmt fail the train.
+    # Stop UNCONDITIONALLY when the server is enabled — is_healthy() has a 0.5s
+    # timeout and reads False while the 4B is loading/busy, so gating on it would
+    # skip the pause exactly when the server is up. stop() is idempotent (no-op if
+    # nothing is recorded), so an unconditional stop is safe and reliable.
+    _server_was_up = False
+    try:
+        from app.core import model_server
+
+        if model_server.is_enabled():
+            print("Pausing warm model server to free Metal memory for training…")
+            model_server.stop()  # frees the ~3GB base if a server is up
+            _server_was_up = True
+    except Exception as exc:  # noqa: BLE001
+        print(f"(could not pause model server: {exc})")
+
     print(f"\nRunning: {' '.join(cmd)}\n")
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+    finally:
+        if _server_was_up:
+            try:
+                from app.core import model_server
+
+                print("Restarting warm model server after training…")
+                model_server.ensure_running()
+            except Exception as exc:  # noqa: BLE001
+                print(f"(could not restart model server: {exc})")
 
     if result.returncode != 0:
         print(f"Training failed (exit {result.returncode}):")
