@@ -266,3 +266,150 @@ def test_plain_reply_has_no_status_claims():
         inbound="Does Thursday 14:00 work for you?",
     )
     assert r.status_claims == []
+
+
+# --- b286: leaked scaffolding / placeholders (blocking) -------------------
+
+
+def test_leaked_facts_context_is_blocking():
+    r = verify_draft(
+        "Hi Leslie,\n\nMedicus is a strong fit.\n\n"
+        "[FACTS CONTEXT] About you: Based in Dubai, active in healthtech.",
+        inbound="Could Medicus be a fit for our fund?",
+    )
+    assert not r.ok
+    assert any("scaffolding" in b.lower() for b in r.blocking)
+
+
+def test_list_attached_placeholder_is_blocking():
+    r = verify_draft(
+        "Hi Theresa — slides updated. Members without access: [list attached].",
+        inbound="Please send a list of people who need access.",
+    )
+    assert not r.ok
+    assert any("placeholder" in b.lower() for b in r.blocking)
+
+
+# --- b286: invented personal/family detail (fabrication) -----------------
+
+
+def test_invented_family_detail_flagged():
+    r = verify_draft(
+        "Hi Christopher — happy to connect! Wishing you a safe trip — "
+        "new baby's arrival is a lot of energy!",
+        inbound="Great to connect. I'm on vacation until the second week of July.",
+    )
+    assert any("family" in f.lower() or "personal" in f.lower() for f in r.fabrications)
+
+
+def test_grounded_family_detail_not_flagged():
+    # The sender raised the baby first — a warm acknowledgement is correct.
+    r = verify_draft(
+        "Congrats on the new baby! Let's reconnect once you're settled.",
+        inbound="I'll be on paternity leave — our baby arrived last week!",
+    )
+    assert r.fabrications == []
+
+
+def test_reason_does_not_ground_family_via_son_substring():
+    # "reason" must NOT count as the family stem "son" (word-boundary check).
+    r = verify_draft(
+        "Thanks — our daughter's birthday kept me busy, sorry for the delay.",
+        inbound="For that reason, could you send the report this week?",
+    )
+    assert any("family" in f.lower() or "personal" in f.lower() for f in r.fabrications)
+
+
+# --- b286: hallucinated review meeting (fabrication) ---------------------
+
+
+def test_hallucinated_review_meeting_flagged():
+    r = verify_draft(
+        "Thanks for the note. We'll cover this in tomorrow's full review meeting.",
+        inbound="Do we have a date for the call yet?",
+    )
+    assert any("review meeting" in f.lower() for f in r.fabrications)
+
+
+def test_grounded_review_meeting_not_flagged():
+    r = verify_draft(
+        "Yes — let's discuss it at the review meeting on Thursday.",
+        inbound="Can we go over the numbers at the review meeting this week?",
+    )
+    assert all("review meeting" not in f.lower() for f in r.fabrications)
+
+
+# --- b286: speaker inversion (fabrication) -------------------------------
+
+
+def test_addressed_to_the_user_is_inversion():
+    r = verify_draft(
+        "Sehr geehrter Herr Hakim,\n\nwir koennen das leider nicht unterstuetzen.\n\n"
+        "Viele Gruesse, Thomas",
+        inbound="Wir unterstuetzen hier leider nicht.",
+        sender="Thomas Kloeckner <thomas@lecon.eu>",
+        user_name="Baher Al Hakim",
+        expected_language="de",
+    )
+    assert any("inversion" in f.lower() for f in r.fabrications)
+
+
+def test_signed_as_sender_is_inversion():
+    r = verify_draft(
+        "Liebe Nadine,\n\ndanke fuer die Nachricht.\n\nViele Gruesse,\nNadine",
+        inbound="Kannst du mir den Zugang schicken?",
+        sender="Nadine <nadine@medicus.ai>",
+        user_name="Baher Al Hakim",
+        expected_language="de",
+    )
+    assert any("inversion" in f.lower() for f in r.fabrications)
+
+
+def test_normal_short_reply_is_not_inversion():
+    # Greeting + one body line naming the recipient + "Thanks" must NOT trip
+    # the signed-as-sender heuristic (the b286 false-positive class).
+    r = verify_draft(
+        "Hi Marcus,\n\nThanks for the time slots — Thursday works. Looking forward!",
+        inbound="Does Thursday work? Best, Marcus",
+        sender="Marcus <marcus@msd.com>",
+        user_name="Baher Al Hakim",
+    )
+    assert all("inversion" not in f.lower() for f in r.fabrications)
+
+
+# --- b286: German status claims + invented deadlines ---------------------
+
+
+def test_german_completion_claim_flagged():
+    r = verify_draft(
+        "Kurt, danke — beide Konten sind nun abgedeckt und innerhalb der Limits.",
+        inbound="Bitte decken Sie die Konten mit ausreichenden Mitteln.",
+        expected_language="de",
+    )
+    assert any("abgedeckt" in c.lower() for c in r.status_claims)
+
+
+def test_german_completion_claim_grounded_not_flagged():
+    # The sender said it was transferred — acknowledging it is fine.
+    r = verify_draft(
+        "Danke — überwiesen ist angekommen, ich schließe den Fall.",
+        inbound="Der Betrag wurde bereits überwiesen.",
+        expected_language="de",
+    )
+    assert all("überwiesen" not in c.lower() for c in r.status_claims)
+
+
+def test_invented_eod_deadline_flagged():
+    r = verify_draft(
+        "Thanks — I'll send the numbers and demo link by EOD.",
+        inbound="Could you share the numbers whenever you have a look?",
+    )
+    assert any("deadline" in f.lower() for f in r.fabrications)
+
+
+def test_grounded_deadline_not_flagged():
+    r = verify_draft(
+        "Sure — I'll get it to you by Friday.",
+        inbound="Can you send it to me by Friday please?",
+    )
+    assert all("deadline" not in f.lower() for f in r.fabrications)

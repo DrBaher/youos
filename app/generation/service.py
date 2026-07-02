@@ -1370,6 +1370,75 @@ def _length_flag(
     return "ok"
 
 
+# Leaked prompt scaffolding (b286). _format_facts_context() output copied
+# verbatim into a live draft — "…just a quick alignment.\n\n[FACTS CONTEXT]
+# About you: Based in Dubai, …". Everything from the marker onward is internal
+# scaffolding, so truncate there. Also drop any residual scaffolding bullet
+# lines ("- Your preference (…", "- About you (…", "- Project (…"). verify.py
+# BLOCKS on any residual placeholder as a backstop.
+_SCAFFOLD_MARKER_RE = re.compile(r"\n*\s*\[\s*FACTS\s+CONTEXT", re.IGNORECASE)
+_SCAFFOLD_BULLET_RE = re.compile(
+    r"^\s*[-*•]?\s*(?:Your preference|About you|Project)\s*\(", re.IGNORECASE
+)
+
+
+def _strip_scaffolding(text: str) -> str:
+    """Remove leaked ``[FACTS CONTEXT …]`` scaffolding from a draft."""
+    if not text:
+        return text
+    m = _SCAFFOLD_MARKER_RE.search(text)
+    if m:
+        text = text[: m.start()].rstrip()
+    lines = text.split("\n")
+    kept = [ln for ln in lines if not _SCAFFOLD_BULLET_RE.match(ln)]
+    if len(kept) != len(lines):
+        text = "\n".join(kept).strip()
+    return text
+
+
+# Greeting name-stutter (b286). The model is told "Begin your reply with: Hi
+# <Name>" and then ALSO opens the body with the recipient as a vocative, giving
+# "Hi Amina,\n\nAmina, thanks …" (~20% of live drafts). Deterministic collapse:
+# when the first line is a greeting ending in a name and the next content line
+# opens with that same name + a delimiter, drop the redundant vocative.
+_GREETING_LEAD_TOKENS = (
+    "hi", "hey", "hello", "dear", "hallo", "liebe", "lieber", "liebes",
+    "sehr geehrte", "guten",
+)
+
+
+def _dedupe_leading_name(text: str) -> str:
+    if not text or "\n" not in text:
+        return text
+    lines = text.split("\n")
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i >= len(lines):
+        return text
+    first = lines[i].strip()
+    fl = first.lower()
+    if not any(fl.startswith(t) for t in _GREETING_LEAD_TOKENS):
+        return text
+    # recipient name = last alphabetic token on the greeting line
+    nm = re.search(r"([A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ.'-]{1,})\s*[,:;!.\-–—]*\s*$", first)
+    if not nm:
+        return text
+    name = nm.group(1)
+    j = i + 1
+    while j < len(lines) and not lines[j].strip():
+        j += 1
+    if j >= len(lines):
+        return text
+    voc = re.match(rf"\s*{re.escape(name)}\s*[,:;!—–-]\s+", lines[j], re.IGNORECASE)
+    if voc:
+        rest = lines[j][voc.end():]
+        # Re-capitalize the now-leading word so "Amina, thanks" → "Thanks".
+        lines[j] = rest[:1].upper() + rest[1:] if rest else rest
+        return "\n".join(lines)
+    return text
+
+
 def _repair_draft(
     draft: str,
     *,
@@ -1390,6 +1459,13 @@ def _repair_draft(
     stripped_all = text.strip()
     if stripped_all.startswith("[") and stripped_all.endswith("]"):
         return text, repairs, None
+
+    # Always strip leaked prompt scaffolding first, before any other pass sees
+    # it (a "[FACTS CONTEXT] About you: …" block appended to a real draft).
+    _descaffolded = _strip_scaffolding(text)
+    if _descaffolded != text:
+        text = _descaffolded
+        repairs.append("stripped_scaffolding")
 
     # Order: quote-tail first (it can sit *before* a signature in the output,
     # so stripping it first leaves the signature pass with a smaller, cleaner
@@ -1425,6 +1501,12 @@ def _repair_draft(
     if _no_phone != text.strip():
         text = _no_phone
         repairs.append("stripped_phone")
+
+    # Always collapse a duplicated recipient name ("Hi Amina,\n\nAmina, …").
+    _deduped = _dedupe_leading_name(text)
+    if _deduped != text:
+        text = _deduped
+        repairs.append("deduped_greeting_name")
 
     if config.get("enforce_greeting_closing"):
         # b231: the configured persona greeting/closing are English. Prepending
@@ -1480,6 +1562,7 @@ def _log_draft_event(
     exemplar_ids: list[str],
     length_flag: str | None,
     thread_id: str | None = None,
+    verify_flags: list[str] | None = None,
 ) -> bool:
     """Append one row to ``draft_events``. Never raises — logging a draft must
     not break drafting. Returns True if a row was written.
@@ -1501,25 +1584,30 @@ def _log_draft_event(
                     detected_mode TEXT, intent TEXT, confidence TEXT,
                     confidence_reason TEXT, model_used TEXT, retrieval_method TEXT,
                     exemplar_ids TEXT NOT NULL DEFAULT '[]', length_flag TEXT,
-                    thread_id TEXT,
+                    thread_id TEXT, verify_flags TEXT NOT NULL DEFAULT '[]',
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )"""
             )
-            # b269: self-heal the join key on instances whose table predates it
-            # (CREATE TABLE IF NOT EXISTS won't add a column to an existing table).
+            # b269/b286: self-heal columns on instances whose table predates
+            # them (CREATE TABLE IF NOT EXISTS won't add a column to an existing
+            # table). thread_id = the outcome join key; verify_flags = the
+            # verify-time fabrication/blocking categories, for fabrication-rate.
             cols = {row[1] for row in conn.execute("PRAGMA table_info(draft_events)").fetchall()}
             if "thread_id" not in cols:
                 conn.execute("ALTER TABLE draft_events ADD COLUMN thread_id TEXT")
+            if "verify_flags" not in cols:
+                conn.execute("ALTER TABLE draft_events ADD COLUMN verify_flags TEXT NOT NULL DEFAULT '[]'")
             conn.execute(
                 """INSERT INTO draft_events
                    (inbound_text, generated_draft, account_email, sender, sender_type,
                     detected_mode, intent, confidence, confidence_reason, model_used,
-                    retrieval_method, exemplar_ids, length_flag, thread_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    retrieval_method, exemplar_ids, length_flag, thread_id, verify_flags)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     inbound_text, draft, account_email, sender, sender_type, detected_mode,
                     intent, confidence, confidence_reason, model_used, retrieval_method,
                     json.dumps([str(i) for i in (exemplar_ids or [])]), length_flag, thread_id,
+                    json.dumps(sorted(set(verify_flags or []))),
                 ),
             )
             conn.commit()
@@ -1771,7 +1859,12 @@ def _assemble_system_text(
     greeting = _resolve_greeting(persona, sender_type, first_name)
     closing = _resolve_closing(persona, sender_type)
     if greeting and closing:
-        result += f"\nBegin your reply with: {greeting}\nEnd your reply with: {closing}\n"
+        result += (
+            f"\nBegin your reply with: {greeting}\n"
+            "Then start the body directly — do NOT repeat the recipient's name "
+            "again right after the greeting.\n"
+            f"End your reply with: {closing}\n"
+        )
     return result.strip()
 
 
@@ -1938,7 +2031,12 @@ def assemble_prompt(
     greeting = _resolve_greeting(persona, sender_type, first_name)
     closing = _resolve_closing(persona, sender_type)
     if greeting and closing:
-        result += f"\nBegin your reply with: {greeting}\nEnd your reply with: {closing}\n"
+        result += (
+            f"\nBegin your reply with: {greeting}\n"
+            "Then start the body directly — do NOT repeat the recipient's name "
+            "again right after the greeting.\n"
+            f"End your reply with: {closing}\n"
+        )
 
     # Defang attacker-forged section markers in the untrusted inbound + subject
     # so they can't inject a competing [TASK]/[SYSTEM] instruction block.
@@ -3395,14 +3493,49 @@ def generate_draft(
         request.inbound_message, draft, database_url, configs_dir, fallback_model=fallback_model
     )
 
+    # Verify-before-accept: deterministic safety checks (language match, no
+    # invented email/link/amount, fabrications). Computed here — BEFORE the
+    # draft-event log — so the fabrication/blocking categories can be persisted
+    # on draft_events (fabrication-rate telemetry) and reused by the quality
+    # gate below. Failure-isolated: never blocks drafting.
+    _vr = None
+    _verify_issues: list[str] = []
+    _verify_flags: list[str] = []
+    try:
+        from app.generation.verify import verify_draft
+
+        _vr = verify_draft(
+            draft,
+            inbound=request.inbound_message,
+            thread_history=request.thread_history,
+            account_email=request.account_email,
+            sender=request.sender,
+            # b237: when a per-sender reply-language habit overrode the
+            # inbound's language, the draft is SUPPOSED to differ from the
+            # inbound — verify against the intended language, not the inbound.
+            expected_language=detected_lang,
+            # b286: the account owner's name, for speaker-inversion detection
+            # (a draft addressed to, or signed as, the wrong party).
+            user_name=_signoff_name(),
+        )
+        _verify_issues = _vr.issues
+        if _vr.blocking:
+            _verify_flags.append("blocking")
+        if _vr.fabrications:
+            _verify_flags.append("fabrication")
+        if _vr.status_claims:
+            _verify_flags.append("status_claim")
+    except Exception:
+        pass
+
     # Capture the draft event (exemplars/intent/sender_type/confidence the
-    # draft was produced with) for the nightly's training signal. Fault-
-    # isolated: never affects the returned draft. Skipped for forced-backend
-    # (benchmark/comparison) drafts AND the deterministic eval family (golden/
-    # autoresearch/replay-backtest) — neither are real user drafts, and both
-    # pollute the training signal and the "drafting with" status derived from
-    # draft_events.model_used (observed live: eval sweeps logged 500–1200
-    # draft_events/day vs ~40 real ones).
+    # draft was produced with, plus verify flags) for the nightly's training
+    # signal + fabrication-rate. Fault-isolated: never affects the returned
+    # draft. Skipped for forced-backend (benchmark/comparison) drafts AND the
+    # deterministic eval family (golden/autoresearch/replay-backtest) — neither
+    # are real user drafts, and both pollute the training signal and the
+    # "drafting with" status derived from draft_events.model_used (observed
+    # live: eval sweeps logged 500–1200 draft_events/day vs ~40 real ones).
     if request.backend_override is None and not request.deterministic:
         _log_draft_event(
             database_url,
@@ -3420,6 +3553,7 @@ def generate_draft(
             exemplar_ids=selected_ids,
             length_flag=length_flag,
             thread_id=request.thread_id,
+            verify_flags=_verify_flags,
         )
 
     # Per-draft quality: how good is THIS draft (voice + structure, collapsed
@@ -3434,41 +3568,28 @@ def generate_draft(
     except Exception:
         _quality = None
 
-    # Verify-before-accept: deterministic safety checks (language match, no
-    # invented email/link/amount). A blocking issue collapses quality_score so
-    # the auto-push quality floor holds the draft for review. Failure-isolated.
-    _verify_issues: list[str] = []
+    # Reuse the verify result: a blocking issue collapses quality so the
+    # auto-push quality floor holds the draft for review. Fault-isolated —
+    # verify must never break drafting.
     try:
-        from app.generation.verify import verify_draft
-
-        _vr = verify_draft(
-            draft,
-            inbound=request.inbound_message,
-            thread_history=request.thread_history,
-            account_email=request.account_email,
-            sender=request.sender,
-            # b237: when a per-sender reply-language habit overrode the
-            # inbound's language, the draft is SUPPOSED to differ from the
-            # inbound — verify against the intended language, not the inbound.
-            expected_language=detected_lang,
-        )
-        _verify_issues = _vr.issues
-        if _vr.blocking and _quality is not None:
-            _quality = min(_quality, 0.1)
-        # b229: an AUTONOMOUS draft asserting a completed state the thread
-        # doesn't support ("payment has been received", "filed with ADGM",
-        # "no further action needed") is a fabrication — the agent did nothing
-        # and can't know. Collapse quality so b188 abstain surfaces the email
-        # for review instead of queueing a confidently-wrong draft. Interactive
-        # and deterministic/eval requests are exempt (same guards as abstain),
-        # so /draft and the golden eval are unaffected.
-        elif (
-            _vr.status_claims
-            and _quality is not None
-            and not getattr(request, "interactive", True)
-            and not getattr(request, "deterministic", False)
-        ):
-            _quality = min(_quality, 0.1)
+        if _vr is not None and _quality is not None:
+            if _vr.blocking:
+                _quality = min(_quality, 0.1)
+            # b229/b286: an AUTONOMOUS draft asserting a completed state the
+            # thread doesn't support ("payment has been received", "no further
+            # action needed"), or one that fabricates family details,
+            # hallucinates a "review meeting", or is written from the wrong
+            # speaker's perspective, is confidently wrong — the agent did nothing
+            # and can't know. Collapse quality so b188 abstain surfaces the email
+            # for review instead of queueing it. Interactive and deterministic/
+            # eval requests are exempt (same guards as abstain), so /draft and
+            # the golden eval are unaffected.
+            elif (
+                (_vr.status_claims or _vr.fabrications)
+                and not getattr(request, "interactive", True)
+                and not getattr(request, "deterministic", False)
+            ):
+                _quality = min(_quality, 0.1)
     except Exception:
         pass
 
