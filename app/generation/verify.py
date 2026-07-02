@@ -82,11 +82,141 @@ _STATUS_CLAIM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("no further action", re.compile(r"\bno\s+(?:further\s+)?action\s+(?:is\s+)?(?:needed|required)\b", re.IGNORECASE)),
 )
 
+# German completion assertions (b286). The English patterns above never fire
+# on the ~27% German half of the queue: a live review found "beide Konten sind
+# nun abgedeckt" (a false "the accounts are now covered" to the bank) and
+# "abgeschlossen" slipping through. Same grounding rule — flagged only when the
+# participle is ABSENT from the inbound/thread, so acknowledging a completion
+# the OTHER party stated ("danke, überwiesen") is not flagged. The key IS the
+# participle, so grounding fires only on the exact same completion word.
+_STATUS_CLAIM_PATTERNS_DE: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("abgedeckt", re.compile(r"\babgedeckt\b", re.IGNORECASE)),
+    ("erledigt", re.compile(r"\berledigt\b", re.IGNORECASE)),
+    ("überwiesen", re.compile(r"\b[uü]berwiesen\b", re.IGNORECASE)),
+    ("bezahlt", re.compile(r"\bbezahlt\b", re.IGNORECASE)),
+    ("eingereicht", re.compile(r"\beingereicht\b", re.IGNORECASE)),
+    ("abgeschlossen", re.compile(r"\babgeschlossen\b", re.IGNORECASE)),
+    ("bestätigt", re.compile(r"\best[äa]tigt\b", re.IGNORECASE)),
+    ("versendet", re.compile(r"\b(?:versendet|verschickt|abgeschickt|versandt)\b", re.IGNORECASE)),
+    ("durchgeführt", re.compile(r"\bdurchgef[üu]hrt\b", re.IGNORECASE)),
+    ("umgesetzt", re.compile(r"\bumgesetzt\b", re.IGNORECASE)),
+    ("freigegeben", re.compile(r"\bfreigegeben\b", re.IGNORECASE)),
+    ("eingerichtet", re.compile(r"\beingerichtet\b", re.IGNORECASE)),
+    ("aktiviert", re.compile(r"\baktiviert\b|\b(?:ist|sind)\s+(?:jetzt|nun)\s+aktiv\b", re.IGNORECASE)),
+)
+
+# Invented deadline / over-commitment (b286, extends b277). The model freely
+# promises firm deadlines the user never made — "by EOD", "by EOD tomorrow" —
+# on Baher's behalf. Flagged only when the deadline token is NOT in the inbound
+# (the sender didn't ask for it), so a genuine "Friday works" reply to a
+# "can you do Friday?" request is left alone. Vague windows ("this/next week")
+# are excluded to keep false positives low.
+_COMMITMENT_RE = re.compile(
+    r"\bby\s+(?P<en>eod|cob|end\s+of\s+(?:the\s+)?day|end\s+of\s+business|"
+    r"tomorrow|tonight|noon|"
+    r"mon(?:day)?|tues?(?:day)?|wed(?:nesday)?|thu(?:rs)?(?:day)?|"
+    r"fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b"
+    r"|\bbis\s+(?P<de>eod|morgen|heute\s+abend|freitag|montag|dienstag|"
+    r"mittwoch|donnerstag)\b",
+    re.IGNORECASE,
+)
+
+# Leaked internal scaffolding / placeholders (b286). A live draft (2026-07)
+# ended with the model's own prompt block copied verbatim — "[FACTS CONTEXT]
+# About you: Based in Dubai, …" — and another surfaced a "[list attached]"
+# placeholder as if it were text. These strings NEVER belong in a real reply,
+# so they are BLOCKING (held for review) regardless of the autonomous/eval
+# path. Deterministic post-processing also strips the [FACTS CONTEXT] block in
+# app.generation.service._strip_scaffolding; this is the belt-and-suspenders
+# catch for anything the strip misses (inline placeholders, partial markers).
+_PLACEHOLDER_RE = re.compile(
+    r"\[\s*FACTS\s+CONTEXT"
+    r"|\[\s*(?:list attached|insert[^\]]*|your name|your \w+ here|placeholder"
+    r"|link|url|date|todo|tbd|xx+)\s*\]"
+    r"|\{\s*name\s*\}",
+    re.IGNORECASE,
+)
+
+# Personal-life fabrication (b286). The 4B LoRA over-learned Baher's warm,
+# family-referencing voice and now INVENTS family details on unrelated threads
+# — "your new baby's arrival is a lot of energy!" to a first-time contact, "our
+# daughter's 4th birthday was last week" on a cold AWS pitch, "Kinder sind
+# gesund" appended to a formal tax reply. Flagged only when NO family/personal
+# stem appears anywhere in the grounding corpus (inbound + thread): if the
+# sender really did mention a baby/wedding/etc., a warm acknowledgement is
+# correct and not flagged. Collapses quality on the autonomous path (→ abstain
+# → surfaced for review), like status claims.
+_PERSONAL_LIFE_RE = re.compile(
+    r"\b(?:new[\s-]?born|new baby|the baby|your baby|a baby|baby'?s|"
+    r"pregnan\w+|maternity|paternity|honeymoon|"
+    r"nap[\s-]?time|"
+    r"(?:your|our|my|the)\s+(?:kids|children|son|daughter|wife|husband|family)|"
+    r"\d+(?:st|nd|rd|th)?\s+birthday|"
+    # German
+    r"kinder\s+sind\s+gesund|neugeboren|schwanger\w*|geburtstag)\b",
+    re.IGNORECASE,
+)
+# Family/personal terms that, if present in the grounding corpus, mean the
+# draft's personal reference is grounded (the thread raised it first). Matched
+# on WORD BOUNDARIES — a substring test wrongly grounds on "son" inside
+# "reason"/"person" (and "nap" inside "snap"), suppressing real fabrications.
+_FAMILY_GROUND_RE = re.compile(
+    r"\b(?:bab(?:y|ies)|new[\s-]?born|neugeboren|birthday|geburtstag|"
+    r"wedding|hochzeit|honeymoon|pregnan\w*|schwanger\w*|maternity|paternity|"
+    r"nap|kids?|child(?:ren)?|kinder|daughter|sons?|wife|husband|"
+    r"family|familie)\b",
+    re.IGNORECASE,
+)
+
+# Hallucinated "review meeting" artifact (b286). The model repeatedly invents
+# a nonexistent "tomorrow's full review meeting" / "in der nächsten
+# Review-Mitteilung" — the internal batch/"review" framing leaking into the
+# email body. Flagged when the phrase is not grounded in the thread.
+_REVIEW_MEETING_RE = re.compile(
+    r"\b(?:full |the )?review meeting\b"
+    r"|\breview[-\s]mitteilung\b"
+    r"|\bin (?:tomorrow'?s|the next|our next) (?:full )?review\b"
+    r"|\bn[äa]chste[nrs]?\s+review[-\s]?(?:meeting|mitteilung|besprechung)\b",
+    re.IGNORECASE,
+)
+
+# Sign-off tokens that mark the closing region of a reply (EN + DE). Used with
+# the sender's name to detect a draft SIGNED AS THE SENDER (speaker inversion).
+# NB: no trailing \b on the German prefixes — "viele gr" must still match
+# inside "viele grüße" / "viele gruesse", where "gr" is not a word boundary.
+_SIGNOFF_RE = re.compile(
+    r"regards|best|thanks|thank you|cheers|sincerely|yours|"
+    r"gr[üu](?:ss|ß|ess)e|mit freundlichen|"
+    r"(?:viele|liebe|beste|herzliche|freundliche)\s+gr|danke",
+    re.IGNORECASE,
+)
+# Opening salutation words (EN + DE) — a first line starting with one of these
+# and containing the USER's own name means the draft greets the user, i.e. it
+# was written from the sender's perspective.
+_GREETING_OPEN_RE = re.compile(
+    r"^\s*(?:hi|hey|hello|dear|hallo|liebe[rs]?|sehr\s+geehrte)\b",
+    re.IGNORECASE,
+)
+_WORD_RE = re.compile(r"[a-zà-öø-ÿ]+", re.IGNORECASE)
+
 # Hard cap on the text any of the above regexes scan. The inbound + thread
 # history are attacker-controlled and otherwise uncapped on this path (the
 # 4000-char prompt cap protects generation, not verify_draft). 20 KB is far
 # more than a real reply needs for grounding.
 _MAX_VERIFY_CHARS = 20_000
+
+
+def _name_tokens(display: str | None) -> list[str]:
+    """Alphabetic name tokens (len ≥ 3) from a From display name, dropping the
+    email part and handling both "First Last" and "Last, First"."""
+    if not display:
+        return []
+    s = re.sub(r"<[^>]*>", " ", display).replace('"', " ").replace("'", " ")
+    toks: list[str] = []
+    for p in re.split(r"[,\s]+", s):
+        if len(p) >= 3 and re.fullmatch(r"[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ.'-]+", p):
+            toks.append(p.lower())
+    return toks
 
 
 @dataclass
@@ -98,6 +228,12 @@ class VerifyResult:
     # interactive drafting, but the autonomous path collapses quality on them —
     # see the caller in app.generation.service.
     status_claims: list[str] = field(default_factory=list)
+    # Ungrounded fabrications (b286): invented family/personal details,
+    # speaker inversion (draft addressed to / signed as the wrong person), and
+    # the hallucinated "review meeting" artifact. Treated like status_claims by
+    # the caller — collapses quality on the autonomous path (→ abstain →
+    # surfaced for review), never touched on the deterministic eval path.
+    fabrications: list[str] = field(default_factory=list)
 
     @property
     def issues(self) -> list[str]:
@@ -116,10 +252,13 @@ def verify_draft(
     account_email: str | None = None,
     sender: str | None = None,
     expected_language: str | None = None,
+    user_name: str | None = None,
 ) -> VerifyResult:
     """Run the deterministic checks. ``inbound`` + ``thread_history`` are the
     grounding corpus; ``account_email`` / ``sender`` are allowed email
-    addresses (the participants) even if not quoted in the body."""
+    addresses (the participants) even if not quoted in the body. ``user_name``
+    is the account owner's display name — used to detect speaker inversion (a
+    draft addressed to, or signed as, the wrong party)."""
     from app.core.text_utils import strip_signature
 
     # Cap every attacker-controlled input before any regex/lang-detect runs.
@@ -198,7 +337,7 @@ def verify_draft(
     # Recorded separately so the autonomous path can act on them; also mirrored
     # into warnings so the review UI shows them.
     status_claims: list[str] = []
-    for key, pat in _STATUS_CLAIM_PATTERNS:
+    for key, pat in (*_STATUS_CLAIM_PATTERNS, *_STATUS_CLAIM_PATTERNS_DE):
         if key in hay_l:
             continue
         m = pat.search(d_core)
@@ -209,4 +348,72 @@ def verify_draft(
                 status_claims.append(m.group(0).strip())
                 warnings.append(f"asserts unverified status: {m.group(0).strip()}")
 
-    return VerifyResult(ok=not blocking, blocking=blocking, warnings=warnings, status_claims=status_claims)
+    # 7) Leaked scaffolding / placeholders — BLOCKING. These never belong in a
+    # real reply (see _PLACEHOLDER_RE). Scan the whole draft, not just d_core.
+    for m in _PLACEHOLDER_RE.finditer(d):
+        blocking.append(f"leaked scaffolding/placeholder: {m.group(0).strip()}")
+
+    # 8) Ungrounded fabrications — collapse on the autonomous path (like status
+    # claims). Family/personal detail invented with no family stem anywhere in
+    # the grounding corpus; the hallucinated "review meeting"; and speaker
+    # inversion (draft addressed to / signed as the wrong party).
+    fabrications: list[str] = []
+    family_grounded = bool(_FAMILY_GROUND_RE.search(hay_l))
+    if not family_grounded:
+        pm = _PERSONAL_LIFE_RE.search(d_core)
+        if pm:
+            fabrications.append(f"invented personal/family detail: {pm.group(0).strip()}")
+    if "review meeting" not in hay_l and "review-mitteilung" not in hay_l:
+        rm = _REVIEW_MEETING_RE.search(d_core)
+        if rm:
+            fabrications.append(f"hallucinated review meeting: {rm.group(0).strip()}")
+
+    # Invented deadline / over-commitment — flagged only when the deadline token
+    # is not in the grounding corpus (the sender didn't ask for it).
+    for cm in _COMMITMENT_RE.finditer(d_core):
+        token = (cm.group("en") or cm.group("de") or "").strip().lower()
+        if token and token not in hay_l:
+            fabrications.append(f"invented deadline: {cm.group(0).strip()}")
+            break
+
+    # Speaker inversion. Work on the RAW draft (not d_core): the signed-as-
+    # sender tell IS a trailing signature, which strip_signature would remove.
+    _lines = [ln for ln in d.strip().splitlines() if ln.strip()]
+    if _lines:
+        user_toks = {t for t in _name_tokens(user_name)}
+        first_words = set(_WORD_RE.findall(_lines[0].lower()))
+        # (a) addressed to the user: the user's own name appears in the opening
+        # line (a greeting, or a leading vocative like "Danke, Baher –"). The
+        # author never greets himself, so this means the draft was written from
+        # the sender's perspective.
+        if user_toks and (user_toks & first_words):
+            fabrications.append("addressed to the user (speaker inversion)")
+        elif len(_lines) >= 3:
+            # (b) signed as the sender: a distinct TRAILING signature line names
+            # the sender (not the user), with a sign-off on it or the line above
+            # — the draft signs off as the person it should be replying to. The
+            # ≥3-line gate keeps the greeting out of the signature region, and
+            # the short-last-line + sign-off requirements avoid firing on a
+            # normal closing sentence that merely addresses the recipient.
+            last = _lines[-1].strip()
+            prev = _lines[-2].strip()
+            last_words = set(_WORD_RE.findall(last.lower()))
+            sender_toks = {t for t in _name_tokens(sender)}
+            if (
+                len(last_words) <= 6
+                and (sender_toks & last_words)
+                and not (user_toks & last_words)
+                and (_SIGNOFF_RE.search(last.lower()) or _SIGNOFF_RE.search(prev.lower()))
+            ):
+                fabrications.append("signed as the sender (speaker inversion)")
+
+    for f in fabrications:
+        warnings.append(f)
+
+    return VerifyResult(
+        ok=not blocking,
+        blocking=blocking,
+        warnings=warnings,
+        status_claims=status_claims,
+        fabrications=fabrications,
+    )

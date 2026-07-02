@@ -34,6 +34,22 @@ def _safe_count(conn: sqlite3.Connection, table: str) -> int:
         return 0
 
 
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        is not None
+    )
+
+
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    try:
+        return column in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+    except sqlite3.OperationalError:
+        return False
+
+
 def _group_counts(conn: sqlite3.Connection, column: str, *, default: str) -> dict[str, int]:
     """COUNT(*) grouped by a draft_events column (NULLs folded to *default*)."""
     try:
@@ -94,6 +110,7 @@ def summarize_draft_events(database_url: str) -> dict:
         "by_length_flag": {},
         "by_model": {},
         "off_target_pct": None,
+        "fabrication_rate": None,
         "outcome": {"matched": 0, "avg_edit_distance_by_sender_type": {}, "avg_edit_distance_by_confidence": {}},
     }
 
@@ -129,6 +146,7 @@ def summarize_draft_events(database_url: str) -> dict:
             # fallback. See get_drafting_model_status().
             "by_model": _group_counts(conn, "model_used", default="unknown"),
             "off_target_pct": None,
+            "fabrication_rate": None,
             "outcome": {"matched": 0, "avg_edit_distance_by_sender_type": {}, "avg_edit_distance_by_confidence": {}},
         }
 
@@ -145,66 +163,125 @@ def summarize_draft_events(database_url: str) -> dict:
         except sqlite3.OperationalError:
             pass
 
-        # Outcome correlation (b167 join key, b185 honesty filter): join
-        # draft_events -> feedback_pairs on the only stable shared key
-        # (inbound_text). feedback_pairs is first collapsed to one mean
-        # edit-distance per inbound (CTE `outcome_by_inbound`) so the
-        # many-rows-per-inbound fan-out can't inflate a cohort's `n` or skew its
-        # average. The draft *text* is deliberately NOT part of the join: it
-        # differs between the tables (see docstring), so an inbound+draft join
-        # matches ~nothing — which was the original always-zero bug.
-        #
-        # b185: count ONLY rows that represent a REAL draft-vs-sent comparison.
-        # ~82k of the live feedback_pairs are "organic" backfill where the SENT
-        # reply was copied into BOTH generated_draft AND edited_reply with a
-        # hardcoded edit_distance_pct=0.0 (there was no model draft to diff).
-        # Including them made avg_edit_distance read 0.0 everywhere — a false
-        # "drafts are perfect" signal that actually means "nothing to compare".
-        # We exclude organic / no-draft rows so `matched` and the per-cohort
-        # averages reflect GENUINE comparisons only (near-zero on current data —
-        # the correct, intended reading, not a regression; the whole point is to
-        # stop the false 0.0 from collapsing the learning signal to uniform).
-        _OUTCOME_CTE = (
-            "WITH outcome_by_inbound AS ("
-            "  SELECT inbound_text, AVG(edit_distance_pct) AS ed"
-            "  FROM feedback_pairs"
-            "  WHERE edit_distance_pct IS NOT NULL"
-            "    AND COALESCE(organic, 0) = 0"
-            "    AND generated_draft <> edited_reply"
-            "  GROUP BY inbound_text"
-            ")"
-        )
-        # b192: per-column NULL bucket. sender_type NULL = "unlogged" (sender
-        # never recorded), distinct from a classifier "unknown"; confidence
-        # keeps its historical "unknown" fold (unaffected by this fix).
-        for key, col, null_bucket in (
-            ("avg_edit_distance_by_sender_type", "sender_type", "unlogged"),
-            ("avg_edit_distance_by_confidence", "confidence", "unknown"),
-        ):
+        # Fabrication rate (b286): share of REAL generated drafts that verify
+        # flagged as a fabrication or hard block (invented family detail,
+        # hallucinated meeting, speaker inversion, leaked scaffolding, invented
+        # deadline, ungrounded status claim). Tracks whether model changes drive
+        # the confidently-wrong rate down over time. Only present once the
+        # verify_flags column exists (self-healed by _log_draft_event).
+        if _column_exists(conn, "draft_events", "verify_flags"):
             try:
-                rows = conn.execute(
-                    f"""{_OUTCOME_CTE}
-                        SELECT COALESCE(de.{col}, '{null_bucket}') AS k,
-                               ROUND(AVG(o.ed), 3) AS avg_ed,
-                               COUNT(*) AS n
-                        FROM draft_events de
-                        JOIN outcome_by_inbound o
-                          ON de.inbound_text = o.inbound_text
-                        GROUP BY k""",  # noqa: S608
-                ).fetchall()
-                summary["outcome"][key] = {str(r["k"]): {"avg_edit_distance": r["avg_ed"], "n": int(r["n"])} for r in rows}
+                flagged_n, total_n = conn.execute(
+                    """SELECT
+                           SUM(CASE WHEN verify_flags LIKE '%fabrication%'
+                                      OR verify_flags LIKE '%blocking%'
+                                      OR verify_flags LIKE '%status_claim%'
+                                    THEN 1 ELSE 0 END),
+                           COUNT(*)
+                       FROM draft_events"""
+                ).fetchone()
+                if total_n:
+                    summary["fabrication_rate"] = round(100.0 * (flagged_n or 0) / total_n, 1)
             except sqlite3.OperationalError:
                 pass
 
-        # Honest coverage: distinct draft_events rows that found ANY outcome.
-        # A zero here means the join isn't landing — surfaced, not swallowed.
+        # Outcome correlation (b286 join-key fix, b185 honesty filter).
+        #
+        # The original join used ``inbound_text`` equality — but the two tables
+        # source that text from DIFFERENT pipelines (``draft_events`` logs the
+        # body handed to the drafter; ``feedback_pairs.inbound_text`` is a
+        # reconstructed "\n\n---\n\n"-joined thread), so it byte-matches ~never
+        # and ``matched`` sat at 0, starving autoresearch of draft-quality case
+        # weights and making the loop look inert. b269 added
+        # ``draft_events.thread_id`` as the stable key precisely for this, but
+        # the stats join was never migrated. We now join on ``thread_id``
+        # (``feedback_pairs`` has none, so we reach it via
+        # ``reply_pair_id -> reply_pairs.thread_id``), and keep the old
+        # inbound_text match as a COALESCE fallback for legacy rows lacking a
+        # thread_id. Each side is collapsed to one mean edit-distance per key
+        # first, and the LEFT JOINs are single-valued, so one draft_events row
+        # yields exactly one outcome (thread preferred) — no fan-out.
+        #
+        # b185 honesty filter: count ONLY real draft-vs-sent comparisons —
+        # ``edit_distance_pct IS NOT NULL AND COALESCE(organic,0)=0 AND
+        # generated_draft <> edited_reply``. The ~82k "organic" backfill rows
+        # copy the sent reply into both columns with a hardcoded
+        # edit_distance_pct=0.0 (no model draft existed); including them reads
+        # as a false "drafts are perfect" 0.0 everywhere. ``matched`` stays an
+        # honest coverage counter so a low join rate is visible, not swallowed.
+        _HONEST_FP = (
+            "edit_distance_pct IS NOT NULL "
+            "AND COALESCE(organic, 0) = 0 "
+            "AND generated_draft <> edited_reply"
+        )
+        # The thread_id join is only available when the schema supports it
+        # (reply_pairs table + feedback_pairs.reply_pair_id + draft_events
+        # .thread_id). On older/partial DBs — and the minimal test fixtures —
+        # fall back to the legacy inbound_text match alone.
+        _has_thread_join = (
+            _table_exists(conn, "reply_pairs")
+            and _column_exists(conn, "feedback_pairs", "reply_pair_id")
+            and _column_exists(conn, "draft_events", "thread_id")
+        )
+        if _has_thread_join:
+            _OUTCOME_SQL = (
+                "WITH obt AS ("
+                "  SELECT rp.thread_id AS k, AVG(fp.edit_distance_pct) AS ed"
+                "  FROM feedback_pairs fp JOIN reply_pairs rp ON fp.reply_pair_id = rp.id"
+                "  WHERE fp.edit_distance_pct IS NOT NULL AND COALESCE(fp.organic,0)=0"
+                "    AND fp.generated_draft <> fp.edited_reply"
+                "    AND rp.thread_id IS NOT NULL AND rp.thread_id <> ''"
+                "  GROUP BY rp.thread_id"
+                "), obi AS ("
+                f"  SELECT inbound_text AS k, AVG(edit_distance_pct) AS ed"
+                f"  FROM feedback_pairs WHERE {_HONEST_FP}"
+                "  GROUP BY inbound_text"
+                ") "
+                "SELECT COALESCE(de.sender_type, 'unlogged') AS st,"
+                "       COALESCE(de.confidence, 'unknown') AS cf,"
+                "       COALESCE(obt.ed, obi.ed) AS ed"
+                "  FROM draft_events de"
+                "  LEFT JOIN obt ON de.thread_id = obt.k"
+                "        AND de.thread_id IS NOT NULL AND de.thread_id <> ''"
+                "  LEFT JOIN obi ON de.inbound_text = obi.k"
+                "  WHERE COALESCE(obt.ed, obi.ed) IS NOT NULL"
+            )
+        else:
+            _OUTCOME_SQL = (
+                "WITH obi AS ("
+                f"  SELECT inbound_text AS k, AVG(edit_distance_pct) AS ed"
+                f"  FROM feedback_pairs WHERE {_HONEST_FP}"
+                "  GROUP BY inbound_text"
+                ") "
+                "SELECT COALESCE(de.sender_type, 'unlogged') AS st,"
+                "       COALESCE(de.confidence, 'unknown') AS cf,"
+                "       obi.ed AS ed"
+                "  FROM draft_events de"
+                "  JOIN obi ON de.inbound_text = obi.k"
+            )
+        # b192: sender_type NULL = "unlogged" (sender never recorded), distinct
+        # from a classifier "unknown"; confidence keeps its "unknown" fold.
         try:
-            matched = conn.execute(
-                f"""{_OUTCOME_CTE}
-                   SELECT COUNT(*) FROM draft_events de
-                   JOIN outcome_by_inbound o ON de.inbound_text = o.inbound_text"""
-            ).fetchone()[0]
-            summary["outcome"]["matched"] = int(matched)
+            from collections import defaultdict
+
+            acc: dict[str, dict[str, list[float]]] = {
+                "avg_edit_distance_by_sender_type": defaultdict(lambda: [0.0, 0]),
+                "avg_edit_distance_by_confidence": defaultdict(lambda: [0.0, 0]),
+            }
+            matched = 0
+            for r in conn.execute(_OUTCOME_SQL):  # noqa: S608
+                matched += 1
+                acc["avg_edit_distance_by_sender_type"][str(r["st"])][0] += r["ed"]
+                acc["avg_edit_distance_by_sender_type"][str(r["st"])][1] += 1
+                acc["avg_edit_distance_by_confidence"][str(r["cf"])][0] += r["ed"]
+                acc["avg_edit_distance_by_confidence"][str(r["cf"])][1] += 1
+            summary["outcome"]["matched"] = matched
+            for key, buckets in acc.items():
+                summary["outcome"][key] = {
+                    k: {"avg_edit_distance": round(s / n, 3), "n": n}
+                    for k, (s, n) in buckets.items()
+                    if n
+                }
         except sqlite3.OperationalError:
             pass
 

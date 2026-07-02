@@ -14,6 +14,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.core.text_utils import repair_mojibake
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,12 +75,12 @@ def _decode_mime_words(value: str) -> str:
         return ""
     value = value[:_MAX_HEADER_CHARS]
     if "=?" not in value:
-        return value
+        return repair_mojibake(value)
     from email.header import decode_header
     try:
         parts = decode_header(value)
     except (ValueError, UnicodeDecodeError):
-        return value
+        return repair_mojibake(value)
     out: list[str] = []
     for chunk, enc in parts:
         if isinstance(chunk, bytes):
@@ -88,7 +90,7 @@ def _decode_mime_words(value: str) -> str:
                 out.append(chunk.decode("utf-8", errors="replace"))
         else:
             out.append(chunk)
-    return "".join(out)
+    return repair_mojibake("".join(out))
 
 
 def _header(payload: dict[str, Any], name: str) -> str:
@@ -180,7 +182,7 @@ def _extract_text(payload: dict[str, Any]) -> str:
                 return r
         return ""
 
-    return walk(payload, 0).strip()
+    return repair_mojibake(walk(payload, 0).strip())
 
 
 def _has_attachment(payload: dict[str, Any]) -> bool:

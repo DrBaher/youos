@@ -372,3 +372,58 @@ def test_strip_phone_lines_removes_hallucinated_phone():
     # Doesn't eat a sentence that merely cites a number / a time range
     assert "5000 units" in strip_phone_lines("We shipped 5000 units today.")
     assert "2:00–2:30" in strip_phone_lines("Let's meet 2:00–2:30 PM tomorrow.")
+
+
+# --- b286: always-on greeting name-stutter dedup + scaffolding strip ------
+
+from app.generation.service import _dedupe_leading_name, _strip_scaffolding  # noqa: E402
+
+
+def test_dedupe_leading_name_collapses_stutter():
+    out = _dedupe_leading_name("Hi Amina,\n\nAmina, thanks for the note.")
+    assert out == "Hi Amina,\n\nThanks for the note."
+
+
+def test_dedupe_leading_name_recapitalizes():
+    out = _dedupe_leading_name("Hi Sandhya,\n\nSandhya, the contract is unclear.")
+    assert out == "Hi Sandhya,\n\nThe contract is unclear."
+
+
+def test_dedupe_leading_name_leaves_normal_greeting():
+    txt = "Hi Marcus,\n\nThanks for the time slots — Thursday works."
+    assert _dedupe_leading_name(txt) == txt
+
+
+def test_dedupe_leading_name_no_greeting_noop():
+    txt = "The report is attached.\n\nReport, as promised."
+    assert _dedupe_leading_name(txt) == txt
+
+
+def test_strip_scaffolding_truncates_facts_block():
+    txt = ("Hi Leslie,\n\nMedicus is a strong fit.\n\n"
+           "[FACTS CONTEXT] About you: Based in Dubai, active in healthtech.")
+    assert _strip_scaffolding(txt) == "Hi Leslie,\n\nMedicus is a strong fit."
+
+
+def test_strip_scaffolding_drops_bullet_lines():
+    txt = "Hi Kurt,\n- Your preference (tone): concise\nBoth accounts are covered."
+    out = _strip_scaffolding(txt)
+    assert "Your preference" not in out
+    assert "Both accounts are covered." in out
+
+
+def test_strip_scaffolding_noop_on_clean_draft():
+    txt = "Hi Alice — Thursday works. Talk soon."
+    assert _strip_scaffolding(txt) == txt
+
+
+def test_repair_applies_dedupe_and_scaffolding():
+    txt = ("Hi Amina,\n\nAmina, thanks — details below.\n\n"
+           "[FACTS CONTEXT] About you: Vienna.")
+    out, repairs, _ = _repair_draft(
+        txt, greeting="", closing="", target_words=None, config=OFF,
+    )
+    assert "stripped_scaffolding" in repairs
+    assert "deduped_greeting_name" in repairs
+    assert "FACTS CONTEXT" not in out
+    assert "Amina, thanks" not in out
