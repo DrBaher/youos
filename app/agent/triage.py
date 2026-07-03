@@ -453,6 +453,7 @@ def _calendar_config() -> dict[str, Any]:
         # per-domain display-name override for brands whose casing the lowercase
         # domain can't reproduce (newmetrics.com -> "NewMetrics").
         "own_company": (str(user.get("company")).strip() if isinstance(user, dict) and user.get("company") else None),
+        "own_name": (str(user.get("name")).strip() if isinstance(user, dict) and user.get("name") else None),
         "company_names": (cal.get("company_names") if isinstance(cal.get("company_names"), dict) else {}),
         "tz": str(tz),
         "business_days": _i("business_days", 5),
@@ -469,6 +470,33 @@ def _calendar_config() -> dict[str, Any]:
 
 _TWO_LEVEL_TLD = {"co", "com", "org", "net", "gov", "ac", "edu"}
 
+# Consumer/free email providers — a counterparty on one of these is a PERSON
+# (title "Name <> <you>"), not a company (title "Company <> <your company>").
+_FREE_EMAIL_DOMAINS = {
+    "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "hotmail.co.uk",
+    "live.com", "msn.com", "yahoo.com", "yahoo.co.uk", "ymail.com", "aol.com",
+    "icloud.com", "me.com", "mac.com", "proton.me", "protonmail.com", "pm.me",
+    "gmx.com", "gmx.de", "gmx.net", "gmx.at", "web.de", "t-online.de",
+    "mail.com", "zoho.com", "fastmail.com", "hey.com", "yandex.com", "qq.com",
+}
+
+
+def _domain_sld(domain: str | None) -> str | None:
+    """The registrable second-level label of a domain ("sub.newmetrics.co.uk"
+    -> "newmetrics"), or None."""
+    parts = [p for p in (domain or "").strip().lower().split(".") if p]
+    if len(parts) < 2:
+        return None
+    sld = parts[-2]
+    if len(parts) >= 3 and sld in _TWO_LEVEL_TLD:  # co.uk, com.au, ac.uk …
+        sld = parts[-3]
+    return sld or None
+
+
+def _name_tokens_lower(display: str | None) -> set[str]:
+    name = re.sub(r"<[^>]*>", "", display or "").replace('"', " ")
+    return {t.lower() for t in re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ]{2,}", name)}
+
 
 def _company_from_email(email: str | None, overrides: dict) -> str | None:
     """A display company name from an email's domain — the registrable label,
@@ -482,20 +510,56 @@ def _company_from_email(email: str | None, overrides: dict) -> str | None:
         return None
     if domain in overrides and str(overrides[domain]).strip():
         return str(overrides[domain]).strip()
-    parts = [p for p in domain.split(".") if p]
-    if len(parts) < 2:
+    sld = _domain_sld(domain)
+    if not sld:
         return None
-    sld = parts[-2]
-    if len(parts) >= 3 and sld in _TWO_LEVEL_TLD:  # co.uk, com.au, ac.uk …
-        sld = parts[-3]
-    return sld[:1].upper() + sld[1:] if sld else None
+    # Strip a trailing legal/corp suffix baked into the domain: "sadadllc" ->
+    # "sadad", "handelsblattgroup" -> "handelsblatt" (only when a real name
+    # remains, so short SLDs like "a1" are untouched).
+    for suf in ("gmbh", "group", "holding", "ventures", "llc", "inc", "ltd", "corp"):
+        if sld.endswith(suf) and len(sld) - len(suf) >= 3:
+            sld = sld[: -len(suf)]
+            break
+    return sld[:1].upper() + sld[1:]
 
 
-def _meeting_title(attendee_email: str | None, account: str | None, cfg: dict) -> str | None:
-    """"<their company> <> <own company>" (b287). own company from
-    ``user.company``, else derived from the account's own domain. Returns None
-    when either side can't be derived — the caller keeps the subject-based
-    title."""
+def _person_first_name(display: str | None, email: str | None) -> str | None:
+    """First name from a From display ("Georges Akkaoui <g@x>" -> "Georges";
+    "Akkaoui, Georges" -> "Georges"), else the email's local part Title-cased."""
+    name = re.sub(r"<[^>]*>", "", display or "").strip().strip('"').strip()
+    if "," in name:  # "Last, First"
+        name = name.split(",", 1)[1].strip()
+    toks = re.findall(r"[^\s]+", name)
+    if toks and re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", toks[0]):
+        return toks[0]
+    local = re.split(r"[.+_-]", (email or "").split("@")[0])[0]
+    return local[:1].upper() + local[1:] if local else None
+
+
+def _meeting_title(attendee_email: str | None, attendee_name: str | None,
+                   account: str | None, cfg: dict) -> str | None:
+    """Meeting-event title (b287). A corporate counterparty →
+    "<their company> <> <own company>" (e.g. "NewMetrics <> Medicus AI"); a
+    counterparty on a consumer/free email domain is a PERSON →
+    "<their first name> <> <own name>" (e.g. "Amina <> Baher"). own company from
+    ``user.company`` (else the account domain); own name from ``user.name``.
+    Returns None when a side can't be derived — the caller keeps the subject."""
+    from app.core.sender import extract_domain
+
+    domain = (extract_domain(attendee_email) or "").strip().lower()
+    # A counterparty is a PERSON when they're on a consumer/free provider, OR
+    # the domain is their own vanity domain — the SLD matches a name token
+    # ("Christopher Jeckl" on jeckl.at). Otherwise it's a company.
+    sld = _domain_sld(domain)
+    is_person = bool(domain and domain in _FREE_EMAIL_DOMAINS)
+    if not is_person and sld and sld in _name_tokens_lower(attendee_name):
+        is_person = True
+    if is_person:
+        person = _person_first_name(attendee_name, attendee_email)
+        own = cfg.get("own_name")
+        if person and own:
+            return f"{person} <> {own}"
+        return None
     company = _company_from_email(attendee_email, cfg.get("company_names") or {})
     own = cfg.get("own_company") or _company_from_email(account, {})
     if not company or not own:
@@ -672,7 +736,7 @@ def _maybe_detect_confirmation(
             thread_id=msg.thread_id,
             message_id=msg.message_id,
             source_draft_id=int(row["id"]) if row.get("id") is not None else None,
-            title=_meeting_title(_att, account, _cfg) or result.title,
+            title=_meeting_title(_att, msg.sender, account, _cfg) or result.title,
             start_iso=result.start_iso,
             end_iso=result.end_iso,
             timezone=_cfg.get("tz"),
@@ -731,7 +795,7 @@ def _maybe_detect_self_scheduled(
         _att = result.attendees[0] if result.attendees else None
         queued = event_store.queue_pending_event(
             database_url, account=account, thread_id=msg.thread_id, message_id=msg.message_id,
-            title=_meeting_title(_att, account, _calendar_config()) or result.title,
+            title=_meeting_title(_att, None, account, _calendar_config()) or result.title,
             start_iso=result.start_iso, end_iso=result.end_iso,
             timezone=tz, attendees=result.attendees, confidence=result.confidence, reasons=result.reasons,
         )
@@ -845,7 +909,7 @@ def _maybe_detect_counterparty_availability(
         _att = result.attendees[0] if result.attendees else None
         queued = event_store.queue_pending_event(
             database_url, account=account, thread_id=msg.thread_id, message_id=msg.message_id,
-            title=_meeting_title(_att, account, cfg) or result.title,
+            title=_meeting_title(_att, msg.sender, account, cfg) or result.title,
             start_iso=start_iso, end_iso=end_iso, timezone=tz,
             attendees=result.attendees, confidence=result.confidence, reasons=reasons,
         )
