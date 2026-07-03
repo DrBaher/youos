@@ -439,6 +439,14 @@ def _calendar_config() -> dict[str, Any]:
         # meeting time (not just the counterparty accepting our proposal) and
         # queue the invite for approval. Defaults on when auto_confirm is on.
         "confirm_from_self": bool(auto_confirm.get("from_self", True)) if isinstance(auto_confirm, dict) else True,
+        # Direction C (b287): detect when the COUNTERPARTY's inbound states a
+        # meeting time or a window of availability, intersect a window with the
+        # user's free/busy, and queue one proposed slot for approval — the common
+        # case where THEY confirm a time and we never proposed slots. Defaults on
+        # when auto_confirm is on. Its own model tier (default 'local' — private:
+        # the inbound is parsed on-device) independent of auto_confirm_model.
+        "confirm_from_counterparty": bool(auto_confirm.get("from_counterparty", True)) if isinstance(auto_confirm, dict) else True,
+        "counterparty_model": str(auto_confirm.get("counterparty_model", "local")) if isinstance(auto_confirm, dict) else "local",
         "tz": str(tz),
         "business_days": _i("business_days", 5),
         "work_start_hour": _i("work_start_hour", 9),
@@ -685,6 +693,121 @@ def _maybe_detect_self_scheduled(
             return True
     except Exception as exc:
         logger.warning("self-scheduled detection failed for %s: %s", msg.message_id, exc)
+    return False
+
+
+def _resolve_counterparty_slot(account: str, result, cfg: dict) -> tuple[str | None, str | None, list[str] | None]:
+    """Turn a counterparty AvailabilityResult into a concrete ``(start_iso,
+    end_iso, reasons)`` by intersecting with the user's real free/busy.
+
+    ``specific`` → honor the confirmed time as-is (annotate a note if the
+    calendar is busy then, but still propose it — they picked it). ``range`` →
+    pick the first open work-hours slot inside the window; fail CLOSED (no
+    proposal) if free/busy can't be read, so we never propose a time with zero
+    calendar knowledge (mirrors b246)."""
+    from datetime import datetime
+    from datetime import timezone as _tz
+
+    from app.agent.calendar import compute_open_slots, fetch_busy, format_slots
+
+    tz = cfg.get("tz", "UTC")
+    slot_minutes = cfg.get("slot_minutes", 30)
+
+    def _utc_iso(dt: datetime) -> str:
+        return dt.astimezone(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    start = datetime.fromisoformat(result.start_iso)
+    end = datetime.fromisoformat(result.end_iso)
+
+    if result.kind == "specific":
+        reasons = [f"they confirmed {format_slots([(start, end)])}"]
+        try:  # fail-open on the conflict note — still propose the confirmed time
+            busy = fetch_busy(account, from_iso=_utc_iso(start), to_iso=_utc_iso(end))
+            if any(s < end and start < e for s, e in busy):
+                reasons = [reasons[0] + " — ⚠ conflicts with an existing event on your calendar"]
+        except Exception:
+            pass
+        return result.start_iso, result.end_iso, reasons
+
+    # range: pick the first free work-hours slot inside the confirmed window.
+    try:
+        busy = fetch_busy(account, from_iso=_utc_iso(start), to_iso=_utc_iso(end))
+    except Exception as exc:  # fail-closed: no availability knowledge → no proposal
+        logger.info("counterparty-availability: free/busy unavailable, no proposal: %s", exc)
+        return None, None, None
+    # Never propose a past time even if the model resolved a window starting in
+    # the past — anchor the scan at max(now, window_start).
+    now_ref = max(datetime.now(_tz.utc), start.astimezone(_tz.utc))
+    span_days = min(14, max(1, (end.date() - start.date()).days + 1))
+    slots = compute_open_slots(
+        busy, now=now_ref, tz=tz, business_days=span_days,
+        work_start_hour=cfg.get("work_start_hour", 9), work_end_hour=cfg.get("work_end_hour", 17),
+        slot_minutes=slot_minutes, max_slots=cfg.get("max_slots", 3),
+        preferred_weekdays=cfg.get("preferred_weekdays"),
+    )
+    picked = next(((s, e) for s, e in slots if s >= now_ref and e <= end), None)
+    if picked is None:
+        return None, None, None  # window offers no open slot — surface nothing
+    ps, pe = picked
+    reasons = [
+        f"they're free {format_slots([(start, end)])}; "
+        f"proposing {format_slots([picked])} from your open calendar"
+    ]
+    return ps.isoformat(), pe.isoformat(), reasons
+
+
+def _maybe_detect_counterparty_availability(
+    database_url: str | None,
+    account: str,
+    msg,
+    *,
+    account_emails: list[str] | None = None,
+    cal_cfg: dict | None = None,
+) -> bool:
+    """Direction C (b287): if THIS inbound states a meeting time or a window of
+    availability, intersect a window with the user's free/busy and queue one
+    proposed calendar event for approval. Detection-only, gated, idempotent per
+    thread, failure-isolated. Returns True when a new event was queued."""
+    if not database_url or not msg.thread_id:
+        return False
+    try:
+        from app.agent import event_store
+        from app.agent.meeting_confirm import detect_counterparty_availability
+        from app.core.text_utils import extract_new_content
+
+        if event_store.get_event_by_thread(database_url, msg.thread_id):
+            return False
+        cfg = cal_cfg or _calendar_config()
+        tz = cfg.get("tz", "UTC")
+        result = detect_counterparty_availability(
+            subject=msg.subject,
+            sender=msg.sender or msg.sender_email or None,
+            sender_email=msg.sender_email,
+            body=extract_new_content(msg.body),
+            account_emails={e.lower() for e in (account_emails or [])},
+            now_iso=msg.received_at,
+            tz=tz,
+            meeting_minutes=cfg.get("slot_minutes", 30),
+            model=cfg.get("counterparty_model", "local"),
+        )
+        if result is None:
+            return False
+        start_iso, end_iso, reasons = _resolve_counterparty_slot(account, result, cfg)
+        if start_iso is None:
+            return False
+        queued = event_store.queue_pending_event(
+            database_url, account=account, thread_id=msg.thread_id, message_id=msg.message_id,
+            title=result.title, start_iso=start_iso, end_iso=end_iso, timezone=tz,
+            attendees=result.attendees, confidence=result.confidence, reasons=reasons,
+        )
+        if queued is not None:
+            logger.info(
+                "counterparty-availability meeting detected on thread %s — queued event row %s",
+                msg.thread_id, queued,
+            )
+            return True
+    except Exception as exc:
+        logger.warning("counterparty-availability detection failed for %s: %s", msg.message_id, exc)
     return False
 
 
@@ -1547,6 +1670,26 @@ def _run_sweep(
                 model=cal_cfg.get("auto_confirm_model", "cloud"),
             ):
                 events_queued += 1
+            # Direction C (b287): the counterparty states a time / availability
+            # window and we never proposed slots. Intersect a window with the
+            # user's free/busy and queue one proposed slot. Skipped if the above
+            # already queued an event for this thread (idempotent per thread).
+            #
+            # Unlike Direction A (anchored to a slot WE proposed), C has no such
+            # anchor, so it MUST respect the needs-reply filter: only genuine 1:1
+            # human mail, never a hard-skipped newsletter/automation (score 0) or
+            # a cold pitch. Without this it queued bogus invites off incidental
+            # "Sunday"/"this week" words in newsletters (Monocle, digests).
+            elif (
+                cal_cfg.get("confirm_from_counterparty")
+                and verdict.score > 0
+                and not verdict.cold_outreach
+            ):
+                if _maybe_detect_counterparty_availability(
+                    database_url, account, msg,
+                    account_emails=_account_emails, cal_cfg=cal_cfg,
+                ):
+                    events_queued += 1
         # NB: self-confirmed meetings (the user's OWN sent reply) are handled by
         # the SENT-mail scan after this loop — fetch_unread drops any thread whose
         # latest message is the user's, so they never reach this inbound loop.
