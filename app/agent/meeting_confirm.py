@@ -454,11 +454,16 @@ def _deterministic_range(text: str, now_iso: str | None, tz: str) -> tuple[str, 
     if re.search(r"\btomorrow\b", low):
         d = today + timedelta(days=1)
         return _window(d, d)
+    # Explicit weekday(s): span the earliest to the latest mentioned, so "Tuesday
+    # and Wed" becomes a Tue–Wed window (the availability + preferred-weekday pass
+    # then picks whichever day is open), not just the first weekday.
+    wd_dates = []
     for name, wd in _WEEKDAY_NUMS.items():
         if re.search(rf"\b{name}\b", low):
             days = (wd - today.weekday()) % 7 or 7  # the NEXT such weekday (not today)
-            d = today + timedelta(days=days)
-            return _window(d, d)
+            wd_dates.append(today + timedelta(days=days))
+    if wd_dates:
+        return _window(min(wd_dates), max(wd_dates))
     return None
 
 

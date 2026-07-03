@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 
 CAL_TIMEOUT_SECONDS = 20
 
+# A busy block this long or longer is treated as an all-day / multi-day marker
+# (OOO, holiday, "colleague off", birthday) and excluded from meeting free/busy
+# — no real 30-min booking is ~a full day, so this only drops full-day events.
+_ALL_DAY_MIN = timedelta(hours=23)
+
 
 class CalendarFetchError(RuntimeError):
     """free/busy could not be fetched (b246) — distinct from a successfully
@@ -119,9 +124,18 @@ def fetch_busy(
             continue
         for block in cal.get("busy", []) or []:
             try:
-                busy.append((_parse_rfc3339(block["start"]), _parse_rfc3339(block["end"])))
+                start, end = _parse_rfc3339(block["start"]), _parse_rfc3339(block["end"])
             except (KeyError, ValueError):
                 continue
+            # Skip all-day / multi-day blocks (≥ ~a full day): these are OOO,
+            # holidays, "colleague is off", birthdays, or multi-day markers —
+            # usually on a shared/secondary calendar — NOT a hard block for a
+            # 30-min call. Counting them as busy wiped out whole days of
+            # availability (a real case: a colleague's all-day "off" hid a free
+            # Wed). Real bookings are the timed sub-day blocks, which stay.
+            if end - start >= _ALL_DAY_MIN:
+                continue
+            busy.append((start, end))
     return busy
 
 
