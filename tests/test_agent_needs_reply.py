@@ -955,3 +955,34 @@ def test_email_mentioning_a_call_still_drafts():
         body="Hi Baher, can you confirm the Q3 pricing? Happy to hop on a call if easier.",
     ))
     assert v.needs_reply, v.reasons
+
+
+# --- b286: no-new-content + parcel/task-reminder suppression -------------
+
+
+def test_signature_only_body_not_drafted():
+    v = classify(_msg(
+        subject="(no subject)",
+        body="-- \nMag.art. Amina Vamosi\nWehleweg 9/53\n1030 Wien\n+436766865714",
+    ))
+    assert v.needs_reply is False
+    assert v.score == 0.0
+
+
+def test_forwarded_parcel_pickup_penalized():
+    v = classify(_msg(
+        subject="Fwd: Ihr Paket ist da!",
+        body="Ihr Paket 103113 ist in der Abholstation 1030 abholbereit. "
+             "Abholfrist: Freitag. Bitte folgen Sie den Anweisungen.",
+    ))
+    assert v.needs_reply is False
+
+
+def test_automated_overdue_task_reminder_penalized():
+    v = classify(_msg(
+        sender="Debitura <contact@debitura.com>",
+        sender_email="contact@debitura.com",
+        subject="Friendly Reminder: 6 Overdue Task(s) Awaiting Your Attention",
+        body="You have 6 tasks and 6 of them are overdue. Please review them.",
+    ))
+    assert v.needs_reply is False

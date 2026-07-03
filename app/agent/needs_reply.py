@@ -145,6 +145,15 @@ TRANSACTIONAL_TEMPLATE_PAT = re.compile(
     # English-only. Cover the common Amazon/retailer German transactional terms.
     r"bestellbest[äa]tigung|auftragsbest[äa]tigung|versandbest[äa]tigung|"
     r"zahlungsbest[äa]tigung|ihre bestellung|rechnungsnummer|rechnung|"
+    # Parcel / shipping pickup notices (EN + DE) — a forwarded "your package is
+    # ready for pickup" is an FYI, not a request. b286: real inbox forwarded a
+    # post.at "Ihr Paket ist da! … abholbereit" notice and it got drafted.
+    r"ihr paket ist da|paket ist da|abholbereit|zur abholung|abholstation|"
+    r"abholfrist|ready for (?:pick[\s-]?up|collection)|available for pickup|"
+    # Automated task/to-do reminders (SaaS nudges) — "N overdue task(s)",
+    # "tasks awaiting your attention". b286: a Debitura "Friendly Reminder: 6
+    # Overdue Task(s) Awaiting Your Attention" got drafted (invented "Robin").
+    r"overdue task|tasks? awaiting your attention|awaiting your attention|"
     # Common body openings, e.g. "Your appointment is confirmed".
     r"your\s+(?:appointment|booking|order|reservation|payment|purchase|delivery|"
     r"subscription|trip|flight|hotel|ticket|invoice|receipt|registration)\s+"
@@ -523,11 +532,22 @@ def classify(
     # full message; only the soft content signals use the trimmed text.
     from app.core.text_utils import extract_new_content, strip_signature
 
-    scoring_text = strip_signature(extract_new_content(msg.body))
-    if not scoring_text.strip():
-        # Degenerate (pure quote / signature only) — fall back to the full body
-        # rather than score emptiness.
-        scoring_text = msg.body
+    new_content = extract_new_content(msg.body)
+    scoring_text = strip_signature(new_content)
+    # A body whose FIRST non-empty line is the RFC "-- " signature delimiter is
+    # a signature with nothing above it — strip_signature leaves it intact
+    # (there's no preceding content to keep), so check it explicitly.
+    _first_ne = next((ln for ln in new_content.splitlines() if ln.strip()), "")
+    _sig_only = bool(re.fullmatch(r"-{2,}", _first_ne.strip()))
+    if _sig_only or not scoring_text.strip():
+        # No repliable NEW content — the message is a signature block, a bare
+        # quote, or a forward with nothing added. b286: a real-inbox FP where
+        # a signature-only mail ("-- \nMag.art. Amina …") scored 0.8 because the
+        # old fallback re-scored the FULL body (incl. the signature's address /
+        # phone, which read as content). Surface for review, never draft.
+        return NeedsReplyVerdict(
+            False, 0.0, ["no new content (signature/quote only)"]
+        )
 
     # 3) Lightweight needs-reply score.
     score = 0.5  # start at the boundary; signals tip it one way or the other

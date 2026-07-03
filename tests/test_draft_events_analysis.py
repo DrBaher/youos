@@ -147,3 +147,45 @@ def test_missing_table_returns_zeroed_summary(tmp_path):
 def test_missing_db_returns_zeroed_summary(tmp_path):
     s = summarize_draft_events(f"sqlite:///{tmp_path / 'nope.db'}")
     assert s["total"] == 0
+
+
+def _make_db_with_threads(tmp_path):
+    """draft_events + feedback_pairs + reply_pairs wired for the b286 thread_id
+    join: the inbound_text DIFFERS between draft_events and feedback_pairs (as on
+    a live instance), so a match can only come from thread_id."""
+    db = tmp_path / "th.db"
+    conn = sqlite3.connect(db)
+    _migrate_draft_events(conn)
+    # draft_events carries thread_id (b269 column added by _migrate_draft_events)
+    conn.execute(
+        "INSERT INTO draft_events (inbound_text, generated_draft, sender_type, confidence, thread_id) "
+        "VALUES ('drafter-view-of-inbound', 'd', 'external_client', 'high', 'THREAD-1')"
+    )
+    conn.execute(
+        """CREATE TABLE reply_pairs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT,
+            inbound_text TEXT, reply_text TEXT )"""
+    )
+    conn.execute("INSERT INTO reply_pairs (id, thread_id, inbound_text) VALUES (7, 'THREAD-1', 'reconstructed-thread')")
+    conn.execute(
+        """CREATE TABLE feedback_pairs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, inbound_text TEXT NOT NULL,
+            generated_draft TEXT NOT NULL, edited_reply TEXT NOT NULL,
+            edit_distance_pct REAL, reply_pair_id INTEGER, organic BOOLEAN DEFAULT 0 )"""
+    )
+    # inbound_text here != draft_events.inbound_text — only thread_id can join.
+    conn.execute(
+        "INSERT INTO feedback_pairs (inbound_text, generated_draft, edited_reply, edit_distance_pct, reply_pair_id, organic) "
+        "VALUES ('reconstructed-thread', 'agent-draft', 'user-sent', 0.4, 7, 0)"
+    )
+    conn.commit()
+    conn.close()
+    return f"sqlite:///{db}"
+
+
+def test_outcome_joins_via_thread_id_when_inbound_text_differs(tmp_path):
+    s = summarize_draft_events(_make_db_with_threads(tmp_path))
+    # inbound_text differs across tables; the match comes from thread_id (b286).
+    assert s["outcome"]["matched"] == 1
+    by_st = s["outcome"]["avg_edit_distance_by_sender_type"]
+    assert by_st["external_client"]["avg_edit_distance"] == 0.4

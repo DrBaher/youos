@@ -28,6 +28,50 @@ def decode_html_entities(text: str) -> str:
     return html.unescape(text)
 
 
+# Double-encoded UTF-8 ("mojibake"): UTF-8 bytes decoded as cp1252/Latin-1 and
+# re-served, so "bestätige" arrives as "bestÃ¤tige" and umlauts
+# mangle similarly. A live inbox audit found ~6.5% of inbound bodies affected —
+# concentrated on German senders, the exact mail where voice-match matters most.
+# The fix is to re-encode with the misapplied codec and decode as UTF-8; mail
+# systems mostly use cp1252 (its 0x80-0x9F glyphs — smart quotes, dashes, the
+# sharp-s continuation — are why "ß" and smart-quote mojibake differ from
+# Latin-1), so cp1252 is tried first, Latin-1 second.
+#
+# The diagnostic signature is a UTF-8 lead byte (U+00C2-U+00F4) followed by
+# either a continuation-range char (U+0080-U+00BF, the Latin-1 family) or one of
+# the cp1252 0x80-0x9F glyphs (the smart-quote / sharp-s family). This virtually
+# never occurs in well-formed text, so it gates the repair tightly.
+_CP1252_HIGH = '€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ'
+_MOJIBAKE_HINT_RE = re.compile("[\u00c2-\u00f4][\u0080-\u00bf" + _CP1252_HIGH + "]")
+
+
+def repair_mojibake(text: str) -> str:
+    """Repair double-encoded UTF-8 in ``text``; return it unchanged if it isn't
+    unambiguously mojibake.
+
+    Guards against corrupting valid text:
+    * only strings carrying the mojibake signature are touched;
+    * ``encode(codec)`` raises on any genuine char the codec can't represent
+      (real Arabic, emoji, a lone euro sign in otherwise-clean text) — left
+      as-is;
+    * a candidate is accepted only if it introduces no U+FFFD and strictly
+      reduces the mojibake signature count.
+    """
+    if not text or not _MOJIBAKE_HINT_RE.search(text):
+        return text
+    before = len(_MOJIBAKE_HINT_RE.findall(text))
+    for codec in ("cp1252", "latin-1"):
+        try:
+            fixed = text.encode(codec).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+        if "\ufffd" in fixed:
+            continue
+        if len(_MOJIBAKE_HINT_RE.findall(fixed)) < before:
+            return fixed
+    return text
+
+
 def strip_quoted_text(text: str) -> str:
     """Remove quoted reply history from email body, keeping only the new content.
 
