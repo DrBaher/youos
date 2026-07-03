@@ -1674,7 +1674,17 @@ def _run_sweep(
             # window and we never proposed slots. Intersect a window with the
             # user's free/busy and queue one proposed slot. Skipped if the above
             # already queued an event for this thread (idempotent per thread).
-            elif cal_cfg.get("confirm_from_counterparty"):
+            #
+            # Unlike Direction A (anchored to a slot WE proposed), C has no such
+            # anchor, so it MUST respect the needs-reply filter: only genuine 1:1
+            # human mail, never a hard-skipped newsletter/automation (score 0) or
+            # a cold pitch. Without this it queued bogus invites off incidental
+            # "Sunday"/"this week" words in newsletters (Monocle, digests).
+            elif (
+                cal_cfg.get("confirm_from_counterparty")
+                and verdict.score > 0
+                and not verdict.cold_outreach
+            ):
                 if _maybe_detect_counterparty_availability(
                     database_url, account, msg,
                     account_emails=_account_emails, cal_cfg=cal_cfg,

@@ -250,3 +250,29 @@ def test_availability_phrase_passes_prefilter():
         complete_fn=lambda p: called.append(p) or "FINAL: NONE",
     )
     assert called, "availability phrase should reach the model (broadened pre-filter)"
+
+
+# --- b287 false-positive guard (live bug: newsletters queued as invites) ----
+
+
+def test_newsletter_prose_not_a_meeting():
+    # Incidental "this week"/"Sunday"/"works" with no scheduling intent → NONE.
+    for body in (
+        "The Monocle Weekend Edition. This week: top stories, read on Sunday.",
+        "3-2-1: How luck works this week, why improvement is hard, a call for courage.",
+        "Invoice INV-2026-0806 from Medicus AI is due next week. Please remit.",
+    ):
+        r = detect_counterparty_availability(
+            subject="x", sender="S", sender_email="s@ext.com", body=body,
+            now_iso=_NOW, tz=VIENNA, complete_fn=lambda p: "FINAL: NONE",
+        )
+        assert r is None, f"should not detect a meeting in: {body!r}"
+
+
+def test_scheduling_intent_required_for_range():
+    # A weekday word alone must NOT trigger the deterministic range fallback.
+    assert detect_counterparty_availability(
+        subject="x", sender="S", sender_email="s@ext.com",
+        body="See you at the Wednesday conference keynote.",
+        now_iso=_NOW, tz=VIENNA, complete_fn=lambda p: "FINAL: NONE",
+    ) is None

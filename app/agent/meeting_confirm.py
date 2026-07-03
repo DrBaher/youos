@@ -48,17 +48,22 @@ _MEETING_SIGNAL_RE = re.compile(
     r"\b(?:meet|meeting|call|invite|calendar|schedul|appointment|catch[\s-]?up)\b",
     re.IGNORECASE,
 )
-# Broader pre-filter for Direction C (b287): a counterparty stating availability
-# often has NO scheduling verb ("I'm free Wednesday or Thursday") — so also
-# admit availability words + day/time phrases. Looser on purpose: a false
-# positive only costs one model call that returns NONE, never a wrong event.
-_AVAIL_SIGNAL_RE = re.compile(
+# Scheduling-INTENT gate for Direction C (b287). A counterparty stating a time
+# to meet has an unambiguous scheduling phrase — a clock time, or a
+# meeting/availability word — NOT just an incidental weekday/week word (a
+# newsletter's "this week's edition" or a "Sunday" dateline). Requiring this to
+# even call the model is what stops bogus invites off newsletter prose (a live
+# b287 bug: Monocle/AgentNews/digests queued invites). The needs-reply gate in
+# triage (hard-skipped newsletters never reach here) is the primary defense;
+# this is the detector-level backstop for any human 1:1 mail that slips through.
+_SCHEDULE_INTENT_RE = re.compile(
     r"\b\d{1,2}\s*(?::\d{2})?\s*(?:am|pm)\b|\b\d{1,2}:\d{2}\b|"
-    r"\b(?:meet|meeting|call|invite|calendar|schedul\w*|appointment|catch[\s-]?up|"
-    r"free|available|availabl\w*|works|suit\w*|"
-    r"next\s+week|this\s+week|tomorrow|"
-    r"mon(?:day)?|tues?(?:day)?|wed(?:nesday)?|thu(?:rs?)?(?:day)?|fri(?:day)?|"
-    r"morning|afternoon|evening)\b",
+    r"\b(?:meet|meeting|schedul\w*|reschedul\w*|sync|catch[\s-]?up|appointment|"
+    r"calendar|invite|works\s+(?:for|on)|good\s+(?:for|on)|that\s+works|"
+    r"suits?\s+(?:me|you|us)|my\s+end|your\s+end|available|availabl\w*|free|"
+    r"i'?m\s+(?:free|available|around|good|flexible|open)|i\s+can\s+(?:do|make)|"
+    r"book\s+a|set\s+up\s+a|hop\s+on|when\s+(?:works|are\s+you|suits)|what\s+time|slot|"
+    r"let'?s\s+(?:meet|schedule|sync|find|do|set|grab|hop|catch|talk|chat|connect))\b",
     re.IGNORECASE,
 )
 
@@ -488,8 +493,10 @@ def detect_counterparty_availability(
         return None  # an invite needs someone to invite
 
     snippet = " ".join((body or "").split())[:_BODY_SNIPPET_CHARS]
-    # Cheap gate: no time/availability signal → not a scheduling message.
-    if not _AVAIL_SIGNAL_RE.search(snippet):
+    # Gate: a real scheduling phrase (clock time / meeting / availability word),
+    # not just an incidental weekday. Keeps the model (and the range fallback)
+    # away from newsletter prose that merely mentions "this week"/"Sunday".
+    if not _SCHEDULE_INTENT_RE.search(snippet):
         return None
 
     if complete_fn is None:
@@ -526,7 +533,8 @@ def detect_counterparty_availability(
     if parsed is None:
         # Local models reliably resolve a SPECIFIC time but miss ranges ("next
         # week"); a deterministic on-device fallback recovers the common range
-        # phrases without egress (keeps the 'local' privacy choice intact).
+        # phrases without egress (keeps the 'local' privacy choice intact). Safe
+        # here — the scheduling-intent gate above already ran.
         parsed = _deterministic_range(snippet, now_iso, tz)
     if parsed is None:
         return None
