@@ -276,3 +276,12 @@ def test_scheduling_intent_required_for_range():
         body="See you at the Wednesday conference keynote.",
         now_iso=_NOW, tz=VIENNA, complete_fn=lambda p: "FINAL: NONE",
     ) is None
+
+
+def test_deterministic_multi_weekday_spans_all():
+    # "Tuesday and Wed" → a Tue–Wed window (not just the first weekday) so the
+    # availability pass can pick whichever day is open (b287 follow-up).
+    kind, s, e = _deterministic_range("I'm free Tuesday and Wed to meet", _NOW, VIENNA)
+    assert kind == "range"
+    assert s.startswith("2026-07-07")  # Tuesday
+    assert e.startswith("2026-07-08")  # Wednesday

@@ -87,3 +87,25 @@ def test_compute_open_slots_non_positive_slot_minutes_does_not_hang():
     assert calendar.compute_open_slots([], now=now, tz="UTC", slot_minutes=-5) == []
     # a positive slot length still produces slots (no regression)
     assert calendar.compute_open_slots([], now=now, tz="UTC", slot_minutes=30)
+
+
+def test_fetch_busy_excludes_all_day_blocks(monkeypatch):
+    """b287 follow-up: all-day / multi-day blocks (OOO, holiday, colleague-off on
+    a shared calendar) must NOT count as busy — only timed sub-day bookings do."""
+    import json as _json
+    import subprocess as _sp
+
+    from app.agent import calendar as cal
+
+    payload = {"calendars": {"primary": {"busy": [
+        {"start": "2026-07-07T00:00:00Z", "end": "2026-07-08T23:59:00Z"},  # all-day (drop)
+        {"start": "2026-07-07T08:00:00Z", "end": "2026-07-07T09:00:00Z"},  # timed (keep)
+    ]}}}
+    monkeypatch.setattr(cal.subprocess, "run", lambda *a, **k: _sp.CompletedProcess(
+        a[0], 0, stdout=_json.dumps(payload), stderr=""))
+    monkeypatch.setattr("app.ingestion.adapters.require_account_argv", lambda cmd: None)
+    # backend="gog" passed directly so no config lookup is needed.
+    busy = cal.fetch_busy("a@x", from_iso="2026-07-07T00:00:00Z",
+                          to_iso="2026-07-08T23:59:00Z", backend="gog")
+    assert len(busy) == 1  # the all-day block was dropped
+    assert busy[0][0].hour == 8
