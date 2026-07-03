@@ -63,8 +63,29 @@ def test_lowercase_capitalized():
     assert first_name_from_display_name("sarah") == "Sarah"
 
 
-def test_single_char():
-    assert first_name_from_display_name("A") == "A"
+def test_single_char_is_rejected():
+    # b290: a 1-char "name" is not a plausible greeting ("Hi A," is worse than
+    # "Hi,") — the extractor returns None so the greeting drops the name.
+    assert first_name_from_display_name("A") is None
+
+
+def test_org_handles_and_acronyms_rejected():
+    # b290: org handles / mailbox strings / acronyms must not become greetings.
+    f = first_name_from_display_name
+    assert f("BK-Firmenkunden (RLBNOE)") is None
+    assert f("Coworking_Vienna") is None
+    assert f('"R+P - Mag. Christoph Rumpler"') is None
+
+
+def test_quotes_stripped_before_parse():
+    # b290: surrounding quotes must not leak into the name ('Hannah"').
+    assert first_name_from_display_name('"Täubl, Hannah"') == "Hannah"
+
+
+def test_hyphenated_given_name_preserved():
+    f = first_name_from_display_name
+    assert f("Jean-Pierre Dubois") == "Jean-Pierre"
+    assert f("Anne-Marie") == "Anne-Marie"
 
 
 def test_first_name_handles_last_comma_first():

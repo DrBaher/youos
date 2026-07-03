@@ -80,6 +80,34 @@ _STATUS_CLAIM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("resolved", re.compile(r"\b(?:is|are|has\s+been|have\s+been)\s+(?:now\s+)?resolved\b", re.IGNORECASE)),
     ("active", re.compile(r"\b(?:is|are)\s+now\s+(?:active|live|enabled|in\s+place|set\s+up)\b", re.IGNORECASE)),
     ("no further action", re.compile(r"\bno\s+(?:further\s+)?action\s+(?:is\s+)?(?:needed|required)\b", re.IGNORECASE)),
+    # b290: fabricated confirmations. Live review found the model asserting a
+    # third party (or itself) "confirmed" something the thread never states —
+    # "Johannes has confirmed the call will be on 5th July" (#46536), "Confirmed —
+    # all parties have signed the NDA" (#23327) on a thread that was only a
+    # scheduling poll. Grounded on the stem "confirm", so echoing the sender's own
+    # "please confirm" does still ground it (accepted: a request grounds the word).
+    ("confirm", re.compile(
+        r"\b(?:has|have)\s+confirmed\b|\bconfirms\b"
+        r"|(?:^|[.!?]\s+|,\s+)confirmed[\s:—,-]", re.IGNORECASE)),
+    # Fabricated "signed" as a completed state — "all parties have signed",
+    # "the NDA has been signed". _CLAIM_PATTERNS carries a softer (warning-only)
+    # "signed"; this collapses on the autonomous path when un-grounded.
+    ("sign", re.compile(
+        r"\b(?:have|has)\s+(?:been\s+)?signed\b|\b(?:is|are|now)\s+signed\b"
+        r"|\bcountersigned\b", re.IGNORECASE)),
+    # Fabricated money movement — "$560 transferred to MED Bank" (#14391) on an
+    # inbound that merely *requested* the transfer. Keyed on "transferred" (not
+    # "transfer"), so a request ("please transfer") never grounds the completion.
+    ("transferred", re.compile(
+        r"\b(?:has|have|had)\s+been\s+transferred\b|\b(?:was|were)\s+transferred\b"
+        r"|\btransferred\s+to\b", re.IGNORECASE)),
+    # Fabricated document location/existence — "the contract is already in your
+    # per-debtor folder under Intel Lab LLC" (#43843): invents where a file lives
+    # in response to a request to share it. Keyed on "folder".
+    ("folder", re.compile(
+        r"\b(?:is|are)\s+(?:already\s+)?(?:in|available\s+in|saved\s+in|stored\s+in|filed\s+in)\s+"
+        r"(?:your|the|our)\b.{0,40}\bfolder\b"
+        r"|\balready\s+in\s+(?:your|the|our)\b.{0,40}\bfolder\b", re.IGNORECASE)),
 )
 
 # German completion assertions (b286). The English patterns above never fire
@@ -199,6 +227,10 @@ _GREETING_OPEN_RE = re.compile(
 )
 _WORD_RE = re.compile(r"[a-zà-öø-ÿ]+", re.IGNORECASE)
 
+# Smart/curly apostrophes → straight quote, so apostrophe-bearing patterns
+# ("baby'?s") match model output that uses U+2019 (b290).
+_APOS_TABLE = {ord(c): "'" for c in "‘’ʼ′´`"}
+
 # Hard cap on the text any of the above regexes scan. The inbound + thread
 # history are attacker-controlled and otherwise uncapped on this path (the
 # 4000-char prompt cap protects generation, not verify_draft). 20 KB is far
@@ -265,10 +297,25 @@ def verify_draft(
     d = (draft or "")[:_MAX_VERIFY_CHARS]
     inbound = (inbound or "")[:_MAX_VERIFY_CHARS]
     d_core = strip_signature(d)
+    # b290: strip_signature over-strips when the BODY opens with a sign-off-like
+    # phrase — a greeting-stutter draft "Hi Franz,\n\nThanks Franz,\nJohannes has
+    # confirmed …" collapses to just "Hi Franz,", so every content/fabrication
+    # scan below (which runs on the de-signatured text) sees nothing and misses
+    # the fabrication (#46536). When the strip removed most of the draft, it
+    # almost certainly ate real body — fall back to the raw draft for the content
+    # scans. The email/link/language checks keep using d_core as before.
+    _d_stripped = d.strip()
+    d_body = d_core if len(d_core.strip()) >= max(40, 0.5 * len(_d_stripped)) else _d_stripped
+    # b290: normalise curly/smart apostrophes to a straight quote before the
+    # content scans. The 4B LoRA emits "baby's" / "daughter's" with a curly ’
+    # (U+2019), which defeats every apostrophe-bearing pattern (baby'?s,
+    # daughter's) and let a fabricated-family draft through (#52452). Applied to
+    # both the draft body and the grounding corpus so matching stays symmetric.
+    d_body = d_body.translate(_APOS_TABLE)
     hay = inbound
     if thread_history:
         hay += "\n" + "\n".join((h.get("text") or "") for h in thread_history)
-    hay = hay[:_MAX_VERIFY_CHARS]
+    hay = hay[:_MAX_VERIFY_CHARS].translate(_APOS_TABLE)
     hay_l = hay.lower()
 
     blocking: list[str] = []
@@ -324,7 +371,7 @@ def verify_draft(
     for key, pat in _CLAIM_PATTERNS:
         if key in hay_l:
             continue  # the claim is grounded in the inbound/thread — not invented
-        m = pat.search(d_core)
+        m = pat.search(d_body)
         if m:
             phrase = m.group(0).strip().lower()
             if phrase not in seen_claims:
@@ -340,7 +387,7 @@ def verify_draft(
     for key, pat in (*_STATUS_CLAIM_PATTERNS, *_STATUS_CLAIM_PATTERNS_DE):
         if key in hay_l:
             continue
-        m = pat.search(d_core)
+        m = pat.search(d_body)
         if m:
             phrase = m.group(0).strip().lower()
             if phrase not in seen_claims:
@@ -360,17 +407,17 @@ def verify_draft(
     fabrications: list[str] = []
     family_grounded = bool(_FAMILY_GROUND_RE.search(hay_l))
     if not family_grounded:
-        pm = _PERSONAL_LIFE_RE.search(d_core)
+        pm = _PERSONAL_LIFE_RE.search(d_body)
         if pm:
             fabrications.append(f"invented personal/family detail: {pm.group(0).strip()}")
     if "review meeting" not in hay_l and "review-mitteilung" not in hay_l:
-        rm = _REVIEW_MEETING_RE.search(d_core)
+        rm = _REVIEW_MEETING_RE.search(d_body)
         if rm:
             fabrications.append(f"hallucinated review meeting: {rm.group(0).strip()}")
 
     # Invented deadline / over-commitment — flagged only when the deadline token
     # is not in the grounding corpus (the sender didn't ask for it).
-    for cm in _COMMITMENT_RE.finditer(d_core):
+    for cm in _COMMITMENT_RE.finditer(d_body):
         token = (cm.group("en") or cm.group("de") or "").strip().lower()
         if token and token not in hay_l:
             fabrications.append(f"invented deadline: {cm.group(0).strip()}")
@@ -381,12 +428,40 @@ def verify_draft(
     _lines = [ln for ln in d.strip().splitlines() if ln.strip()]
     if _lines:
         user_toks = {t for t in _name_tokens(user_name)}
+        # (a) addressed to the user — the draft was written from the sender's
+        # perspective. Two shapes, both requiring DIRECT ADDRESS (not a mere
+        # mention: "my name is Baher" in a self-intro must NOT trip this):
+        #   (a1) greeting inversion — line 0 is a salutation naming the user
+        #        ("Hi Baher," / "Sehr geehrter Herr …").
+        #   (a2) vocative inversion — the user's name set off by punctuation as a
+        #        form of address ("Thanks for the message, Baher.") on any line
+        #        except the last. b290: the last line is the sign-off region —
+        #        "Best, Baher" is the user's OWN correct sign-off, not inversion —
+        #        so it is excluded. Catches #20468 (banker's-voice reply).
         first_words = set(_WORD_RE.findall(_lines[0].lower()))
-        # (a) addressed to the user: the user's own name appears in the opening
-        # line (a greeting, or a leading vocative like "Danke, Baher –"). The
-        # author never greets himself, so this means the draft was written from
-        # the sender's perspective.
-        if user_toks and (user_toks & first_words):
+        _greeting_inv = (
+            user_toks and (user_toks & first_words)
+            and _GREETING_OPEN_RE.search(_lines[0])
+        )
+        _vocative_inv = False
+        if user_toks and not _greeting_inv:
+            _voc_re = re.compile(
+                r"(?:^|[,;(–—-])\s*(?:" + "|".join(re.escape(t) for t in user_toks) + r")\b\s*[.,!?;:]",
+                re.IGNORECASE,
+            )
+            _last = len(_lines) - 1
+            for i, ln in enumerate(_lines):
+                if not _voc_re.search(ln):
+                    continue
+                # Skip a match on a SHORT trailing line — that's the user's own
+                # sign-off ("Best, Baher."), not inversion. A long final line is
+                # real body text (#20468's whole banker's-voice reply is one line
+                # that ends the draft), so it still counts.
+                if i == _last and len(_WORD_RE.findall(ln)) <= 6:
+                    continue
+                _vocative_inv = True
+                break
+        if _greeting_inv or _vocative_inv:
             fabrications.append("addressed to the user (speaker inversion)")
         elif len(_lines) >= 3:
             # (b) signed as the sender: a distinct TRAILING signature line names

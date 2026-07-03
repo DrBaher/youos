@@ -1436,6 +1436,25 @@ def _dedupe_leading_name(text: str) -> str:
         # Re-capitalize the now-leading word so "Amina, thanks" → "Thanks".
         lines[j] = rest[:1].upper() + rest[1:] if rest else rest
         return "\n".join(lines)
+    # b290: lead-word + recipient vocative ("Thanks Franz, …" under a "Hi Franz,"
+    # greeting). Drop just the redundant name, keeping the lead: "Thanks, …".
+    lead = re.match(
+        rf"\s*(?P<lead>thanks|thank you|hi|hey|hello|dear)\s+{re.escape(name)}\s*[,:;!—–-]\s+",
+        lines[j], re.IGNORECASE,
+    )
+    if lead:
+        w = lead.group("lead")
+        lines[j] = w[:1].upper() + w[1:] + ", " + lines[j][lead.end():]
+        return "\n".join(lines)
+    # b290: inline set-off vocative — the recipient's name repeated mid-sentence,
+    # dash- or comma-set-off, right before sentence punctuation ("Thanks for
+    # reaching out — Danilo. Interesting …"). Drop the redundant "— Danilo".
+    inline = re.search(
+        rf"\s*[,—–-]\s*{re.escape(name)}\b\s*(?=[.!?,])", lines[j], re.IGNORECASE
+    )
+    if inline:
+        lines[j] = lines[j][:inline.start()] + lines[j][inline.end():]
+        return "\n".join(lines)
     return text
 
 

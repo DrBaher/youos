@@ -413,3 +413,108 @@ def test_grounded_deadline_not_flagged():
         inbound="Can you send it to me by Friday please?",
     )
     assert all("deadline" not in f.lower() for f in r.fabrications)
+
+
+# --- b290: fabricated confirmations / actions / locations ----------------
+
+
+def test_fabricated_confirmation_flagged():
+    # "has confirmed" a call the thread never confirms (#46536).
+    r = verify_draft(
+        "Hi Franz,\n\nJohannes has confirmed the call will be on 5th July at 14:00.",
+        inbound="Please let Johannes know who will participate in that call.",
+    )
+    assert any("confirm" in c.lower() for c in r.status_claims)
+
+
+def test_leading_confirmed_and_have_signed_flagged():
+    # "Confirmed —" assertion + "have signed" on a thread that was only a poll (#23327).
+    r = verify_draft(
+        "Hi Johannes,\n\nThanks for the poll. Confirmed — all parties have signed the NDA.",
+        inbound="Here's the link to the scheduling poll. If none of the slots work, tell me.",
+    )
+    assert r.status_claims  # confirmation and/or signed
+
+
+def test_confirmation_grounded_not_flagged():
+    # Sender asked to confirm → "Confirmed" is a grounded reply, not a fabrication.
+    r = verify_draft(
+        "Confirmed — I'll be there Thursday.",
+        inbound="Can you confirm you'll join on Thursday?",
+    )
+    assert all("confirm" not in c.lower() for c in r.status_claims)
+
+
+def test_fabricated_transfer_flagged():
+    # Inbound merely *requests* a transfer; draft claims it happened (#14391).
+    r = verify_draft(
+        "Hi Nadine,\n\n$560 USD transferred to the MED bank details attached.",
+        inbound="We have a payment request: amount 560$, transfer to the attached bank details.",
+    )
+    assert any("transferred" in c.lower() for c in r.status_claims)
+
+
+def test_fabricated_folder_location_flagged():
+    # Draft invents where a file lives in response to a request to share it (#43843).
+    r = verify_draft(
+        "Hi Sandhya,\n\nThe contract is already in your per-debtor folder under Intel Lab.",
+        inbound="Could you please share a copy of the contract for Balance Labs?",
+    )
+    assert any("folder" in c.lower() for c in r.status_claims)
+
+
+# --- b290: speaker inversion (vocative) + FP guards ----------------------
+
+
+def test_vocative_inversion_midbody_flagged():
+    # The banker's-voice reply: user's own name as a vocative on a body line (#20468).
+    r = verify_draft(
+        "Hi BK-Firmenkunden,\n\nThanks for the message, Baher. I'll need a screenshot "
+        "of the unpaid transfers to investigate further.",
+        inbound="I'd be happy to look into it. Could you send a screenshot of the payments?",
+        sender="Iris <firmenkunden@raiffeisenbank.at>",
+        user_name="Baher",
+    )
+    assert any("inversion" in f.lower() for f in r.fabrications)
+
+
+def test_self_introduction_not_inversion():
+    # "my name is Baher" is a self-intro, NOT the sender addressing Baher (#31193 FP guard).
+    r = verify_draft(
+        "Hi Ryan,\n\nThanks for reaching out — my name is Baher and I'm the CEO of "
+        "Medicus AI. Happy to schedule a call.\n\nBest, Baher",
+        inbound="Hi, I'm from a healthcare magazine, please connect me to marketing.",
+        sender="Ryan Carter <ryan@hhmglobal.com>",
+        user_name="Baher",
+    )
+    assert all("inversion" not in f.lower() for f in r.fabrications)
+
+
+def test_own_signoff_not_inversion():
+    # "Best, Baher." as the trailing sign-off is the user's OWN name — not inversion.
+    r = verify_draft(
+        "Hi Marcus,\n\nThursday works for me — see you then.\n\nBest, Baher.",
+        inbound="Does Thursday work for a call?",
+        sender="Marcus <marcus@msd.com>",
+        user_name="Baher",
+    )
+    assert all("inversion" not in f.lower() for f in r.fabrications)
+
+
+def test_curly_apostrophe_family_fabrication_flagged():
+    # Curly apostrophe (U+2019) must not defeat the family-fabrication scan (#52452).
+    r = verify_draft(
+        "Hi Matthew,\n\nStill tied up with family — baby’s first month.",
+        inbound="Just checking in on the proposed meeting times for the AWS support.",
+    )
+    assert any("family" in f.lower() or "personal" in f.lower() for f in r.fabrications)
+
+
+def test_stutter_opener_does_not_hide_fabrication():
+    # A greeting-stutter body ("Hi Franz,\n\nThanks Franz,\n…") must not let
+    # strip_signature truncate away the fabrication scan (#46536 root cause).
+    r = verify_draft(
+        "Hi Franz,\n\nThanks Franz,\nJohannes has confirmed the call is on 5th July.",
+        inbound="Please tell Johannes who will attend.",
+    )
+    assert r.status_claims  # the "has confirmed" survives the strip

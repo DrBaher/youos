@@ -204,6 +204,27 @@ MARKETING_BODY_PAT = re.compile(
     re.IGNORECASE,
 )
 
+# Mass-mail salutations — "Dear Valued Client/Customer", "Dear Member",
+# "Dear Sir or Madam". These openings are never used in genuine 1:1 mail, so
+# they mark a blast even when the List-* headers AND the unsubscribe footer are
+# absent (b290: a Rhivu Capital insurance solicitation "Dear Valued Client" got
+# a warm personalised reply drafted). Anchored to the very start of the body.
+MASS_SALUTATION_PAT = re.compile(
+    r"^\s*(?:dear\s+(?:valued\s+)?(?:client|customer|member|subscriber|partner|"
+    r"user|reader|guest|sir\s+or\s+mada?m|sir/madam)|"
+    r"valued\s+(?:client|customer|member))\b",
+    re.IGNORECASE,
+)
+
+# Automation relay in the From display name — "<Person> via <Service>"
+# (SignWell / DocuSign e-signature notifications, app relays). When this
+# reaches scoring at all, no List-* header hard-skipped it, so it's an
+# app-generated "please review/sign this document" notification, not a human
+# awaiting a personal reply (b290: SignWell "Please sign …" mails drafted
+# acknowledgements). Case-sensitive after "via" — a capitalised service name —
+# so it never fires on prose like "sent via mobile".
+VIA_RELAY_PAT = re.compile(r"\bvia\s+[A-Z][A-Za-z0-9]")
+
 # --- Soft-penalty patterns (might still want a personal reply) -------------
 
 # `noreply@` / `donotreply@` — was hard-skip, now a soft penalty because
@@ -714,6 +735,18 @@ def classify(
         score -= 0.20
         reasons.append("marketing/bulk body footer")
         bulk_demote = True
+    elif msg.body and MASS_SALUTATION_PAT.search(msg.body):
+        score -= 0.20
+        reasons.append("mass-mail salutation (Dear Valued Client / …)")
+        bulk_demote = True
+
+    # Automation relay ("<Person> via <Service>") in the From display name —
+    # e-signature / app notifications that survived the List-* hard-skips. Never
+    # a human awaiting a personal reply, so surface rather than draft (b290).
+    relay_demote = False
+    if msg.sender and VIA_RELAY_PAT.search(msg.sender):
+        reasons.append("automation relay (\"… via <Service>\") — surfaced, not drafted")
+        relay_demote = True
 
     # Imperative bonus is suppressed for any template-like FYI mail (transactional
     # confirmations, meeting recaps) where the verbs are boilerplate, not asks.
@@ -806,7 +839,7 @@ def classify(
     #     Tied to noreply/operational so a HUMAN asking about an invoice still drafts.
     #   - confident cold pitch from a first-contact sender (see cold_demote above)
     transactional_automation = transactional and (noreply_demote or operational)
-    never_draft = group_demote or bulk_demote or noreply_demote or transactional_automation or cold_demote or not_addressed_demote
+    never_draft = group_demote or bulk_demote or noreply_demote or transactional_automation or cold_demote or not_addressed_demote or relay_demote
     demoted = never_draft and not is_vip
     if demoted and score >= threshold:
         reasons.append("automation/bulk/group — surfaced, not drafted")

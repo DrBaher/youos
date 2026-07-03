@@ -1051,3 +1051,54 @@ def test_bcc_broadcast_empty_headers_with_salutation_still_drafts():
         body="Hi Baher, can you confirm your availability for the shoot?"),
         account_emails=_ME, user_name="Baher", threshold=0.5)
     assert v.needs_reply is True
+
+
+# --- b290: mass-mail salutation + automation relay → surface, not draft ----
+
+
+def test_mass_salutation_not_drafted():
+    # "Dear Valued Client" mass-mail with no List-* header still surfaces (#23069).
+    v = classify(_msg(
+        headers={"to": "baher@medicus.ai"},
+        sender="Krishnapriya <krishnapriya@rhivucapital.com>",
+        sender_email="krishnapriya@rhivucapital.com",
+        subject="Smart Insurance Solutions for You",
+        body="Dear Valued Client,\n\nIn today's world the right insurance is a necessity. "
+             "Please review our tailored solutions and let us know."),
+        account_emails=_ME, user_name="Baher", threshold=0.5)
+    assert v.needs_reply is False
+    assert v.surface_for_review is True
+
+
+def test_via_relay_not_drafted():
+    # "<Person> via SignWell" e-signature notification surfaces, never drafts (#52020).
+    v = classify(_msg(
+        headers={"to": "baher@medicus.ai"},
+        sender="Baher Al Hakim via SignWell <signwelldocs@signwell.com>",
+        sender_email="signwelldocs@signwell.com",
+        subject="Please sign: Distribution Agreement",
+        body="Please Review This Document. View & Complete Document. What is SignWell?"),
+        account_emails=_ME, user_name="Baher", threshold=0.5)
+    assert v.needs_reply is False
+
+
+def test_normal_dear_name_still_drafts():
+    # "Dear Baher" (a real 1:1 salutation) must NOT be caught by the mass-mail rule.
+    v = classify(_msg(
+        headers={"to": "baher@medicus.ai"},
+        sender="Christoph <cr@rplusp.at>", sender_email="cr@rplusp.at",
+        subject="Open balance",
+        body="Dear Baher,\n\nCould you please propose a payment plan for the open balance?"),
+        account_emails=_ME, user_name="Baher", threshold=0.5)
+    assert v.needs_reply is True
+
+
+def test_via_lowercase_prose_still_drafts():
+    # "sent via mobile" style prose must not trip the relay rule.
+    v = classify(_msg(
+        headers={"to": "baher@medicus.ai"},
+        sender="Martin Wenzel <martin@wa-ip.com>", sender_email="martin@wa-ip.com",
+        subject="Re: agreement",
+        body="Hi Baher, could you confirm the timeline? Sent via mobile, apologies for typos."),
+        account_emails=_ME, user_name="Baher", threshold=0.5)
+    assert v.needs_reply is True
