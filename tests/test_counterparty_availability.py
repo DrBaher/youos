@@ -299,13 +299,28 @@ def test_quoted_reply_header_not_scanned():
     ) is None
 
 
-def test_meeting_title_format():
+def test_meeting_title_company_vs_person():
     from app.agent.triage import _company_from_email, _meeting_title
-    cfg = {"own_company": "Medicus AI", "company_names": {"newmetrics.com": "NewMetrics"}}
-    assert _meeting_title("gakkaoui@newmetrics.com", "baher@medicus.ai", cfg) == "NewMetrics <> Medicus AI"
-    assert _meeting_title("x@acme.com", "baher@medicus.ai", cfg) == "Acme <> Medicus AI"
+    cfg = {"own_company": "Medicus AI", "own_name": "Baher",
+           "company_names": {"newmetrics.com": "NewMetrics"}}
+    a = "baher@medicus.ai"
+    # corporate domain → "Company <> own company"
+    assert _meeting_title("gakkaoui@newmetrics.com", "Georges Akkaoui <g@newmetrics.com>", a, cfg) == "NewMetrics <> Medicus AI"
+    assert _meeting_title("x@acme.com", "Jane <x@acme.com>", a, cfg) == "Acme <> Medicus AI"
+    # consumer/free email → PERSON: "First name <> own name"
+    assert _meeting_title("aminaannav@gmail.com", '"Amina Anna Vámosi" <a@gmail.com>', a, cfg) == "Amina <> Baher"
+    assert _meeting_title("t@outlook.com", "Kloeckner, Thomas <t@outlook.com>", a, cfg) == "Thomas <> Baher"
+    # person with no display name → first token of the local part
+    assert _meeting_title("john.smith@gmail.com", None, a, cfg) == "John <> Baher"
+    # vanity/personal domain (SLD matches the sender's name) → PERSON
+    assert _meeting_title("cj@jeckl.at", "Christopher Jeckl <cj@jeckl.at>", a, cfg) == "Christopher <> Baher"
+    # a real company on the same-shaped domain stays a company
+    assert _meeting_title("g@newmetrics.com", "Georges Akkaoui <g@newmetrics.com>", a, cfg) == "NewMetrics <> Medicus AI"
+    # corporate legal suffix baked into the domain is stripped
+    assert _company_from_email("x@sadadllc.com", {}) == "Sadad"
+    assert _company_from_email("x@handelsblattgroup.com", {}) == "Handelsblatt"
     # own_company falls back to the account domain when user.company is unset
-    assert _meeting_title("x@acme.com", "b@medicus.ai", {}) == "Acme <> Medicus"
+    assert _meeting_title("x@acme.com", None, "b@medicus.ai", {}) == "Acme <> Medicus"
     # unparseable → None (caller keeps the subject title)
-    assert _meeting_title("nope", "b@medicus.ai", cfg) is None
+    assert _meeting_title("nope", None, a, cfg) is None
     assert _company_from_email("a@sub.example.co.uk", {}) == "Example"
