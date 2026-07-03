@@ -986,3 +986,43 @@ def test_automated_overdue_task_reminder_penalized():
         body="You have 6 tasks and 6 of them are overdue. Please review them.",
     ))
     assert v.needs_reply is False
+
+
+# --- b288: CC'd + no personal salutation → don't draft --------------------
+
+_ME = ["baher@medicus.ai"]
+
+
+def test_ccd_without_salutation_not_drafted():
+    v = classify(_msg(
+        headers={"to": "team@ext.com, colleague@ext.com", "cc": "baher@medicus.ai"},
+        body="Hi all, can someone confirm the Q3 numbers by Friday?"),
+        account_emails=_ME, user_name="Baher", threshold=0.5)
+    assert v.needs_reply is False
+    assert v.surface_for_review is True
+
+
+def test_ccd_with_salutation_still_drafts():
+    # "Hi Baher" in the body → it IS for you even though you're only CC'd.
+    v = classify(_msg(
+        headers={"to": "team@ext.com", "cc": "baher@medicus.ai"},
+        body="Hi Baher, could you confirm the Q3 numbers by Friday?"),
+        account_emails=_ME, user_name="Baher", threshold=0.5)
+    assert v.needs_reply is True
+
+
+def test_direct_recipient_without_salutation_still_drafts():
+    # You're in To → drafts regardless of salutation (unchanged behaviour).
+    v = classify(_msg(
+        headers={"to": "baher@medicus.ai"},
+        body="Can you confirm the Q3 numbers by Friday?"),
+        account_emails=_ME, user_name="Baher", threshold=0.5)
+    assert v.needs_reply is True
+
+
+def test_broadcast_to_list_not_you_no_salutation_not_drafted():
+    v = classify(_msg(
+        headers={"to": "cast-crew@filmco.com"},
+        body="Reminder: SOKO Donau filming Tuesday. Call time 7am."),
+        account_emails=_ME, user_name="Baher", threshold=0.5)
+    assert v.needs_reply is False

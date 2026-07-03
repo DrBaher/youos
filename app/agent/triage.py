@@ -1707,10 +1707,17 @@ def _run_sweep(
         [account.lower()] + [e.lower() for e in get_user_emails() if e]
     ))
 
+    _user_name = None
+    try:
+        from app.core.config import load_config
+
+        _user_name = ((load_config() or {}).get("user") or {}).get("name")
+    except Exception:
+        _user_name = None
     classified = classify_many(
         messages, history=history, threshold=threshold,
         skip_senders=skip_senders, vip_senders=vip_senders,
-        account_emails=_account_emails,
+        account_emails=_account_emails, user_name=_user_name,
     )
     # Borderline LLM veto: ask the warm model to demote would-be drafts that
     # are actually broadcasts (no-op unless agent.adjudication.enabled + model
