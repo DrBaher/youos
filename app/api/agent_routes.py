@@ -265,36 +265,62 @@ def draft_for_thread(body: DraftForThreadBody, request: Request) -> dict:
     # live gog thread fetch below gets an id it understands.
     body.thread_id = store.normalize_thread_id(body.thread_id)
     existing = store.get_by_thread(db_url, body.thread_id)
-    # Resolve the mailbox: explicit > the existing row's account > first user email.
     from app.agent.scheduler import get_agent_config
     from app.core.config import get_user_emails
 
-    account = body.account or (existing or {}).get("account") or None
-    if not account:
-        emails = get_user_emails()
-        account = emails[0] if emails else None
-    if not account:
-        raise HTTPException(400, "no account configured")
-    # Validate the account against configured mailboxes — a public (Funnel-
-    # exposed) caller must not drive the ingestion backend with an arbitrary
-    # account string. Allowed = agent.accounts (if set) ∪ user.emails.
-    _allowed = {a.strip().lower() for a in (get_agent_config().get("accounts") or [])} \
-        | {e.strip().lower() for e in get_user_emails()}
-    if _allowed and account.strip().lower() not in _allowed:
-        raise HTTPException(400, f"unknown account {account!r}")
+    # Configured mailboxes, in order: agent.accounts (if set) then user.emails,
+    # deduped. Used both to validate an explicit account and to probe for the
+    # thread when the caller didn't say which mailbox it's in.
+    _configured: list[str] = []
+    for a in [*(get_agent_config().get("accounts") or []), *get_user_emails()]:
+        a = (a or "").strip()
+        if a and a.lower() not in {c.lower() for c in _configured}:
+            _configured.append(a)
+    _allowed = {c.lower() for c in _configured}
+
+    # An explicit account (from the caller or an existing row) is authoritative;
+    # a public (Funnel-exposed) caller must not drive ingestion with an arbitrary
+    # mailbox, so validate it against the configured set.
+    explicit_account = (body.account or (existing or {}).get("account") or "").strip() or None
+    if explicit_account and _allowed and explicit_account.lower() not in _allowed:
+        raise HTTPException(400, f"unknown account {explicit_account!r}")
+
     # Source the inbound to reply to: the stored row's body if we have one, else
     # fetch the thread's latest message live.
     inbound = (existing or {}).get("body") if existing else None
     sender = (existing or {}).get("sender") or (existing or {}).get("sender_email")
     subject = (existing or {}).get("subject")
+    account = explicit_account
     msg = None
     if not (inbound and inbound.strip()):
         from app.agent.inbox_fetch import fetch_thread
 
-        msg = fetch_thread(account, body.thread_id)
-        if not msg or not (msg.body or "").strip():
-            raise HTTPException(404, "could not fetch a message to draft from for this thread")
+        # b291: the Gmail add-on's "Draft a reply" sends only the thread id, not
+        # the active mailbox, so defaulting to the first configured email fetched
+        # the WRONG mailbox and Gmail returned 404 (a thread in baher@medicus.ai
+        # looked up under drbaher@gmail.com). Probe the explicit/known account
+        # first, then every other configured mailbox, and adopt whichever one
+        # actually holds the thread.
+        candidates = [explicit_account] if explicit_account else []
+        candidates += [c for c in _configured if c != explicit_account]
+        if not candidates:
+            raise HTTPException(400, "no account configured")
+        for cand in candidates:
+            m = fetch_thread(cand, body.thread_id)
+            if m and (m.body or "").strip():
+                msg, account = m, cand
+                break
+        if not msg:
+            raise HTTPException(
+                404,
+                "could not fetch a message to draft from for this thread "
+                "in any configured mailbox",
+            )
         inbound, sender, subject = msg.body, (msg.sender or msg.sender_email), msg.subject
+    if not account:
+        account = _configured[0] if _configured else None
+    if not account:
+        raise HTTPException(400, "no account configured")
 
     try:
         resp = generate_draft(
