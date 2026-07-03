@@ -297,3 +297,15 @@ def test_quoted_reply_header_not_scanned():
         subject="re", sender="T", sender_email="t@x.com", body=body,
         now_iso=_NOW, tz=VIENNA, complete_fn=lambda p: "FINAL: NONE",
     ) is None
+
+
+def test_meeting_title_format():
+    from app.agent.triage import _company_from_email, _meeting_title
+    cfg = {"own_company": "Medicus AI", "company_names": {"newmetrics.com": "NewMetrics"}}
+    assert _meeting_title("gakkaoui@newmetrics.com", "baher@medicus.ai", cfg) == "NewMetrics <> Medicus AI"
+    assert _meeting_title("x@acme.com", "baher@medicus.ai", cfg) == "Acme <> Medicus AI"
+    # own_company falls back to the account domain when user.company is unset
+    assert _meeting_title("x@acme.com", "b@medicus.ai", {}) == "Acme <> Medicus"
+    # unparseable → None (caller keeps the subject title)
+    assert _meeting_title("nope", "b@medicus.ai", cfg) is None
+    assert _company_from_email("a@sub.example.co.uk", {}) == "Example"
