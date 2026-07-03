@@ -399,6 +399,24 @@ def test_dedupe_leading_name_no_greeting_noop():
     assert _dedupe_leading_name(txt) == txt
 
 
+def test_dedupe_inline_setoff_vocative():
+    # b290: recipient name repeated mid-sentence, dash-set-off before punctuation.
+    out = _dedupe_leading_name("Hi Danilo,\n\nThanks for reaching out — Danilo. Interesting.")
+    assert out == "Hi Danilo,\n\nThanks for reaching out. Interesting."
+
+
+def test_dedupe_lead_word_vocative():
+    # b290: "Thanks Franz," under a "Hi Franz," greeting → "Thanks, …".
+    out = _dedupe_leading_name("Hi Franz,\n\nThanks Franz, Johannes has confirmed the call.")
+    assert out == "Hi Franz,\n\nThanks, Johannes has confirmed the call."
+
+
+def test_dedupe_does_not_touch_nonrecipient_name():
+    # A DIFFERENT name mid-sentence (not the recipient) must be left alone.
+    txt = "Hi Franz,\n\nThanks — Johannes will confirm the date."
+    assert _dedupe_leading_name(txt) == txt
+
+
 def test_strip_scaffolding_truncates_facts_block():
     txt = ("Hi Leslie,\n\nMedicus is a strong fit.\n\n"
            "[FACTS CONTEXT] About you: Based in Dubai, active in healthtech.")

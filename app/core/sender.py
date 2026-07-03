@@ -24,16 +24,38 @@ _MAX_ADDR_SCAN = 1024
 _TITLE_PREFIXES = re.compile(r"^(dr\.?|prof\.?|mr\.?|mrs\.?|ms\.?|sir)\s+", re.IGNORECASE)
 
 
+def _is_plausible_first_name(candidate: str | None) -> bool:
+    """True only when ``candidate`` looks like a real given name. A WRONG greeting
+    ("Hi BK-Firmenkunden", "Hi Coworking_Vienna") is worse than a nameless one, so
+    the extractor rejects org handles / mailbox strings / acronyms and lets the
+    greeting fall back to "Hi," (b290). Accepts one optional internal hyphen for
+    "Jean-Pierre"; each part must be 2–14 letters and not an all-caps acronym."""
+    if not candidate:
+        return False
+    s = candidate.strip().strip("\"'“”‘’")
+    segs = s.split("-")
+    if not 1 <= len(segs) <= 2:
+        return False
+    for seg in segs:
+        if not re.fullmatch(r"[A-Za-zÀ-ÖØ-öø-ÿ]{2,14}", seg):
+            return False
+        if seg.isupper():  # acronym / code (BK, RLBNOE), not a name
+            return False
+    return True
+
+
 def first_name_from_display_name(display_name: str | None) -> str | None:
     """Extract first name from a display name string.
 
     Handles: "Sarah Mitchell", "Dr. Baher", "sarah.mitchell@company.com", etc.
-    Returns None if unparseable.
+    Returns None if unparseable OR the result isn't a plausible given name
+    (org handle / mailbox / acronym) — the caller then greets without a name.
     """
     if not display_name or not display_name.strip():
         return None
 
-    name = display_name.strip()
+    # Strip surrounding quotes early so '"Täubl, Hannah"' → 'Hannah', not 'Hannah"'.
+    name = display_name.strip().strip("\"'“”‘’").strip()
 
     # If it looks like an email, extract from local part
     if "@" in name:
@@ -62,10 +84,14 @@ def first_name_from_display_name(display_name: str | None) -> str | None:
             name = before or name   # "Franz Feichtner, PhD" → "Franz Feichtner"
 
     # Take first word as first name
+    if not name.split():
+        return None
     first = name.split()[0]
     # Remove any trailing punctuation
     first = first.rstrip(",.")
-    if not first:
+    # Reject org handles / mailbox strings / acronyms — a wrong greeting is worse
+    # than a nameless one (b290: "Hi BK-Firmenkunden", "Hi Coworking_Vienna").
+    if not _is_plausible_first_name(first):
         return None
     return first[0].upper() + first[1:] if len(first) > 1 else first.upper()
 
