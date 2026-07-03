@@ -377,6 +377,12 @@ function actDraftForThread(e) {
   var threadId = e.commonEventObject.parameters.threadId;
   var instruction = _formVal(e, 'instruction').trim();
   var payload = { thread_id: String(threadId) };
+  // Pass the mailbox we're currently in so the server fetches the thread from
+  // the RIGHT account (a thread in baher@medicus.ai looked up under the default
+  // drbaher@gmail.com used to 404). The server also probes all mailboxes as a
+  // fallback, so this is an optimisation, not a hard requirement.
+  var active = _activeEmail(e);
+  if (active) { payload.account = active; }
   if (instruction) { payload.instruction = instruction; }
   var res = _api('post', '/api/agent/draft_for_thread', payload);
   if (res.code !== 200) { return _notify('Draft failed (' + res.code + ')'); }

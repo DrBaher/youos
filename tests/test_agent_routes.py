@@ -1281,6 +1281,52 @@ def test_draft_for_thread_no_row_creates_one(authed_client, monkeypatch):
     assert body["row"]["thread_id"] == "t-brand-new"
 
 
+def test_draft_for_thread_probes_all_mailboxes_when_account_omitted(authed_client, monkeypatch):
+    """b291: the Gmail add-on sends no account; a thread that lives in the SECOND
+    configured mailbox must still draft (previously it fetched the first mailbox,
+    got a Gmail 404, and returned 404)."""
+    from types import SimpleNamespace
+
+    import app.agent.inbox_fetch as inbox
+    import app.generation.service as svc
+
+    monkeypatch.setattr("app.core.config.get_user_emails",
+                        lambda *a, **k: ["first@example.com", "second@example.com"])
+    monkeypatch.setattr("app.agent.scheduler.get_agent_config", lambda *a, **k: {"accounts": []})
+    monkeypatch.setattr(svc, "generate_draft",
+                        lambda req, **kw: SimpleNamespace(draft="Reply from the right box.", model_used="stub"))
+
+    def _fetch(account, thread_id, **kw):
+        # Only the SECOND mailbox holds this thread; the first 404s (returns None).
+        if account == "second@example.com":
+            return inbox.InboxMessage(
+                message_id="m", thread_id=thread_id, account=account,
+                sender="Christian <christian@lonvita.io>", sender_email="christian@lonvita.io",
+                subject="Medicus product model", body="Following up on the model.")
+        return None
+
+    monkeypatch.setattr(inbox, "fetch_thread", _fetch)
+    r = authed_client.post("/api/agent/draft_for_thread", json={"thread_id": "t-in-second-box"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["created"] is True
+    assert body["row"]["account"] == "second@example.com"
+    assert body["row"]["draft"] == "Reply from the right box."
+
+
+def test_draft_for_thread_404_when_no_mailbox_has_thread(authed_client, monkeypatch):
+    """b291: if NO configured mailbox holds the thread, still a clean 404 (not 500)."""
+    import app.agent.inbox_fetch as inbox
+
+    monkeypatch.setattr("app.core.config.get_user_emails",
+                        lambda *a, **k: ["first@example.com", "second@example.com"])
+    monkeypatch.setattr("app.agent.scheduler.get_agent_config", lambda *a, **k: {"accounts": []})
+    monkeypatch.setattr(inbox, "fetch_thread", lambda account, thread_id, **kw: None)
+    r = authed_client.post("/api/agent/draft_for_thread", json={"thread_id": "t-nowhere"})
+    assert r.status_code == 404
+    assert "any configured mailbox" in r.text
+
+
 def test_restore_endpoint_undismisses(authed_client):
     rows = authed_client.get("/api/agent/pending?tier=draft").json()["rows"]
     rid = rows[0]["id"]
