@@ -586,9 +586,17 @@ def rescreen(request: Request, body: RescreenBody | None = None) -> dict:
         # The user's own addresses for this row = the row's swept mailbox + aliases.
         acct_emails = list(dict.fromkeys([(r.get("account") or "").lower()] + user_emails))
         acct_emails = [e for e in acct_emails if e]
+        _uname = None
+        try:
+            from app.core.config import load_config
+
+            _uname = ((load_config() or {}).get("user") or {}).get("name")
+        except Exception:
+            _uname = None
         v = classify(
             msg, history=history, threshold=threshold,
             skip_senders=skip_senders, vip_senders=vip_senders, account_emails=acct_emails,
+            user_name=_uname,
         )
         marker = next(
             (m for reason in v.reasons for m in _RESCREEN_MARKERS if m in reason.lower()),

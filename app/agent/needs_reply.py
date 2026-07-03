@@ -412,6 +412,47 @@ def _addressed_to_me(
     return -0.45, "you aren't a direct recipient (via alias/group/bcc)"
 
 
+_GREETING_LEAD = (
+    r"(?:hi|hey|hello|dear|hallo|liebe[rs]?|lieber|"
+    r"sehr\s+geehrte[rs]?(?:\s+herr|\s+frau)?|"
+    r"guten\s+(?:tag|morgen|abend)|good\s+(?:morning|afternoon|evening))"
+)
+
+
+def _greets_user_by_name(body: str | None, name_tokens: set[str]) -> bool:
+    """True if the message's opening addresses the user by name — a personal
+    salutation ("Hi Baher", "Dear Baher", "Hallo Baher") or a leading vocative
+    ("Baher, …"). Paired with the not-a-direct-recipient signal: a broadcast the
+    user is only CC'd/BCC'd on, with no personal greeting, isn't theirs to
+    answer (b288, user policy: "no Hi Baher → don't draft it")."""
+    toks = sorted((re.escape(t) for t in name_tokens if t and len(t) >= 3), key=len, reverse=True)
+    if not toks:
+        return False
+    head = " ".join((body or "").split())[:200].lower()
+    names = "|".join(toks)
+    # greeting word, then the user's name within a couple of tokens
+    if re.search(rf"\b{_GREETING_LEAD}\b[\s,]*(?:[\w.'-]+\s+){{0,2}}(?:{names})\b", head):
+        return True
+    # leading vocative: "Baher, …"
+    if re.search(rf"^(?:{names})\b\s*[,:—–-]", head):
+        return True
+    return False
+
+
+def _user_name_tokens(account_emails: set[str] | list[str] | None, user_name: str | None) -> set[str]:
+    """Name-like tokens for the user: from ``user_name`` and the local parts of
+    their own addresses (baher@… → 'baher'). Used to detect a personal
+    salutation."""
+    out: set[str] = set()
+    for t in re.findall(r"[A-Za-zÀ-ÖØ-öø-ÿ]{3,}", user_name or ""):
+        out.add(t.lower())
+    for e in (account_emails or []):
+        for part in re.split(r"[.+_-]", (e or "").split("@")[0]):
+            if len(part) >= 3:
+                out.add(part.lower())
+    return out
+
+
 def classify(
     msg: InboxMessage,
     *,
@@ -420,6 +461,7 @@ def classify(
     skip_senders: list[str] | None = None,
     vip_senders: list[str] | None = None,
     account_emails: list[str] | None = None,
+    user_name: str | None = None,
 ) -> NeedsReplyVerdict:
     """Decide whether this inbound deserves a draft.
 
@@ -558,12 +600,29 @@ def classify(
     # user's own addresses and the message has a parseable To/Cc. b205: real
     # inbox was drafting replies to threads addressed to colleagues.
     group_demote = False
+    not_addressed_demote = False
     if account_emails:
         _mine = {e.lower() for e in account_emails if e}
         addr_penalty, addr_reason = _addressed_to_me(msg.headers, _mine)
         if addr_penalty:
             score += addr_penalty
             reasons.append(addr_reason)
+
+        # "I'm CC'd and it doesn't say Hi Baher" (user policy): when the user is
+        # NOT a direct To recipient AND the body doesn't greet them by name, the
+        # mail isn't theirs to answer — a broadcast/CC/BCC. Never-draft (still
+        # surfaced for review). If they ARE in To, or it opens "Hi Baher", this
+        # doesn't fire. Fixes a filming-schedule reminder that drafted a reply.
+        _to_direct = _header_emails(msg.headers.get("to"))
+        _cc_direct = _header_emails(msg.headers.get("cc"))
+        if (_to_direct or _cc_direct) and not (_mine & _to_direct) and not _greets_user_by_name(
+            msg.body, _user_name_tokens(_mine, user_name)
+        ):
+            not_addressed_demote = True
+            reasons.append(
+                "not addressed to you by name and you're not a direct (To) "
+                "recipient — surfaced, not drafted"
+            )
 
         # Group / broadcast thread: you're one of many recipients — a teammate is
         # usually the designated responder, so surface for review instead of
@@ -741,7 +800,7 @@ def classify(
     #     Tied to noreply/operational so a HUMAN asking about an invoice still drafts.
     #   - confident cold pitch from a first-contact sender (see cold_demote above)
     transactional_automation = transactional and (noreply_demote or operational)
-    never_draft = group_demote or bulk_demote or noreply_demote or transactional_automation or cold_demote
+    never_draft = group_demote or bulk_demote or noreply_demote or transactional_automation or cold_demote or not_addressed_demote
     demoted = never_draft and not is_vip
     if demoted and score >= threshold:
         reasons.append("automation/bulk/group — surfaced, not drafted")
@@ -768,6 +827,7 @@ def classify_many(
     skip_senders: list[str] | None = None,
     vip_senders: list[str] | None = None,
     account_emails: list[str] | None = None,
+    user_name: str | None = None,
 ) -> list[tuple[InboxMessage, NeedsReplyVerdict]]:
     """Vectorised helper. Returns pairs in the input order."""
     return [
@@ -776,7 +836,7 @@ def classify_many(
             classify(
                 m, history=history, threshold=threshold,
                 skip_senders=skip_senders, vip_senders=vip_senders,
-                account_emails=account_emails,
+                account_emails=account_emails, user_name=user_name,
             ),
         )
         for m in messages
