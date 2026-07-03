@@ -612,10 +612,16 @@ def classify(
         # NOT a direct To recipient AND the body doesn't greet them by name, the
         # mail isn't theirs to answer — a broadcast/CC/BCC. Never-draft (still
         # surfaced for review). If they ARE in To, or it opens "Hi Baher", this
-        # doesn't fire. Fixes a filming-schedule reminder that drafted a reply.
+        # doesn't fire.
+        #
+        # b289: fire even when To/Cc are empty/unparseable. A real personal email
+        # addressed to you carries your address in To; empty headers mean a Bcc
+        # broadcast or list blast (e.g. the SOKO filming-schedule reminder, To/Cc
+        # both blank) — which is exactly the case that shouldn't be drafted. The
+        # only over-catch is a genuine direct email whose To failed to parse, and
+        # that fails soft (surfaced for review, not dropped).
         _to_direct = _header_emails(msg.headers.get("to"))
-        _cc_direct = _header_emails(msg.headers.get("cc"))
-        if (_to_direct or _cc_direct) and not (_mine & _to_direct) and not _greets_user_by_name(
+        if not (_mine & _to_direct) and not _greets_user_by_name(
             msg.body, _user_name_tokens(_mine, user_name)
         ):
             not_addressed_demote = True

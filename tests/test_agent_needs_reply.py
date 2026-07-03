@@ -522,7 +522,11 @@ def test_addressed_to_me_noop_without_account_emails():
 
 
 def test_addressed_to_me_noop_without_parseable_recipients():
-    v = classify(_msg(headers={}), account_emails=ME)
+    # The soft _addressed_to_me penalty is a no-op when To/Cc don't parse. Greet
+    # the user by name so the b289 not-addressed gate (which DOES fire on empty
+    # headers + no salutation) stays out of this soft-penalty check.
+    v = classify(_msg(headers={}, body="Hi You, could you confirm the timeline?"),
+                 account_emails=ME, user_name="You")
     assert not any("recipient" in r for r in v.reasons)
 
 
@@ -1026,3 +1030,24 @@ def test_broadcast_to_list_not_you_no_salutation_not_drafted():
         body="Reminder: SOKO Donau filming Tuesday. Call time 7am."),
         account_emails=_ME, user_name="Baher", threshold=0.5)
     assert v.needs_reply is False
+
+
+def test_bcc_broadcast_empty_headers_no_salutation_not_drafted():
+    # b289: To/Cc both empty/unparseable (Bcc blast) + no "Hi Baher" → surface,
+    # don't draft. This is the real SOKO reminder that b288 missed.
+    v = classify(_msg(
+        headers={"to": "", "cc": ""},
+        body="Reminder: SOKO Donau Filming – Tuesday, July 7 & Wednesday, July 8. "
+             "Please confirm your call time."),
+        account_emails=_ME, user_name="Baher", threshold=0.5)
+    assert v.needs_reply is False
+    assert v.surface_for_review is True
+
+
+def test_bcc_broadcast_empty_headers_with_salutation_still_drafts():
+    # Even with empty headers, an explicit "Hi Baher" means it's for you.
+    v = classify(_msg(
+        headers={"to": "", "cc": ""},
+        body="Hi Baher, can you confirm your availability for the shoot?"),
+        account_emails=_ME, user_name="Baher", threshold=0.5)
+    assert v.needs_reply is True
