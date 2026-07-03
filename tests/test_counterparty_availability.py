@@ -285,3 +285,15 @@ def test_deterministic_multi_weekday_spans_all():
     assert kind == "range"
     assert s.startswith("2026-07-07")  # Tuesday
     assert e.startswith("2026-07-08")  # Wednesday
+
+
+def test_quoted_reply_header_not_scanned():
+    # The day/time in a quoted "On <day> <time>, X wrote:" attribution must NOT
+    # trigger detection — only the sender's own new words (b287 live bug: a
+    # domain-spam and a cold pitch queued invites off their quoted headers).
+    body = ("I am interested in buying your domain, I can pay you $600. "
+            "On Thu, July 2, 2026 3:52 PM, Tammi <t@x.com> wrote: earlier stuff")
+    assert detect_counterparty_availability(
+        subject="re", sender="T", sender_email="t@x.com", body=body,
+        now_iso=_NOW, tz=VIENNA, complete_fn=lambda p: "FINAL: NONE",
+    ) is None
