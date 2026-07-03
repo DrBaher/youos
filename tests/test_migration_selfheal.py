@@ -92,7 +92,7 @@ def test_run_triage_self_heals_and_drafts_on_a_stale_db(tmp_path, monkeypatch):
         message_id="m1", thread_id="t1", account="you@example.com",
         sender="Alice <alice@partner.com>", sender_email="alice@partner.com",
         subject="Pricing question", body="Could you confirm the Q3 pricing?",
-        headers={},
+        headers={"to": "you@example.com"},
     )
     monkeypatch.setattr("app.agent.triage.fetch_unread", lambda *a, **k: [msg])
 

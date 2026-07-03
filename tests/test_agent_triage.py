@@ -43,7 +43,7 @@ def mocked_environment(monkeypatch, tmp_path):
             sender_email="alice@partner.com",
             subject="Pricing question",
             body="Hi — could you confirm the Q3 pricing? Thanks.",
-            headers={},
+            headers={"to": "you@example.com"},
         ),
         InboxMessage(
             message_id="m2",
@@ -863,7 +863,7 @@ def test_auto_push_holds_high_stakes_mail(monkeypatch, tmp_path):
         sender="Alice <alice@partner.com>", sender_email="alice@partner.com",
         subject="Contract for countersignature",
         body="Please review and sign the attached agreement — payment is due on signing.",
-        headers={},
+        headers={"to": "you@example.com"},
     )
     monkeypatch.setattr("app.agent.triage.fetch_unread", lambda *a, **k: [msg])
 
@@ -908,7 +908,7 @@ def test_thread_history_threaded_into_draft_request(monkeypatch, tmp_path):
     msg = InboxMessage(
         message_id="m1", thread_id="t1", account="you@example.com",
         sender="Alice <alice@x.com>", sender_email="alice@x.com",
-        subject="Re: Q3", body="Any update on pricing?", headers={},
+        subject="Re: Q3", body="Any update on pricing?", headers={"to": "you@example.com"},
         thread_history=[{"sender": "Alice <alice@x.com>", "text": "Here's the deck."}],
     )
     monkeypatch.setattr("app.agent.triage.fetch_unread", lambda *a, **k: [msg])
@@ -1056,7 +1056,7 @@ def test_calendar_proposes_slots_for_meeting_requests(monkeypatch, tmp_path):
     msg = InboxMessage(
         message_id="m1", thread_id="t1", account="you@example.com",
         sender="Bob <bob@x.com>", sender_email="bob@x.com",
-        subject="Sync", body="Can we schedule a call to sync next week?", headers={},
+        subject="Sync", body="Can we schedule a call to sync next week?", headers={"to": "you@example.com"},
     )
     monkeypatch.setattr("app.agent.triage.fetch_unread", lambda *a, **k: [msg])
     monkeypatch.setattr("app.agent.triage._calendar_config", lambda: {
@@ -1111,7 +1111,7 @@ def test_thread_summary_persisted_for_long_threads(monkeypatch, tmp_path):
     msg = InboxMessage(
         message_id="m1", thread_id="t1", account="you@example.com",
         sender="Alice <alice@x.com>", sender_email="alice@x.com",
-        subject="Q3", body="So where did we land?", headers={},
+        subject="Q3", body="So where did we land?", headers={"to": "you@example.com"},
         thread_history=[{"sender": f"P{i}", "text": f"point {i}"} for i in range(5)],
     )
     monkeypatch.setattr("app.agent.triage.fetch_unread", lambda *a, **k: [msg])
