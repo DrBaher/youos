@@ -38,6 +38,22 @@ _MAX_TOKENS_AVAIL_LOCAL = 96
 _MAX_TOKENS_AVAIL_CLOUD = 256
 _ISO_DT_RE = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\s*[+-]\d{2}:?\d{2})?")
 _DEFAULT_MEETING_MINUTES = 30
+# Quoted-reply attribution line ("On <date> <time>, X wrote:", Outlook/German
+# variants). The whitespace-collapsed body keeps it inline, and its date+time
+# are a classic source of spurious detections (b287 live bug: a domain-buying
+# spam and a cold pitch queued invites off the "On Thu … 3:52 PM … wrote:" in
+# their quoted history). Cut the snippet at the first such marker so only the
+# sender's OWN new words are scanned. The 80-char bound in text_utils'
+# _QUOTE_BOUNDARY_PATTERNS is too short for real attributions (they carry an
+# email address), so it misses these — this is the wider, detector-local guard.
+_QUOTE_CUT_RE = re.compile(
+    r"\bOn\b.{0,240}?\bwrote:"
+    r"|\bAm\b.{0,240}?\bschrieb:"
+    r"|-{2,}\s*Original Message"
+    r"|\bFrom:\s.{0,120}?\bSent:"
+    r"|\bVon:\s.{0,120}?\bGesendet:",
+    re.IGNORECASE | re.DOTALL,
+)
 # Cheap pre-filter for self-scheduled detection: a sent message worth asking the
 # model about must contain a clock time OR scheduling vocabulary. Skips the
 # model (cost + false positives) on the 90% of sent mail that isn't arranging a
@@ -498,6 +514,10 @@ def detect_counterparty_availability(
         return None  # an invite needs someone to invite
 
     snippet = " ".join((body or "").split())[:_BODY_SNIPPET_CHARS]
+    # Cut the quoted-reply history: only the sender's OWN new words should be
+    # scanned, never a "On <day> <time>, X wrote:" attribution (its date+time
+    # spuriously trip detection).
+    snippet = _QUOTE_CUT_RE.split(snippet, maxsplit=1)[0].strip()
     # Gate: a real scheduling phrase (clock time / meeting / availability word),
     # not just an incidental weekday. Keeps the model (and the range fallback)
     # away from newsletter prose that merely mentions "this week"/"Sunday".
