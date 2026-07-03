@@ -447,6 +447,13 @@ def _calendar_config() -> dict[str, Any]:
         # the inbound is parsed on-device) independent of auto_confirm_model.
         "confirm_from_counterparty": bool(auto_confirm.get("from_counterparty", True)) if isinstance(auto_confirm, dict) else True,
         "counterparty_model": str(auto_confirm.get("counterparty_model", "local")) if isinstance(auto_confirm, dict) else "local",
+        # Meeting-event title format (b287): "<their company> <> <own company>"
+        # e.g. "NewMetrics <> Medicus AI". own_company from user.company (else
+        # derived from the account domain); company_names is an optional
+        # per-domain display-name override for brands whose casing the lowercase
+        # domain can't reproduce (newmetrics.com -> "NewMetrics").
+        "own_company": (str(user.get("company")).strip() if isinstance(user, dict) and user.get("company") else None),
+        "company_names": (cal.get("company_names") if isinstance(cal.get("company_names"), dict) else {}),
         "tz": str(tz),
         "business_days": _i("business_days", 5),
         "work_start_hour": _i("work_start_hour", 9),
@@ -458,6 +465,42 @@ def _calendar_config() -> dict[str, Any]:
         # work_start_hour/work_end_hour range.
         "preferred_weekdays": parse_preferred_weekdays(cal.get("preferred_weekdays")),
     }
+
+
+_TWO_LEVEL_TLD = {"co", "com", "org", "net", "gov", "ac", "edu"}
+
+
+def _company_from_email(email: str | None, overrides: dict) -> str | None:
+    """A display company name from an email's domain — the registrable label,
+    Title-cased ("gakkaoui@newmetrics.com" -> "Newmetrics"). ``overrides`` maps a
+    full domain to an exact brand name for casing the domain can't reproduce
+    ("newmetrics.com" -> "NewMetrics"). Returns None on an unparseable domain."""
+    from app.core.sender import extract_domain
+
+    domain = (extract_domain(email) or "").strip().lower()
+    if not domain:
+        return None
+    if domain in overrides and str(overrides[domain]).strip():
+        return str(overrides[domain]).strip()
+    parts = [p for p in domain.split(".") if p]
+    if len(parts) < 2:
+        return None
+    sld = parts[-2]
+    if len(parts) >= 3 and sld in _TWO_LEVEL_TLD:  # co.uk, com.au, ac.uk …
+        sld = parts[-3]
+    return sld[:1].upper() + sld[1:] if sld else None
+
+
+def _meeting_title(attendee_email: str | None, account: str | None, cfg: dict) -> str | None:
+    """"<their company> <> <own company>" (b287). own company from
+    ``user.company``, else derived from the account's own domain. Returns None
+    when either side can't be derived — the caller keeps the subject-based
+    title."""
+    company = _company_from_email(attendee_email, cfg.get("company_names") or {})
+    own = cfg.get("own_company") or _company_from_email(account, {})
+    if not company or not own:
+        return None
+    return f"{company} <> {own}"
 
 
 
@@ -621,16 +664,18 @@ def _maybe_detect_confirmation(
         )
         if result is None:
             return False
+        _cfg = _calendar_config()
+        _att = result.attendees[0] if result.attendees else None
         queued = event_store.queue_pending_event(
             database_url,
             account=account,
             thread_id=msg.thread_id,
             message_id=msg.message_id,
             source_draft_id=int(row["id"]) if row.get("id") is not None else None,
-            title=result.title,
+            title=_meeting_title(_att, account, _cfg) or result.title,
             start_iso=result.start_iso,
             end_iso=result.end_iso,
-            timezone=_calendar_config().get("tz"),
+            timezone=_cfg.get("tz"),
             attendees=result.attendees,
             confidence=result.confidence,
             reasons=result.reasons,
@@ -683,9 +728,11 @@ def _maybe_detect_self_scheduled(
         )
         if result is None:
             return False
+        _att = result.attendees[0] if result.attendees else None
         queued = event_store.queue_pending_event(
             database_url, account=account, thread_id=msg.thread_id, message_id=msg.message_id,
-            title=result.title, start_iso=result.start_iso, end_iso=result.end_iso,
+            title=_meeting_title(_att, account, _calendar_config()) or result.title,
+            start_iso=result.start_iso, end_iso=result.end_iso,
             timezone=tz, attendees=result.attendees, confidence=result.confidence, reasons=result.reasons,
         )
         if queued is not None:
@@ -795,9 +842,11 @@ def _maybe_detect_counterparty_availability(
         start_iso, end_iso, reasons = _resolve_counterparty_slot(account, result, cfg)
         if start_iso is None:
             return False
+        _att = result.attendees[0] if result.attendees else None
         queued = event_store.queue_pending_event(
             database_url, account=account, thread_id=msg.thread_id, message_id=msg.message_id,
-            title=result.title, start_iso=start_iso, end_iso=end_iso, timezone=tz,
+            title=_meeting_title(_att, account, cfg) or result.title,
+            start_iso=start_iso, end_iso=end_iso, timezone=tz,
             attendees=result.attendees, confidence=result.confidence, reasons=reasons,
         )
         if queued is not None:
