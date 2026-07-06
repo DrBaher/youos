@@ -1131,6 +1131,23 @@ def _apply_name(template: str, name: str | None) -> str:
     return out.replace("  ", " ")
 
 
+def _default_reply_language() -> str | None:
+    """The configured default reply language (``generation.reply_language``).
+
+    When set to a language code (e.g. ``"en"``), the drafter replies in THIS
+    language regardless of the inbound's language — unless a per-sender learned
+    habit (``reply_language`` on the sender profile, b237) overrides it. Unset,
+    or ``"auto"``/``"mirror"``/``"inbound"``, keeps the original behavior of
+    mirroring the inbound's language (b293)."""
+    try:
+        from app.core.config import load_config
+
+        v = (((load_config() or {}).get("generation") or {}).get("reply_language") or "").strip().lower()
+        return v if v and v not in ("auto", "mirror", "inbound") else None
+    except Exception:
+        return None
+
+
 def _signoff_name() -> str | None:
     """The user's own name for a closing's ``{name}`` (e.g. "Best, Baher")."""
     try:
@@ -2968,6 +2985,17 @@ def generate_draft(
     from app.core.text_utils import detect_language
 
     detected_lang = detect_language(clean_inbound)
+    # b293: the user's DEFAULT reply language. Some users always reply in their
+    # own language even to foreign-language mail (Baher: "I always respond in
+    # English even to German emails, unless I choose German for select ones"), so
+    # mirroring the inbound is wrong for them. When generation.reply_language is
+    # set (e.g. "en"), it becomes the baseline instead of the inbound's language.
+    # A per-sender LEARNED reply_language (b237, below) still overrides it — that
+    # is how "reply in German to select senders" is honored: those senders carry
+    # a learned 'de' on their sender profile. Unset → mirror the inbound (default).
+    _default_reply_lang = _default_reply_language()
+    if _default_reply_lang:
+        detected_lang = _default_reply_lang
 
     # Handle thread context for ongoing threads. Prefer caller-supplied
     # structured history (the agent fetches the real thread) — it's far more

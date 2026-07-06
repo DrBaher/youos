@@ -378,6 +378,26 @@ def test_strip_phone_lines_removes_hallucinated_phone():
 
 from app.generation.service import _dedupe_leading_name, _strip_scaffolding  # noqa: E402
 
+# --- b293: configurable default reply language ---------------------------
+
+
+def test_default_reply_language_reads_config(monkeypatch):
+    from app.generation.service import _default_reply_language
+
+    monkeypatch.setattr("app.core.config.load_config",
+                        lambda *a, **k: {"generation": {"reply_language": "en"}})
+    assert _default_reply_language() == "en"
+
+
+def test_default_reply_language_unset_or_auto_is_none(monkeypatch):
+    from app.generation.service import _default_reply_language
+
+    monkeypatch.setattr("app.core.config.load_config", lambda *a, **k: {"generation": {}})
+    assert _default_reply_language() is None
+    monkeypatch.setattr("app.core.config.load_config",
+                        lambda *a, **k: {"generation": {"reply_language": "auto"}})
+    assert _default_reply_language() is None
+
 
 def test_dedupe_leading_name_collapses_stutter():
     out = _dedupe_leading_name("Hi Amina,\n\nAmina, thanks for the note.")
