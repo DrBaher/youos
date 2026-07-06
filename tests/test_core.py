@@ -47,6 +47,36 @@ def test_strip_quoted_short_fallback():
     assert "Alice wrote" in result
 
 
+def test_strip_quoted_apple_mail_from_date_block():
+    # b292: Apple Mail / Outlook-web attribution uses "Date:" (not "Sent:"). An
+    # unstripped quote let a German legal signature flip language detection.
+    text = (
+        "Hi! Thanks for sending this great draft. I have a few comments.\n\n"
+        "From: Baher Al Hakim <baher@medicus.ai>\n"
+        "Date: Friday, 3 July 2026 at 9:34 PM\n"
+        "To: Zeina <zeina@x.com>\n"
+        "Subject: Homepage\n\n"
+        "Hey, Geschäftsführer: Dr. Baher. Handelsgericht Wien. Wirtschaftskammer Österreich."
+    )
+    result = strip_quoted_text(text)
+    assert "few comments" in result
+    assert "Handelsgericht" not in result
+    assert "From:" not in result
+
+
+def test_strip_quoted_german_von_gesendet_block():
+    # German mail client attribution: "Von: … \n Gesendet: …".
+    text = (
+        "Danke, das passt so für mich. Ich melde mich bei Fragen.\n\n"
+        "Von: Johannes Heizer <johannes@x.com>\n"
+        "Gesendet: Mittwoch, 1. Juli 2026 11:14\n"
+        "An: Baher\nBetreff: Test\n\nOriginal quoted content here."
+    )
+    result = strip_quoted_text(text)
+    assert "Ich melde mich" in result
+    assert "Original quoted" not in result
+
+
 def test_decode_html_entities():
     assert decode_html_entities("&amp; &lt; &gt;") == "& < >"
 

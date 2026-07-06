@@ -8,8 +8,13 @@ import re
 _QUOTE_BOUNDARY_PATTERNS = [
     # "On [date], [name] wrote:" (Gmail/Outlook)
     re.compile(r"^On .{10,80} wrote:\s*$", re.MULTILINE),
-    # "From: ..." followed by "Sent: ..." (Outlook style)
-    re.compile(r"^From:\s+.+\nSent:\s+", re.MULTILINE),
+    # "From: ..." attribution block. Outlook uses "Sent:"; Apple Mail / modern
+    # Outlook-on-web use "Date:" (b292: a Zeina reply quoted "From: … \n Date: …"
+    # and, unstripped, its German legal signature flipped language detection to
+    # German → a German draft on an English thread). Both header spellings, plus
+    # the German client variant "Von: … \n Gesendet:/Datum:".
+    re.compile(r"^From:\s+.+\n(?:Sent|Date):\s+", re.MULTILINE),
+    re.compile(r"^Von:\s+.+\n(?:Gesendet|Datum):\s+", re.MULTILINE),
     # Lines starting with "> " (traditional quote markers) — 3+ consecutive
     re.compile(r"(?:^> .+\n){3,}", re.MULTILINE),
     # "---------- Forwarded message ----------"
