@@ -86,6 +86,23 @@ def test_language_instruction_always_present_for_english():
     assert "Reply in English." not in instr
 
 
+def test_language_instruction_explicit_english_drops_mirror_rule():
+    """b293: an EXPLICIT reply language (configured default / learned habit) must
+    name English AND drop the mirror rule — so a German inbound gets an English
+    reply instead of being mirrored back to German."""
+    instr = _language_instruction("en", explicit=True)
+    assert "Reply in English." in instr
+    assert "regardless of the language" in instr.lower()
+    assert "same language" not in instr.lower()   # mirror rule dropped
+    assert "do not mirror" in instr.lower()
+
+
+def test_language_instruction_explicit_german_is_strong():
+    instr = _language_instruction("de", explicit=True)
+    assert "Reply in German." in instr
+    assert "same language" not in instr.lower()   # explicit, not mirror
+
+
 def test_language_instruction_handles_none():
     instr = _language_instruction(None)
     assert instr.strip()
