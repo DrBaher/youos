@@ -874,17 +874,28 @@ _LANGUAGE_MIRROR_RULE = (
 )
 
 
-def _language_instruction(language_hint: str | None) -> str:
-    """Build the language-mirroring directive for the system turn (b183).
+def _language_instruction(language_hint: str | None, *, explicit: bool = False) -> str:
+    """Build the language directive for the system turn (b183).
 
     Always returns a non-empty instruction so the directive can never be
     dropped. When ``language_hint`` resolves to a known non-English language the
     instruction names it explicitly ("Reply in German.") — the strong form the
     local model actually honors; otherwise the generic mirror rule is used.
+
+    b293: when ``explicit`` is set, the reply language was a DELIBERATE choice
+    (a configured default or a learned per-sender habit), not the inbound's
+    language — so name it (including English) and DROP the mirror rule, which
+    would otherwise tell the model to match the inbound ("do not translate to
+    English"). This is what makes "reply in English even to German mail" work.
     """
     from app.core.text_utils import language_name
 
     name = language_name(language_hint)
+    if explicit and name:
+        return (
+            f"Reply in {name}. Write your ENTIRE reply in {name}, regardless of "
+            f"the language of the incoming message. Do NOT mirror the sender's language."
+        )
     if name and language_hint and language_hint.strip().lower() != "en":
         return f"Reply in {name}. {_LANGUAGE_MIRROR_RULE}"
     return _LANGUAGE_MIRROR_RULE
@@ -1707,6 +1718,7 @@ def assemble_chat_messages(
     subject: str | None = None,
     user_prompt: str | None = None,
     extra_constraint: str | None = None,
+    language_explicit: bool = False,
 ) -> list[dict[str, str]]:
     """Build ChatML ``[{system}, {user}]`` for the local chat model (b173).
 
@@ -1742,6 +1754,7 @@ def assemble_chat_messages(
         extra_constraint=extra_constraint,
         inbound_message=inbound_message,
         include_exemplar_hint=bool(reply_pairs),
+        language_explicit=language_explicit,
     )
     user_text = neutralize_prompt_markers(inbound_message)
     if subject:
@@ -1769,6 +1782,7 @@ def _assemble_system_text(
     extra_constraint: str | None,
     inbound_message: str,
     include_exemplar_hint: bool,
+    language_explicit: bool = False,
 ) -> str:
     """Persona/style/grounding/task as plain prose (no bracket scaffold) for the
     ChatML system turn. Same information content as ``assemble_prompt`` minus
@@ -1851,7 +1865,7 @@ def _assemble_system_text(
     # Language mirroring (b183): ALWAYS present so a heuristic mis-detect can't
     # drop the directive (the live German→English regression). Names the
     # language when detection is confident.
-    language_block = f"\n{_language_instruction(language_hint)}\n"
+    language_block = f"\n{_language_instruction(language_hint, explicit=language_explicit)}\n"
 
     grounding_block = ""
     if _inbound_requests_fact(inbound_message):
@@ -1923,6 +1937,7 @@ def assemble_prompt(
     subject: str | None = None,
     user_prompt: str | None = None,
     extra_constraint: str | None = None,
+    language_explicit: bool = False,
 ) -> str:
     style = persona.get("style", {})
     voice = style.get("voice", "direct, clear, pragmatic")
@@ -2018,7 +2033,7 @@ def assemble_prompt(
     # Language mirroring (b183): always emit, naming the language when known.
     # Mirrors the chat-path logic so the flat-text fallback (ollama/claude) gets
     # the same directive instead of silently dropping it under "en".
-    language_block = f"\n[LANGUAGE] {_language_instruction(language_hint)}\n"
+    language_block = f"\n[LANGUAGE] {_language_instruction(language_hint, explicit=language_explicit)}\n"
 
     # Fact-grounding guard — only when the inbound actually asks for a concrete
     # detail, so the common case keeps the unchanged prompt (minimises any
@@ -2994,8 +3009,10 @@ def generate_draft(
     # is how "reply in German to select senders" is honored: those senders carry
     # a learned 'de' on their sender profile. Unset → mirror the inbound (default).
     _default_reply_lang = _default_reply_language()
+    _lang_explicit = False
     if _default_reply_lang:
         detected_lang = _default_reply_lang
+        _lang_explicit = True
 
     # Handle thread context for ongoing threads. Prefer caller-supplied
     # structured history (the agent fetches the real thread) — it's far more
@@ -3180,6 +3197,7 @@ def generate_draft(
                 _profile_lang = str(sender_profile.get("reply_language") or "").strip()
                 if _profile_lang:
                     detected_lang = _profile_lang
+                    _lang_explicit = True  # a learned habit is a deliberate choice
             if not first_name:
                 # b231: no profile row (or a profile without a display name)
                 # left every greeting a bare "Hi," — fall back to the display
@@ -3218,6 +3236,7 @@ def generate_draft(
         subject=request.subject,
         user_prompt=request.user_prompt,
         extra_constraint=extra_constraint,
+        language_explicit=_lang_explicit,
     )
 
     # Token budget: estimate from the chat messages. Exemplars are no
