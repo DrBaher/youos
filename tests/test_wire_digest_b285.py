@@ -84,10 +84,11 @@ def test_build_uses_template_shell_and_edition():
     def stub(p):
         return '<div class="card"><h2>Top Stories</h2><ol><li>GPT-5 shipped at $200/mo</li></ol></div>'
 
-    html, stories = w.build_wire_html(items, 68, complete_fn=stub,
-                                      now=datetime.datetime(2026, 6, 19, 19, 0))
+    html, stories, degraded = w.build_wire_html(items, 68, complete_fn=stub,
+                                                now=datetime.datetime(2026, 6, 19, 19, 0))
     assert "<!DOCTYPE html>" in html and "The Wire — #68" in html
     assert stories == 1
+    assert degraded is False
 
 
 def test_build_falls_back_when_model_output_invalid():
@@ -96,18 +97,35 @@ def test_build_falls_back_when_model_output_invalid():
     def bad(p):
         return "Concrete headline placeholder"   # fails validation
 
-    html, _ = w.build_wire_html(items, 70, complete_fn=bad,
-                                now=datetime.datetime(2026, 6, 19, 19, 0))
+    html, _, degraded = w.build_wire_html(items, 70, complete_fn=bad,
+                                          now=datetime.datetime(2026, 6, 19, 19, 0))
     # fallback renders the real subject, HTML-escaped, and is itself valid
     assert "&amp;" in html and "&lt;b&gt;" in html
     assert "Concrete headline" not in html
+    assert degraded is True   # a rejected summary must be flagged, not silent
 
 
 def test_build_fallback_when_model_unavailable(monkeypatch):
     monkeypatch.setattr("app.core.completion.select_completion", lambda *a, **k: None)
     items = [{"id": "1", "from": "a@b.com", "subject": "Story one", "body": "x", "promo": False}]
-    html, stories = w.build_wire_html(items, 71, now=datetime.datetime(2026, 6, 19, 19, 0))
+    html, stories, degraded = w.build_wire_html(items, 71, now=datetime.datetime(2026, 6, 19, 19, 0))
     assert "Story one" in html and stories == 1
+    assert degraded is True
+
+
+def test_build_pins_cloud_model_and_timeout(monkeypatch):
+    # The summarizer must pin a concrete model + budget, never ride the CLI default.
+    seen = {}
+
+    def fake_select(model, *, max_tokens, temperature=0.0, cloud_model=None, timeout=None):
+        seen.update(model=model, cloud_model=cloud_model, timeout=timeout)
+        return lambda p: '<div class="card"><h2>Top Stories</h2><ol><li>x</li></ol></div>'
+
+    monkeypatch.setattr("app.core.completion.select_completion", fake_select)
+    items = [{"id": "1", "from": "a@b.com", "subject": "S", "body": "x", "promo": False}]
+    w.build_wire_html(items, 72, cloud_model="sonnet", timeout=300,
+                      now=datetime.datetime(2026, 6, 19, 19, 0))
+    assert seen == {"model": "cloud", "cloud_model": "sonnet", "timeout": 300}
 
 
 def test_merge_section_cards_dedupes_and_orders():
@@ -137,11 +155,12 @@ def test_chunked_path_used_for_high_volume(monkeypatch):
 
     items = [{"id": str(i), "from": "Brew", "subject": f"S{i}", "body": "GPT", "promo": False}
              for i in range(w._CHUNK_SIZE + 5)]
-    html, stories = w.build_wire_html(items, 80, complete_fn=fake,
-                                      now=datetime.datetime(2026, 6, 19, 19, 0))
+    html, stories, degraded = w.build_wire_html(items, 80, complete_fn=fake,
+                                                now=datetime.datetime(2026, 6, 19, 19, 0))
     assert len(calls) >= 2 + 1                 # ≥2 batches + 1 Top Stories pass
     assert "Top Stories" in html and "Story from batch" in html
     assert "Newsletters" not in html          # not the flat fallback
+    assert degraded is False
 
 
 # --- edition tracking -------------------------------------------------------
@@ -222,7 +241,7 @@ def test_force_bypasses_dedup_and_daily_claim(monkeypatch):
     monkeypatch.setattr("app.agent.digest_tasks._update_run", lambda *a, **k: None)
     items = [{"id": "1", "account": "me@x.com", "from": "Brew", "subject": "AI", "body": "x", "promo": False}]
     monkeypatch.setattr(w, "collect_wire", lambda spec, accts: (items, list(items)))
-    monkeypatch.setattr(w, "build_wire_html", lambda *a, **k: ("<html></html>", 1))
+    monkeypatch.setattr(w, "build_wire_html", lambda *a, **k: ("<html></html>", 1, False))
     monkeypatch.setattr(w, "_archive", lambda *a, **k: 1)
     monkeypatch.setattr(w, "_bump_edition", lambda *a, **k: None)
 

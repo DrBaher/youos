@@ -51,6 +51,13 @@ _DEFAULT_DAYS_BACK = 2
 _DEFAULT_MAX_EMAILS = 600
 _DEFAULT_MAX_BODY_LINES = 150
 _DEFAULT_HOUR = 19
+# Pin the cloud summarizer to a concrete, fast model rather than riding the
+# `claude` CLI's ambient default — that default can silently swap under us (an
+# interactive /model or /fast toggle rewrites ~/.claude/settings.json), and a
+# heavy 1M-context default blew the per-batch timeout, collapsing the digest to
+# the flat fallback (b294). A larger timeout gives a busy box headroom.
+_DEFAULT_SUMMARY_MODEL_NAME = "sonnet"
+_DEFAULT_SUMMARY_TIMEOUT = 300
 _READ_TIMEOUT = 30
 _LIST_TIMEOUT = 60
 
@@ -119,6 +126,8 @@ class WireSpec:
     max_emails: int = _DEFAULT_MAX_EMAILS
     max_body_lines: int = _DEFAULT_MAX_BODY_LINES
     summary_model: str = "cloud"     # 'cloud' (Claude) | 'local' (warm model)
+    summary_model_name: str = _DEFAULT_SUMMARY_MODEL_NAME  # concrete cloud model pin
+    summary_timeout: int = _DEFAULT_SUMMARY_TIMEOUT        # per-batch cloud-call budget (s)
     seed_edition: int = 0            # starting edition when no state file exists yet
     work_accounts: tuple[str, ...] = ()  # contribute categorized newsletters only
     skip_from: tuple[str, ...] = field(default_factory=lambda: _SKIP_FROM)
@@ -163,6 +172,8 @@ def load_wire_spec() -> WireSpec:
         max_emails=max(1, _int("max_emails", _DEFAULT_MAX_EMAILS)),
         max_body_lines=max(10, _int("max_body_lines", _DEFAULT_MAX_BODY_LINES)),
         summary_model=str(w.get("summary_model") or "cloud").strip().lower(),
+        summary_model_name=str(w.get("summary_model_name") or _DEFAULT_SUMMARY_MODEL_NAME).strip(),
+        summary_timeout=max(30, _int("summary_timeout", _DEFAULT_SUMMARY_TIMEOUT)),
         seed_edition=max(0, _int("seed_edition", 0)),
         work_accounts=_list("work_accounts", ()),
         skip_from=_list("skip_from", _SKIP_FROM),
@@ -210,12 +221,17 @@ def next_edition() -> int:
     return int(read_edition_state().get("lastEdition", 0)) + 1
 
 
-def _bump_edition(edition: int, *, date: str, emails: int, stories: int) -> None:
-    """Persist a sent edition (atomic write under var/)."""
+def _bump_edition(edition: int, *, date: str, emails: int, stories: int,
+                  degraded: bool = False) -> None:
+    """Persist a sent edition (atomic write under var/). ``degraded`` marks an
+    issue that shipped the flat fallback (no themed summary) so a silent collapse
+    is auditable in the history."""
     state = read_edition_state()
     state["lastEdition"] = edition
     entry = {"edition": edition, "date": date, "emails_processed": emails,
              "stories_processed": stories}
+    if degraded:
+        entry["degraded"] = True
     state["history"] = [entry, *state.get("history", [])][:200]
     path = _edition_path()
     try:
@@ -580,6 +596,11 @@ def _summarize_chunked(items: list[dict[str, str]], edition: int, complete_fn) -
             logger.info("wire batch %d/%d failed (%s); skipped", n, len(chunks), exc)
     if not outputs:
         return ""
+    if len(outputs) < len(chunks):
+        logger.warning(
+            "wire: only %d/%d summary batches survived — digest is thinner than the "
+            "full day (raise agent.wire.summary_timeout or lower _CHUNK_SIZE)",
+            len(outputs), len(chunks))
     merged = _merge_section_cards(outputs)
     if not merged:
         return ""
@@ -588,10 +609,15 @@ def _summarize_chunked(items: list[dict[str, str]], edition: int, complete_fn) -
 
 
 def build_wire_html(items: list[dict[str, str]], edition: int, *, model: str = "cloud",
-                    complete_fn=None, now: datetime | None = None) -> tuple[str, int]:
-    """Build the full Wire HTML for ``items``. Returns ``(html, story_count)``.
-    Uses the cloud model to extract+group stories; falls back to a deterministic
-    grouped list if the model is unavailable or its output fails validation."""
+                    complete_fn=None, now: datetime | None = None,
+                    cloud_model: str | None = None,
+                    timeout: int | None = None) -> tuple[str, int, bool]:
+    """Build the full Wire HTML for ``items``. Returns ``(html, story_count,
+    degraded)``. Uses the cloud model to extract+group stories; falls back to a
+    deterministic grouped list if the model is unavailable or its output fails
+    validation. ``degraded`` is True when that flat fallback was shipped (a
+    themed digest could not be produced). ``cloud_model``/``timeout`` pin the
+    cloud model + per-call budget (see ``select_completion``)."""
     from app.agent.digest_tasks import _user_tz
 
     now = now or datetime.now(_user_tz())
@@ -601,7 +627,8 @@ def build_wire_html(items: list[dict[str, str]], edition: int, *, model: str = "
     if complete_fn is None:
         from app.core.completion import select_completion
 
-        complete_fn = select_completion(model, max_tokens=8000, temperature=0.3)
+        complete_fn = select_completion(model, max_tokens=8000, temperature=0.3,
+                                        cloud_model=cloud_model, timeout=timeout)
 
     if complete_fn is not None:
         if len(items) > _CHUNK_SIZE:
@@ -617,8 +644,13 @@ def build_wire_html(items: list[dict[str, str]], edition: int, *, model: str = "
             except Exception as exc:
                 logger.info("wire summarization failed (%s); using fallback render", exc)
 
+    degraded = False
     if not sections:
+        logger.warning(
+            "wire #%s: model summary unavailable/rejected — shipping DEGRADED flat "
+            "fallback (%d newsletters, no themed sections)", edition, len(items))
         sections = _fallback_sections(items)
+        degraded = True
 
     story_count = sections.lower().count("<li")
     deliver = ""
@@ -628,7 +660,7 @@ def build_wire_html(items: list[dict[str, str]], edition: int, *, model: str = "
         sections=sections,
         deliver_to=deliver or "YouOS",
     )
-    return html, story_count
+    return html, story_count, degraded
 
 
 # --- orchestration ----------------------------------------------------------
@@ -707,9 +739,11 @@ def run_wire(database_url: str, *, now: datetime | None = None, dry_run: bool = 
         if not items:
             return {"status": "preview", "name": _WIRE_NAME, "edition": edition,
                     "count": 0, "html": "", "to": to}
-        html, stories = build_wire_html(items, edition, model=spec.summary_model, now=now_local)
+        html, stories, degraded = build_wire_html(
+            items, edition, model=spec.summary_model, now=now_local,
+            cloud_model=spec.summary_model_name, timeout=spec.summary_timeout)
         return {"status": "preview", "name": _WIRE_NAME, "edition": edition,
-                "count": len(items), "stories": stories, "to": to,
+                "count": len(items), "stories": stories, "to": to, "degraded": degraded,
                 "subject": _subject(edition, now_local), "html": html}
 
     gates = _wire_gates()
@@ -748,7 +782,9 @@ def run_wire(database_url: str, *, now: datetime | None = None, dry_run: bool = 
     if run_id is None:
         return {"status": "skipped_done", "name": _WIRE_NAME, "period": period}
 
-    html, stories = build_wire_html(fresh, edition, model=spec.summary_model, now=now_local)
+    html, stories, degraded = build_wire_html(
+        fresh, edition, model=spec.summary_model, now=now_local,
+        cloud_model=spec.summary_model_name, timeout=spec.summary_timeout)
     subject = _subject(edition, now_local)
     plain = f"The Wire #{edition} — {len(fresh)} newsletters, {stories} stories. View as HTML."
 
@@ -765,10 +801,11 @@ def run_wire(database_url: str, *, now: datetime | None = None, dry_run: bool = 
                 sent_message_id=res.message_id, detail=f"sent to {to}; edition {edition}")
 
     archived = _archive(manifest, spec)
-    _bump_edition(edition, date=now_local.strftime("%Y-%m-%d"), emails=len(fresh), stories=stories)
+    _bump_edition(edition, date=now_local.strftime("%Y-%m-%d"), emails=len(fresh),
+                  stories=stories, degraded=degraded)
     _update_run(database_url, run_id, "sent", detail=f"sent to {to}; edition {edition}; archived {archived}")
     return {"status": "sent", "name": _WIRE_NAME, "period": period, "edition": edition,
-            "to": to, "count": len(fresh), "stories": stories,
+            "to": to, "count": len(fresh), "stories": stories, "degraded": degraded,
             "archived": archived, "sent_message_id": res.message_id}
 
 
