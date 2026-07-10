@@ -54,12 +54,26 @@ _PROJECT_RE = re.compile(
 )
 
 
+# b296: words the greedy "project <word>" regex captures that are NOT project
+# names ("project and have capacity" → "and"). A fact keyed on one of these
+# matches nearly any inbound and poisons every draft, so treat it as no key.
+_PROJECT_KEY_STOPWORDS = frozenset({
+    "and", "the", "for", "with", "from", "this", "that", "then", "than", "will",
+    "would", "have", "has", "had", "was", "were", "are", "being", "been", "into",
+    "successfully", "engagement", "update", "meeting", "call", "team", "about",
+})
+
+
 def _extract_project_key(note: str, project_name: str | None) -> str:
     if project_name:
         return project_name.lower().strip()
     m = _PROJECT_RE.search(note)
     if m:
-        return (m.group(1) or m.group(2)).lower()
+        cand = (m.group(1) or m.group(2) or "").lower().strip()
+        # Only accept a real-looking key; a stopword/short capture → "default"
+        # (dormant: "default" never appears in inbound text, so it won't inject).
+        if len(cand) >= 3 and cand not in _PROJECT_KEY_STOPWORDS:
+            return cand
     return "default"
 
 
