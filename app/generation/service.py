@@ -2853,10 +2853,19 @@ def _run_subprocess(cmd: list[str], *, timeout: int = SUBPROCESS_TIMEOUT) -> sub
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
-def _call_claude_cli(prompt: str, *, max_tokens: int = 300) -> str:  # noqa: ARG001
-    # Note: claude CLI --print does not support --max-tokens; use -p to pass prompt
-    cmd = ["claude", "--print", "-p", prompt]
-    result = _run_subprocess(cmd, timeout=SUBPROCESS_TIMEOUT)
+def _call_claude_cli(prompt: str, *, max_tokens: int = 300, model: str | None = None,
+                     timeout: int | None = None) -> str:  # noqa: ARG001
+    # Note: claude CLI --print does not support --max-tokens; use -p to pass prompt.
+    # ``model`` pins a specific model instead of the CLI's ambient default — the
+    # default can silently swap under a caller (e.g. an interactive /model or /fast
+    # toggle rewrites ~/.claude/settings.json), so long-running background callers
+    # that need a stable, fast model should pin one. ``timeout`` overrides the
+    # per-call subprocess budget for heavier prompts.
+    cmd = ["claude", "--print"]
+    if model:
+        cmd += ["--model", model]
+    cmd += ["-p", prompt]
+    result = _run_subprocess(cmd, timeout=timeout or SUBPROCESS_TIMEOUT)
     if result.returncode != 0:
         stderr = result.stderr.strip()
         raise RuntimeError(f"claude CLI failed (exit {result.returncode}): {stderr}")

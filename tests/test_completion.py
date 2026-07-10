@@ -36,3 +36,20 @@ def test_cloud_tier_uses_claude_cli(monkeypatch):
     monkeypatch.setattr(gen, "_call_claude_cli", lambda p, **k: "CLOUD:" + p)
     fn = select_completion("cloud", max_tokens=10)
     assert fn is not None and fn("hi") == "CLOUD:hi"
+
+
+def test_cloud_tier_threads_model_pin_and_timeout(monkeypatch):
+    import app.generation.service as gen
+
+    seen = {}
+
+    def _spy(p, **kw):
+        seen.update(kw)
+        return p
+
+    monkeypatch.setattr(gen, "_call_claude_cli", _spy)
+    fn = select_completion("cloud", max_tokens=10, cloud_model="sonnet", timeout=300)
+    fn("x")
+    # the concrete model + timeout must reach the CLI, not the ambient default
+    assert seen.get("model") == "sonnet"
+    assert seen.get("timeout") == 300
