@@ -2853,6 +2853,27 @@ def _run_subprocess(cmd: list[str], *, timeout: int = SUBPROCESS_TIMEOUT) -> sub
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
+def _resolve_claude_bin() -> str:
+    """Absolute path to the ``claude`` CLI.
+
+    The launchd daemon runs with a minimal PATH (``/opt/homebrew/bin:/usr/...``)
+    that excludes ``~/.local/bin`` — where the native Claude Code installer now
+    puts ``claude``. A bare ``"claude"`` in subprocess then fails with
+    FileNotFoundError, which silently collapsed every cloud call to the fallback
+    (the Wire went degraded for days; b295). Resolve explicitly: honor PATH when
+    it works, else probe the known install locations, else return the bare name
+    so the caller raises a clear error rather than guessing."""
+    found = shutil.which("claude")
+    if found:
+        return found
+    for cand in (Path.home() / ".local" / "bin" / "claude",
+                 Path("/opt/homebrew/bin/claude"),
+                 Path("/usr/local/bin/claude")):
+        if cand.exists():
+            return str(cand)
+    return "claude"
+
+
 def _call_claude_cli(prompt: str, *, max_tokens: int = 300, model: str | None = None,
                      timeout: int | None = None) -> str:  # noqa: ARG001
     # Note: claude CLI --print does not support --max-tokens; use -p to pass prompt.
@@ -2861,7 +2882,7 @@ def _call_claude_cli(prompt: str, *, max_tokens: int = 300, model: str | None = 
     # toggle rewrites ~/.claude/settings.json), so long-running background callers
     # that need a stable, fast model should pin one. ``timeout`` overrides the
     # per-call subprocess budget for heavier prompts.
-    cmd = ["claude", "--print"]
+    cmd = [_resolve_claude_bin(), "--print"]
     if model:
         cmd += ["--model", model]
     cmd += ["-p", prompt]

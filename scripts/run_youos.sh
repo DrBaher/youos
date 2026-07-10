@@ -31,6 +31,29 @@ HOST="${YOUOS_HOST:-127.0.0.1}"
 PORT="${YOUOS_PORT:-8765}"
 APP_MODULE="${YOUOS_APP_MODULE:-app.main:app}"
 
+# Claude cloud auth for the headless (launchd) context. The daemon runs with a
+# minimal env and CANNOT read the login Keychain where `claude` stores its OAuth
+# credential, so a bare `claude --print` reports "Not logged in" and every cloud
+# summary (the Wire digest, cloud draft escalation) silently degrades to the
+# fallback (b295). Feed the token via env instead. Prefer a long-lived token from
+# `claude setup-token` saved to the secrets file; else read the current session
+# token from the Keychain at boot (works only while that token is fresh).
+if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+  _TOK_FILE="${YOUOS_CLAUDE_TOKEN_FILE:-$YOUOS_DATA_DIR/secrets/claude_oauth_token}"
+  if [[ -r "$_TOK_FILE" ]]; then
+    CLAUDE_CODE_OAUTH_TOKEN="$(tr -d '[:space:]' < "$_TOK_FILE" || true)"
+  else
+    CLAUDE_CODE_OAUTH_TOKEN="$(security find-generic-password -s 'Claude Code-credentials' -w 2>/dev/null \
+      | "$PYTHON_BIN" -c 'import sys,json; print(json.load(sys.stdin)["claudeAiOauth"]["accessToken"])' 2>/dev/null || true)"
+  fi
+  export CLAUDE_CODE_OAUTH_TOKEN
+fi
+if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+  echo "[youos boot] claude cloud auth: token present (${#CLAUDE_CODE_OAUTH_TOKEN} chars)" >&2
+else
+  echo "[youos boot] WARNING: no CLAUDE_CODE_OAUTH_TOKEN — cloud calls (Wire) will fall back" >&2
+fi
+
 # Boot banner → launchd.stderr.log. Makes a (re)start auditable: the SHA is the
 # code now serving and config_mtime shows whether the latest youos_config.yaml
 # was picked up. A restart that silently no-ops (old process keeps answering
