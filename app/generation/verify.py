@@ -149,6 +149,36 @@ _COMMITMENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Bare future-time over-commitment (b297). The 4B LoRA promises a near-term
+# action the sender never requested a time for — "I'll follow up with Fyoldi
+# tomorrow", "I'll resend them today". Distinct from _COMMITMENT_RE (which needs
+# an explicit "by <deadline>"): here the tell is a first-person future intent
+# followed within a clause by a concrete near-term time token. Flagged only when
+# that time token is NOT in the grounding corpus (the sender didn't set it), so
+# a "Friday works?" → "yes, Friday" reply stays clean.
+_OVERCOMMIT_RE = re.compile(
+    r"\bI(?:['’]ll| will| shall| am going to|['’]m going to|['’]ll aim to| will aim to)\b"
+    r"[^.?!\n]{0,70}?\b(?P<t>today|tonight|tomorrow|this\s+(?:morning|afternoon|evening)|"
+    r"heute|morgen|heute\s+abend)\b",
+    re.IGNORECASE,
+)
+
+# Ungrounded first-person completed EXTERNAL action (b297). The model asserts it
+# performed a real-world action it categorically cannot have — "I've reviewed the
+# GLS delivery log", "I've spoken with the notary" — on a thread that never
+# mentions the action. Flagged only when the action stem is absent from the
+# grounding corpus, so a genuine "I've reviewed the agreement" on an agreement
+# thread (where "review" is quoted) is left alone.
+_DID_ACTION_RE = re.compile(
+    r"\bI(?:['’]ve| have)\s+(?:already\s+|just\s+)?"
+    r"(?P<v>review|check|look(?:ed)?\s+(?:at|into|through)|"
+    r"gone through|spoke|spoken|contact|call|reach|verif)",
+    re.IGNORECASE,
+)
+# Grounding stems for _DID_ACTION_RE, keyed by the captured verb fragment.
+_ACTION_STEMS = ("review", "check", "look", "spoke", "spoken", "speak", "spok",
+                 "contact", "call", "reach", "verif")
+
 # Leaked internal scaffolding / placeholders (b286). A live draft (2026-07)
 # ended with the model's own prompt block copied verbatim — "[FACTS CONTEXT]
 # About you: Based in Dubai, …" — and another surfaced a "[list attached]"
@@ -422,6 +452,21 @@ def verify_draft(
         if token and token not in hay_l:
             fabrications.append(f"invented deadline: {cm.group(0).strip()}")
             break
+
+    # b297: bare future-time over-commitment ("I'll follow up … tomorrow") whose
+    # time token the sender never set.
+    for om in _OVERCOMMIT_RE.finditer(d_body):
+        token = re.sub(r"\s+", " ", om.group("t")).strip().lower()
+        if token and token not in hay_l:
+            fabrications.append(f"invented commitment: {om.group(0).strip()}")
+            break
+
+    # b297: first-person completed external action absent from the grounding
+    # corpus ("I've reviewed the GLS delivery log" on a thread that never
+    # mentions reviewing anything).
+    am = _DID_ACTION_RE.search(d_body)
+    if am and not any(stem in hay_l for stem in _ACTION_STEMS):
+        fabrications.append(f"invented completed action: {am.group(0).strip()}")
 
     # Speaker inversion. Work on the RAW draft (not d_core): the signed-as-
     # sender tell IS a trailing signature, which strip_signature would remove.
