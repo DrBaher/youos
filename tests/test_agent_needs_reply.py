@@ -86,6 +86,29 @@ def test_google_system_mailboxes_hard_skip():
         assert any("google system mailbox" in r for r in v.reasons), email
 
 
+def test_machine_notifiers_hard_skipped():
+    """b298: pure-machine status/receipt/platform notifiers get hard-skipped."""
+    for email in (
+        "noreply@statuspage.io",
+        "no_reply@email.apple.com",
+        "no-reply-pr8x@mail.anthropic.com",
+        "noreply@mail.app.supabase.io",
+        "notifications@vercel.com",
+    ):
+        v = classify(_msg(sender=f"X <{email}>", sender_email=email))
+        assert not v.needs_reply, email
+
+
+def test_valuable_noreply_and_humans_not_skipped_by_notifier_rule():
+    """b298: the notifier rule must NOT catch a lead-bearing generic noreply@ or
+    a real human at a platform vendor (only machine local-parts at those hosts)."""
+    from app.agent.needs_reply import AUTOMATION_DOMAIN_PAT, PLATFORM_NOTIFIER_PAT
+
+    for email in ("noreply@leadgen-demo-form.com", "hello@vercel.com", "jane@apple.com"):
+        assert not AUTOMATION_DOMAIN_PAT.search(f"x <{email}>"), email
+        assert not PLATFORM_NOTIFIER_PAT.search(email), email
+
+
 def test_real_human_at_google_not_skipped():
     """A real person at ``@google.com`` must NOT be caught by the system-mailbox
     rule (it matches only machine local-parts)."""
