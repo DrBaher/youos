@@ -82,3 +82,24 @@ def signature_only_reply(
     if len(content) < _MIN_CONTENT_CHARS:
         return True
     return bool(_COURTESY_ONLY.match(content))
+
+
+# --- b300: self-initiated compositions --------------------------------------
+#
+# Thread-STARTING emails the user wrote (no inbound above them) are captured as
+# reply_pairs whose inbound_text is a synthetic "[compose] ..." instruction, so
+# the voice finetune learns composing style, not just replying style. Consumers
+# that assume inbound_text is a real counterparty email (reply-exemplar
+# retrieval, replay backtest, benchmark generation, model comparison) must
+# exclude them via `is_composition_metadata` — the finetune export and
+# sender-profile/persona corpora deliberately include them.
+
+COMPOSITION_PAIR_STRATEGY = "self_initiated_composition"
+
+
+def is_composition_metadata(metadata: object) -> bool:
+    """True if a reply_pairs ``metadata_json`` dict marks a composition pair."""
+    return (
+        isinstance(metadata, dict)
+        and metadata.get("pair_strategy") == COMPOSITION_PAIR_STRATEGY
+    )
