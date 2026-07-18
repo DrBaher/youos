@@ -691,6 +691,30 @@ _PERSONAL_TOPIC_RE = re.compile(
 )
 
 
+# b296: keys too generic to identify a project — a project fact keyed on one of
+# these (the greedy "project <word>" extractor captures the following stopword,
+# e.g. "project and have capacity" → key "and") would match almost any inbound
+# and inject garbage into every draft. Shared with the extractor's write guard.
+FACT_KEY_STOPWORDS: frozenset[str] = frozenset({
+    "and", "the", "for", "with", "from", "this", "that", "then", "than", "they",
+    "them", "our", "your", "their", "its", "have", "has", "had", "will", "would",
+    "can", "could", "should", "about", "into", "onto", "over", "under", "after",
+    "before", "being", "been", "were", "are", "was", "default", "unknown",
+    "project", "meeting", "update", "call", "team", "successfully", "engagement",
+    "parties", "stakeholder", "deadline", "budget", "renewal",
+})
+
+
+def _project_key_matches(key: str, inbound_lower: str) -> bool:
+    """True iff ``key`` is a meaningful project key present as a whole word in the
+    (already-lowercased) inbound. Rejects stopwords and <3-char keys so a garbage
+    key can't universally match; requires a word-boundary hit, not a substring."""
+    k = (key or "").strip().lower()
+    if len(k) < 3 or k in FACT_KEY_STOPWORDS:
+        return False
+    return re.search(rf"\b{re.escape(k)}\b", inbound_lower) is not None
+
+
 def lookup_facts(
     *,
     sender: str | None,
@@ -750,9 +774,14 @@ def lookup_facts(
         if project_rows:
             inbound_lower = inbound_text.lower()
             for row in project_rows:
-                key_lower = row["key"].lower()
                 tags = json.loads(row["tags"]) if row["tags"] else []
-                if key_lower in inbound_lower or any(t.lower() in inbound_lower for t in tags):
+                keys = [row["key"], *tags]
+                # b296: only inject a project fact whose key is a MEANINGFUL word
+                # present in the inbound as a whole word. The old substring match
+                # on a raw key let a garbage fact keyed "and" (from the greedy
+                # "project <word>" extractor) match nearly every email and inject
+                # the phantom "tomorrow's full review meeting" into every draft.
+                if any(_project_key_matches(k, inbound_lower) for k in keys):
                     facts.append({"type": row["type"], "key": row["key"], "fact": row["fact"]})
 
     except Exception:
@@ -1571,6 +1600,15 @@ def _repair_draft(
             if greeting and not _draft_has_greeting(text, greeting):
                 text = f"{greeting}\n\n{text.lstrip()}"
                 repairs.append("added_greeting")
+                # b296: the earlier _dedupe_leading_name pass ran BEFORE this
+                # greeting existed, so a body that opens with the recipient as a
+                # vocative only now collides with it ("Hi Nadine,\n\nNadine,
+                # thanks …"). Re-run the dedup now that the pair is visible.
+                _reduped = _dedupe_leading_name(text)
+                if _reduped != text:
+                    text = _reduped
+                    if "deduped_greeting_name" not in repairs:
+                        repairs.append("deduped_greeting_name")
             if closing and not _draft_has_closing(text, closing):
                 text = f"{text.rstrip()}\n\n{closing}"
                 repairs.append("added_closing")

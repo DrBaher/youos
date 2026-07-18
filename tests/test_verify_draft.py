@@ -29,6 +29,44 @@ def test_quoting_an_email_from_the_inbound_is_allowed():
     assert r.ok
 
 
+# --- b297: over-commitment + invented completed action ---------------------
+
+
+def test_invented_completed_action_is_fabrication():
+    # The agent claims a real-world action it cannot have done, ungrounded.
+    r = verify_draft(
+        "Thanks — I've reviewed the GLS delivery log; the package is in transit.",
+        inbound="Fwd: your parcel is ready for pickup at the GLS shop.",
+    )
+    assert any("completed action" in f for f in r.fabrications), r.fabrications
+
+
+def test_bare_future_overcommitment_when_time_not_requested():
+    r = verify_draft(
+        "Will do — I'll follow up with the vendor tomorrow to confirm.",
+        inbound="Just wanted to flag that the invoice looked off.",
+    )
+    assert any("invented commitment" in f for f in r.fabrications), r.fabrications
+
+
+def test_grounded_time_is_not_flagged():
+    # The sender asked about tomorrow → committing to tomorrow is grounded.
+    r = verify_draft(
+        "Yes, I'll send it tomorrow.",
+        inbound="Could you get it to me by tomorrow?",
+    )
+    assert not any("commitment" in f for f in r.fabrications), r.fabrications
+
+
+def test_grounded_action_is_not_flagged():
+    # "review" appears in the thread → "I've reviewed it" is grounded.
+    r = verify_draft(
+        "I've reviewed the agreement and it looks good.",
+        inbound="Please review the agreement and let me know.",
+    )
+    assert not any("completed action" in f for f in r.fabrications), r.fabrications
+
+
 def test_participant_emails_are_allowed():
     # The account + sender addresses are participants, fine to mention.
     r = verify_draft(

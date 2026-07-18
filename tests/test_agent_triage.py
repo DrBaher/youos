@@ -159,6 +159,83 @@ def test_triage_persists_drafts_and_is_idempotent_on_repeat_run(mocked_environme
     assert len(rows2) == 1, "repeated triage must not duplicate"
 
 
+def test_second_sweep_skips_generation_for_already_queued(mocked_environment, monkeypatch):
+    """b299: a message already in agent_pending_drafts (any status) must be
+    skipped BEFORE generation on later sweeps. The message_id INSERT OR IGNORE
+    kept the queue clean, but it fired only after the whole per-message
+    pipeline (rules, urgency, summary, multi-candidate generate_draft) had
+    re-run and its result was discarded — on prod that was ~5k wasted
+    generations/week over ~50 threads, each also burning a daily-cap slot."""
+    from app.agent.store import list_pending, mark_dismissed
+    from app.agent.triage import run_triage
+
+    env = mocked_environment
+    calls: list = []
+
+    class _Resp:
+        draft = "Hi Alice, confirmed — Q3 pricing unchanged."
+        model_used = "qwen2.5-1.5b-lora"
+        repairs: list[str] = []
+        quality_score = 0.8
+
+    def _spy(req, **kw):
+        calls.append(req)
+        return _Resp()
+
+    monkeypatch.setattr("app.generation.service.generate_draft", _spy)
+
+    r1 = run_triage(account="you@example.com", database_url=env["database_url"], configs_dir=env["configs_dir"])
+    assert r1.persisted == 1
+    assert len(calls) == 1
+
+    # Second sweep, same still-unread inbound: skipped before generation.
+    r2 = run_triage(account="you@example.com", database_url=env["database_url"], configs_dir=env["configs_dir"])
+    assert len(calls) == 1, "already-queued message must not be re-drafted"
+    assert r2.persisted == 0
+    assert any(
+        "already in review queue" in " ".join(v.reasons) for _, v in r2.skipped
+    ), "the skip must carry an explicit reason for the audit trail"
+
+    # The user acting on the row must not resurrect it: dismissed (and sent)
+    # rows keep their message_id in the table, so they stay skipped too.
+    row = list_pending(env["database_url"])[0]
+    mark_dismissed(env["database_url"], row["id"], reason="already_handled")
+    run_triage(account="you@example.com", database_url=env["database_url"], configs_dir=env["configs_dir"])
+    assert len(calls) == 1, "dismissed row must not be re-drafted either"
+
+
+def test_dry_run_still_drafts_already_queued_messages(mocked_environment, monkeypatch):
+    """b299 keeps dry-run (persist=False) exempt from the already-queued skip:
+    it never writes, so previewing a draft for an already-queued message is
+    the point of the flag."""
+    from app.agent.triage import run_triage
+
+    env = mocked_environment
+    calls: list = []
+
+    class _Resp:
+        draft = "Hi Alice, confirmed — Q3 pricing unchanged."
+        model_used = "qwen2.5-1.5b-lora"
+        repairs: list[str] = []
+        quality_score = 0.8
+
+    def _spy(req, **kw):
+        calls.append(req)
+        return _Resp()
+
+    monkeypatch.setattr("app.generation.service.generate_draft", _spy)
+
+    run_triage(account="you@example.com", database_url=env["database_url"], configs_dir=env["configs_dir"])
+    assert len(calls) == 1
+
+    run_triage(
+        account="you@example.com",
+        database_url=env["database_url"], configs_dir=env["configs_dir"],
+        persist=False,
+    )
+    assert len(calls) == 2, "dry-run should still draft for preview"
+
+
 def test_triage_dry_run_does_not_persist(mocked_environment):
     from app.agent.store import list_pending
     from app.agent.triage import run_triage
@@ -330,8 +407,20 @@ def test_daily_cap_stops_drafting_when_quota_hit(mocked_environment, monkeypatch
     assert r1.kept == 1
     assert r1.persisted == 1
 
-    # Second run hits the cap → no drafts persisted, message recorded as
-    # capped skip.
+    # Second run: a FRESH inbound (the b299 already-queued skip would drop the
+    # first one before the cap check) hits the cap → no drafts persisted,
+    # message recorded as capped skip.
+    fresh = InboxMessage(
+        message_id="m3",
+        thread_id="t3",
+        account="you@example.com",
+        sender="Bob <bob@partner.com>",
+        sender_email="bob@partner.com",
+        subject="Contract question",
+        body="Hi — can you confirm the renewal terms? Thanks.",
+        headers={"to": "you@example.com"},
+    )
+    monkeypatch.setattr("app.agent.triage.fetch_unread", lambda *a, **k: [fresh])
     r2 = run_triage(account="you@example.com",
                     database_url=env["database_url"], configs_dir=env["configs_dir"])
     assert r2.kept == 0

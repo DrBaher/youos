@@ -40,8 +40,25 @@ AUTOMATION_DOMAIN_PAT = re.compile(
     r"[\w-]+\.atlassian\.net|[\w-]+\.circleci\.com|[\w-]+\.travis-ci\.(?:com|org)|"
     r"fireflies\.ai|otter\.ai|loom\.com|calendly\.com|doodle\.com|fathom\.video|"
     r"krisp\.ai|grain\.com|"
-    r"[\w.-]*docusign\.(?:net|com)|[\w.-]*booking\.com"
+    r"[\w.-]*docusign\.(?:net|com)|[\w.-]*booking\.com|"
+    # b298: pure-machine status/receipt/platform-notification domains (and
+    # dedicated transactional subdomains). Unlike a generic noreply@ — which can
+    # be a demo-form LEAD — these carry no lead value and are never human-tended.
+    # From a baheros queue review (2026-07): incident alerts (statuspage.io),
+    # Apple receipts (email.apple.com), Anthropic + Supabase platform notices.
+    r"statuspage\.io|email\.apple\.com|mail\.anthropic\.com|"
+    r"[\w.-]*\.supabase\.(?:io|com|co)"
     r")",
+    re.IGNORECASE,
+)
+
+# b298: machine notification mailboxes at dev/hosting platforms that ALSO have
+# humans, so the whole domain can't be skipped — only the notifications@ /
+# no-reply@ local-part is a bot ("notifications@vercel.com" deploy/passkey
+# notices). Real people at these vendors use a personal local-part.
+PLATFORM_NOTIFIER_PAT = re.compile(
+    r"\b(?:notifications?|no[-_.]?reply[\w-]*)@[\w.-]*"
+    r"(?:vercel\.com|netlify\.com|render\.com|railway\.app|fly\.io)\b",
     re.IGNORECASE,
 )
 
@@ -556,6 +573,8 @@ def classify(
         return NeedsReplyVerdict(False, 0.0, [f"mailer-daemon/bounce ({msg.sender!r})"])
     if msg.sender and AUTOMATION_DOMAIN_PAT.search(msg.sender):
         return NeedsReplyVerdict(False, 0.0, [f"automation domain ({msg.sender!r})"])
+    if msg.sender_email and PLATFORM_NOTIFIER_PAT.search(msg.sender_email):
+        return NeedsReplyVerdict(False, 0.0, [f"platform notifier mailbox ({msg.sender_email})"])
     if msg.sender_email and GOOGLE_SYSTEM_MAILBOX_PAT.search(msg.sender_email):
         return NeedsReplyVerdict(False, 0.0, [f"google system mailbox ({msg.sender_email})"])
     if msg.subject and SERVICE_SUBJECT_PAT.search(msg.subject):

@@ -1762,6 +1762,23 @@ def _run_sweep(
 
     _proposed_slots_acc: list = list(pending_proposed_slots(database_url, account)) if database_url else []
     _proposed_by_mid: dict[str, list] = {}
+    # b299: message_ids already in agent_pending_drafts (any status — pending,
+    # sent, dismissed). A message stays unread in Gmail until the user reads it
+    # there, so every sweep re-fetched the same inbound and re-ran the whole
+    # per-message pipeline (rules, urgency, summary, calendar slots, and a
+    # multi-candidate generate_draft) only for upsert_pending's INSERT OR
+    # IGNORE to discard the result — ~5k wasted generations/week over ~50
+    # threads on prod, each one also burning a daily-cap slot. Skip them
+    # BEFORE the expensive work instead. Dry-run (persist=False) keeps the old
+    # behavior: it never writes, so previewing an already-queued message is
+    # intentional there.
+    _already_queued: set[str] = set()
+    if persist and database_url:
+        from app.agent.store import existing_message_ids
+
+        _already_queued = existing_message_ids(
+            database_url, [m.message_id for m, _ in classified]
+        )
     cap_hit_count = 0
     # b282: count of calendar events queued for approval this sweep (auto-confirm).
     events_queued = 0
@@ -1813,6 +1830,27 @@ def _run_sweep(
         # NB: self-confirmed meetings (the user's OWN sent reply) are handled by
         # the SENT-mail scan after this loop — fetch_unread drops any thread whose
         # latest message is the user's, so they never reach this inbound loop.
+
+        # b299: already processed on a previous sweep — the row exists in
+        # agent_pending_drafts (whatever its status), so everything below
+        # (outreach render, rules, urgency, summary, generation, persist)
+        # would be recomputed and then discarded. Placed AFTER auto-confirm:
+        # calendar detection is idempotent per thread but must still see the
+        # message (free/busy can change between sweeps).
+        if msg.message_id in _already_queued:
+            skipped.append(
+                (
+                    msg,
+                    NeedsReplyVerdict(
+                        needs_reply=False,
+                        score=verdict.score,
+                        reasons=verdict.reasons + ["already in review queue"],
+                        cold_outreach=verdict.cold_outreach,
+                        surface_for_review=False,
+                    ),
+                )
+            )
+            continue
 
         # Outreach rules run BEFORE the needs-reply gate: the matched message is
         # a website lead-form notification (typically automation the gate would

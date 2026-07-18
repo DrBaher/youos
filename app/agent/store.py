@@ -129,6 +129,28 @@ def upsert_pending(
         return cur.lastrowid if cur.rowcount > 0 else None
 
 
+def existing_message_ids(database_url: str, message_ids: list[str]) -> set[str]:
+    """Return the subset of ``message_ids`` already in ``agent_pending_drafts``.
+
+    Any status counts (pending, sent, dismissed, …): a message the agent has
+    already processed once must not be re-drafted just because it is still
+    unread in Gmail. Triage calls this BEFORE generation (b299) so the
+    ``INSERT OR IGNORE`` in :func:`upsert_pending` stops being the only guard —
+    that one fires *after* the expensive draft has already been generated and
+    thrown away, and after the daily cap was burned on it.
+    """
+    ids = [m for m in message_ids if m]
+    if not ids:
+        return set()
+    with closing(_connect(database_url)) as conn:
+        placeholders = ",".join("?" * len(ids))
+        rows = conn.execute(
+            f"SELECT message_id FROM agent_pending_drafts WHERE message_id IN ({placeholders})",
+            ids,
+        ).fetchall()
+    return {row["message_id"] for row in rows}
+
+
 def list_pending(
     database_url: str,
     *,

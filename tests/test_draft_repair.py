@@ -56,6 +56,27 @@ def test_greeting_detection():
     assert not _draft_has_greeting("Sure, that works for me.", "Hi John,")
 
 
+def test_added_greeting_does_not_create_name_stutter():
+    # b296: the model opens with the recipient as a vocative and no greeting;
+    # enforce_greeting_closing prepends "Hi Nadine," which USED to yield the
+    # stutter "Hi Nadine,\n\nNadine, thanks …" because the dedup pass ran before
+    # the greeting existed. It must now collapse after the greeting is added.
+    cfg = {"enforce_greeting_closing": True, "strip_trailing_signature": False,
+           "strip_quote_tail": False, "decode_html_entities": False}
+    for body, name in [
+        ("Nadine, thanks for the update.", "Nadine"),
+        ("Sofia — thanks for checking in.", "Sofia"),
+        ("Thanks Steffen — glad to hear it.", "Steffen"),
+    ]:
+        text, repairs, _ = _repair_draft(
+            body, greeting=f"Hi {name},", closing="", target_words=None, config=cfg)
+        assert text.startswith(f"Hi {name},\n\n"), text
+        # the name must not appear a second time in the opening body line
+        body_line = text.split("\n\n", 1)[1].split("\n", 1)[0]
+        assert name not in body_line, f"stutter survived: {text!r}"
+        assert "deduped_greeting_name" in repairs
+
+
 def test_closing_detection():
     assert _draft_has_closing("...see you then.\n\nBest,\nBaher", "Best,")
     assert _draft_has_closing("...talk soon", "Cheers,")
