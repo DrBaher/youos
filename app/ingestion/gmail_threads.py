@@ -194,6 +194,7 @@ class IngestCounts:
     inbound_documents: int = 0
     chunks: int = 0
     reply_pairs: int = 0
+    composition_pairs: int = 0
 
 
 @dataclass(slots=True)
@@ -361,6 +362,9 @@ def ingest_gmail_threads(
                 counts.inbound_documents += inserted_documents
                 counts.chunks += inserted_documents
                 counts.reply_pairs += _ingest_thread_reply_pairs(connection, thread)
+                counts.composition_pairs += _ingest_thread_compositions(
+                    connection, thread, user_emails=user_emails
+                )
             status, detail, error_summary = _gmail_run_outcome(
                 counts=counts,
                 import_detail=import_detail,
@@ -799,10 +803,10 @@ def _gmail_run_outcome(
         f"Ingested {counts.threads} Gmail thread(s) from {import_detail} into {target_db_path}. "
         f"Discovered {counts.discovered_threads} thread(s), fetched {counts.fetched_threads} payload(s), "
         f"stored {counts.inbound_documents} inbound document(s), {counts.chunks} chunk(s), "
-        f"and {counts.reply_pairs} reply pair(s). "
+        f"{counts.reply_pairs} reply pair(s), and {counts.composition_pairs} composition pair(s). "
         "Message bodies came from full thread payloads and reply pairs were extracted from ordered thread messages."
     )
-    useful_rows = counts.inbound_documents + counts.reply_pairs
+    useful_rows = counts.inbound_documents + counts.reply_pairs + counts.composition_pairs
     if useful_rows == 0:
         # Empty delta: the fetch ran cleanly (no exception, no load/normalize
         # failure -- those return "failed" earlier in ingest_gmail_threads) but
@@ -1283,6 +1287,137 @@ def _ingest_thread_reply_pairs(connection: sqlite3.Connection, thread: list[Norm
     return pair_count
 
 
+def _format_recipients(entries: list[dict[str, str | None]] | None) -> str:
+    names = []
+    for entry in entries or []:
+        display = _display_author(entry.get("name"), entry.get("email"))
+        if display:
+            names.append(display)
+    return ", ".join(names)
+
+
+def _composition_prompt(message: NormalizedMessage) -> str:
+    """Synthetic instruction standing in for the (nonexistent) inbound text.
+
+    Deterministic and clearly marked so downstream consumers can tell a
+    composition pair from a real exchange even without parsing metadata, and so
+    the finetune learns "when asked to compose to X about Y, write like this".
+    """
+    context = message.recipient_context or {}
+    lines = ["[compose] Write a new email."]
+    to = _format_recipients(context.get("to"))
+    if to:
+        lines.append(f"To: {to}")
+    cc = _format_recipients(context.get("cc"))
+    if cc:
+        lines.append(f"Cc: {cc}")
+    if message.subject:
+        lines.append(f"Subject: {message.subject}")
+    return "\n".join(lines)
+
+
+def _has_external_recipient(
+    message: NormalizedMessage, user_emails: tuple[str, ...]
+) -> bool:
+    """True if at least one To/Cc recipient is NOT the user themselves.
+
+    A thread-starting send addressed only to the user's own accounts is a
+    note-to-self or — worse — one of YouOS's own machine-generated self-sends
+    (the Wire newsletter digest, scheduled digests), which live-verification
+    showed dominating the sent window. Those must never become voice-training
+    compositions.
+    """
+    own = {e.strip().lower() for e in user_emails if e}
+    context = message.recipient_context or {}
+    for field in ("to", "cc"):
+        for entry in context.get(field) or []:
+            email = (entry.get("email") or "").strip().lower()
+            if email and email not in own:
+                return True
+    return False
+
+
+def _ingest_thread_compositions(
+    connection: sqlite3.Connection,
+    thread: list[NormalizedMessage],
+    *,
+    user_emails: tuple[str, ...] = (),
+) -> int:
+    """b300: persist thread-STARTING self-authored messages as composition pairs.
+
+    The reply-pair extractor only pairs a self-authored message with the inbound
+    messages ABOVE it, so an email the user composed to open a conversation
+    (and any immediate self-authored follow-up before the first response) was
+    fetched by the ``in:sent`` window and then dropped everywhere — it never
+    became a document (inbound-only) or a pair. The voice finetune therefore
+    learned the user's replying style but not their composing style.
+
+    Captured as a reply_pairs row with ``inbound_text`` = a synthetic
+    "[compose] ..." instruction and ``pair_strategy`` =
+    ``COMPOSITION_PAIR_STRATEGY``; consumers that require a real inbound
+    (reply-exemplar retrieval, replay backtest, benchmarks, model comparison)
+    filter on that marker via ``is_composition_metadata``. ``inbound_author``
+    carries the primary recipient so the per-sender export cap and the
+    "has the user corresponded with this person" needs-reply signal both see
+    people the user *writes to*, not only people who write in.
+    """
+    from app.core.pair_quality import COMPOSITION_PAIR_STRATEGY
+
+    count = 0
+    for message in thread:
+        # Only the leading self-authored run of the thread: once any inbound
+        # message appears, later self-authored messages belong to the
+        # reply-pair extractor (they answer something).
+        if not message.self_authored:
+            break
+        body = (message.body_text or "").strip()
+        if not body:
+            continue
+        # Same junk gates as reply extraction: forwards carry someone else's
+        # text; acks/OOO/signature-only sends teach nothing (E9/E21/b235).
+        if _FORWARDED_PATTERN.search(body[:500]):
+            continue
+        subject = (message.subject or "").strip()
+        if subject.lower().startswith(("fwd:", "fw:")):
+            continue
+        author = _display_author(message.sender_name, message.sender_email)
+        if _is_low_quality_reply(body, reply_author=author):
+            continue
+        # Self-addressed sends (incl. YouOS's own Wire/digest machine mail)
+        # are not compositions to anyone — see _has_external_recipient.
+        if not _has_external_recipient(message, user_emails):
+            continue
+        recipients = (message.recipient_context or {}).get("to") or []
+        primary_recipient = (
+            _display_author(recipients[0].get("name"), recipients[0].get("email"))
+            if recipients
+            else None
+        )
+        pair = ExtractedReplyPair(
+            source_id=f"{message.thread_id}:{message.message_id}",
+            thread_id=message.thread_id,
+            document_source_id=message.message_id,
+            inbound_text=_composition_prompt(message),
+            reply_text=message.body_text,
+            inbound_author=primary_recipient,
+            reply_author=author,
+            paired_at=message.timestamp,
+            metadata={
+                "subject": message.subject,
+                "account_email": message.account_email,
+                "source": message.source_name,
+                "pair_strategy": COMPOSITION_PAIR_STRATEGY,
+                "reply_message_id": message.message_id,
+                "reply_recipient_context": message.recipient_context,
+                "reply_labels": message.label_ids,
+            },
+        )
+        # No inbound document exists for a composition — document_id stays NULL.
+        _upsert_reply_pair(connection, pair=pair, document_id=None)
+        count += 1
+    return count
+
+
 def _build_reply_pair(
     inbound_messages: list[NormalizedMessage],
     *,
@@ -1456,13 +1591,20 @@ def _upsert_reply_pair(
     connection: sqlite3.Connection,
     *,
     pair: ExtractedReplyPair,
-    document_id: int,
+    document_id: int | None,
 ) -> None:
-    # E14: detect language from inbound text for language-filtered retrieval
+    # E14: detect language from inbound text for language-filtered retrieval.
+    # b300: composition pairs have a synthetic English "[compose]" inbound, so
+    # their language comes from the user's own text instead.
+    from app.core.pair_quality import is_composition_metadata
+
+    language_source = (
+        pair.reply_text if is_composition_metadata(pair.metadata) else pair.inbound_text
+    )
     language: str | None = None
     try:
         from app.core.text_utils import detect_language
-        language = detect_language(pair.inbound_text or "")
+        language = detect_language(language_source or "")
     except Exception:
         pass
 

@@ -120,7 +120,12 @@ def _write_threads(tmp_path: Path, payloads: list[dict]) -> Path:
 def _sent_only_thread() -> dict:
     """A thread containing only a message the user sent -- no inbound message and
     therefore no reply pair. This is the shape that produces an empty delta for a
-    SENT-only nightly window (the b169 trigger)."""
+    SENT-only nightly window (the b169 trigger).
+
+    b300 note: a *substantive* sent-only opener now lands a composition pair
+    (see tests/test_composition_pairs_b300.py), so this fixture uses an
+    acknowledgment-only body that the composition quality gate skips -- keeping
+    it a true empty delta."""
     return {
         "thread_id": "t-sent",
         "account": "me@example.com",
@@ -130,7 +135,7 @@ def _sent_only_thread() -> dict:
                 "from_email": "me@example.com",
                 "from_name": "Me",
                 "to": "friend@example.com",
-                "body_text": "Just a note I sent out.",
+                "body_text": "Noted",
                 "subject": "FYI",
                 "timestamp": "2024-01-01T10:00:00Z",
                 "label_ids": ["SENT"],

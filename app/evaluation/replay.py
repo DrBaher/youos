@@ -137,11 +137,23 @@ def sample_pairs(
     finally:
         conn.close()
 
+    from app.core.pair_quality import is_composition_metadata
+
     cases: list[ReplayCase] = []
     for r in rows:
         author = (r["inbound_author"] or "").lower()
         if any(tok in author for tok in _AUTOMATION_AUTHOR):
             continue
+        # b300: composition pairs have no real inbound to replay against —
+        # drafting a "reply" to the synthetic "[compose]" prompt would score
+        # the wrong task and skew the weekly trend.
+        try:
+            import json as _json
+
+            if is_composition_metadata(_json.loads(r["metadata_json"] or "{}")):
+                continue
+        except Exception:
+            pass
         if triage_filter and _hard_skipped_by_triage(r):
             continue
         cases.append(

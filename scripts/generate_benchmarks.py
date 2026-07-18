@@ -118,8 +118,20 @@ def generate_cases(db_path: Path, count: int = 15, sample_size: int = 30, seed: 
             "SELECT id, inbound_text, reply_text, inbound_author, metadata_json FROM reply_pairs WHERE reply_text IS NOT NULL AND LENGTH(reply_text) > 20"
         ).fetchall()
 
+        # b300: composition pairs have a synthetic "[compose]" inbound — not a
+        # benchmarkable reply case. Filter BEFORE sampling: every later branch
+        # (stratified pick, edge case, fill-remaining) draws from all_rows.
+        from app.core.pair_quality import is_composition_metadata
+
+        def _is_composition(raw: str | None) -> bool:
+            try:
+                return is_composition_metadata(json.loads(raw or "{}"))
+            except Exception:
+                return False
+
+        all_rows = [r for r in all_rows if not _is_composition(r["metadata_json"])]
+
         # Shuffle using our seeded RNG instead of SQL RANDOM()
-        all_rows = list(all_rows)
         rng.shuffle(all_rows)
         # Limit to sample_size for random rotation
         if sample_size and len(all_rows) > sample_size:

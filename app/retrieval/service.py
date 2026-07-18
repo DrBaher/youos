@@ -1246,9 +1246,18 @@ def _matches_filters(
 ) -> bool:
     if source_types and source_type not in source_types:
         return False
+    metadata = _loads_json(metadata_json)
+    # b300: composition pairs (thread-starting emails, synthetic "[compose]"
+    # inbound) are voice-training rows, not reply exemplars — surfacing one as
+    # a few-shot "inbound → reply" example would show the drafter an
+    # instruction where a counterparty email belongs. Their reply_text is
+    # FTS-indexed, so a topical query CAN rank them without this gate.
+    from app.core.pair_quality import is_composition_metadata
+
+    if is_composition_metadata(metadata):
+        return False
     if not account_emails:
         return True
-    metadata = _loads_json(metadata_json)
     account_email = _account_email_from_metadata(metadata)
     return account_email in account_emails
 

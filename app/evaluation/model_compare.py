@@ -128,15 +128,37 @@ def sample_reply_pairs(
     conn = connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute(
-            """SELECT id, inbound_text, reply_text FROM reply_pairs
-               WHERE length(trim(reply_text)) >= ? AND length(trim(inbound_text)) >= ?""",
-            (min_chars, min_chars),
-        ).fetchall()
+        try:
+            rows = conn.execute(
+                """SELECT id, inbound_text, reply_text, metadata_json FROM reply_pairs
+                   WHERE length(trim(reply_text)) >= ? AND length(trim(inbound_text)) >= ?""",
+                (min_chars, min_chars),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            # Legacy schema without metadata_json (also: no compositions there).
+            rows = conn.execute(
+                """SELECT id, inbound_text, reply_text, NULL AS metadata_json FROM reply_pairs
+                   WHERE length(trim(reply_text)) >= ? AND length(trim(inbound_text)) >= ?""",
+                (min_chars, min_chars),
+            ).fetchall()
     except sqlite3.OperationalError:
         rows = []
     finally:
         conn.close()
+
+    # b300: composition pairs have a synthetic "[compose]" inbound — drafting
+    # a reply to it compares the wrong task, so keep them out of the A/B set.
+    import json as _json
+
+    from app.core.pair_quality import is_composition_metadata
+
+    def _is_composition(raw: str | None) -> bool:
+        try:
+            return is_composition_metadata(_json.loads(raw or "{}"))
+        except Exception:
+            return False
+
+    rows = [r for r in rows if not _is_composition(r["metadata_json"])]
 
     rng = random.Random(seed)
     if len(rows) > limit:
