@@ -1083,13 +1083,23 @@ def _message_timestamp(payload: dict[str, Any]) -> str | None:
 
 
 def _message_body_text(payload: dict[str, Any]) -> str:
+    # Full-fidelity fields from export formats that pre-extracted the body.
+    #
+    # b302: ``snippet`` is NOT in this list. A raw Gmail API message (the shape
+    # ``gog gmail thread get --full`` returns) carries a top-level ``snippet``
+    # alongside its MIME ``payload`` — and the snippet is a ~200-char,
+    # HTML-ESCAPED preview ("we&#39;re"). With snippet in the direct fields it
+    # won every time and the full text/plain part below was never reached, so
+    # every live-ingested body — the entire documents/reply_pairs corpus, and
+    # through it the finetune training data, retrieval exemplars, and eval
+    # ground truth — was a truncated escaped preview. Snippet is a last resort
+    # only, unescaped.
     direct_fields = (
         "body_text",
         "body",
         "text",
         "plain_text",
         "content",
-        "snippet",
     )
     for field in direct_fields:
         value = _string(payload.get(field))
@@ -1105,6 +1115,12 @@ def _message_body_text(payload: dict[str, Any]) -> str:
         html_parts = _extract_payload_parts(payload_obj, mime_type="text/html")
         if html_parts:
             return _html_to_text("\n".join(html_parts)).strip()[:_MAX_BODY_CHARS]
+
+    snippet = _string(payload.get("snippet"))
+    if snippet:
+        import html as _htmllib
+
+        return _htmllib.unescape(snippet)[:_MAX_BODY_CHARS]
 
     return ""
 
