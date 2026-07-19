@@ -238,8 +238,36 @@ _CLOSER_LINE = re.compile(
 )
 
 
+# A line that carries no composed content: a bold-converted name ("*Baher Al
+# Hakim*"), a role line ("CEO / Medicus AI"), or any short line without
+# sentence-ending punctuation (bare names, street addresses). Used only to
+# recognize signature-only residue — never to cut lines out of real prose.
+_SIG_RESIDUE_LINE = re.compile(
+    r"^\s*(?:\*[^*\n]{2,60}\*|"
+    r".*\b(?:CEO|CTO|COO|CFO|Founder|Co-?founder|Managing Director|Director|Head of)\b\s*[/|·—-].*|"
+    r"(?:\S+(?:\s+\S+){0,5}))\s*$"
+)
+
+
+def _is_signature_residue(text: str) -> bool:
+    """True when ``text`` is just a sign-off closer plus name/role/address
+    lines — i.e. the user sent an empty body and only the signature remains.
+    A closer followed by any real sentence (terminal ``.!?``) is not residue."""
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not lines:
+        return True
+    if not _CLOSER_LINE.match(lines[0]):
+        return False
+    return all(
+        not ln.rstrip().endswith((".", "!", "?")) and _SIG_RESIDUE_LINE.match(ln)
+        for ln in lines[1:]
+    )
+
+
 def clean_reply_for_evaluation(text: str) -> str:
-    """The user's newly composed reply content, for use as scoring ground truth.
+    """The user's newly composed reply content — the shared definition used for
+    replay-scoring ground truth (b304) AND fine-tune training targets (b305);
+    keeping the two identical is what makes the replay metrics meaningful.
 
     Post-b302 ``reply_pairs.reply_text`` holds the raw full body: new content +
     sign-off + multi-line signature/legal footer + the entire quoted thread.
@@ -261,7 +289,12 @@ def clean_reply_for_evaluation(text: str) -> str:
     m = _CLOSER_LINE.search(t)
     if m and t[: m.start()].strip():
         t = t[: m.start()].rstrip()
-    return strip_signature(t)
+    t = strip_signature(t)
+    # An empty-body send (signature only) survives the cuts above because each
+    # cut refuses to leave nothing — recognize it explicitly so callers drop it.
+    if _is_signature_residue(t):
+        return ""
+    return t
 
 
 def detect_language(text: str) -> str:

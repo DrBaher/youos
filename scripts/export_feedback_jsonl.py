@@ -12,6 +12,7 @@ from pathlib import Path
 import yaml
 
 from app.core.settings import get_settings
+from app.core.text_utils import clean_reply_for_evaluation
 from app.db.bootstrap import resolve_sqlite_path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -285,9 +286,12 @@ def export_dpo(args: argparse.Namespace) -> None:
     pairs: list[dict] = []
     for r in rows:
         inbound = r["inbound_text"] or ""
-        chosen = r["edited_reply"] or ""
+        # b305: same composed-content cleaning as the SFT path — a raw sent body
+        # as ``chosen`` would teach DPO to prefer signature blocks and quoted
+        # threads over the draft. ``rejected`` is a generated draft (no cleanup).
+        chosen = clean_reply_for_evaluation(r["edited_reply"] or "")
         rejected = r["generated_draft"] or ""
-        if not inbound or chosen.strip() == rejected.strip():
+        if not inbound or len(chosen.strip()) < 15 or chosen.strip() == rejected.strip():
             continue
         ed = r["edit_distance_pct"]
         if ed is not None and not (DPO_MIN_CONTRAST <= ed <= DPO_MAX_CONTRAST):
@@ -502,7 +506,14 @@ def export(args: argparse.Namespace) -> None:
     for row in rows:
         rating = row["rating"]
         edit_pct = row["edit_distance_pct"]
-        edited_reply = row["edited_reply"] or ""
+        # b305: post-b302 the organic corpus stores the RAW sent body — 93% of
+        # exported targets carried the Gmail signature/legal footer and 47% the
+        # quoted thread, so the LoRA was being taught to emit the signature (the
+        # single most repeated pattern in the corpus) and long targets blew the
+        # 1024-token training window. Train on the composed content only — the
+        # same definition the replay scorer uses (b304); the repair pass appends
+        # closings and push appends the Gmail signature at send time.
+        edited_reply = clean_reply_for_evaluation(row["edited_reply"] or "")
         organic = row["organic"]
 
         # b153: drop attacker-injected pairs before they become training examples.
