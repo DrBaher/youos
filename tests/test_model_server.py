@@ -215,6 +215,40 @@ def test_ensure_running_passes_adapter_when_present(monkeypatch):
     ms._proc = None  # cleanup module state
 
 
+def test_request_bodies_carry_adapter_field(monkeypatch):
+    """b306: mlx-lm 0.31.3 silently ignores the CLI --adapter-path (the
+    default_model→real-name resolution happens before the adapter-map lookup),
+    so the warm server served the BASE model. Every generation request must
+    therefore state the adapter via the body's ``adapters`` field, which does
+    load. No adapter → no field."""
+    monkeypatch.setattr(ms, "_adapter_arg", lambda: "/inst/models/adapters/latest")
+    body = ms._payload("p", max_tokens=5, temperature=None, top_p=None, stream=False)
+    assert body["adapters"] == "/inst/models/adapters/latest"
+
+    captured = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}, "text": "ok"}]}
+
+    def fake_post(url, json=None, timeout=None):
+        captured["body"] = json
+        return _Resp()
+
+    monkeypatch.setattr(ms.httpx, "post", fake_post)
+    ms.chat_complete([{"role": "user", "content": "hi"}], max_tokens=5)
+    assert captured["body"]["adapters"] == "/inst/models/adapters/latest"
+
+    monkeypatch.setattr(ms, "_adapter_arg", lambda: None)
+    body = ms._payload("p", max_tokens=5, temperature=None, top_p=None, stream=False)
+    assert "adapters" not in body
+    ms.chat_complete([{"role": "user", "content": "hi"}], max_tokens=5)
+    assert "adapters" not in captured["body"]
+
+
 def test_ensure_running_reloads_when_adapter_changed(monkeypatch):
     """b159: when the adapter was retrained, ensure_running reaps the stale server
     and respawns UNDER THE LOCK (no longer routing through restart()), and
