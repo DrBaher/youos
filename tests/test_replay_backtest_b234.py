@@ -175,6 +175,28 @@ def test_evaluate_case_scores_basic_metrics():
     assert m["inbound_has_question"] is True
 
 
+def test_evaluate_case_honors_target_language():
+    # b307: under generation.reply_language=en the pipeline TARGETS English for
+    # a German inbound; verify must judge against that intent, not the inbound.
+    german_inbound = (
+        "Hallo, vielen Dank für die Unterlagen. Können wir bitte nächste Woche "
+        "einen Termin machen? Das wäre sehr gut, danke."
+    )
+    draft = "Hi Johannes, happy to set something up next week — does Tuesday work?"
+    m = evaluate_case(
+        _case(inbound_text=german_inbound, real_reply="Sure, Tuesday next week works well for me."),
+        draft,
+        target_language="en",
+    )
+    assert not any("language mismatch" in b for b in m["verify_blocking"])
+    # Without the intent, the old inbound-mirror expectation still flags it.
+    m = evaluate_case(
+        _case(inbound_text=german_inbound, real_reply="Sure, Tuesday next week works well for me."),
+        draft,
+    )
+    assert any("language mismatch" in b for b in m["verify_blocking"])
+
+
 def test_evaluate_case_flags_language_mismatch():
     m = evaluate_case(
         _case(real_reply="Danke dir, das passt so. Donnerstag funktioniert gut bei mir, bis dahin alles Gute."),

@@ -293,6 +293,12 @@ class DraftResponse:
     # (language mismatch, invented email/link) collapses quality_score so the
     # auto-push quality floor holds the draft for review. Empty when clean.
     verify_issues: list[str] = field(default_factory=list)
+    # b307: the language the pipeline TARGETED for this draft (config default →
+    # per-sender learned habit → inbound's detected language). External
+    # verification (the replay backtest) must judge language against this
+    # intent — re-deriving from the inbound flags every correct English reply
+    # to a German sender under generation.reply_language=en.
+    target_language: str | None = None
     # b175: cloud (Claude) drafting transparency. ``cloud_used`` is True iff this
     # draft was produced by a cloud backend that egressed the inbound off-device;
     # ``egress_notice`` carries a human-readable warning in that case (else None).
@@ -3759,6 +3765,7 @@ def generate_draft(
         candidates=candidates,
         quality_score=_quality,
         verify_issues=_verify_issues,
+        target_language=detected_lang,
         # b175: cloud-drafting transparency. True/notice iff a cloud backend
         # actually ran (model_used == "claude"); the centralized gate above
         # guarantees that only happens on an explicit, opted-in, flag-enabled
