@@ -81,6 +81,77 @@ def test_decode_html_entities():
     assert decode_html_entities("&amp; &lt; &gt;") == "& < >"
 
 
+def test_strip_quoted_wrapped_on_wrote_attribution():
+    # b304: the "On … wrote:" attribution hard-wrapped by the client, so
+    # "wrote:" lands on the next line.
+    text = (
+        "Sounds great, thanks for the update! I will review the agreement today.\n\n"
+        "On Fri, Jul 17, 2026 at 2:48 PM Mathieu, Azèle <azele.mathieu@msd.com>\n"
+        "wrote:\n\n> Proprietary\n>\n> Hi Baher,\n> Original quoted content."
+    )
+    result = strip_quoted_text(text)
+    assert "review the agreement" in result
+    assert "Proprietary" not in result
+
+
+def test_strip_quoted_run_with_bare_quote_lines():
+    # b304: bare ">" continuation lines count toward the 3-consecutive run.
+    text = (
+        "Short new content here, long enough to clear the fallback threshold.\n"
+        "> Proprietary\n>\n> Hi Baher,\n>\n> quoted body continues here\n"
+    )
+    result = strip_quoted_text(text)
+    assert "Short new content" in result
+    assert "quoted body" not in result
+
+
+def test_clean_reply_for_evaluation_strips_deep_signature_block():
+    # b304: sign-off + 12-line signature/legal footer — "Regards," sits outside
+    # strip_signature's 8-line tail window, and the German legal block flipped
+    # detect_language to "de" for an English reply.
+    from app.core.text_utils import clean_reply_for_evaluation, detect_language
+
+    text = (
+        "Hi Johannes,\n\nI checked and the transfer went out, so it should be "
+        "with you or on the way.\nLet me know if you still have not received it "
+        "by Monday.\n\nRegards,\n\n*Baher Al Hakim*\nCEO / Medicus AI\n"
+        "w: medicus.ai\ne: baher@medicus.ai\nm: +43 664 3221410\n\n"
+        "Geschäftsführer: Dr. Baher Al Hakim\nSitz der Gesellschaft: Wien\n"
+        "UID: ATU 72096518\nHandelsgericht Wien, FN 458726y\n"
+        "Kammer: Wirtschaftskammer Österreich"
+    )
+    result = clean_reply_for_evaluation(text)
+    assert "transfer went out" in result
+    assert "Geschäftsführer" not in result
+    assert "Regards" not in result
+    assert detect_language(result) == "en"
+
+
+def test_clean_reply_for_evaluation_german_closer_and_genuine_language():
+    # A genuinely German reply keeps its language; the closer itself goes.
+    from app.core.text_utils import clean_reply_for_evaluation, detect_language
+
+    text = (
+        "Hallo Herr Maier,\n\nvielen Dank für die Unterlagen — das passt so "
+        "für uns, und wir melden uns nächste Woche mit den Details.\n\n"
+        "Mit freundlichen Grüßen\nBaher Al Hakim\nMedicus AI FlexCo\n"
+        "Wehleweg 9/53, 1030 Wien"
+    )
+    result = clean_reply_for_evaluation(text)
+    assert "melden uns" in result
+    assert "FlexCo" not in result
+    assert detect_language(result) == "de"
+
+
+def test_clean_reply_for_evaluation_keeps_short_reply_intact():
+    # Each cut is skipped when it would leave nothing: a reply that IS just a
+    # closer-plus-line survives.
+    from app.core.text_utils import clean_reply_for_evaluation
+
+    text = "Thanks,\nsee you Thursday at the lab."
+    assert clean_reply_for_evaluation(text) == text
+
+
 # ── sender tests ──
 
 

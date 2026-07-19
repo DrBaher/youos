@@ -111,6 +111,49 @@ def test_sample_pairs_filters_automation_and_trivial(corpus_db):
     assert ids == {1, 2}  # automation (3) and trivial (4) excluded
 
 
+def test_sample_pairs_cleans_reply_ground_truth(corpus_db):
+    # b304: post-b302 reply_text is the raw full body. The case's real_reply
+    # must be the newly composed content only — no quoted thread, no
+    # signature/legal footer — and a pair whose new content is trivial after
+    # cleaning is excluded even though its raw length clears the SQL floor.
+    conn = sqlite3.connect(corpus_db.removeprefix("sqlite:///"))
+    _ins = (
+        "INSERT INTO reply_pairs (id, source_type, source_id, thread_id, inbound_text,"
+        " reply_text, inbound_author, reply_author, paired_at) VALUES (?,?,?,?,?,?,?,?,?)"
+    )
+    conn.execute(_ins, (
+        5, "gmail_thread", "s5", "th-5",
+        "Did the transfer go out already? Please confirm when you can.",
+        (
+            "Hi Johannes,\n\nI checked and the transfer went out yesterday.\n\n"
+            "Regards,\n\n*Baher Al Hakim*\nCEO / Medicus AI\nw: medicus.ai\n"
+            "e: baher@medicus.ai\nm: +43 664 3221410\n\n"
+            "Geschäftsführer: Dr. Baher Al Hakim\nUID: ATU 72096518\n"
+            "Handelsgericht Wien, FN 458726y\nKammer: Wirtschaftskammer Österreich\n\n"
+            "On Thu, Jul 16, 2026 at 9:02 AM Johannes Heizer <johannes@x.com>\n"
+            "wrote:\n\n> Hi Baher,\n>\n> did the transfer go out already?\n"
+        ),
+        "Johannes Heizer <johannes@x.com>", "Me <me@x.com>", "2026-06-05",
+    ))
+    conn.execute(_ins, (
+        6, "gmail_thread", "s6", "th-6",
+        "Quick check: are we still on for the Thursday sync at ten?",
+        "Ok!\n\nOn Mon, Jul 13, 2026, Carol wrote:\nAre we still on for Thursday?",
+        "Carol <c@z.com>", "Me <me@x.com>", "2026-06-06",
+    ))
+    conn.commit()
+    conn.close()
+
+    cases = {c.reply_pair_id: c for c in sample_pairs(corpus_db, n=10)}
+    assert 5 in cases
+    cleaned = cases[5].real_reply
+    assert "transfer went out" in cleaned
+    assert "Geschäftsführer" not in cleaned
+    assert "wrote:" not in cleaned
+    assert "Regards" not in cleaned
+    assert 6 not in cases  # "Ok!" after quote-strip — trivial, excluded
+
+
 # --- scoring + aggregation -----------------------------------------------------
 
 

@@ -8,6 +8,11 @@ import re
 _QUOTE_BOUNDARY_PATTERNS = [
     # "On [date], [name] wrote:" (Gmail/Outlook)
     re.compile(r"^On .{10,80} wrote:\s*$", re.MULTILINE),
+    # Same attribution but hard-wrapped by the sending client, so "wrote:"
+    # lands on the following line (b304: "On Fri, Jul 17, 2026 at 2:48 PM
+    # Mathieu, Azèle <a@b>\r\nwrote:" — unmatched, the whole quoted thread
+    # survived into the reply-pair ground truth).
+    re.compile(r"^On .{10,120}\r?\n.{0,120}wrote:\s*$", re.MULTILINE),
     # "From: ..." attribution block. Outlook uses "Sent:"; Apple Mail / modern
     # Outlook-on-web use "Date:" (b292: a Zeina reply quoted "From: … \n Date: …"
     # and, unstripped, its German legal signature flipped language detection to
@@ -15,8 +20,11 @@ _QUOTE_BOUNDARY_PATTERNS = [
     # the German client variant "Von: … \n Gesendet:/Datum:".
     re.compile(r"^From:\s+.+\n(?:Sent|Date):\s+", re.MULTILINE),
     re.compile(r"^Von:\s+.+\n(?:Gesendet|Datum):\s+", re.MULTILINE),
-    # Lines starting with "> " (traditional quote markers) — 3+ consecutive
-    re.compile(r"(?:^> .+\n){3,}", re.MULTILINE),
+    # Lines starting with ">" (traditional quote markers) — 3+ consecutive.
+    # Bare ">" continuation lines (a quoted blank line) count toward the run
+    # (b304: "> Proprietary\r\n>\r\n> Hi Baher," never reached 3 consecutive
+    # matches with the stricter "> .+" form).
+    re.compile(r"(?:^>(?: .*)?\r?\n){3,}", re.MULTILINE),
     # "---------- Forwarded message ----------"
     re.compile(r"^-{5,}\s*Forwarded message\s*-{5,}", re.MULTILINE),
     # Outlook separator line
@@ -201,6 +209,59 @@ def strip_signature(text: str) -> str:
             head = "\n".join(lines[:i]).rstrip()
             return head if head else text
     return text
+
+
+# Company/legal footer and contact-detail lines that mark the start of a
+# signature block even when the sign-off line sits outside strip_signature's
+# tail window (b304: Baher's Gmail signature is 12+ lines — name, role,
+# w:/e:/m: contact rows, then the Austrian legal block "Geschäftsführer …
+# UID: ATU… Handelsgericht Wien … Kammer: …" — so "Regards," was never within
+# the last 8 lines and the German footer flipped detect_language to "de" for
+# English replies).
+_SIGNATURE_BLOCK_LINE = re.compile(
+    r"^\s*(?:Geschäftsführer\b|Firmenbuch\b|Handelsgericht\b|Handelsregister\b|"
+    r"UID[:\s]|VAT[:\s]|Kammer:|Sitz der Gesellschaft|"
+    r"[wemptWEMPT]:\s+(?:https?://|[\w.+-]+@[\w-]+|\+?\d|[\w-]+\.[a-z]{2,}))",
+    re.MULTILINE,
+)
+
+# Own-line sign-off closers, including the German/French ones the English-only
+# _SIGNATURE_START list misses. Anchored to a full line so prose that merely
+# contains the words can't match.
+_CLOSER_LINE = re.compile(
+    r"^\s*(?:best|best regards|kind regards|warm regards|warm wishes|regards|"
+    r"cheers|many thanks|thanks|thank you|sincerely|talk soon|"
+    r"mit freundlichen grüßen|mit besten grüßen|beste grüße|viele grüße|"
+    r"liebe grüße|schöne grüße|herzliche grüße|freundliche grüße|"
+    r"cordialement|bien cordialement|bien à vous|amicalement)\s*[,!.]?\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def clean_reply_for_evaluation(text: str) -> str:
+    """The user's newly composed reply content, for use as scoring ground truth.
+
+    Post-b302 ``reply_pairs.reply_text`` holds the raw full body: new content +
+    sign-off + multi-line signature/legal footer + the entire quoted thread.
+    Scoring a draft against that raw blob poisons every comparative metric
+    (language detection reads the German legal footer, stance heuristics read
+    the counterparty's quoted text, similarity collapses under 1000+ quoted
+    words). This strips, in order: quoted history, the signature block (legal/
+    contact lines anywhere, not just in the tail), and a trailing own-line
+    sign-off. Deliberately more aggressive than :func:`strip_signature` —
+    acceptable for evaluation ground truth, not for user-facing text. Each cut
+    is skipped if it would leave nothing.
+    """
+    if not text:
+        return text
+    t = extract_new_content(text)
+    m = _SIGNATURE_BLOCK_LINE.search(t)
+    if m and t[: m.start()].strip():
+        t = t[: m.start()].rstrip()
+    m = _CLOSER_LINE.search(t)
+    if m and t[: m.start()].strip():
+        t = t[: m.start()].rstrip()
+    return strip_signature(t)
 
 
 def detect_language(text: str) -> str:

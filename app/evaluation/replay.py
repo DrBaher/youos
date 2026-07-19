@@ -138,6 +138,7 @@ def sample_pairs(
         conn.close()
 
     from app.core.pair_quality import is_composition_metadata
+    from app.core.text_utils import clean_reply_for_evaluation
 
     cases: list[ReplayCase] = []
     for r in rows:
@@ -156,12 +157,20 @@ def sample_pairs(
             pass
         if triage_filter and _hard_skipped_by_triage(r):
             continue
+        # b304: post-b302 reply_text is the raw full body — quoted thread,
+        # sign-off, and multi-line legal signature included. Score against the
+        # user's newly composed content only, and re-apply the triviality floor
+        # to the CLEANED text (the SQL floor sees the raw length, which a
+        # signature alone can satisfy).
+        real_reply = clean_reply_for_evaluation(r["reply_text"] or "")
+        if len(real_reply) < _MIN_REPLY_CHARS:
+            continue
         cases.append(
             ReplayCase(
                 reply_pair_id=int(r["id"]),
                 thread_id=r["thread_id"],
                 inbound_text=r["inbound_text"],
-                real_reply=r["reply_text"],
+                real_reply=real_reply,
                 inbound_author=r["inbound_author"],
                 paired_at=r["paired_at"],
             )
