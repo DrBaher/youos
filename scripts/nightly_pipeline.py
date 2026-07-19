@@ -778,7 +778,9 @@ def step_deduplicate(verbose: bool = False) -> bool:
     return _run_step(
         "Corpus deduplication",
         [sys.executable, str(ROOT_DIR / "scripts" / "deduplicate_corpus.py")],
-        timeout=300,
+        # b303: 300s was sized for the pre-b302 corpus (~12k pairs) and timed
+        # out on the repaired one (~54k pairs + 97k documents).
+        timeout=1800,
     )
 
 

@@ -470,8 +470,15 @@ def run_training(args: argparse.Namespace) -> str:
         print(f"(could not pause model server: {exc})")
 
     print(f"\nRunning: {' '.join(cmd)}\n")
+    # b303: scale the safety timeout with the requested iterations. The flat
+    # 3600s was sized for the nightly's incremental runs (auto-scale caps at
+    # 300 iters) and killed the first full retrain (--iters 2000 ≈ 2.3h at
+    # batch-size 1) an hour in. ~10s/iter is generous (observed ~4.2s/iter on
+    # the 4B at batch 1 + checkpoint/val overhead); the floor keeps small runs
+    # on the old behavior.
+    train_timeout = max(3600, iters * 10)
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=train_timeout)
     finally:
         if _server_was_up:
             try:
