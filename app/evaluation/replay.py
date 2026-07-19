@@ -210,15 +210,22 @@ def evaluate_case(
     draft: str,
     *,
     embed_fn: Callable[[str], Any] | None = None,
+    target_language: str | None = None,
 ) -> dict[str, Any]:
-    """All per-case metrics for one (draft, real reply) comparison."""
+    """All per-case metrics for one (draft, real reply) comparison.
+
+    ``target_language`` is the language the pipeline targeted for this draft
+    (b307). Passing it mirrors the live verify call — without it, every
+    correct English draft to a German inbound scores a blocking "language
+    mismatch" under generation.reply_language=en (35/60 cases in the first
+    clean-scorer run were exactly this false positive)."""
     from app.core.diff import hybrid_similarity
     from app.core.text_utils import detect_language
     from app.evaluation.voice_match import voice_match_score
     from app.generation.verify import verify_draft
 
     vm = voice_match_score(draft, case.real_reply, embed_fn=embed_fn)
-    vr = verify_draft(draft, inbound=case.inbound_text)
+    vr = verify_draft(draft, inbound=case.inbound_text, expected_language=target_language)
     lang_reply = detect_language(case.real_reply)
     lang_draft = detect_language(draft)
     sim = hybrid_similarity(draft, case.real_reply)
@@ -258,6 +265,7 @@ def run_replay(
         draft: str | None = None
         model_used: str | None = None
         error: str | None = None
+        target_language: str | None = None
         if draft_fn is not None:
             draft, model_used = draft_fn(case)
         else:
@@ -280,6 +288,7 @@ def run_replay(
                 )
                 draft = resp.draft
                 model_used = resp.model_used
+                target_language = resp.target_language
             except Exception as exc:  # noqa: BLE001 — one bad case must not kill the run
                 error = f"{type(exc).__name__}: {exc}"
                 logger.warning("replay case %s failed: %s", case.reply_pair_id, error)
@@ -287,7 +296,9 @@ def run_replay(
         result = ReplayResult(case=case, draft=draft, model_used=model_used, error=error)
         if draft and not error:
             try:
-                result.metrics = evaluate_case(case, draft, embed_fn=embed_fn)
+                result.metrics = evaluate_case(
+                    case, draft, embed_fn=embed_fn, target_language=target_language
+                )
             except Exception as exc:  # noqa: BLE001
                 result.error = f"metrics failed: {type(exc).__name__}: {exc}"
         results.append(result)
