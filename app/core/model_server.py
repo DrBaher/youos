@@ -560,6 +560,21 @@ def restart() -> bool:
     return ensure_running()
 
 
+def _request_adapter() -> str | None:
+    """Adapter path to attach to every generation request (b306).
+
+    mlx-lm 0.31.3's ``ModelProvider.load`` resolves ``"default_model"`` to the
+    real model name BEFORE looking up the CLI ``--adapter-path`` in a map keyed
+    by ``"default_model"`` — so the lookup always misses and the CLI adapter is
+    silently never loaded: the warm server serves the BASE model. (Found
+    2026-07-19: two replay runs across different promoted adapters produced
+    byte-identical drafts; server output matched subprocess-base exactly.)
+    The request-body ``adapters`` field takes a different path through the same
+    resolution and DOES load, so every request states the adapter explicitly.
+    Harmless on a fixed upstream: same path → same model key → no reload."""
+    return _adapter_arg()
+
+
 def _payload(
     prompt: str,
     *,
@@ -570,6 +585,9 @@ def _payload(
     seed: int | None = None,
 ) -> dict:
     body: dict = {"prompt": prompt, "max_tokens": max_tokens, "stream": stream}
+    adapter = _request_adapter()
+    if adapter:
+        body["adapters"] = adapter
     if temperature is not None:
         body["temperature"] = temperature
     if top_p is not None:
@@ -622,6 +640,11 @@ def chat_complete(
     transport/HTTP error.
     """
     body: dict = {"messages": list(messages), "max_tokens": max_tokens, "stream": False}
+    # b306: state the adapter per-request — the CLI --adapter-path is silently
+    # ignored by mlx-lm 0.31.3 (see _request_adapter).
+    adapter = _request_adapter()
+    if adapter:
+        body["adapters"] = adapter
     if temperature is not None:
         body["temperature"] = temperature
     if top_p is not None:
