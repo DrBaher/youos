@@ -102,6 +102,10 @@ with `youos config set`, never over the API).
 |---|---|---|
 | `agent.digests.enabled` | **false** | master switch for digest tasks |
 
+This flag is the *whole* gate: the scheduler runs digests (and The Wire)
+**independently of `agent.enabled`**, because they read Gmail through their own
+search and never draft. "Digests on, drafting off" is a supported configuration.
+
 A digest's `destination` decides whether it crosses the send boundary:
 - **`agent`** (default): compute + **store** the body for pickup; **sends
   nothing** → never touches the send frontier (needs only `digests.enabled`).

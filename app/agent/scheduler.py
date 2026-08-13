@@ -5,6 +5,11 @@ Runs ``run_triage()`` periodically inside the running ``youos serve`` process
 ``agent.enabled``; off by default so installing YouOS doesn't quietly start
 polling your inbox.
 
+The tick also drives two scheduled jobs that are **independent** of
+``agent.enabled`` — digest tasks (``agent.digests.enabled``) and The Wire
+(``agent.wire.enabled``). Each self-gates on its own flag, so "run my digests
+with drafting off" is a supported configuration.
+
 Safety:
 - Never starts under pytest (``PYTEST_CURRENT_TEST`` env probe).
 - Per-iteration failures are logged + swallowed — one bad sweep (transient
@@ -384,8 +389,11 @@ async def _run_tick(app) -> int:
     cfg = get_agent_config()
     # 60s minimum interval — guardrail against accidental tight-loop config.
     interval = max(60, cfg["interval_minutes"] * 60)
+    # Resolved once for BOTH the sweep and the digest step: digests are gated on
+    # ``agent.digests.enabled`` alone, so they must not depend on the sweep block
+    # (see the digest/Wire step below) for their account list.
+    accounts = _resolve_accounts(cfg["accounts"])
     if cfg["enabled"]:
-        accounts = _resolve_accounts(cfg["accounts"])
         total_persisted = 0
         # Per-account consecutive-failure tracking persists across ticks so
         # a silently-dying agent gets exactly one notification on the first
@@ -436,41 +444,49 @@ async def _run_tick(app) -> int:
                        title=fc.title, message=fc.message)
         setattr(app.state, _FAILURES_ATTR, failures)
 
-        # Scheduled digest tasks (collect → summarize → send one digest).
-        # No-op unless agent.digests.enabled; the per-period claim makes
-        # repeated ticks idempotent, so checking every tick is safe.
-        # Failure-isolated — a digest error never disrupts the sweep loop.
-        try:
-            from app.agent.digest_tasks import run_due_digests
-            from app.core.settings import get_settings
-
-            db_url = get_settings().database_url
-            for account in accounts:
-                await asyncio.get_event_loop().run_in_executor(
-                    None, partial(run_due_digests, db_url, account)
-                )
-        except Exception as exc:
-            logger.info("digest tasks step errored: %s", exc)
-
-        # The Wire — newsletter digest (collect bodies → themed HTML → send +
-        # archive). One issue spans all accounts, so it runs ONCE per tick (not
-        # per account); no-op unless agent.wire.enabled + due + not yet today.
-        try:
-            from app.agent.wire_digest import run_due_wire
-            from app.core.settings import get_settings
-
-            await asyncio.get_event_loop().run_in_executor(
-                None, partial(run_due_wire, get_settings().database_url)
-            )
-        except Exception as exc:
-            logger.info("wire digest step errored: %s", exc)
-
         if total_persisted > 0 and cfg["notify_macos"]:
             s = "s" if total_persisted != 1 else ""
             _notify_macos(
                 title="YouOS",
                 message=f"{total_persisted} new draft{s} ready in /triage",
             )
+
+    # Scheduled digest tasks (collect → summarize → send one digest).
+    # No-op unless agent.digests.enabled; the per-period claim makes
+    # repeated ticks idempotent, so checking every tick is safe.
+    # Failure-isolated — a digest error never disrupts the sweep loop.
+    #
+    # Deliberately OUTSIDE the ``agent.enabled`` gate: digests read Gmail
+    # directly (their own ``gog`` search) and never draft, so "run my digests
+    # but stop drafting" is a valid configuration. ``agent.digests.enabled`` is
+    # documented as their master switch — coupling them to the sweep made that
+    # a lie and silently disabled digests whenever drafting was turned off.
+    try:
+        from app.agent.digest_tasks import run_due_digests
+        from app.core.settings import get_settings
+
+        db_url = get_settings().database_url
+        for account in accounts:
+            await asyncio.get_event_loop().run_in_executor(
+                None, partial(run_due_digests, db_url, account)
+            )
+    except Exception as exc:
+        logger.info("digest tasks step errored: %s", exc)
+
+    # The Wire — newsletter digest (collect bodies → themed HTML → send +
+    # archive). One issue spans all accounts, so it runs ONCE per tick (not
+    # per account); no-op unless agent.wire.enabled + due + not yet today.
+    # Independent of ``agent.enabled`` for the same reason as digests above.
+    try:
+        from app.agent.wire_digest import run_due_wire
+        from app.core.settings import get_settings
+
+        await asyncio.get_event_loop().run_in_executor(
+            None, partial(run_due_wire, get_settings().database_url)
+        )
+    except Exception as exc:
+        logger.info("wire digest step errored: %s", exc)
+
     return interval
 
 
