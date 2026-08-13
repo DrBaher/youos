@@ -361,3 +361,61 @@ def test_notify_macos_passes_text_as_argv_not_interpolated(monkeypatch):
     args = captured["args"]
     assert r'err C:\x "q"' in args  # message passed verbatim as data
     assert "display notification (item 1 of argv) with title (item 2 of argv)" in args
+
+
+# --- b308: digests / Wire are independent of agent.enabled -----------------
+
+
+def _tick_with(monkeypatch, *, enabled: bool):
+    """Run exactly one _run_tick with the sweep, digest and Wire steps stubbed.
+
+    Returns (swept, digested, wire_runs)."""
+    import sys
+
+    from app.agent import scheduler
+
+    monkeypatch.setattr(scheduler, "get_agent_config", lambda: {
+        "enabled": enabled, "interval_minutes": 15,
+        "accounts": ["a@x.com", "b@y.com"],
+        "window": "24h", "limit": 25, "threshold": 0.6, "notify_macos": False,
+    })
+    monkeypatch.setattr(scheduler, "_resolve_accounts", lambda cfg_list: list(cfg_list))
+
+    swept: list[str] = []
+    monkeypatch.setattr(scheduler, "_run_one_sweep", lambda acct, cfg: swept.append(acct) or 0)
+
+    digested: list[str] = []
+    wire_runs: list[int] = []
+    # The tick imports these lazily inside the try blocks, so stub the modules.
+    monkeypatch.setitem(sys.modules, "app.agent.digest_tasks", SimpleNamespace(
+        run_due_digests=lambda db_url, account: digested.append(account)))
+    monkeypatch.setitem(sys.modules, "app.agent.wire_digest", SimpleNamespace(
+        run_due_wire=lambda db_url: wire_runs.append(1)))
+    monkeypatch.setitem(sys.modules, "app.core.settings", SimpleNamespace(
+        get_settings=lambda: SimpleNamespace(database_url="sqlite://")))
+
+    app = SimpleNamespace(state=SimpleNamespace())
+    asyncio.run(scheduler._run_tick(app))
+    return swept, digested, wire_runs
+
+
+def test_tick_runs_digests_and_wire_when_drafting_is_disabled(monkeypatch):
+    """agent.enabled=false stops drafting but must NOT stop digests/Wire —
+    each is gated only by its own flag (agent.digests.enabled / agent.wire.enabled),
+    which they check themselves. Regression guard for b308: they used to sit
+    inside the sweep's `if cfg["enabled"]` block, so turning drafting off
+    silently killed the digests too."""
+    swept, digested, wire_runs = _tick_with(monkeypatch, enabled=False)
+
+    assert swept == []                          # no drafting
+    assert digested == ["a@x.com", "b@y.com"]   # digests still ran, per account
+    assert wire_runs == [1]                     # Wire ran once (not per account)
+
+
+def test_tick_runs_sweep_and_digests_when_enabled(monkeypatch):
+    """The enabled path is unchanged: sweep AND digests AND one Wire run."""
+    swept, digested, wire_runs = _tick_with(monkeypatch, enabled=True)
+
+    assert swept == ["a@x.com", "b@y.com"]
+    assert digested == ["a@x.com", "b@y.com"]
+    assert wire_runs == [1]
